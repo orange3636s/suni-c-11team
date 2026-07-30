@@ -14,7 +14,7 @@ CSV 업로드
 → 데이터 전처리  
 → 머신러닝 예측  
 → SHAP 원인 후보 분석  
-→ Streamlit 대시보드  
+→ Next.js 대시보드  
 → FastAPI  
 → n8n 자동화  
 → Slack 알림
