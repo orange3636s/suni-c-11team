@@ -4,6 +4,7 @@ const navigationItems = [
   { label: "모델 학습", href: "/training" },
   { label: "수율 예측", href: "/prediction" },
   { label: "원인 분석", href: "/root-cause" },
+  { label: "분석 보고서", href: "/report" },
   { label: "사전 알람 로그", href: "/#alerts" },
   { label: "모델 모니터링", href: "/#monitoring" },
 ];
@@ -14,7 +15,8 @@ type SidebarProps = {
     | "데이터 업로드"
     | "모델 학습"
     | "수율 예측"
-    | "원인 분석";
+    | "원인 분석"
+    | "분석 보고서";
 };
 
 export default function Sidebar({ activeItem = "개요" }: SidebarProps) {

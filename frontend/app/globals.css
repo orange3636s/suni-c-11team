@@ -1124,6 +1124,147 @@ a {
   cursor: pointer;
 }
 
+.overviewLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: -16px 0 48px;
+}
+
+.reportControls,
+.reportProgress {
+  display: grid;
+  gap: 18px;
+}
+
+.reportControls {
+  margin-bottom: 28px;
+}
+
+.reportOptionGrid,
+.reportKpiGrid,
+.reportTwoColumn,
+.reportThreeColumn,
+.findingGrid {
+  display: grid;
+  gap: 16px;
+}
+
+.reportOptionGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.reportKpiGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.reportTwoColumn {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.reportThreeColumn {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 28px 0;
+}
+
+.findingGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  list-style: none;
+  margin: 20px 0 0;
+  padding: 0;
+}
+
+.findingCard {
+  background: #f7f9fc;
+  border-left: 4px solid #78879b;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.findingCard.warning {
+  border-left-color: var(--orange);
+}
+
+.findingCard.danger {
+  border-left-color: var(--red);
+}
+
+.findingCard p {
+  margin: 8px 0;
+}
+
+.findingCard small,
+.reportProgress span {
+  color: var(--muted);
+}
+
+.reportWarningBanner {
+  background: #fff6e7;
+  border: 1px solid #f0d29b;
+  border-radius: 14px;
+  color: #824c08;
+  margin-bottom: 28px;
+  padding: 18px 22px;
+}
+
+.reportWarningBanner ul {
+  margin-bottom: 0;
+}
+
+.recommendationList,
+.methodologyList,
+.rankList {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recommendationList li {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.recommendationList span {
+  color: var(--muted);
+  display: block;
+  margin-top: 4px;
+}
+
+.methodologyList {
+  list-style: disc;
+  padding-left: 20px;
+}
+
+.rankList li,
+.rankList span {
+  align-items: center;
+  display: flex;
+}
+
+.rankList li {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rankList span {
+  gap: 9px;
+  min-width: 0;
+}
+
+.rankList b {
+  align-items: center;
+  background: #eef2f8;
+  border-radius: 50%;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
 @media (max-width: 1100px) {
   .cardGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1149,6 +1290,12 @@ a {
   .predictionControls,
   .predictionKpiGrid,
   .analysisChartGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reportOptionGrid,
+  .reportKpiGrid,
+  .reportThreeColumn {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1282,6 +1429,14 @@ a {
   .analysisOptionGrid,
   .analysisChartGrid,
   .contributionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .reportOptionGrid,
+  .reportKpiGrid,
+  .reportTwoColumn,
+  .reportThreeColumn,
+  .findingGrid {
     grid-template-columns: 1fr;
   }
 

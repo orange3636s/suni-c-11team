@@ -82,6 +82,7 @@ npm run dev
 - 모델 학습 페이지: http://localhost:3000/training
 - 수율 예측 페이지: http://localhost:3000/prediction
 - 원인 분석 페이지: http://localhost:3000/root-cause
+- 분석 보고서 페이지: http://localhost:3000/report
 - FastAPI: http://127.0.0.1:8000
 - Swagger: http://127.0.0.1:8000/docs
 
@@ -192,6 +193,44 @@ SHAP 결과는 인과관계를 증명하지 않고 모델 예측의 기여도를
 Test R²가 낮거나 Validation/Test 성능 차이가 큰 모델은 화면과 API 응답에
 품질 경고를 표시하므로 공정 조치 전에 반드시 현장 검증이 필요하다.
 
+## 자동 분석 보고서
+
+`/report` 페이지에서는 CSV와 저장 모델만 선택하면 별도의 예측 또는 원인
+분석 페이지 실행 없이 다음 흐름을 자동으로 수행한다.
+
+```text
+CSV 검사 → 전처리 → 모델 로드 → 수율 예측 → 위험 분류
+→ SHAP 분석 → 주요 후보 요약 → 규칙 기반 보고서 생성
+```
+
+예측과 SHAP 계산은 기존 추론 및 설명 모듈을 재사용하며 외부 LLM API를
+사용하지 않는다.
+
+- 보고서 JSON API: `POST /api/report`
+- HTML 다운로드 API: `POST /api/report/download`
+- 요청 필드: `file`, `model_id`, `warning_threshold`,
+  `danger_threshold`, `max_rows`, `top_n`
+- 기본 SHAP 분석 행: 500행
+- 위험 Wafer 목록: 위험 → 주의 → 정상 순서이며 같은 등급에서는 예측값
+  오름차순
+
+Executive Summary에는 전체 Wafer 수, 평균 예측 수율, 정상·주의·위험 수,
+주의·위험 비율, 모델 Test 지표, 실제 SHAP 분석 행 수와 샘플링 여부가
+포함된다. Key Findings는 계산된 위험 분류, 상위 Step, R/D/EQ 유형,
+feature 및 LOT 집계만 사용해 3~7개의 규칙 기반 문장으로 생성한다.
+
+Wafer 식별자에서 Lot을 추출할 수 있으면 LOT별 Wafer 수, 평균 예측값,
+위험 분류 수, 위험 비율과 상위 SHAP 후보를 함께 제공한다. 식별자 일부에서
+Lot을 추출하지 못하면 LOT 섹션을 생략하고 경고에 이유를 기록한다.
+
+추천 조치는 설비 제어값 변경 지시가 아니라 엔지니어 검토 우선순위다.
+위험 LOT, 상위 Step, 반복 탐지된 R/D/EQ 유형과 모델 품질을 기준으로
+공정 로그·장비 이력·레시피 변경 내역 확인 또는 추가 학습을 권고한다.
+
+다운로드 HTML에는 CSS를 문서 내부에 포함하므로 외부 CDN이나 인터넷 연결
+없이 브라우저에서 열고 인쇄할 수 있다. 보고서의 SHAP 후보는 모델 예측
+기여도이며 실제 불량의 직접 원인이나 인과관계를 확정하지 않는다.
+
 ## 현재 구현 범위
 
 - CSV 업로드와 프론트엔드 파일 형식·크기 검사
@@ -205,5 +244,7 @@ Test R²가 낮거나 Validation/Test 성능 차이가 큰 모델은 화면과 A
 - Wafer 위험 분류, 예측 결과 필터·검색·정렬 및 CSV 다운로드
 - 실제 SHAP 기반 전체·공정 단계·파라미터 유형·Wafer별 원인 후보 분석
 - 원인 분석 중요도 차트 및 CSV 다운로드
+- 예측·위험 분류·SHAP 결과를 결합한 규칙 기반 자동 분석 보고서
+- 위험 Wafer 및 LOT 집계와 독립형 HTML 보고서 다운로드
 
-AI Report는 다음 단계이며, n8n 및 Slack 알림과 배포 기능은 개발 예정이다.
+n8n 및 Slack 알림과 Vercel·Render 배포 기능은 아직 구현하지 않았다.

@@ -61,13 +61,13 @@ const pipelineSteps = [
   },
   {
     title: "AI Report",
-    description: "분석 결과를 운영 보고서로 정리하는 기능을 준비합니다.",
-    status: "다음 단계" as const,
+    description: "예측과 원인 후보를 엔지니어용 자동 보고서로 정리합니다.",
+    status: "구현 완료" as const,
   },
   {
     title: "n8n 알림",
     description: "검증된 위험 신호의 알림을 자동화할 예정입니다.",
-    status: "개발 예정" as const,
+    status: "다음 단계" as const,
   },
 ];
 
@@ -107,6 +107,20 @@ export default function Home() {
                 <StatusCard key={card.label} {...card} />
               ))}
             </div>
+          </section>
+
+          <section className="overviewLinks" aria-label="주요 기능 바로가기">
+            {[
+              ["데이터 업로드", "/upload"],
+              ["모델 학습", "/training"],
+              ["수율 예측", "/prediction"],
+              ["원인 분석", "/root-cause"],
+              ["분석 보고서", "/report"],
+            ].map(([label, href]) => (
+              <a className="button secondary" href={href} key={href}>
+                {label}
+              </a>
+            ))}
           </section>
 
           <section className="pipelineSection" aria-labelledby="pipeline-title">

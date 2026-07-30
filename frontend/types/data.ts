@@ -223,3 +223,88 @@ export type ExplainResponse = {
   model_quality_warnings: string[];
   warnings: string[];
 };
+
+export type ReportOptions = {
+  warning_threshold: number;
+  danger_threshold: number;
+  max_rows: number;
+  top_n: number;
+};
+
+export type ReportExecutiveSummary = {
+  total_wafers: number;
+  average_predicted_yield: number;
+  normal_count: number;
+  warning_count: number;
+  danger_count: number;
+  risk_ratio: number;
+  analyzed_rows: number;
+  shap_sampling_used: boolean;
+  sampling_strategy: string;
+};
+
+export type ReportModelInfo = {
+  model_id: string;
+  target: string;
+  model_name: string;
+  test_metrics: ModelMetrics;
+};
+
+export type ReportFinding = {
+  severity: "info" | "warning" | "danger";
+  title: string;
+  description: string;
+  evidence: string;
+};
+
+export type ReportRiskWafer = {
+  identifier: unknown;
+  predicted_value: number;
+  risk_level: "normal" | "warning" | "danger" | null;
+  actual_value: number | null;
+  absolute_error: number | null;
+  top_harmful_features: string[];
+  top_step: string | null;
+  top_parameter_type: string | null;
+};
+
+export type ReportLotSummary = {
+  lot_id: string;
+  wafer_count: number;
+  average_predicted_yield: number;
+  danger_count: number;
+  warning_count: number;
+  normal_count: number;
+  danger_ratio: number;
+  top_harmful_feature: string | null;
+  top_harmful_step: string | null;
+};
+
+export type ReportRecommendation = {
+  priority: "high" | "medium" | "low";
+  title: string;
+  description: string;
+};
+
+export type ReportResponse = {
+  success: boolean;
+  report_id: string;
+  created_at: string;
+  filename: string;
+  model: ReportModelInfo;
+  executive_summary: ReportExecutiveSummary;
+  key_findings: ReportFinding[];
+  top_risk_wafers: ReportRiskWafer[];
+  lot_summary: ReportLotSummary[];
+  top_features: GlobalImportanceItem[];
+  top_steps: StepSummaryItem[];
+  parameter_type_summary: (ParameterTypeSummaryItem & {
+    ratio: number | null;
+  })[];
+  recommendations: ReportRecommendation[];
+  model_quality_warnings: string[];
+  methodology_notes: string[];
+  explanation_method: string;
+  is_fallback: boolean;
+  warnings: string[];
+};

@@ -37,6 +37,7 @@ from api.schemas.data import (
     PredictionSummary,
     PreprocessChanges,
     PreprocessResponse,
+    ReportResponse,
     TrainResponse,
     ValidationResponse,
     ValidationResult,
@@ -69,6 +70,8 @@ from src.ml.explainability import (
 )
 from src.ml.training import train_regression_models
 from src.preprocessing import preprocess_dataframe
+from src.reporting.export import render_report_html
+from src.reporting.report_builder import build_report
 
 
 logger = logging.getLogger(__name__)
@@ -722,6 +725,123 @@ async def download_explanation(
     return Response(
         content=csv_content,
         media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
+
+
+async def _run_report(
+    file: UploadFile,
+    model_id: str,
+    warning_threshold: float,
+    danger_threshold: float,
+    max_rows: int,
+    top_n: int,
+) -> dict[str, Any]:
+    filename, dataframe = await _read_csv_upload(file)
+    try:
+        logger.info("보고서 모델 로드 시작: %s", model_id)
+        loaded = load_prediction_model(model_id, MODEL_DIR)
+        logger.info("보고서 예측 및 위험 분류 시작")
+        prediction = predict_dataframe(
+            dataframe,
+            loaded,
+            warning_threshold=warning_threshold,
+            danger_threshold=danger_threshold,
+            max_rows=None,
+        )
+        logger.info("보고서 SHAP 분석 시작")
+        explanation = explain_dataframe(
+            dataframe,
+            loaded,
+            max_rows=max_rows,
+            top_n=top_n,
+            per_wafer_top_n=DEFAULT_WAFER_TOP_N,
+            warning_threshold=warning_threshold,
+            danger_threshold=danger_threshold,
+            prediction_result=prediction,
+        )
+        logger.info("규칙 기반 보고서 구성 시작")
+        return build_report(
+            filename,
+            loaded,
+            prediction,
+            explanation,
+        )
+    except InferenceInputError as exc:
+        logger.warning("보고서 입력 오류: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ModelLoadError as exc:
+        logger.exception("보고서 모델 또는 SHAP 처리 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("자동 분석 보고서 생성 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="자동 분석 보고서를 생성하는 중 서버 오류가 발생했습니다.",
+        ) from exc
+
+
+@router.post("/report", response_model=ReportResponse)
+async def generate_report(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
+    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
+    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
+    top_n: int = Form(DEFAULT_TOP_N),
+) -> ReportResponse:
+    report = await _run_report(
+        file,
+        model_id,
+        warning_threshold,
+        danger_threshold,
+        max_rows,
+        top_n,
+    )
+    try:
+        response = ReportResponse(**report)
+        response.model_dump_json()
+        return response
+    except Exception as exc:
+        logger.exception("보고서 JSON 응답 직렬화 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="보고서 JSON 응답을 생성하지 못했습니다.",
+        ) from exc
+
+
+@router.post("/report/download")
+async def download_report(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
+    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
+    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
+    top_n: int = Form(DEFAULT_TOP_N),
+) -> Response:
+    report = await _run_report(
+        file,
+        model_id,
+        warning_threshold,
+        danger_threshold,
+        max_rows,
+        top_n,
+    )
+    html = render_report_html(report)
+    timestamp = report["created_at"].replace("-", "").replace(":", "")
+    timestamp = timestamp[:15].replace("T", "_")
+    filename = f"manufacturing_ai_report_{timestamp}.html"
+    return Response(
+        content=html.encode("utf-8"),
+        media_type="text/html; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"'
         },

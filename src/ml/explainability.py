@@ -16,6 +16,7 @@ from src.ml.inference import (
     InferenceInputError,
     LoadedPredictionModel,
     ModelLoadError,
+    PredictionResult,
     predict_dataframe,
     prepare_inference_features,
 )
@@ -428,6 +429,9 @@ def explain_dataframe(
     max_rows: int = DEFAULT_MAX_EXPLAIN_ROWS,
     top_n: int = DEFAULT_TOP_N,
     per_wafer_top_n: int = DEFAULT_WAFER_TOP_N,
+    warning_threshold: float = DEFAULT_WARNING_THRESHOLD,
+    danger_threshold: float = DEFAULT_DANGER_THRESHOLD,
+    prediction_result: PredictionResult | None = None,
 ) -> ExplainResult:
     if not 1 <= max_rows <= MAX_EXPLAIN_ROWS:
         raise InferenceInputError(
@@ -441,13 +445,17 @@ def explain_dataframe(
         )
 
     logger.info("설명용 예측 시작: rows=%d", len(dataframe))
-    predictions = predict_dataframe(
+    predictions = prediction_result or predict_dataframe(
         dataframe,
         loaded,
-        warning_threshold=DEFAULT_WARNING_THRESHOLD,
-        danger_threshold=DEFAULT_DANGER_THRESHOLD,
+        warning_threshold=warning_threshold,
+        danger_threshold=danger_threshold,
         max_rows=None,
     )
+    if predictions.total_rows != len(dataframe):
+        raise InferenceInputError(
+            "설명에 전달된 예측 결과의 행 수가 CSV와 일치하지 않습니다."
+        )
     processed, preprocessing_report = preprocess_dataframe(dataframe)
     all_features, feature_warnings = prepare_inference_features(
         processed,

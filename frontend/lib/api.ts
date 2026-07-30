@@ -5,6 +5,8 @@ import type {
   PreprocessResponse,
   PredictionResponse,
   PredictionThresholds,
+  ReportOptions,
+  ReportResponse,
   TrainResponse,
   ValidationResponse,
 } from "@/types/data";
@@ -235,6 +237,69 @@ export async function downloadExplanation(
     });
   } catch {
     throw new Error("원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.blob();
+}
+
+function reportFormData(
+  file: File,
+  modelId: string,
+  options: ReportOptions,
+): FormData {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model_id", modelId);
+  formData.append(
+    "warning_threshold",
+    String(options.warning_threshold),
+  );
+  formData.append(
+    "danger_threshold",
+    String(options.danger_threshold),
+  );
+  formData.append("max_rows", String(options.max_rows));
+  formData.append("top_n", String(options.top_n));
+  return formData;
+}
+
+export async function generateReport(
+  file: File,
+  modelId: string,
+  options: ReportOptions,
+): Promise<ReportResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/report`, {
+      method: "POST",
+      body: reportFormData(file, modelId, options),
+    });
+  } catch {
+    throw new Error(
+      "분석 보고서 서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.json() as Promise<ReportResponse>;
+}
+
+export async function downloadReport(
+  file: File,
+  modelId: string,
+  options: ReportOptions,
+): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/report/download`, {
+      method: "POST",
+      body: reportFormData(file, modelId, options),
+    });
+  } catch {
+    throw new Error("HTML 보고서 다운로드 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));
