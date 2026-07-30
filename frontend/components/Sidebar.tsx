@@ -1,13 +1,17 @@
 const navigationItems = [
-  "개요",
-  "데이터 업로드",
-  "수율 예측",
-  "원인 분석",
-  "사전 알람 로그",
-  "모델 모니터링",
+  { label: "개요", href: "/" },
+  { label: "데이터 업로드", href: "/upload" },
+  { label: "수율 예측", href: "/#prediction" },
+  { label: "원인 분석", href: "/#root-cause" },
+  { label: "사전 알람 로그", href: "/#alerts" },
+  { label: "모델 모니터링", href: "/#monitoring" },
 ];
 
-export default function Sidebar() {
+type SidebarProps = {
+  activeItem?: "개요" | "데이터 업로드";
+};
+
+export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -22,18 +26,21 @@ export default function Sidebar() {
 
       <nav aria-label="주요 메뉴">
         <ul className="navigationList">
-          {navigationItems.map((item, index) => (
-            <li key={item}>
+          {navigationItems.map((item) => {
+            const isActive = item.label === activeItem;
+            return (
+            <li key={item.label}>
               <a
-                className={`navigationItem ${index === 0 ? "active" : ""}`}
-                href={index === 0 ? "#overview" : `#section-${index}`}
-                aria-current={index === 0 ? "page" : undefined}
+                className={`navigationItem ${isActive ? "active" : ""}`}
+                href={item.href}
+                aria-current={isActive ? "page" : undefined}
               >
                 <span className="navigationDot" aria-hidden="true" />
-                {item}
+                {item.label}
               </a>
             </li>
-          ))}
+            );
+          })}
         </ul>
       </nav>
 

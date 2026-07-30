@@ -32,26 +32,32 @@ const pipelineSteps = [
   {
     title: "CSV 업로드",
     description: "공정 원본 데이터를 안전하게 불러옵니다.",
+    status: "구현 완료" as const,
   },
   {
     title: "데이터 검증",
     description: "스키마, 결측치, 중복 여부를 확인합니다.",
+    status: "구현 완료" as const,
   },
   {
     title: "데이터 전처리",
     description: "설정 기반으로 분석 가능한 형태를 준비합니다.",
+    status: "구현 완료" as const,
   },
   {
     title: "머신러닝 예측",
     description: "Wafer별 수율 위험을 예측할 예정입니다.",
+    status: "개발 예정" as const,
   },
   {
     title: "원인 후보 분석",
     description: "공정 이상에 영향을 준 후보를 제시할 예정입니다.",
+    status: "개발 예정" as const,
   },
   {
     title: "n8n 알림",
     description: "검증된 위험 신호의 알림을 자동화할 예정입니다.",
+    status: "개발 예정" as const,
   },
 ];
 

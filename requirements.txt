@@ -9,6 +9,7 @@ shap
 fastapi
 uvicorn
 pydantic
+python-multipart
 python-dotenv
 pyyaml
 joblib

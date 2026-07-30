@@ -2,12 +2,14 @@ type PipelineStepProps = {
   index: number;
   title: string;
   description: string;
+  status: "구현 완료" | "개발 예정";
 };
 
 export default function PipelineStep({
   index,
   title,
   description,
+  status,
 }: PipelineStepProps) {
   return (
     <li className="pipelineStep">
@@ -16,7 +18,11 @@ export default function PipelineStep({
         <strong>{title}</strong>
         <span>{description}</span>
       </div>
-      <span className="stepStatus">준비 중</span>
+      <span
+        className={`stepStatus ${status === "구현 완료" ? "complete" : ""}`}
+      >
+        {status}
+      </span>
     </li>
   );
 }
