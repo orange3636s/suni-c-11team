@@ -3,13 +3,18 @@ const navigationItems = [
   { label: "데이터 업로드", href: "/upload" },
   { label: "모델 학습", href: "/training" },
   { label: "수율 예측", href: "/prediction" },
-  { label: "원인 분석", href: "/#root-cause" },
+  { label: "원인 분석", href: "/root-cause" },
   { label: "사전 알람 로그", href: "/#alerts" },
   { label: "모델 모니터링", href: "/#monitoring" },
 ];
 
 type SidebarProps = {
-  activeItem?: "개요" | "데이터 업로드" | "모델 학습" | "수율 예측";
+  activeItem?:
+    | "개요"
+    | "데이터 업로드"
+    | "모델 학습"
+    | "수율 예측"
+    | "원인 분석";
 };
 
 export default function Sidebar({ activeItem = "개요" }: SidebarProps) {

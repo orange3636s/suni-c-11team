@@ -56,7 +56,12 @@ const pipelineSteps = [
   },
   {
     title: "원인 후보 분석",
-    description: "공정 이상에 영향을 준 후보를 제시할 예정입니다.",
+    description: "SHAP 기반으로 공정 이상에 영향을 준 후보를 분석합니다.",
+    status: "구현 완료" as const,
+  },
+  {
+    title: "AI Report",
+    description: "분석 결과를 운영 보고서로 정리하는 기능을 준비합니다.",
     status: "다음 단계" as const,
   },
   {

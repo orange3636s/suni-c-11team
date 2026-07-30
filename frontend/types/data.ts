@@ -137,3 +137,89 @@ export type PredictionResponse = {
   warnings: string[];
   truncated: boolean;
 };
+
+export type ExplainOptions = {
+  max_rows: number;
+  top_n: number;
+  per_wafer_top_n: number;
+};
+
+export type GlobalImportanceItem = {
+  rank: number;
+  feature: string;
+  step: string;
+  parameter_type: string;
+  parameter_name: string;
+  mean_abs_shap: number;
+  mean_harmful_contribution: number;
+  direction: string;
+};
+
+export type AggregateImportanceItem = {
+  rank: number;
+  mean_abs_shap: number;
+  harmful_contribution: number;
+  feature_count: number;
+};
+
+export type ExplainAnalysisSummary = {
+  total_rows: number;
+  analyzed_rows: number;
+  sampling_used: boolean;
+  sampling_strategy: string;
+  explanation_method: string;
+  is_fallback: boolean;
+};
+
+export type StepSummaryItem = AggregateImportanceItem & {
+  step: string;
+};
+
+export type ParameterTypeSummaryItem = AggregateImportanceItem & {
+  parameter_type: string;
+};
+
+export type LocalContributionItem = {
+  feature: string;
+  value: unknown;
+  shap_value: number;
+  harmful_contribution: number;
+  beneficial_contribution: number;
+  step: string;
+  parameter_type: string;
+};
+
+export type WaferExplanation = {
+  identifier: unknown;
+  prediction: number;
+  risk_level: "normal" | "warning" | "danger" | null;
+  base_value: number;
+  top_negative_contributors: LocalContributionItem[];
+  top_positive_contributors: LocalContributionItem[];
+};
+
+export type ExplainResponse = {
+  success: boolean;
+  filename: string;
+  model: {
+    model_id: string;
+    target: string;
+    model_name: string;
+  };
+  analysis_summary: ExplainAnalysisSummary;
+  explanation_method: string;
+  is_fallback: boolean;
+  identifier_column: string;
+  global_importance: GlobalImportanceItem[];
+  step_summary: StepSummaryItem[];
+  parameter_type_summary: ParameterTypeSummaryItem[];
+  equipment_summary: {
+    rank: number;
+    equipment: string;
+    mean_abs_shap: number;
+    harmful_contribution: number;
+  }[];
+  wafer_explanations: WaferExplanation[];
+  model_quality_warnings: string[];
+  warnings: string[];
+};

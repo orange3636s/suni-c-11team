@@ -81,6 +81,7 @@ npm run dev
 - 데이터 업로드 페이지: http://localhost:3000/upload
 - 모델 학습 페이지: http://localhost:3000/training
 - 수율 예측 페이지: http://localhost:3000/prediction
+- 원인 분석 페이지: http://localhost:3000/root-cause
 - FastAPI: http://127.0.0.1:8000
 - Swagger: http://127.0.0.1:8000/docs
 
@@ -164,6 +165,33 @@ Validation으로 분리해 기본적으로 Train 64%, Validation 16%, Test 20%�
 예측할 수 있으며, target이 있으면 R², RMSE, MAE와 행별 오차를 함께 계산한다.
 원본 업로드 CSV는 예측 과정에서도 영구 저장하지 않는다.
 
+## SHAP 기반 원인 후보 분석
+
+`/root-cause` 페이지에서 저장된 모델과 CSV를 선택하면 실제 SHAP 값을
+계산해 모델 예측에 영향을 준 feature를 보여준다. 학습 파이프라인의 전처리를
+그대로 적용하고 변환된 feature 이름과 순서를 유지한다.
+
+- 원인 분석 API: `POST /api/explain`
+- 전체 중요도 CSV API: `POST /api/explain/download`
+- 요청 필드: `file`, `model_id`, `max_rows`, `top_n`,
+  `per_wafer_top_n`
+- 기본 최대 분석 행: 500행
+- 최대 허용 분석 행: 1,000행
+- 샘플링 순서: 위험 → 주의 → 정상
+- Tree 모델: `shap.Explainer` 또는 `TreeExplainer`
+- 선형 모델: `shap.Explainer` 또는 `LinearExplainer`
+- SHAP을 사용할 수 없는 모델: 모델 독립형 feature perturbation 방식
+
+`Y`는 수율이 낮아지는 방향을 위험 기여로, `Y1`~`Y10`은 값이 높아지는
+방향을 위험 기여로 계산한다. 결과에는 전체 feature 중요도, Step별 집계,
+R/D/EQ 유형별 집계, 설비 집계 및 Wafer별 악화·개선 기여 변수가 포함된다.
+`mean_abs_shap`과 `mean_harmful_contribution`은 분석 행 전체의 feature별
+평균이며, Step·유형별 필드는 해당 그룹에 속한 feature 평균값들의 합계다.
+
+SHAP 결과는 인과관계를 증명하지 않고 모델 예측의 기여도를 설명한다.
+Test R²가 낮거나 Validation/Test 성능 차이가 큰 모델은 화면과 API 응답에
+품질 경고를 표시하므로 공정 조치 전에 반드시 현장 검증이 필요하다.
+
 ## 현재 구현 범위
 
 - CSV 업로드와 프론트엔드 파일 형식·크기 검사
@@ -175,6 +203,7 @@ Validation으로 분리해 기본적으로 Train 64%, Validation 16%, Test 20%�
 - 모델 학습 결과와 모델별 비교 화면
 - 저장 모델 목록 조회와 신규 CSV 수율 예측
 - Wafer 위험 분류, 예측 결과 필터·검색·정렬 및 CSV 다운로드
+- 실제 SHAP 기반 전체·공정 단계·파라미터 유형·Wafer별 원인 후보 분석
+- 원인 분석 중요도 차트 및 CSV 다운로드
 
-SHAP 기반 원인 분석, n8n 및 Slack 알림, 최종 대시보드 고도화와 배포 기능은
-아직 구현하지 않았다.
+AI Report는 다음 단계이며, n8n 및 Slack 알림과 배포 기능은 개발 예정이다.

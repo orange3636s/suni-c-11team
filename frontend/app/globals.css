@@ -1021,6 +1021,109 @@ a {
   color: var(--red);
 }
 
+.analysisControls {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.analysisOptionGrid,
+.analysisChartGrid,
+.contributionGrid {
+  display: grid;
+  gap: 18px;
+}
+
+.analysisOptionGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.analysisChartGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 28px 0;
+}
+
+.analysisChartCard:first-child {
+  grid-column: 1 / -1;
+}
+
+.analysisChartCard h3,
+.contributionGrid h3 {
+  margin: 0 0 16px;
+}
+
+.chartCanvas {
+  height: 360px;
+}
+
+.localChart {
+  height: 220px;
+  margin-bottom: 16px;
+}
+
+.chartTooltip {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  font-size: 12px;
+}
+
+.waferDetailSummary {
+  background: #f7f9fc;
+  border-radius: 10px;
+  margin: 22px 0 0;
+  padding: 14px;
+}
+
+.analysisDisclaimer {
+  border-left: 4px solid var(--orange);
+  margin: 18px 0 0;
+  padding: 12px 16px;
+  background: #fff8e9;
+}
+
+.contributionGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.contributionList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.contributionList li {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+}
+
+.contributionList span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.selectedRow {
+  background: #eef3ff;
+}
+
+.dataTable tbody tr {
+  cursor: pointer;
+}
+
 @media (max-width: 1100px) {
   .cardGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1044,7 +1147,8 @@ a {
   }
 
   .predictionControls,
-  .predictionKpiGrid {
+  .predictionKpiGrid,
+  .analysisChartGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1174,8 +1278,15 @@ a {
   .trainingSummaryGrid,
   .trainingControls,
   .predictionControls,
-  .predictionKpiGrid {
+  .predictionKpiGrid,
+  .analysisOptionGrid,
+  .analysisChartGrid,
+  .contributionGrid {
     grid-template-columns: 1fr;
+  }
+
+  .analysisChartCard:first-child {
+    grid-column: auto;
   }
 
   .predictionTableHeader,

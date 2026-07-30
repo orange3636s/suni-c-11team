@@ -1,4 +1,6 @@
 import type {
+  ExplainOptions,
+  ExplainResponse,
   ModelListResponse,
   PreprocessResponse,
   PredictionResponse,
@@ -177,6 +179,62 @@ export async function downloadPredictions(
     throw new Error(
       "예측 다운로드 서버에 연결할 수 없습니다.",
     );
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.blob();
+}
+
+function explanationFormData(
+  file: File,
+  modelId: string,
+  options: ExplainOptions,
+): FormData {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model_id", modelId);
+  formData.append("max_rows", String(options.max_rows));
+  formData.append("top_n", String(options.top_n));
+  formData.append("per_wafer_top_n", String(options.per_wafer_top_n));
+  return formData;
+}
+
+export async function explainCsv(
+  file: File,
+  modelId: string,
+  options: ExplainOptions,
+): Promise<ExplainResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/explain`, {
+      method: "POST",
+      body: explanationFormData(file, modelId, options),
+    });
+  } catch {
+    throw new Error(
+      "원인 분석 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.json() as Promise<ExplainResponse>;
+}
+
+export async function downloadExplanation(
+  file: File,
+  modelId: string,
+  options: ExplainOptions,
+): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/explain/download`, {
+      method: "POST",
+      body: explanationFormData(file, modelId, options),
+    });
+  } catch {
+    throw new Error("원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));

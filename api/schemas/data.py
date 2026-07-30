@@ -130,3 +130,87 @@ class PredictionResponse(BaseModel):
     predictions: list[dict[str, Any]]
     warnings: list[str] = Field(default_factory=list)
     truncated: bool = False
+
+
+class ExplainAnalysisSummary(BaseModel):
+    total_rows: int
+    analyzed_rows: int
+    sampling_used: bool
+    sampling_strategy: str
+    explanation_method: str
+    is_fallback: bool
+
+
+class GlobalImportanceItem(BaseModel):
+    rank: int
+    feature: str
+    step: str
+    parameter_type: str
+    parameter_name: str
+    mean_abs_shap: float
+    mean_harmful_contribution: float
+    direction: str
+
+
+class AggregateImportanceItem(BaseModel):
+    rank: int
+    mean_abs_shap: float
+    harmful_contribution: float
+    feature_count: int
+
+
+class StepSummaryItem(AggregateImportanceItem):
+    step: str
+
+
+class ParameterTypeSummaryItem(AggregateImportanceItem):
+    parameter_type: str
+
+
+class EquipmentSummaryItem(BaseModel):
+    rank: int
+    equipment: str
+    mean_abs_shap: float
+    harmful_contribution: float
+
+
+class LocalContributionItem(BaseModel):
+    feature: str
+    value: Any
+    shap_value: float
+    harmful_contribution: float
+    beneficial_contribution: float
+    step: str
+    parameter_type: str
+
+
+class WaferExplanation(BaseModel):
+    identifier: Any
+    prediction: float
+    risk_level: str | None
+    base_value: float
+    top_negative_contributors: list[LocalContributionItem]
+    top_positive_contributors: list[LocalContributionItem]
+
+
+class ExplainModelInfo(BaseModel):
+    model_id: str
+    target: str
+    model_name: str
+
+
+class ExplainResponse(BaseModel):
+    success: bool = True
+    filename: str
+    model: ExplainModelInfo
+    analysis_summary: ExplainAnalysisSummary
+    explanation_method: str
+    is_fallback: bool
+    identifier_column: str
+    global_importance: list[GlobalImportanceItem]
+    step_summary: list[StepSummaryItem]
+    parameter_type_summary: list[ParameterTypeSummaryItem]
+    equipment_summary: list[EquipmentSummaryItem]
+    wafer_explanations: list[WaferExplanation]
+    model_quality_warnings: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

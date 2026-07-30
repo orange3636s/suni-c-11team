@@ -24,6 +24,9 @@ from api.schemas.data import (
     ColumnDetectionResult,
     DataSummary,
     DatasetSplit,
+    ExplainAnalysisSummary,
+    ExplainModelInfo,
+    ExplainResponse,
     ModelArtifacts,
     ModelComparisonItem,
     ModelListResponse,
@@ -56,6 +59,13 @@ from src.ml.inference import (
     list_prediction_models,
     load_prediction_model,
     predict_dataframe,
+)
+from src.ml.explainability import (
+    DEFAULT_MAX_EXPLAIN_ROWS,
+    DEFAULT_TOP_N,
+    DEFAULT_WAFER_TOP_N,
+    ExplainResult,
+    explain_dataframe,
 )
 from src.ml.training import train_regression_models
 from src.preprocessing import preprocess_dataframe
@@ -585,6 +595,130 @@ async def download_predictions(
     output = pd.DataFrame(result.predictions)
     csv_content = output.to_csv(index=False).encode("utf-8-sig")
     filename = f"predictions_{result.model_id}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
+
+
+def _explain_response(
+    filename: str,
+    result: ExplainResult,
+) -> ExplainResponse:
+    response = ExplainResponse(
+        filename=filename,
+        model=ExplainModelInfo(
+            model_id=result.model_id,
+            target=result.target,
+            model_name=result.model_name,
+        ),
+        analysis_summary=ExplainAnalysisSummary(
+            total_rows=result.total_rows,
+            analyzed_rows=result.analyzed_rows,
+            sampling_used=result.sampling_used,
+            sampling_strategy=result.sampling_strategy,
+            explanation_method=result.explanation_method,
+            is_fallback=result.is_fallback,
+        ),
+        explanation_method=result.explanation_method,
+        is_fallback=result.is_fallback,
+        identifier_column=result.identifier_column,
+        global_importance=result.global_importance,
+        step_summary=result.step_summary,
+        parameter_type_summary=result.parameter_type_summary,
+        equipment_summary=result.equipment_summary,
+        wafer_explanations=result.wafer_explanations,
+        model_quality_warnings=result.model_quality_warnings,
+        warnings=result.warnings,
+    )
+    response.model_dump_json()
+    return response
+
+
+async def _run_explanation(
+    file: UploadFile,
+    model_id: str,
+    max_rows: int,
+    top_n: int,
+    per_wafer_top_n: int,
+) -> tuple[str, ExplainResult]:
+    filename, dataframe = await _read_csv_upload(file)
+    try:
+        loaded = load_prediction_model(model_id, MODEL_DIR)
+        result = explain_dataframe(
+            dataframe,
+            loaded,
+            max_rows=max_rows,
+            top_n=top_n,
+            per_wafer_top_n=per_wafer_top_n,
+        )
+        return filename, result
+    except InferenceInputError as exc:
+        logger.warning("설명 입력 오류: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ModelLoadError as exc:
+        logger.exception("설명 모델 처리 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("원인 분석 처리 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="원인 분석 처리 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+
+
+@router.post("/explain", response_model=ExplainResponse)
+async def explain_csv(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
+    top_n: int = Form(DEFAULT_TOP_N),
+    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
+) -> ExplainResponse:
+    filename, result = await _run_explanation(
+        file,
+        model_id,
+        max_rows,
+        top_n,
+        per_wafer_top_n,
+    )
+    try:
+        return _explain_response(filename, result)
+    except Exception as exc:
+        logger.exception("원인 분석 응답 직렬화 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="원인 분석 결과 응답을 생성하지 못했습니다.",
+        ) from exc
+
+
+@router.post("/explain/download")
+async def download_explanation(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
+    top_n: int = Form(DEFAULT_TOP_N),
+    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
+) -> Response:
+    _, result = await _run_explanation(
+        file,
+        model_id,
+        max_rows,
+        top_n,
+        per_wafer_top_n,
+    )
+    output = pd.DataFrame(result.global_importance)
+    csv_content = output.to_csv(index=False).encode("utf-8-sig")
+    filename = f"explanation_{result.model_id}.csv"
     return Response(
         content=csv_content,
         media_type="text/csv; charset=utf-8",
