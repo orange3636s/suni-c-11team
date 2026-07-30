@@ -1,0 +1,13 @@
+id_column: Sample_ID
+yield_column: Yield_Value
+fail_rate_columns:
+  - Rate_A
+fail_bit_columns:
+  - Bit_A
+response_suffix: _RESP
+defect_suffix: _DEF
+equipment_suffix: _MACHINE
+feature_patterns:
+  response: '^Unit\d+_RESP\d+$'
+  defect: '^Unit\d+_DEF.*$'
+  equipment: '^Unit\d+_MACHINE.*$'

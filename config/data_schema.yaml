@@ -18,3 +18,8 @@ fail_bit_columns:
 response_suffix: _R
 defect_suffix: _D
 equipment_suffix: _EQ
+
+feature_patterns:
+  response: '^Step\d+_R\d+$'
+  defect: '^Step\d+_D.*$'
+  equipment: '^Step\d+_EQ.*$'

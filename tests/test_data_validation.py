@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -9,9 +11,9 @@ def test_valid_dataframe_passes_validation() -> None:
         {
             "Lot_Wafer_ID": ["W001", "W002"],
             "Y": [98.1, 97.5],
-            "STEP01_R": [1.0, 1.1],
-            "STEP01_D": [0, 1],
-            "STEP01_EQ": ["EQ1", "EQ2"],
+            "Step1_R1": [1.0, 1.1],
+            "Step1_D1": [0, 1],
+            "Step1_EQ": ["EQ1", "EQ2"],
         }
     )
 
@@ -51,19 +53,19 @@ def test_r_d_eq_columns_are_detected_by_suffix() -> None:
         {
             "Lot_Wafer_ID": ["W001"],
             "Y": [98.1],
-            "STEP01_R": [1.0],
-            "STEP02_R": [2.0],
-            "STEP01_D": [0],
-            "STEP01_EQ": ["EQ1"],
+            "Step1_R1": [1.0],
+            "Step2_R2": [2.0],
+            "Step1_D1": [0],
+            "Step1_EQ": ["EQ1"],
             "NOT_RESPONSE": [3.0],
         }
     )
 
     result = validate_dataframe(dataframe)
 
-    assert result["r_columns"] == ["STEP01_R", "STEP02_R"]
-    assert result["d_columns"] == ["STEP01_D"]
-    assert result["eq_columns"] == ["STEP01_EQ"]
+    assert result["r_columns"] == ["Step1_R1", "Step2_R2"]
+    assert result["d_columns"] == ["Step1_D1"]
+    assert result["eq_columns"] == ["Step1_EQ"]
 
 
 def test_duplicate_lot_wafer_id_count() -> None:
@@ -84,7 +86,7 @@ def test_overall_missing_rate() -> None:
         {
             "Lot_Wafer_ID": ["W001", "W002"],
             "Y": [98.1, None],
-            "STEP01_R": [None, 1.1],
+            "Step1_R1": [None, 1.1],
         }
     )
 
@@ -110,23 +112,9 @@ def test_target_columns_are_detected_from_yaml() -> None:
     assert result["target_columns"] == ["Y", "Y1", "Y6"]
 
 
-def test_custom_yaml_schema_is_used(tmp_path) -> None:
-    schema_path = tmp_path / "custom_schema.yaml"
-    schema_path.write_text(
-        "\n".join(
-            (
-                "id_column: Sample_ID",
-                "yield_column: Yield_Value",
-                "fail_rate_columns:",
-                "  - Rate_A",
-                "fail_bit_columns:",
-                "  - Bit_A",
-                "response_suffix: _RESP",
-                "defect_suffix: _DEF",
-                "equipment_suffix: _MACHINE",
-            )
-        ),
-        encoding="utf-8",
+def test_custom_yaml_schema_is_used() -> None:
+    schema_path = (
+        Path(__file__).parent / "fixtures" / "custom_data_schema.yaml"
     )
     dataframe = pd.DataFrame(
         {
@@ -134,18 +122,18 @@ def test_custom_yaml_schema_is_used(tmp_path) -> None:
             "Yield_Value": [98.1],
             "Rate_A": [0.1],
             "Bit_A": [10],
-            "STEP_RESP": [1.0],
-            "STEP_DEF": [0],
-            "STEP_MACHINE": ["M1"],
+            "Unit1_RESP1": [1.0],
+            "Unit1_DEF1": [0],
+            "Unit1_MACHINE": ["M1"],
         }
     )
 
     result = validate_dataframe(dataframe, schema_path=schema_path)
 
     assert result["is_valid"] is True
-    assert result["r_columns"] == ["STEP_RESP"]
-    assert result["d_columns"] == ["STEP_DEF"]
-    assert result["eq_columns"] == ["STEP_MACHINE"]
+    assert result["r_columns"] == ["Unit1_RESP1"]
+    assert result["d_columns"] == ["Unit1_DEF1"]
+    assert result["eq_columns"] == ["Unit1_MACHINE"]
     assert result["target_columns"] == ["Yield_Value", "Rate_A", "Bit_A"]
 
 

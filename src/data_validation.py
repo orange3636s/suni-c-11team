@@ -7,6 +7,8 @@ import pandas as pd
 import yaml
 from pandas.api.types import is_numeric_dtype
 
+from src.column_detection import detect_feature_columns
+
 
 DEFAULT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "data_schema.yaml"
@@ -19,6 +21,7 @@ REQUIRED_SCHEMA_KEYS = (
     "response_suffix",
     "defect_suffix",
     "equipment_suffix",
+    "feature_patterns",
 )
 
 
@@ -61,11 +64,6 @@ def validate_dataframe(
     schema = load_data_schema(schema_path)
     id_column = schema["id_column"]
     yield_column = schema["yield_column"]
-    fail_rate_columns = schema["fail_rate_columns"]
-    fail_bit_columns = schema["fail_bit_columns"]
-    response_suffix = schema["response_suffix"]
-    defect_suffix = schema["defect_suffix"]
-    equipment_suffix = schema["equipment_suffix"]
 
     row_count, column_count = df.shape
     required_columns = (id_column, yield_column)
@@ -74,21 +72,11 @@ def validate_dataframe(
     ]
 
     column_names = [column for column in df.columns if isinstance(column, str)]
-    r_columns = [
-        column for column in column_names if column.endswith(response_suffix)
-    ]
-    d_columns = [
-        column for column in column_names if column.endswith(defect_suffix)
-    ]
-    eq_columns = [
-        column for column in column_names if column.endswith(equipment_suffix)
-    ]
-    target_names = {
-        yield_column,
-        *fail_rate_columns,
-        *fail_bit_columns,
-    }
-    target_columns = [column for column in column_names if column in target_names]
+    detected_columns = detect_feature_columns(column_names, schema)
+    r_columns = detected_columns["r_columns"]
+    d_columns = detected_columns["d_columns"]
+    eq_columns = detected_columns["eq_columns"]
+    target_columns = detected_columns["target_columns"]
 
     total_missing_count = int(df.isna().sum().sum())
     total_cell_count = row_count * column_count
@@ -114,15 +102,15 @@ def validate_dataframe(
 
     if not r_columns:
         warnings.append(
-            f"{response_suffix}로 끝나는 Response 컬럼이 발견되지 않았습니다."
+            "스키마 패턴과 일치하는 Response 컬럼이 발견되지 않았습니다."
         )
     if not d_columns:
         warnings.append(
-            f"{defect_suffix}로 끝나는 Defect 컬럼이 발견되지 않았습니다."
+            "스키마 패턴과 일치하는 Defect 컬럼이 발견되지 않았습니다."
         )
     if not eq_columns:
         warnings.append(
-            f"{equipment_suffix}로 끝나는 Equipment 컬럼이 발견되지 않았습니다."
+            "스키마 패턴과 일치하는 Equipment 컬럼이 발견되지 않았습니다."
         )
 
     if yield_column in df.columns and not is_numeric_dtype(df[yield_column]):

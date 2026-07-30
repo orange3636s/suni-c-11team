@@ -1,6 +1,12 @@
 missing:
   strategy: lot_mean
+  fallback: median
   add_indicator: true
 
 outlier:
   method: iqr
+  lower_multiplier: 1.5
+  upper_multiplier: 1.5
+
+categorical:
+  fill_value: UNKNOWN
