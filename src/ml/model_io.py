@@ -68,6 +68,7 @@ def save_model_bundle(
             "random_state": random_state,
             "split_method": split_method,
             "scikit_learn_version": sklearn.__version__,
+            "sklearn_version": sklearn.__version__,
         }
     )
     joblib.dump(model, model_path)
@@ -80,3 +81,10 @@ def save_model_bundle(
 
 def load_model(model_path: str | Path) -> Any:
     return joblib.load(Path(model_path))
+
+
+def load_metadata(metadata_path: str | Path) -> dict[str, Any]:
+    loaded = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError("모델 메타데이터는 JSON 객체여야 합니다.")
+    return loaded

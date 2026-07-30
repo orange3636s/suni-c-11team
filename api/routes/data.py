@@ -18,6 +18,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 
 from api.schemas.data import (
     ColumnDetectionResult,
@@ -25,7 +26,12 @@ from api.schemas.data import (
     DatasetSplit,
     ModelArtifacts,
     ModelComparisonItem,
+    ModelListResponse,
     ModelMetrics,
+    ModelSummary,
+    PredictionModelInfo,
+    PredictionResponse,
+    PredictionSummary,
     PreprocessChanges,
     PreprocessResponse,
     TrainResponse,
@@ -40,6 +46,17 @@ from src.ml.dataset import (
     split_dataset,
 )
 from src.ml.model_io import DEFAULT_MODEL_DIR, save_model_bundle
+from src.ml.inference import (
+    DEFAULT_DANGER_THRESHOLD,
+    DEFAULT_WARNING_THRESHOLD,
+    MAX_PREDICTION_ROWS,
+    InferenceInputError,
+    PredictionResult,
+    ModelLoadError,
+    list_prediction_models,
+    load_prediction_model,
+    predict_dataframe,
+)
 from src.ml.training import train_regression_models
 from src.preprocessing import preprocess_dataframe
 
@@ -437,3 +454,141 @@ async def train_model(
         ) from exc
     logger.info("학습 API 응답 직렬화 완료")
     return response
+
+
+@router.get("/models", response_model=ModelListResponse)
+def get_models() -> ModelListResponse:
+    try:
+        models, warnings = list_prediction_models(MODEL_DIR)
+        return ModelListResponse(
+            models=[ModelSummary(**model) for model in models],
+            warnings=warnings,
+        )
+    except ModelLoadError as exc:
+        logger.exception("모델 목록 조회 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
+def _prediction_response(
+    filename: str,
+    result: PredictionResult,
+) -> PredictionResponse:
+    evaluation = (
+        ModelMetrics(**result.evaluation.as_dict())
+        if result.evaluation is not None
+        else None
+    )
+    response = PredictionResponse(
+        filename=filename,
+        model=PredictionModelInfo(
+            model_id=result.model_id,
+            target=result.target,
+            model_name=result.model_name,
+        ),
+        summary=PredictionSummary(
+            total_rows=result.total_rows,
+            average_prediction=result.average_prediction,
+            normal_count=result.normal_count,
+            warning_count=result.warning_count,
+            danger_count=result.danger_count,
+            evaluation=evaluation,
+        ),
+        identifier_column=result.identifier_column,
+        predictions=result.predictions,
+        warnings=result.warnings,
+        truncated=result.truncated,
+    )
+    response.model_dump_json()
+    return response
+
+
+async def _run_prediction(
+    file: UploadFile,
+    model_id: str,
+    warning_threshold: float,
+    danger_threshold: float,
+    *,
+    max_rows: int | None,
+) -> tuple[str, PredictionResult]:
+    filename, dataframe = await _read_csv_upload(file)
+    try:
+        loaded = load_prediction_model(model_id, MODEL_DIR)
+        result = predict_dataframe(
+            dataframe,
+            loaded,
+            warning_threshold=warning_threshold,
+            danger_threshold=danger_threshold,
+            max_rows=max_rows,
+        )
+        return filename, result
+    except InferenceInputError as exc:
+        logger.warning("예측 입력 오류: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ModelLoadError as exc:
+        logger.exception("예측 모델 처리 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("예측 처리 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="예측 처리 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+
+
+@router.post("/predict", response_model=PredictionResponse)
+async def predict_csv(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
+    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
+) -> PredictionResponse:
+    filename, result = await _run_prediction(
+        file,
+        model_id,
+        warning_threshold,
+        danger_threshold,
+        max_rows=MAX_PREDICTION_ROWS,
+    )
+    try:
+        return _prediction_response(filename, result)
+    except Exception as exc:
+        logger.exception("예측 응답 직렬화 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="예측 결과 응답을 생성하지 못했습니다.",
+        ) from exc
+
+
+@router.post("/predict/download")
+async def download_predictions(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
+    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
+) -> Response:
+    _, result = await _run_prediction(
+        file,
+        model_id,
+        warning_threshold,
+        danger_threshold,
+        max_rows=None,
+    )
+    output = pd.DataFrame(result.predictions)
+    csv_content = output.to_csv(index=False).encode("utf-8-sig")
+    filename = f"predictions_{result.model_id}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )

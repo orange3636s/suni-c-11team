@@ -49,6 +49,9 @@ def load_data_schema(
 def validate_dataframe(
     df: pd.DataFrame,
     schema_path: str | Path | None = None,
+    *,
+    require_id: bool = True,
+    require_yield: bool = True,
 ) -> dict[str, Any]:
     """원본을 변경하지 않고 업로드된 공정 DataFrame의 기본 품질을 검증한다.
 
@@ -66,7 +69,14 @@ def validate_dataframe(
     yield_column = schema["yield_column"]
 
     row_count, column_count = df.shape
-    required_columns = (id_column, yield_column)
+    required_columns = tuple(
+        column
+        for column, required in (
+            (id_column, require_id),
+            (yield_column, require_yield),
+        )
+        if required
+    )
     missing_required_columns = [
         column for column in required_columns if column not in df.columns
     ]

@@ -51,13 +51,13 @@ const pipelineSteps = [
   },
   {
     title: "수율 예측",
-    description: "저장된 모델로 Wafer별 수율을 예측할 예정입니다.",
-    status: "다음 단계" as const,
+    description: "저장된 모델로 Wafer별 수율과 위험 상태를 예측합니다.",
+    status: "구현 완료" as const,
   },
   {
     title: "원인 후보 분석",
     description: "공정 이상에 영향을 준 후보를 제시할 예정입니다.",
-    status: "개발 예정" as const,
+    status: "다음 단계" as const,
   },
   {
     title: "n8n 알림",

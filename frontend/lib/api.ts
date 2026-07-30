@@ -1,5 +1,8 @@
 import type {
+  ModelListResponse,
   PreprocessResponse,
+  PredictionResponse,
+  PredictionThresholds,
   TrainResponse,
   ValidationResponse,
 } from "@/types/data";
@@ -98,4 +101,85 @@ export async function trainModel(
   }
 
   return response.json() as Promise<TrainResponse>;
+}
+
+export async function getModels(): Promise<ModelListResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/models`, {
+      method: "GET",
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error(
+      "FastAPI 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.json() as Promise<ModelListResponse>;
+}
+
+function predictionFormData(
+  file: File,
+  modelId: string,
+  thresholds: PredictionThresholds,
+): FormData {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model_id", modelId);
+  formData.append(
+    "warning_threshold",
+    String(thresholds.warning_threshold),
+  );
+  formData.append(
+    "danger_threshold",
+    String(thresholds.danger_threshold),
+  );
+  return formData;
+}
+
+export async function predictCsv(
+  file: File,
+  modelId: string,
+  thresholds: PredictionThresholds,
+): Promise<PredictionResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/predict`, {
+      method: "POST",
+      body: predictionFormData(file, modelId, thresholds),
+    });
+  } catch {
+    throw new Error(
+      "예측 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.json() as Promise<PredictionResponse>;
+}
+
+export async function downloadPredictions(
+  file: File,
+  modelId: string,
+  thresholds: PredictionThresholds,
+): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/predict/download`, {
+      method: "POST",
+      body: predictionFormData(file, modelId, thresholds),
+    });
+  } catch {
+    throw new Error(
+      "예측 다운로드 서버에 연결할 수 없습니다.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.blob();
 }

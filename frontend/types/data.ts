@@ -87,3 +87,53 @@ export type TrainResponse = {
     metadata_file: string;
   };
 };
+
+export type ModelSummary = {
+  model_id: string;
+  target: string;
+  model_name: string;
+  created_at: string;
+  test_metrics: ModelMetrics;
+  feature_count: number;
+};
+
+export type ModelListResponse = {
+  success: boolean;
+  models: ModelSummary[];
+  warnings: string[];
+};
+
+export type PredictionThresholds = {
+  warning_threshold: number;
+  danger_threshold: number;
+};
+
+export type PredictionRow = Record<string, unknown> & {
+  risk_level?: "normal" | "warning" | "danger" | null;
+  residual?: number | null;
+  absolute_error?: number | null;
+};
+
+export type PredictionSummary = {
+  total_rows: number;
+  average_prediction: number;
+  normal_count: number;
+  warning_count: number;
+  danger_count: number;
+  evaluation: ModelMetrics | null;
+};
+
+export type PredictionResponse = {
+  success: boolean;
+  filename: string;
+  model: {
+    model_id: string;
+    target: string;
+    model_name: string;
+  };
+  summary: PredictionSummary;
+  identifier_column: string;
+  predictions: PredictionRow[];
+  warnings: string[];
+  truncated: boolean;
+};

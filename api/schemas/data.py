@@ -89,3 +89,44 @@ class TrainResponse(BaseModel):
     feature_count: int
     warnings: list[str] = Field(default_factory=list)
     artifacts: ModelArtifacts
+
+
+class ModelSummary(BaseModel):
+    model_id: str
+    target: str
+    model_name: str
+    created_at: str
+    test_metrics: ModelMetrics
+    feature_count: int
+
+
+class ModelListResponse(BaseModel):
+    success: bool = True
+    models: list[ModelSummary] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PredictionModelInfo(BaseModel):
+    model_id: str
+    target: str
+    model_name: str
+
+
+class PredictionSummary(BaseModel):
+    total_rows: int
+    average_prediction: float
+    normal_count: int
+    warning_count: int
+    danger_count: int
+    evaluation: ModelMetrics | None = None
+
+
+class PredictionResponse(BaseModel):
+    success: bool = True
+    filename: str
+    model: PredictionModelInfo
+    summary: PredictionSummary
+    identifier_column: str
+    predictions: list[dict[str, Any]]
+    warnings: list[str] = Field(default_factory=list)
+    truncated: bool = False

@@ -23,7 +23,12 @@ def detect_feature_columns(
         *schema_config["fail_bit_columns"],
     }
 
-    string_columns = [column for column in columns if isinstance(column, str)]
+    string_columns = [
+        column
+        for column in columns
+        if isinstance(column, str)
+        and not column.lower().endswith("_missing")
+    ]
     return {
         "r_columns": [
             column

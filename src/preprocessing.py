@@ -188,24 +188,26 @@ def preprocess_dataframe(
     for column in numeric_feature_columns:
         missing_mask = processed_df[column].isna()
         missing_count = int(missing_mask.sum())
-        if not missing_count:
-            imputed_counts[column] = 0
-            continue
 
         if add_indicator:
             indicator_column = f"{column}_missing"
             if indicator_column in processed_df.columns:
-                warnings.append(
-                    f"{indicator_column} 컬럼이 이미 존재하여 값을 갱신했습니다."
-                )
-                existing_indicator_updates[indicator_column] = (
-                    missing_mask.astype("int8")
-                )
+                if missing_count:
+                    warnings.append(
+                        f"{indicator_column} 컬럼이 이미 존재하여 값을 갱신했습니다."
+                    )
+                    existing_indicator_updates[indicator_column] = (
+                        missing_mask.astype("int8")
+                    )
             else:
                 new_indicator_data[indicator_column] = missing_mask.astype(
                     "int8"
                 )
                 added_indicator_columns.append(indicator_column)
+
+        if not missing_count:
+            imputed_counts[column] = 0
+            continue
 
         if missing_strategy == "lot_mean" and id_column in processed_df.columns:
             extract_failed_mask = missing_mask & lot_values.isna()

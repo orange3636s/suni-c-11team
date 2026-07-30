@@ -80,6 +80,7 @@ npm run dev
 - Next.js: http://localhost:3000
 - 데이터 업로드 페이지: http://localhost:3000/upload
 - 모델 학습 페이지: http://localhost:3000/training
+- 수율 예측 페이지: http://localhost:3000/prediction
 - FastAPI: http://127.0.0.1:8000
 - Swagger: http://127.0.0.1:8000/docs
 
@@ -137,6 +138,32 @@ Validation으로 분리해 기본적으로 Train 64%, Validation 16%, Test 20%�
 생성 시각, 데이터셋별 지표, 분리 방식 및 scikit-learn 버전이 포함된다.
 업로드한 원본 CSV는 저장하지 않는다.
 
+## 저장 모델 예측
+
+학습은 CSV로 모델을 생성하고 평가하는 과정이며, 예측은 저장된 모델과
+메타데이터를 불러와 새로운 CSV의 Wafer별 목표값을 계산하는 과정이다.
+추론 CSV도 기존 검증과 전처리를 거치며, 메타데이터에 저장된 학습 feature
+목록과 순서를 그대로 복원한다. 학습 당시 필요했던 feature 컬럼이 없으면
+예측하지 않으며, 새로 추가된 R/D/EQ feature는 모델 입력에서 제외하고 경고로
+알린다.
+
+- 모델 목록 API: `GET /api/models`
+- 예측 API: `POST /api/predict`
+- 예측 CSV 다운로드 API: `POST /api/predict/download`
+- 예측 페이지: http://localhost:3000/prediction
+- 요청 필드: `file`, `model_id`, `warning_threshold`, `danger_threshold`
+- 화면 응답 예측 행 제한: 최대 5,000행
+
+기본 `Y` 위험 기준은 다음과 같다.
+
+- 정상: `predicted_Y >= 95`
+- 주의: `90 <= predicted_Y < 95`
+- 위험: `predicted_Y < 90`
+
+주의 기준은 위험 기준보다 커야 한다. 신규 CSV에 실제 target이 없어도
+예측할 수 있으며, target이 있으면 R², RMSE, MAE와 행별 오차를 함께 계산한다.
+원본 업로드 CSV는 예측 과정에서도 영구 저장하지 않는다.
+
 ## 현재 구현 범위
 
 - CSV 업로드와 프론트엔드 파일 형식·크기 검사
@@ -146,6 +173,8 @@ Validation으로 분리해 기본적으로 Train 64%, Validation 16%, Test 20%�
 - Lot 그룹 기반 Train/Validation/Test 분리
 - 회귀 모델 비교, 평가 및 최적 모델 저장
 - 모델 학습 결과와 모델별 비교 화면
+- 저장 모델 목록 조회와 신규 CSV 수율 예측
+- Wafer 위험 분류, 예측 결과 필터·검색·정렬 및 CSV 다운로드
 
-저장된 모델을 이용한 수율 예측, SHAP 기반 원인 분석, n8n 및 Slack 알림
-기능은 아직 구현하지 않았다.
+SHAP 기반 원인 분석, n8n 및 Slack 알림, 최종 대시보드 고도화와 배포 기능은
+아직 구현하지 않았다.
