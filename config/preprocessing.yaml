@@ -1,0 +1,6 @@
+missing:
+  strategy: lot_mean
+  add_indicator: true
+
+outlier:
+  method: iqr
