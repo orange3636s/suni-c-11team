@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+.venv/
+
+# VS Code
+.vscode/
+
+# Environment
+.env
+
+# Models
+models/*.pkl
+
+# Data
+data/raw/*
+!data/raw/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+data/results/*
+!data/results/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
