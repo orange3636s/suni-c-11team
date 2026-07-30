@@ -1,3 +1,5 @@
+import warnings
+
 import pandas as pd
 import pytest
 
@@ -321,3 +323,81 @@ def test_validation_and_preprocessing_use_same_detection(
     assert validation_result["r_columns"] == preprocessing_detection["r_columns"]
     assert validation_result["d_columns"] == preprocessing_detection["d_columns"]
     assert validation_result["eq_columns"] == preprocessing_detection["eq_columns"]
+
+
+def test_preprocessing_twice_does_not_duplicate_indicators(
+    schema_config: dict,
+    preprocessing_config: dict,
+) -> None:
+    dataframe = pd.DataFrame(
+        {
+            "Lot_Wafer_ID": ["L001_W01", "L001_W02", "L002_W01"],
+            "Y": [98.0, 97.0, 96.0],
+            "Step1_R1": [1.0, None, 3.0],
+            "Step1_D1": [None, 1.0, 2.0],
+        }
+    )
+
+    processed_once, _ = preprocess_dataframe(
+        dataframe,
+        schema_config,
+        preprocessing_config,
+    )
+    processed_twice, _ = preprocess_dataframe(
+        processed_once,
+        schema_config,
+        preprocessing_config,
+    )
+    first_indicators = [
+        column
+        for column in processed_once.columns
+        if column.endswith("_missing")
+    ]
+    second_indicators = [
+        column
+        for column in processed_twice.columns
+        if column.endswith("_missing")
+    ]
+
+    assert processed_once.columns.is_unique
+    assert processed_twice.columns.is_unique
+    assert second_indicators == first_indicators
+    assert len(processed_twice.columns) == len(processed_once.columns)
+    assert processed_twice.index.equals(processed_once.index)
+
+
+def test_indicator_creation_does_not_emit_fragmentation_warning(
+    schema_config: dict,
+    preprocessing_config: dict,
+) -> None:
+    row_count = 4
+    feature_data = {
+        f"Step1_R{index}": [1.0, None, 2.0, 3.0]
+        for index in range(1, 121)
+    }
+    dataframe = pd.DataFrame(
+        {
+            "Lot_Wafer_ID": [
+                f"L001_W{index:02d}" for index in range(1, row_count + 1)
+            ],
+            "Y": [98.0, 97.0, 96.0, 95.0],
+            **feature_data,
+        }
+    )
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        processed, report = preprocess_dataframe(
+            dataframe,
+            schema_config,
+            preprocessing_config,
+        )
+
+    performance_warnings = [
+        warning
+        for warning in captured
+        if issubclass(warning.category, pd.errors.PerformanceWarning)
+    ]
+    assert performance_warnings == []
+    assert processed.columns.is_unique
+    assert len(report["added_indicator_columns"]) == 120

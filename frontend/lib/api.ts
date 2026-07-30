@@ -1,5 +1,6 @@
 import type {
   PreprocessResponse,
+  TrainResponse,
   ValidationResponse,
 } from "@/types/data";
 
@@ -70,4 +71,31 @@ export function validateCsv(file: File): Promise<ValidationResponse> {
 
 export function preprocessCsv(file: File): Promise<PreprocessResponse> {
   return postCsv<PreprocessResponse>("/api/preprocess", file);
+}
+
+export async function trainModel(
+  file: File,
+  target: string,
+): Promise<TrainResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("target", target);
+
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/train`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error(
+      "FastAPI 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<TrainResponse>;
 }

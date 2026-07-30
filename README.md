@@ -79,6 +79,7 @@ npm run dev
 
 - Next.js: http://localhost:3000
 - 데이터 업로드 페이지: http://localhost:3000/upload
+- 모델 학습 페이지: http://localhost:3000/training
 - FastAPI: http://127.0.0.1:8000
 - Swagger: http://127.0.0.1:8000/docs
 
@@ -106,12 +107,45 @@ Next.js의 `/upload` 페이지에서 CSV 파일을 선택하거나 드래그 앤
 4. `frontend` 디렉터리에서 `npm install` 후 `npm run dev`를 실행한다.
 5. 브라우저에서 http://localhost:3000/upload 로 이동한다.
 
+## 머신러닝 학습
+
+`/training` 페이지에서 CSV와 목표 변수를 선택하면 검증과 기존 전처리를
+먼저 실행한 뒤 회귀 모델을 비교한다. 기본 목표 변수는 최종 수율 `Y`이며,
+동일한 구조로 `Y1`부터 `Y10`까지 선택할 수 있다.
+
+- 학습 API: `POST /api/train`
+- 요청 필드: `file`, `target`
+- 기본 target: `Y`
+- 지원 target: `Y`, `Y1`~`Y10`
+- 모델 후보: `DummyRegressor`, `Ridge`, `RandomForestRegressor`,
+  `HistGradientBoostingRegressor`
+- 최적 모델 기준: Validation RMSE 오름차순, 동률이면 Validation R² 내림차순
+- 평가 지표:
+  - R²: 목표값 변동을 모델이 설명하는 비율
+  - RMSE: 큰 오차에 더 큰 가중치를 주는 평균 오차
+  - MAE: 예측값과 실제값 차이의 절댓값 평균
+
+데이터는 먼저 전체의 20%를 Test로 분리하고, 나머지 80%에서 20%를
+Validation으로 분리해 기본적으로 Train 64%, Validation 16%, Test 20%를
+사용한다. `Lot_Wafer_ID`에서 Lot을 추출할 수 있으면 같은 Lot의 wafer가 서로
+다른 데이터셋에 포함되지 않도록 그룹 단위로 분리한다. Lot 추출이 불가능하거나
+그룹 수가 부족하면 `random_state=42`인 random split을 사용하고 학습 결과에
+경고를 포함한다.
+
+선택된 모델은 `models/`에 joblib 파일로 저장되며 같은 이름의 JSON
+메타데이터가 함께 생성된다. 메타데이터에는 target, 모델명, feature 컬럼,
+생성 시각, 데이터셋별 지표, 분리 방식 및 scikit-learn 버전이 포함된다.
+업로드한 원본 CSV는 저장하지 않는다.
+
 ## 현재 구현 범위
 
 - CSV 업로드와 프론트엔드 파일 형식·크기 검사
 - 기존 Python 로직을 이용한 데이터 검증
 - 기존 Python 로직을 이용한 결측치 처리와 이상치 보정
 - 검증 결과, 처리 전후 통계, 전처리 데이터 미리보기
+- Lot 그룹 기반 Train/Validation/Test 분리
+- 회귀 모델 비교, 평가 및 최적 모델 저장
+- 모델 학습 결과와 모델별 비교 화면
 
-머신러닝 모델 학습·예측, SHAP 기반 원인 분석, n8n 및 Slack 알림 기능은 아직
-구현하지 않았다.
+저장된 모델을 이용한 수율 예측, SHAP 기반 원인 분석, n8n 및 Slack 알림
+기능은 아직 구현하지 않았다.

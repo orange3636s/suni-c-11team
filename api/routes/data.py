@@ -1,30 +1,64 @@
 from __future__ import annotations
 
+import csv
+import logging
 import math
-from io import BytesIO
+from collections import Counter
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 
 from api.schemas.data import (
     ColumnDetectionResult,
     DataSummary,
+    DatasetSplit,
+    ModelArtifacts,
+    ModelComparisonItem,
+    ModelMetrics,
     PreprocessChanges,
     PreprocessResponse,
+    TrainResponse,
     ValidationResponse,
     ValidationResult,
 )
 from src.data_validation import load_data_schema, validate_dataframe
+from src.ml.dataset import (
+    ALLOWED_TARGETS,
+    RANDOM_STATE,
+    prepare_dataset,
+    split_dataset,
+)
+from src.ml.model_io import DEFAULT_MODEL_DIR, save_model_bundle
+from src.ml.training import train_regression_models
 from src.preprocessing import preprocess_dataframe
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["data"])
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
+MODEL_DIR = DEFAULT_MODEL_DIR
+
+
+def _duplicate_names(values: list[str]) -> list[str]:
+    counts = Counter(values)
+    return list(
+        dict.fromkeys(
+            value for value in values if counts[value] > 1
+        )
+    )
 
 
 async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
@@ -63,10 +97,23 @@ async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
 
     for encoding in SUPPORTED_ENCODINGS:
         try:
-            dataframe = pd.read_csv(BytesIO(content), encoding=encoding)
+            decoded_content = content.decode(encoding)
+            header = next(csv.reader(StringIO(decoded_content)), [])
+            duplicate_columns = _duplicate_names(header)
+            if duplicate_columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "CSV에 중복된 컬럼명이 있습니다: "
+                        + ", ".join(duplicate_columns)
+                    ),
+                )
+            dataframe = pd.read_csv(StringIO(decoded_content))
             return filename, dataframe
         except UnicodeDecodeError:
             continue
+        except HTTPException:
+            raise
         except pd.errors.EmptyDataError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -200,3 +247,193 @@ async def preprocess_csv(
         warnings=list(report["warnings"]),
         preview=_preview_records(processed),
     )
+
+
+@router.post("/train", response_model=TrainResponse)
+async def train_model(
+    file: UploadFile = File(...),
+    target: str = Form("Y"),
+) -> TrainResponse:
+    _, dataframe = await _read_csv_upload(file)
+    logger.info(
+        "학습 CSV 읽기 완료: rows=%d, columns=%d",
+        dataframe.shape[0],
+        dataframe.shape[1],
+    )
+
+    if target not in ALLOWED_TARGETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="지원하지 않는 목표 변수입니다. Y부터 Y10까지만 사용할 수 있습니다.",
+        )
+
+    try:
+        validation = validate_dataframe(dataframe)
+    except Exception as exc:
+        logger.exception("학습 데이터 검증 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="데이터 검증 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+    if not validation["is_valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "데이터 검증 오류로 모델을 학습할 수 없습니다.",
+                "errors": validation["errors"],
+            },
+        )
+    logger.info("학습 데이터 검증 완료")
+
+    try:
+        processed, preprocessing_report = preprocess_dataframe(dataframe)
+    except Exception as exc:
+        logger.exception("학습 데이터 전처리 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="데이터 전처리 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+    logger.info(
+        "학습 데이터 전처리 완료: rows=%d, columns=%d",
+        processed.shape[0],
+        processed.shape[1],
+    )
+
+    try:
+        dataset = prepare_dataset(processed, target=target)
+    except ValueError as exc:
+        logger.warning("학습 데이터 준비 실패: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("학습 feature 탐지 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="학습 feature를 준비하는 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+    logger.info(
+        "학습 feature 탐지 완료: target=%s, features=%d",
+        target,
+        len(dataset.feature_columns),
+    )
+
+    try:
+        split = split_dataset(dataset, random_state=RANDOM_STATE)
+    except ValueError as exc:
+        logger.warning("학습 데이터 분할 실패: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("학습 데이터 분할 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="학습 데이터를 분할하는 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+    logger.info(
+        "학습 데이터 분할 완료: method=%s, train=%d, validation=%d, test=%d",
+        split.split_method,
+        split.row_counts["train_rows"],
+        split.row_counts["validation_rows"],
+        split.row_counts["test_rows"],
+    )
+
+    try:
+        training = train_regression_models(
+            dataset,
+            split,
+            random_state=RANDOM_STATE,
+        )
+    except ValueError as exc:
+        logger.warning("모델 학습 실패: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("모델 학습 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="모델 학습 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+    logger.info("최적 모델 선정 완료: %s", training.best_model_name)
+
+    metrics = {
+        name: values.as_dict()
+        for name, values in training.metrics.items()
+    }
+    try:
+        model_path, metadata_path, _ = save_model_bundle(
+            training.best_model,
+            target=target,
+            model_name=training.best_model_name,
+            feature_columns=dataset.feature_columns,
+            metrics=metrics,
+            random_state=RANDOM_STATE,
+            split_method=split.split_method,
+            model_dir=MODEL_DIR,
+        )
+    except Exception as exc:
+        logger.exception("학습 모델 또는 메타데이터 저장 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="모델 학습에는 성공했지만 파일 저장에 실패했습니다.",
+        ) from exc
+    logger.info("학습 모델 저장 완료")
+
+    warnings = list(
+        dict.fromkeys(
+            [
+                *preprocessing_report["warnings"],
+                *dataset.warnings,
+                *split.warnings,
+                *training.warnings,
+            ]
+        )
+    )
+    try:
+        response = TrainResponse(
+            target=target,
+            best_model=training.best_model_name,
+            split=DatasetSplit(
+                **split.row_counts,
+                group_split_used=split.group_split_used,
+                split_method=split.split_method,
+            ),
+            metrics={
+                name: ModelMetrics(**values)
+                for name, values in metrics.items()
+            },
+            model_comparison=[
+                ModelComparisonItem(
+                    model_name=item.model_name,
+                    status=item.status,
+                    validation=(
+                        ModelMetrics(**item.validation.as_dict())
+                        if item.validation is not None
+                        else None
+                    ),
+                    selected=item.selected,
+                    error_message=item.error_message,
+                )
+                for item in training.model_comparison
+            ],
+            feature_count=len(dataset.feature_columns),
+            warnings=warnings,
+            artifacts=ModelArtifacts(
+                model_file=model_path.name,
+                metadata_file=metadata_path.name,
+            ),
+        )
+        response.model_dump_json()
+    except Exception as exc:
+        logger.exception("학습 API 응답 직렬화 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="학습 결과 응답을 생성하는 중 서버 내부 오류가 발생했습니다.",
+        ) from exc
+    logger.info("학습 API 응답 직렬화 완료")
+    return response

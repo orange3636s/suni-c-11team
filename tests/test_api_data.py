@@ -28,6 +28,21 @@ def test_non_csv_file_is_rejected() -> None:
     assert "CSV" in str(error.value.detail)
 
 
+def test_duplicate_csv_headers_are_rejected() -> None:
+    content = (
+        "Lot_Wafer_ID,Y,Step1_R1,Step1_R1\n"
+        "LOT01_W01,98.1,1.0,2.0\n"
+    ).encode("utf-8")
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(validate_csv(_upload("sample.csv", content)))
+
+    assert error.value.status_code == 400
+    assert error.value.detail == (
+        "CSV에 중복된 컬럼명이 있습니다: Step1_R1"
+    )
+
+
 def test_valid_csv_validation_succeeds() -> None:
     response = asyncio.run(validate_csv(_upload("sample.csv", _valid_csv())))
 

@@ -45,9 +45,14 @@ const pipelineSteps = [
     status: "구현 완료" as const,
   },
   {
-    title: "머신러닝 예측",
-    description: "Wafer별 수율 위험을 예측할 예정입니다.",
-    status: "개발 예정" as const,
+    title: "머신러닝 학습",
+    description: "검증된 데이터로 회귀 모델을 비교하고 저장합니다.",
+    status: "구현 완료" as const,
+  },
+  {
+    title: "수율 예측",
+    description: "저장된 모델로 Wafer별 수율을 예측할 예정입니다.",
+    status: "다음 단계" as const,
   },
   {
     title: "원인 후보 분석",

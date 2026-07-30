@@ -50,3 +50,42 @@ class PreprocessResponse(BaseModel):
     changes: PreprocessChanges
     warnings: list[str] = Field(default_factory=list)
     preview: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ModelMetrics(BaseModel):
+    r2: float | None
+    rmse: float | None
+    mae: float | None
+
+
+class DatasetSplit(BaseModel):
+    train_rows: int
+    validation_rows: int
+    test_rows: int
+    group_split_used: bool
+    split_method: str
+
+
+class ModelComparisonItem(BaseModel):
+    model_name: str
+    status: str
+    validation: ModelMetrics | None = None
+    selected: bool
+    error_message: str | None = None
+
+
+class ModelArtifacts(BaseModel):
+    model_file: str
+    metadata_file: str
+
+
+class TrainResponse(BaseModel):
+    success: bool = True
+    target: str
+    best_model: str
+    split: DatasetSplit
+    metrics: dict[str, ModelMetrics]
+    model_comparison: list[ModelComparisonItem]
+    feature_count: int
+    warnings: list[str] = Field(default_factory=list)
+    artifacts: ModelArtifacts

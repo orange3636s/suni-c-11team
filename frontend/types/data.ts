@@ -46,3 +46,44 @@ export type PreprocessResponse = {
   warnings: string[];
   preview: DataPreviewRow[];
 };
+
+export type ModelMetrics = {
+  r2: number | null;
+  rmse: number | null;
+  mae: number | null;
+};
+
+export type DatasetSplit = {
+  train_rows: number;
+  validation_rows: number;
+  test_rows: number;
+  group_split_used: boolean;
+  split_method: string;
+};
+
+export type ModelComparisonItem = {
+  model_name: string;
+  status: "success" | "failed";
+  validation: ModelMetrics | null;
+  selected: boolean;
+  error_message: string | null;
+};
+
+export type TrainResponse = {
+  success: boolean;
+  target: string;
+  best_model: string;
+  split: DatasetSplit;
+  metrics: {
+    train: ModelMetrics;
+    validation: ModelMetrics;
+    test: ModelMetrics;
+  };
+  model_comparison: ModelComparisonItem[];
+  feature_count: number;
+  warnings: string[];
+  artifacts: {
+    model_file: string;
+    metadata_file: string;
+  };
+};

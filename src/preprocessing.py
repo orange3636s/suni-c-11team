@@ -1,6 +1,7 @@
 """YAML 설정에 따라 제조 공정 DataFrame을 전처리한다."""
 
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,24 @@ from src.data_validation import load_data_schema
 DEFAULT_PREPROCESSING_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "preprocessing.yaml"
 )
-LOT_PATTERN = re.compile(r"^(.+?)(?:[_-]?W(?:AFER)?\d+)$", re.IGNORECASE)
+LOT_PATTERN = re.compile(
+    r"^(.+?)(?:[_-]?W(?:AFER|F)?\d+)$",
+    re.IGNORECASE,
+)
 INDICATOR_OVERFIT_WARNING = (
     "결측 여부가 목표값을 과도하게 설명할 수 있으므로 모델 학습 시 "
     "과적합 검증이 필요합니다."
 )
 STRING_MISSING_VALUES = {"", "none", "null", "nan"}
+
+
+def _duplicate_column_names(columns: list[Any]) -> list[Any]:
+    counts = Counter(columns)
+    return list(
+        dict.fromkeys(
+            column for column in columns if counts[column] > 1
+        )
+    )
 
 
 def load_preprocessing_config(
@@ -108,22 +121,34 @@ def preprocess_dataframe(
         else load_preprocessing_config()
     )
     processed_df = df.copy(deep=True)
+    duplicate_columns = _duplicate_column_names(list(processed_df.columns))
+    if duplicate_columns:
+        raise ValueError(
+            "전처리 데이터에 중복된 컬럼명이 있습니다: "
+            + ", ".join(str(column) for column in duplicate_columns)
+        )
 
     original_shape = tuple(df.shape)
     warnings: list[str] = []
     imputed_counts: dict[str, int] = {}
     clipped_counts: dict[str, int] = {}
     added_indicator_columns: list[str] = []
+    new_indicator_data: dict[str, pd.Series] = {}
+    existing_indicator_updates: dict[str, pd.Series] = {}
 
     id_column = schema["id_column"]
     detected_columns = detect_feature_columns(
         list(processed_df.columns),
         schema,
     )
-    r_columns = detected_columns["r_columns"]
-    d_columns = detected_columns["d_columns"]
-    categorical_feature_columns = detected_columns["eq_columns"]
-    numeric_feature_columns = [*r_columns, *d_columns]
+    r_columns = list(dict.fromkeys(detected_columns["r_columns"]))
+    d_columns = list(dict.fromkeys(detected_columns["d_columns"]))
+    categorical_feature_columns = list(
+        dict.fromkeys(detected_columns["eq_columns"])
+    )
+    numeric_feature_columns = list(
+        dict.fromkeys([*r_columns, *d_columns])
+    )
     standardized_missing_count = _standardize_missing_values(
         processed_df,
         [*numeric_feature_columns, *categorical_feature_columns],
@@ -171,11 +196,15 @@ def preprocess_dataframe(
             indicator_column = f"{column}_missing"
             if indicator_column in processed_df.columns:
                 warnings.append(
-                    f"{indicator_column} 컬럼이 이미 존재하여 결측 Indicator를 "
-                    "추가하지 않았습니다."
+                    f"{indicator_column} 컬럼이 이미 존재하여 값을 갱신했습니다."
+                )
+                existing_indicator_updates[indicator_column] = (
+                    missing_mask.astype("int8")
                 )
             else:
-                processed_df[indicator_column] = missing_mask.astype("int8")
+                new_indicator_data[indicator_column] = missing_mask.astype(
+                    "int8"
+                )
                 added_indicator_columns.append(indicator_column)
 
         if missing_strategy == "lot_mean" and id_column in processed_df.columns:
@@ -222,6 +251,32 @@ def preprocess_dataframe(
             processed_df.loc[remaining_missing_mask, column] = median_value
 
         imputed_counts[column] = missing_count
+
+    if existing_indicator_updates:
+        update_df = pd.DataFrame(
+            existing_indicator_updates,
+            index=processed_df.index,
+        )
+        processed_df.loc[:, list(update_df.columns)] = update_df
+
+    if new_indicator_data:
+        indicator_df = pd.DataFrame(
+            new_indicator_data,
+            index=processed_df.index,
+        )
+        processed_df = pd.concat(
+            [processed_df, indicator_df],
+            axis=1,
+        )
+        duplicate_columns = _duplicate_column_names(
+            list(processed_df.columns)
+        )
+        if duplicate_columns:
+            raise ValueError(
+                "전처리 indicator 결합 후 중복된 컬럼명이 있습니다: "
+                + ", ".join(str(column) for column in duplicate_columns)
+            )
+        processed_df = processed_df.copy()
 
     categorical_fill_value = str(config["categorical"]["fill_value"])
     for column in categorical_feature_columns:
