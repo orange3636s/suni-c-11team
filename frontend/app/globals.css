@@ -54,36 +54,25 @@ a {
 
 .brand {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 14px;
   margin: 0 8px 38px;
 }
 
-.brandMark {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.09);
-  font-size: 16px;
+.brandLogo {
+  display: block;
+  width: 120px;
+  height: auto;
+  object-fit: contain;
+}
+
+.brandTitle {
+  color: #ffffff;
+  font-size: 17px;
   font-weight: 700;
-}
-
-.brand div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.brand strong {
-  letter-spacing: 0.08em;
-}
-
-.brand span:last-child {
-  color: #aeb9c8;
-  font-size: 12px;
+  letter-spacing: -0.01em;
+  line-height: 1.45;
 }
 
 .navigationList {
@@ -1324,7 +1313,16 @@ a {
   }
 
   .brand {
+    gap: 12px;
     margin: 0 4px 18px;
+  }
+
+  .brandLogo {
+    width: 108px;
+  }
+
+  .brandTitle {
+    font-size: 16px;
   }
 
   .navigationList {

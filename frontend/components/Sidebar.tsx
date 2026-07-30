@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 const navigationItems = [
   { label: "개요", href: "/" },
   { label: "데이터 업로드", href: "/upload" },
@@ -23,13 +25,19 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brandMark" aria-hidden="true">
-          S
-        </span>
-        <div>
-          <strong>SEMI AI</strong>
-          <span>공정 분석 시스템</span>
-        </div>
+        <Image
+          className="brandLogo"
+          src="/sk-hynix-logo.png"
+          alt="SK hynix"
+          width={120}
+          height={59}
+          priority
+        />
+        <strong className="brandTitle">
+          제조 공정 불량 예측
+          <br />
+          &amp; 원인분석 AI
+        </strong>
       </div>
 
       <nav aria-label="주요 메뉴">
