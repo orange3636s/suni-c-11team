@@ -38,12 +38,14 @@ from api.schemas.data import (
     PredictionSummary,
     PreprocessChanges,
     PreprocessResponse,
+    RelationshipAnalysisResponse,
     ReportResponse,
     TrainResponse,
     ValidationResponse,
     ValidationResult,
 )
 from api.settings import settings
+from src.analytics.relationships import analyze_relationships
 from src.data_validation import load_data_schema, validate_dataframe
 from src.automation.analyzer import build_automation_response
 from src.ml.dataset import (
@@ -707,6 +709,62 @@ async def explain_csv(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="원인 분석 결과 응답을 생성하지 못했습니다.",
+        ) from exc
+
+
+@router.post(
+    "/relationships",
+    response_model=RelationshipAnalysisResponse,
+)
+async def analyze_feature_relationships(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
+    top_n: int = Form(10),
+    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
+    correlation_method: str = Form("pearson"),
+) -> RelationshipAnalysisResponse:
+    filename, dataframe = await _read_csv_upload(file)
+    try:
+        loaded = load_prediction_model(model_id, MODEL_DIR)
+        explanation = explain_dataframe(
+            dataframe,
+            loaded,
+            max_rows=max_rows,
+            top_n=100,
+            per_wafer_top_n=per_wafer_top_n,
+        )
+        analysis = analyze_relationships(
+            dataframe,
+            target=explanation.target,
+            correlation_method=correlation_method,
+            top_n=top_n,
+            shap_importance=explanation.global_importance,
+        )
+        response = RelationshipAnalysisResponse(
+            filename=filename,
+            explanation=_explain_response(filename, explanation),
+            **analysis,
+        )
+        response.model_dump_json()
+        return response
+    except (InferenceInputError, ValueError) as exc:
+        logger.warning("연관 분석 입력 오류: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ModelLoadError as exc:
+        logger.exception("연관 분석 모델 처리 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("연관 분석 처리 중 내부 오류")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="연관 분석 결과를 생성하지 못했습니다.",
         ) from exc
 
 

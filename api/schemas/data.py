@@ -216,6 +216,20 @@ class ExplainResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RelationshipAnalysisResponse(BaseModel):
+    success: bool = True
+    filename: str
+    explanation: ExplainResponse
+    target: str
+    correlation_method: str
+    rankings: dict[str, dict[str, list[dict[str, Any]]]]
+    pareto: dict[str, Any]
+    relationship_paths: list[dict[str, Any]]
+    available_steps: list[int]
+    confidence_criteria: dict[str, str]
+    caveats: list[str]
+
+
 class ReportExecutiveSummary(BaseModel):
     total_wafers: int
     average_predicted_yield: float

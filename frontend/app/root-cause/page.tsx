@@ -7,7 +7,12 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
+  Line,
+  ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -16,19 +21,22 @@ import {
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import {
+  analyzeRelationships,
   downloadExplanation,
-  explainCsv,
   getModels,
 } from "@/lib/api";
 import type {
   ExplainOptions,
   ExplainResponse,
   ModelSummary,
+  RelationshipAnalysisResponse,
+  RelationshipFeature,
+  RelationshipPath,
 } from "@/types/data";
 
 const DEFAULT_OPTIONS: ExplainOptions = {
   max_rows: 500,
-  top_n: 20,
+  top_n: 10,
   per_wafer_top_n: 5,
 };
 
@@ -70,6 +78,15 @@ export default function RootCausePage() {
   const [options, setOptions] =
     useState<ExplainOptions>(DEFAULT_OPTIONS);
   const [result, setResult] = useState<ExplainResponse | null>(null);
+  const [relationships, setRelationships] =
+    useState<RelationshipAnalysisResponse | null>(null);
+  const [rankingMode, setRankingMode] =
+    useState<"shap" | "correlation">("shap");
+  const [rankingGroup, setRankingGroup] =
+    useState<"overall" | "R" | "D" | "EQ">("overall");
+  const [correlationMethod, setCorrelationMethod] =
+    useState<"pearson" | "spearman">("pearson");
+  const [selectedPath, setSelectedPath] = useState(0);
   const [selectedWafer, setSelectedWafer] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -96,37 +113,15 @@ export default function RootCausePage() {
   }, []);
 
   const selected = result?.wafer_explanations[selectedWafer];
-  const globalChart = useMemo(
-    () =>
-      (result?.global_importance ?? []).slice(0, 15).map((item) => ({
-        name: item.feature,
-        value: item.mean_harmful_contribution,
-        step: item.step,
-        parameterType: item.parameter_type,
-        meanAbsShap: item.mean_abs_shap,
-      })),
-    [result],
-  );
-  const stepChart = useMemo(
-    () =>
-      (result?.step_summary ?? []).slice(0, 10).map((item) => ({
-        name: item.step,
-        value: item.harmful_contribution,
-      })),
-    [result],
-  );
-  const typeChart = useMemo(
-    () =>
-      (result?.parameter_type_summary ?? []).map((item) => ({
-        name: item.parameter_type,
-        value: item.harmful_contribution,
-      })),
-    [result],
+  const rankingData = useMemo(
+    () => relationships?.rankings[rankingMode][rankingGroup] ?? [],
+    [rankingGroup, rankingMode, relationships],
   );
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const selectedFile = event.target.files?.[0] ?? null;
     setResult(null);
+    setRelationships(null);
     setError("");
     if (selectedFile && !selectedFile.name.toLowerCase().endsWith(".csv")) {
       setFile(null);
@@ -142,8 +137,16 @@ export default function RootCausePage() {
     setError("");
     setResult(null);
     try {
-      setResult(await explainCsv(file, modelId, options));
+      const response = await analyzeRelationships(
+        file,
+        modelId,
+        options,
+        correlationMethod,
+      );
+      setRelationships(response);
+      setResult(response.explanation);
       setSelectedWafer(0);
+      setSelectedPath(0);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -224,7 +227,6 @@ export default function RootCausePage() {
               {(
                 [
                   ["max_rows", "최대 분석 행", 1, 1000],
-                  ["top_n", "전체 Top N", 1, 100],
                   ["per_wafer_top_n", "Wafer별 Top N", 1, 20],
                 ] as const
               ).map(([key, label, min, max]) => (
@@ -245,6 +247,40 @@ export default function RootCausePage() {
                   />
                 </div>
               ))}
+              <div className="fieldGroup">
+                <label htmlFor="top_n">Top N</label>
+                <select
+                  id="top_n"
+                  value={options.top_n}
+                  onChange={(event) =>
+                    setOptions({
+                      ...options,
+                      top_n: Number(event.target.value),
+                    })
+                  }
+                >
+                  {[5, 10, 15, 20].map((value) => (
+                    <option key={value} value={value}>
+                      Top {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="fieldGroup">
+                <label htmlFor="correlation-method">상관 방식</label>
+                <select
+                  id="correlation-method"
+                  value={correlationMethod}
+                  onChange={(event) =>
+                    setCorrelationMethod(
+                      event.target.value as "pearson" | "spearman",
+                    )
+                  }
+                >
+                  <option value="pearson">Pearson</option>
+                  <option value="spearman">Spearman</option>
+                </select>
+              </div>
             </div>
             <div className="uploadActions">
               <button
@@ -314,26 +350,64 @@ export default function RootCausePage() {
                 )}
               </section>
 
-              <section className="analysisChartGrid">
-                <ChartCard
-                  title="전체 위험 기여도 Top 15"
-                  description="값이 클수록 모델 예측을 위험 방향으로 더 크게 이동시킨 feature입니다."
-                  data={globalChart}
-                  color="#b33a46"
-                />
-                <ChartCard
-                  title="공정 Step별 위험 기여도 Top 10"
-                  description="동일 Step에 속한 feature의 위험 기여도를 합산해 비교합니다."
-                  data={stepChart}
-                  color="#1769aa"
-                />
-                <ChartCard
-                  title="파라미터 유형별 위험 기여도"
-                  description="Response · Delta · Equipment 유형별 영향 크기를 비교합니다."
-                  data={typeChart}
-                  color="#a96208"
-                />
-              </section>
+              {relationships && (
+                <>
+                  <section className="resultCard relationshipSection">
+                    <div className="sectionHeading compact">
+                      <div>
+                        <span className="sectionLabel">1단계 · 영향 변수 순위</span>
+                        <h2>전체 및 그룹별 Top N</h2>
+                      </div>
+                      <p>
+                        Ranking basis:{" "}
+                        {rankingData[0]?.ranking_basis ?? "데이터 없음"}
+                      </p>
+                    </div>
+                    <div className="relationshipToolbar">
+                      <SegmentedControl
+                        options={[
+                          ["shap", "SHAP"],
+                          ["correlation", "Correlation"],
+                        ]}
+                        value={rankingMode}
+                        onChange={(value) =>
+                          setRankingMode(value as "shap" | "correlation")
+                        }
+                      />
+                      <SegmentedControl
+                        options={[
+                          ["overall", "전체"],
+                          ["R", "R"],
+                          ["D", "D"],
+                          ["EQ", "EQ"],
+                        ]}
+                        value={rankingGroup}
+                        onChange={(value) =>
+                          setRankingGroup(
+                            value as "overall" | "R" | "D" | "EQ",
+                          )
+                        }
+                      />
+                    </div>
+                    {rankingData.length ? (
+                      <RankingChart data={rankingData} />
+                    ) : (
+                      <p className="emptyMessage">
+                        선택한 기준의 순위 데이터가 없습니다.
+                      </p>
+                    )}
+                  </section>
+
+                  <ParetoSection analysis={relationships} />
+
+                  <PathSection
+                    paths={relationships.relationship_paths}
+                    selectedIndex={selectedPath}
+                    onSelect={setSelectedPath}
+                    confidenceCriteria={relationships.confidence_criteria}
+                  />
+                </>
+              )}
 
               <section className="resultCard">
                 <div className="sectionHeading compact">
@@ -420,37 +494,47 @@ export default function RootCausePage() {
   );
 }
 
-function ChartCard({
-  title,
-  description,
-  data,
-  color,
+function SegmentedControl({
+  options,
+  value,
+  onChange,
 }: {
-  title: string;
-  description: string;
-  data: {
-    name: string;
-    value: number;
-    step?: string;
-    parameterType?: string;
-    meanAbsShap?: number;
-  }[];
-  color: string;
+  options: [string, string][];
+  value: string;
+  onChange: (value: string) => void;
 }) {
   return (
-    <article className="resultCard analysisChartCard">
-      <h3>{title}</h3>
-      <p className="chartDescription">{description}</p>
-      <div
-        className="chartCanvas"
-        role="img"
-        aria-label={`${title}. ${description}`}
-      >
+    <div className="segmentedControl">
+      {options.map(([option, label]) => (
+        <button
+          key={option}
+          type="button"
+          className={value === option ? "active" : ""}
+          aria-pressed={value === option}
+          onClick={() => onChange(option)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function groupColor(group: string): string {
+  if (group === "R") return "#1769aa";
+  if (group === "D") return "#a96208";
+  return "#647185";
+}
+
+function RankingChart({ data }: { data: RelationshipFeature[] }) {
+  return (
+    <div className="rankingLayout">
+      <div className="chartCanvas relationshipChart" role="img">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
             layout="vertical"
-            margin={{ top: 8, right: 18, bottom: 4, left: 20 }}
+            margin={{ top: 8, right: 18, bottom: 4, left: 28 }}
           >
             <CartesianGrid
               stroke="rgba(0, 0, 0, 0.07)"
@@ -465,8 +549,8 @@ function ChartCard({
             />
             <YAxis
               type="category"
-              dataKey="name"
-              width={120}
+              dataKey="display_name"
+              width={138}
               axisLine={false}
               tickLine={false}
               tick={{ fontSize: 10, fill: "#6e6e73" }}
@@ -475,36 +559,275 @@ function ChartCard({
             <Tooltip
               content={({ active, payload }) => {
                 if (!active || !payload?.[0]) return null;
-                const item = payload[0].payload as (typeof data)[number];
+                const item = payload[0].payload as RelationshipFeature;
                 return (
                   <div className="chartTooltip">
-                    <strong>{item.name}</strong>
-                    {item.step && <span>Step: {item.step}</span>}
-                    {item.parameterType && (
-                      <span>유형: {item.parameterType}</span>
-                    )}
-                    {item.meanAbsShap !== undefined && (
-                      <span>
-                        전체 중요도: {formatNumber(item.meanAbsShap)}
-                      </span>
-                    )}
-                    <span>위험 기여도: {formatNumber(item.value)}</span>
+                    <strong>{item.feature}</strong>
+                    <span>유형: {item.group}</span>
+                    <span>점수: {formatNumber(item.score ?? 0)}</span>
+                    <span>방향: {item.direction}</span>
+                    <span>
+                      유효 표본: {item.valid_count?.toLocaleString() ?? "SHAP 기준"}
+                    </span>
                   </div>
                 );
               }}
             />
-            <Bar
-              dataKey="value"
-              radius={[0, 6, 6, 0]}
-              animationDuration={220}
-            >
+            <Bar dataKey="score" radius={[0, 6, 6, 0]} animationDuration={220}>
               {data.map((item) => (
-                <Cell key={item.name} fill={color} />
+                <Cell key={item.feature} fill={groupColor(item.group)} />
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
+      <div className="tableWrapper rankingTable">
+        <table className="dataTable">
+          <thead>
+            <tr>
+              <th>순위</th><th>변수</th><th>유형</th><th>점수</th>
+              <th>방향</th><th>유효 표본</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((item, index) => (
+              <tr key={item.feature}>
+                <td>{index + 1}</td>
+                <td title={item.feature}>{item.display_name}</td>
+                <td>{item.group}</td>
+                <td>{item.score === null ? "-" : formatNumber(item.score)}</td>
+                <td>{item.direction}</td>
+                <td>{item.valid_count?.toLocaleString() ?? "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ParetoSection({
+  analysis,
+}: {
+  analysis: RelationshipAnalysisResponse;
+}) {
+  const { pareto } = analysis;
+  return (
+    <section className="resultCard relationshipSection">
+      <div className="sectionHeading compact">
+        <div>
+          <span className="sectionLabel">2단계 · 검토 우선순위</span>
+          <h2>누적 영향도 80% Pareto</h2>
+        </div>
+        <p>Ranking basis: {pareto.ranking_basis}</p>
+      </div>
+      <div className="paretoSummary">
+        <div><span>우선 검토 변수</span><strong>{pareto.required_feature_count}개</strong></div>
+        <div><span>누적 영향도</span><strong>{(pareto.cumulative_contribution * 100).toFixed(1)}%</strong></div>
+        <div><span>전체 변수</span><strong>{pareto.total_feature_count}개</strong></div>
+        <div>
+          <span>상위 그룹 구성</span>
+          <strong>R {pareto.group_counts.R} · D {pareto.group_counts.D} · EQ {pareto.group_counts.EQ}</strong>
+        </div>
+      </div>
+      {pareto.features.length ? (
+        <div className="paretoScroll">
+          <div
+            className="paretoChart"
+            style={{ width: Math.max(760, pareto.features.length * 52) }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={pareto.features}>
+                <CartesianGrid stroke="rgba(0,0,0,.07)" vertical={false} />
+                <XAxis
+                  dataKey="display_name"
+                  tick={{ fontSize: 10 }}
+                  tickFormatter={(value) => String(value).replace("Step ", "S")}
+                />
+                <YAxis yAxisId="impact" tick={{ fontSize: 10 }} />
+                <YAxis
+                  yAxisId="share"
+                  orientation="right"
+                  domain={[0, 1]}
+                  tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`}
+                  tick={{ fontSize: 10 }}
+                />
+                <Tooltip
+                  formatter={(value, name) => [
+                    name === "cumulative_share"
+                      ? `${(Number(value) * 100).toFixed(1)}%`
+                      : formatNumber(Number(value)),
+                    name === "cumulative_share" ? "누적 영향도" : "영향도",
+                  ]}
+                />
+                <ReferenceLine yAxisId="share" y={0.8} stroke="#b33a46" strokeDasharray="5 5" />
+                <Bar yAxisId="impact" dataKey="impact" radius={[5, 5, 0, 0]}>
+                  {pareto.features.map((item) => (
+                    <Cell
+                      key={item.feature}
+                      fill={item.within_threshold ? groupColor(item.group) : "#c7c7cc"}
+                    />
+                  ))}
+                </Bar>
+                <Line
+                  yAxisId="share"
+                  type="monotone"
+                  dataKey="cumulative_share"
+                  stroke="#b33a46"
+                  dot={false}
+                  strokeWidth={2}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      ) : (
+        <p className="emptyMessage">누적 영향도를 계산할 데이터가 없습니다.</p>
+      )}
+      <p className="analysisDisclaimer">{pareto.caveat}</p>
+    </section>
+  );
+}
+
+function associationValue(value: AssociationSummaryLike): string {
+  if (!value) return "-";
+  const metric = value.eta_squared ?? value.pearson;
+  return metric === null || metric === undefined ? "-" : metric.toFixed(3);
+}
+
+type AssociationSummaryLike = RelationshipPath["r_d"];
+
+function PathSection({
+  paths,
+  selectedIndex,
+  onSelect,
+  confidenceCriteria,
+}: {
+  paths: RelationshipPath[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+  confidenceCriteria: Record<string, string>;
+}) {
+  const selected = paths[selectedIndex];
+  return (
+    <>
+      <section className="resultCard relationshipSection">
+        <div className="sectionHeading compact">
+          <div>
+            <span className="sectionLabel">3단계 · 연관 경로</span>
+            <h2>R·EQ → D → Y 우선순위</h2>
+          </div>
+          <p>Path relevance score · 인과 효과가 아닌 탐색 점수</p>
+        </div>
+        {paths.length ? (
+          <div className="tableWrapper">
+            <table className="dataTable pathTable">
+              <thead><tr>
+                <th>Rank</th><th>Step</th><th>Response</th><th>Equipment</th>
+                <th>Defect</th><th>R→D</th><th>EQ→D</th><th>D→Y</th>
+                <th>SHAP</th><th>Score</th><th>Sample</th><th>Confidence</th>
+              </tr></thead>
+              <tbody>
+                {paths.map((path, index) => (
+                  <tr
+                    key={path.step}
+                    className={selectedIndex === index ? "selectedRow" : ""}
+                    onClick={() => onSelect(index)}
+                  >
+                    <td>{path.rank}</td><td>Step {path.step}</td>
+                    <td>{path.response ?? "-"}</td><td>{path.equipment ?? "-"}</td>
+                    <td>{path.defect}</td><td>{associationValue(path.r_d)}</td>
+                    <td>{associationValue(path.eq_d)}</td><td>{associationValue(path.d_y)}</td>
+                    <td>{formatNumber(path.shap_importance)}</td>
+                    <td>{path.path_score.toFixed(3)}</td>
+                    <td>{path.valid_count.toLocaleString()}</td>
+                    <td><span className={`confidenceBadge ${path.confidence}`}>{path.confidence}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <p className="emptyMessage">동일 Step의 연관 경로를 구성할 데이터가 없습니다.</p>}
+        <p className="chartDescription">
+          Confidence 기준: 충분({confidenceCriteria.sufficient}) · 주의({confidenceCriteria.caution}) · 부족({confidenceCriteria.insufficient})
+        </p>
+      </section>
+      {selected && <PathDetail path={selected} />}
+    </>
+  );
+}
+
+function PathDetail({ path }: { path: RelationshipPath }) {
+  return (
+    <section className="resultCard relationshipSection">
+      <div className="sectionHeading compact">
+        <div>
+          <span className="sectionLabel">4단계 · 선택 경로 상세</span>
+          <h2>Step {path.step} 관계 패널</h2>
+        </div>
+      </div>
+      <div className="pathDetailGrid">
+        <ScatterPanel title={`${path.response ?? "R"} vs ${path.defect}`} data={path.r_vs_d} xLabel={path.response ?? "R"} yLabel={path.defect} />
+        <EquipmentPanel title={`${path.equipment ?? "EQ"} vs ${path.defect}`} data={path.eq_vs_d} />
+        <ScatterPanel title={`${path.defect} vs Y`} data={path.d_vs_y} xLabel={path.defect} yLabel="Final Yield Y" />
+      </div>
+      <div className="interpretationPanel">
+        <strong>5단계 · 엔지니어 해석</strong>
+        <p>{path.interpretation}</p>
+        <span>Correlation does not imply causation · 공식 공정 Spec이 아닌 데이터 기반 분석 결과입니다.</span>
+      </div>
+    </section>
+  );
+}
+
+function ScatterPanel({ title, data, xLabel, yLabel }: {
+  title: string; data: { x: number; y: number }[]; xLabel: string; yLabel: string;
+}) {
+  return (
+    <article className="relationshipPanel">
+      <h3>{title}</h3>
+      {data.length ? (
+        <div className="detailChart">
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 10, right: 12, bottom: 18, left: 5 }}>
+              <CartesianGrid stroke="rgba(0,0,0,.07)" />
+              <XAxis type="number" dataKey="x" name={xLabel} tick={{ fontSize: 10 }} />
+              <YAxis type="number" dataKey="y" name={yLabel} tick={{ fontSize: 10 }} />
+              <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+              <Scatter data={data} fill="#1769aa" fillOpacity={0.62} />
+            </ScatterChart>
+          </ResponsiveContainer>
+        </div>
+      ) : <p className="emptyMessage">표시할 유효 데이터가 없습니다.</p>}
+    </article>
+  );
+}
+
+function EquipmentPanel({ title, data }: {
+  title: string; data: RelationshipPath["eq_vs_d"];
+}) {
+  return (
+    <article className="relationshipPanel">
+      <h3>{title}</h3>
+      {data.length ? (
+        <div className="detailChart">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 18, left: 5 }}>
+              <CartesianGrid stroke="rgba(0,0,0,.07)" vertical={false} />
+              <XAxis dataKey="equipment" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip />
+              <Bar dataKey="q3" fill="#d8e8f5" name="Q3" />
+              <Bar dataKey="median" fill="#647185" name="중앙값" />
+              <Line dataKey="mean" stroke="#a96208" name="평균" />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      ) : <p className="emptyMessage">범주형 Equipment 분포 데이터가 없습니다.</p>}
+      {data.some((item) => item.sample_warning) && (
+        <p className="warningMessage">표본 10개 미만 Equipment는 해석에 주의가 필요합니다.</p>
+      )}
     </article>
   );
 }

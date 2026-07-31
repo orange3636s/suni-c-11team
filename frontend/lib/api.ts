@@ -5,6 +5,7 @@ import type {
   PreprocessResponse,
   PredictionResponse,
   PredictionThresholds,
+  RelationshipAnalysisResponse,
   ReportOptions,
   ReportResponse,
   TrainResponse,
@@ -251,6 +252,30 @@ export async function explainCsv(
     throw new Error(await getErrorMessage(response));
   }
   return response.json() as Promise<ExplainResponse>;
+}
+
+export async function analyzeRelationships(
+  file: File,
+  modelId: string,
+  options: ExplainOptions,
+  correlationMethod: "pearson" | "spearman",
+): Promise<RelationshipAnalysisResponse> {
+  const formData = explanationFormData(file, modelId, options);
+  formData.append("correlation_method", correlationMethod);
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/relationships`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    rethrowApiConfigurationError(error);
+    throw new Error("연관 분석 서버에 연결할 수 없습니다.");
+  }
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.json() as Promise<RelationshipAnalysisResponse>;
 }
 
 export async function downloadExplanation(

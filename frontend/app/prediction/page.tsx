@@ -3,12 +3,16 @@
 import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
   Line,
   LineChart,
   ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -69,7 +73,7 @@ export default function PredictionPage() {
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [sortDirection, setSortDirection] =
-    useState<SortDirection>("desc");
+    useState<SortDirection>("asc");
 
   useEffect(() => {
     let mounted = true;
@@ -228,6 +232,37 @@ export default function PredictionPage() {
             : undefined,
         risk: String(row.risk_level ?? "normal"),
       }));
+  }, [result]);
+
+  const diagnostics = useMemo(() => {
+    if (!result) return { points: [], histogram: [] };
+    const predictedKey = `predicted_${result.model.target}`;
+    const actualKey = `actual_${result.model.target}`;
+    const points = result.predictions.flatMap((row) => {
+      const actual = row[actualKey];
+      const predicted = row[predictedKey];
+      return typeof actual === "number" && typeof predicted === "number"
+        ? [{ actual, predicted, error: predicted - actual }]
+        : [];
+    });
+    if (!points.length) return { points, histogram: [] };
+    const errors = points.map((point) => point.error);
+    const minimum = Math.min(...errors);
+    const maximum = Math.max(...errors);
+    const binCount = Math.min(12, Math.max(5, Math.ceil(Math.sqrt(errors.length))));
+    const width = maximum === minimum ? 1 : (maximum - minimum) / binCount;
+    const histogram = Array.from({ length: binCount }, (_, index) => ({
+      label: `${(minimum + index * width).toFixed(1)}`,
+      count: 0,
+    }));
+    errors.forEach((errorValue) => {
+      const index = Math.min(
+        binCount - 1,
+        Math.max(0, Math.floor((errorValue - minimum) / width)),
+      );
+      histogram[index].count += 1;
+    });
+    return { points, histogram };
   }, [result]);
 
   if (!isLoadingModels && models.length === 0) {
@@ -422,6 +457,13 @@ export default function PredictionPage() {
                   <div className="normalKpi"><span>정상 Wafer</span><strong>{result.summary.normal_count}</strong></div>
                   <div className="warningKpi"><span>주의 Wafer</span><strong>{result.summary.warning_count}</strong></div>
                   <div className="dangerKpi"><span>위험 Wafer</span><strong>{result.summary.danger_count}</strong></div>
+                  {result.summary.evaluation && (
+                    <>
+                      <div><span>R²</span><strong>{formatMetric(result.summary.evaluation.r2)}</strong></div>
+                      <div><span>RMSE</span><strong>{formatMetric(result.summary.evaluation.rmse)}</strong></div>
+                      <div><span>MAE</span><strong>{formatMetric(result.summary.evaluation.mae)}</strong></div>
+                    </>
+                  )}
                 </div>
               </section>
 
@@ -574,6 +616,49 @@ export default function PredictionPage() {
                 </div>
               </section>
 
+              {diagnostics.points.length > 0 && (
+                <section className="predictionDiagnosticsGrid">
+                  <article className="resultCard">
+                    <div className="sectionHeading compact">
+                      <div>
+                        <span className="sectionLabel">Model fit</span>
+                        <h2>Actual vs Predicted</h2>
+                      </div>
+                    </div>
+                    <div className="predictionDiagnosticCanvas">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ScatterChart margin={{ top: 10, right: 16, bottom: 20, left: 8 }}>
+                          <CartesianGrid stroke="rgba(0,0,0,.07)" />
+                          <XAxis type="number" dataKey="actual" name="Actual" tick={{ fontSize: 10 }} />
+                          <YAxis type="number" dataKey="predicted" name="Predicted" tick={{ fontSize: 10 }} />
+                          <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+                          <Scatter data={diagnostics.points} fill="#1769aa" fillOpacity={0.62} />
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </article>
+                  <article className="resultCard">
+                    <div className="sectionHeading compact">
+                      <div>
+                        <span className="sectionLabel">Prediction error</span>
+                        <h2>예측 오차 Histogram</h2>
+                      </div>
+                    </div>
+                    <div className="predictionDiagnosticCanvas">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={diagnostics.histogram}>
+                          <CartesianGrid stroke="rgba(0,0,0,.07)" vertical={false} />
+                          <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                          <Tooltip />
+                          <Bar dataKey="count" name="Wafer 수" fill="#647185" radius={[5, 5, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </article>
+                </section>
+              )}
+
               <section className="resultCard" aria-labelledby="prediction-table-title">
                 <div className="resultHeader predictionTableHeader">
                   <div>
@@ -607,8 +692,8 @@ export default function PredictionPage() {
                         setSortDirection(event.target.value as SortDirection)
                       }
                     >
-                      <option value="desc">예측 수율 높은 순</option>
                       <option value="asc">예측 수율 낮은 순</option>
+                      <option value="desc">예측 수율 높은 순</option>
                     </select>
                   </div>
                 </div>

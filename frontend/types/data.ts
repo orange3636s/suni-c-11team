@@ -224,6 +224,101 @@ export type ExplainResponse = {
   warnings: string[];
 };
 
+export type AssociationSummary = {
+  pearson?: number | null;
+  spearman?: number | null;
+  eta_squared?: number | null;
+  valid_count: number;
+  excluded_count: number;
+  category_count?: number;
+  direction?: string;
+  strength?: string;
+};
+
+export type RelationshipFeature = {
+  rank?: number;
+  feature: string;
+  display_name: string;
+  step: number | null;
+  group: "R" | "D" | "EQ" | string;
+  ranking_basis: string;
+  score: number | null;
+  signed_association: number | null;
+  direction: string;
+  valid_count: number | null;
+  missing_count: number | null;
+  missing_rate: number | null;
+  category_count: number | null;
+  is_categorical: boolean;
+};
+
+export type EquipmentDistribution = {
+  equipment: string;
+  count: number;
+  mean: number;
+  median: number;
+  q1: number;
+  q3: number;
+  minimum: number;
+  maximum: number;
+  sample_warning: boolean;
+};
+
+export type RelationshipPath = {
+  rank: number;
+  step: number;
+  response: string | null;
+  defect: string;
+  equipment: string | null;
+  r_d: AssociationSummary | null;
+  eq_d: AssociationSummary | null;
+  d_y: AssociationSummary;
+  r_y: AssociationSummary | null;
+  eq_y: AssociationSummary | null;
+  shap_importance: number;
+  valid_count: number;
+  missing_rate: number;
+  confidence: "sufficient" | "caution" | "insufficient";
+  path_score: number;
+  path_status: string;
+  interpretation: string;
+  r_vs_d: { x: number; y: number }[];
+  eq_vs_d: EquipmentDistribution[];
+  d_vs_y: { x: number; y: number }[];
+};
+
+export type RelationshipAnalysisResponse = {
+  success: boolean;
+  filename: string;
+  explanation: ExplainResponse;
+  target: string;
+  correlation_method: "pearson" | "spearman";
+  rankings: Record<
+    "shap" | "correlation",
+    Record<"overall" | "R" | "D" | "EQ", RelationshipFeature[]>
+  >;
+  pareto: {
+    threshold: number;
+    required_feature_count: number;
+    cumulative_contribution: number;
+    total_feature_count: number;
+    total_impact: number;
+    group_counts: Record<"R" | "D" | "EQ", number>;
+    ranking_basis: string;
+    caveat: string;
+    features: (RelationshipFeature & {
+      impact: number;
+      share: number;
+      cumulative_share: number;
+      within_threshold: boolean;
+    })[];
+  };
+  relationship_paths: RelationshipPath[];
+  available_steps: number[];
+  confidence_criteria: Record<string, string>;
+  caveats: string[];
+};
+
 export type ReportOptions = {
   warning_threshold: number;
   danger_threshold: number;

@@ -2567,6 +2567,184 @@ select,
   min-width: 0;
 }
 
+.relationshipSection {
+  margin-top: 20px;
+}
+
+.relationshipToolbar,
+.segmentedControl,
+.paretoSummary,
+.rankingLayout,
+.pathDetailGrid {
+  display: flex;
+}
+
+.relationshipToolbar {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0;
+  flex-wrap: wrap;
+}
+
+.segmentedControl {
+  padding: 4px;
+  gap: 3px;
+  border-radius: 14px;
+  background: #f2f2f4;
+}
+
+.segmentedControl button {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: #6e6e73;
+  background: transparent;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+.segmentedControl button.active {
+  color: #1d1d1f;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.09);
+}
+
+.rankingLayout {
+  align-items: stretch;
+  gap: 20px;
+}
+
+.relationshipChart,
+.rankingTable {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.relationshipChart {
+  height: 340px;
+}
+
+.rankingTable {
+  max-height: 340px;
+  overflow: auto;
+}
+
+.paretoSummary {
+  gap: 10px;
+  margin: 18px 0;
+  flex-wrap: wrap;
+}
+
+.paretoSummary > div {
+  flex: 1 1 150px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #f7f7f8;
+}
+
+.paretoSummary span,
+.paretoSummary strong {
+  display: block;
+}
+
+.paretoSummary span {
+  margin-bottom: 7px;
+  color: #86868b;
+  font-size: 12px;
+}
+
+.paretoSummary strong {
+  color: #1d1d1f;
+  font-size: 16px;
+}
+
+.paretoScroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.paretoChart {
+  height: 350px;
+}
+
+.pathTable tbody tr {
+  cursor: pointer;
+}
+
+.confidenceBadge {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.confidenceBadge.sufficient {
+  color: #287a5b;
+  background: #eaf5f0;
+}
+
+.confidenceBadge.caution {
+  color: #a96208;
+  background: #fff3df;
+}
+
+.confidenceBadge.insufficient {
+  color: #b33a46;
+  background: #fbecef;
+}
+
+.pathDetailGrid {
+  gap: 14px;
+  align-items: stretch;
+}
+
+.relationshipPanel {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: #f8f8fa;
+}
+
+.relationshipPanel h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.detailChart {
+  height: 270px;
+}
+
+.interpretationPanel {
+  margin-top: 16px;
+  padding: 18px;
+  border-radius: 16px;
+  background: #eef5fb;
+}
+
+.interpretationPanel p {
+  margin: 8px 0;
+  line-height: 1.65;
+}
+
+.interpretationPanel span {
+  color: #6e6e73;
+  font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .rankingLayout,
+  .pathDetailGrid {
+    flex-direction: column;
+  }
+
+  .rankingTable,
+  .relationshipPanel {
+    width: 100%;
+  }
+}
+
 .analysisChartCard h3,
 .contributionGrid h3 {
   color: var(--text-primary);
@@ -2585,6 +2763,22 @@ select,
 
 .predictionTrendCard {
   overflow: hidden;
+}
+
+.predictionDiagnosticsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.predictionDiagnosticCanvas {
+  height: 300px;
+}
+
+@media (max-width: 760px) {
+  .predictionDiagnosticsGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .chartTooltip {
