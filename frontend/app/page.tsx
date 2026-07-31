@@ -1,29 +1,46 @@
 import Header from "@/components/Header";
+import EmptyState from "@/components/EmptyState";
 import PipelineStep from "@/components/PipelineStep";
 import Sidebar from "@/components/Sidebar";
 import StatusCard from "@/components/StatusCard";
+import StatusBadge from "@/components/StatusBadge";
 
 const statusCards = [
   {
-    label: "분석 Wafer 수",
+    label: "Average Predicted Yield",
     value: "-",
-    detail: "데이터 연결 대기",
+    unit: "%",
+    detail: "예측 실행 후 평균 수율 표시",
   },
   {
-    label: "평균 예측 수율",
+    label: "Yield Loss",
     value: "-",
-    detail: "예측 모델 준비 전",
+    unit: "%p",
+    detail: "기준 수율 대비 손실",
+    tone: "warning" as const,
   },
   {
-    label: "위험 Wafer 수",
+    label: "High-risk LOTs",
     value: "-",
-    detail: "위험 기준 설정 대기",
+    detail: "위험 LOT 집계 전",
     tone: "danger" as const,
   },
   {
-    label: "모델 신뢰도",
-    value: "준비 중",
-    detail: "검증 데이터 필요",
+    label: "Critical Equipment",
+    value: "-",
+    detail: "장비별 분석 결과 필요",
+    tone: "danger" as const,
+  },
+  {
+    label: "Model R²",
+    value: "-",
+    detail: "Test 성능 기준",
+    tone: "warning" as const,
+  },
+  {
+    label: "RMSE",
+    value: "-",
+    detail: "저장 모델 평가값",
     tone: "warning" as const,
   },
 ];
@@ -83,20 +100,34 @@ export default function Home() {
       <div className="contentShell">
         <Header />
         <main id="overview" className="mainContent">
-          <section className="intro">
-            <div>
-              <span className="eyebrow">제조 인텔리전스 플랫폼</span>
-              <h1>제조 공정 불량 예측 및 원인 분석 AI</h1>
-              <p>
-                공정 데이터 검증, 수율 위험 예측,
-                <br className="desktopBreak" /> 불량 원인 후보 분석 및 사전
-                알림 시스템
-              </p>
+          <section className="riskSummaryBanner" aria-labelledby="risk-summary-title">
+            <div className="riskSummaryMessage">
+              <span className="riskSummaryIcon" aria-hidden="true">
+                <span />
+              </span>
+              <div>
+                <StatusBadge label="No analysis result" tone="neutral" dot={false} />
+                <h2 id="risk-summary-title">현재 분석 결과가 없습니다.</h2>
+                <p>
+                  CSV 검증과 모델 예측을 실행하면 위험 LOT, 평균 수율,
+                  주요 영향 Step을 이곳에서 빠르게 확인할 수 있습니다.
+                </p>
+              </div>
             </div>
-            <div className="phaseBadge">
-              <span className="statusDot warning" aria-hidden="true" />
-              초기 환경 구성 단계
-            </div>
+            <dl className="riskSummaryMetrics">
+              <div>
+                <dt>위험 LOT</dt>
+                <dd>-</dd>
+              </div>
+              <div>
+                <dt>평균 예측 수율</dt>
+                <dd>-</dd>
+              </div>
+              <div>
+                <dt>주요 영향 Step</dt>
+                <dd>-</dd>
+              </div>
+            </dl>
           </section>
 
           <section aria-labelledby="summary-title">
@@ -107,14 +138,14 @@ export default function Home() {
               </div>
               <p>공정 데이터가 연결되면 지표가 자동으로 표시됩니다.</p>
             </div>
-            <div className="cardGrid">
+            <div className="cardGrid kpiGrid">
               {statusCards.map((card) => (
                 <StatusCard key={card.label} {...card} />
               ))}
             </div>
           </section>
 
-          <section className="overviewLinks" aria-label="주요 기능 바로가기">
+          <section className="overviewLinks quickActions" aria-label="주요 기능 바로가기">
             {[
               ["데이터 업로드", "/upload"],
               ["모델 학습", "/training"],
@@ -127,6 +158,41 @@ export default function Home() {
                 {label}
               </a>
             ))}
+          </section>
+
+          <section className="dashboardAnalysisGrid" aria-label="분석 시각화">
+            <article className="surfaceCard analysisPrimary">
+              <div className="sectionHeading compact">
+                <div>
+                  <span className="sectionLabel">Yield trend</span>
+                  <h2>LOT / Wafer 수율 예측 추이</h2>
+                </div>
+                <StatusBadge label="데이터 필요" tone="neutral" />
+              </div>
+              <p className="chartDescription">
+                실제값과 예측값, 위험 기준선을 동일한 축에서 비교합니다.
+              </p>
+              <EmptyState
+                title="표시할 예측 데이터가 없습니다."
+                description="수율 예측 페이지에서 모델과 CSV를 선택해 예측을 실행해 주세요."
+              />
+            </article>
+            <article className="surfaceCard analysisSecondary">
+              <div className="sectionHeading compact">
+                <div>
+                  <span className="sectionLabel">Yield loss drivers</span>
+                  <h2>주요 수율 저하 요인</h2>
+                </div>
+              </div>
+              <p className="chartDescription">
+                SHAP 영향도 기준 상위 Step · R · D · EQ를 보여줍니다.
+              </p>
+              <EmptyState
+                compact
+                title="원인 분석 대기"
+                description="SHAP 분석 결과가 생성되면 영향 방향과 크기를 표시합니다."
+              />
+            </article>
           </section>
 
           <section className="pipelineSection" aria-labelledby="pipeline-title">

@@ -191,6 +191,8 @@ export default function UploadPage() {
                 className="button secondary"
                 type="button"
                 disabled={!file || loadingAction !== null}
+                data-loading={loadingAction === "validate"}
+                aria-busy={loadingAction === "validate"}
                 onClick={handleValidate}
               >
                 {loadingAction === "validate" ? "검증 중..." : "데이터 검증"}
@@ -199,6 +201,8 @@ export default function UploadPage() {
                 className="button primary"
                 type="button"
                 disabled={!file || loadingAction !== null}
+                data-loading={loadingAction === "preprocess"}
+                aria-busy={loadingAction === "preprocess"}
                 onClick={handlePreprocess}
               >
                 {loadingAction === "preprocess"

@@ -3,6 +3,7 @@ type StatusCardProps = {
   value: string;
   detail: string;
   tone?: "default" | "warning" | "danger" | "normal";
+  unit?: string;
 };
 
 export default function StatusCard({
@@ -10,6 +11,7 @@ export default function StatusCard({
   value,
   detail,
   tone = "default",
+  unit,
 }: StatusCardProps) {
   return (
     <article className={`statusCard ${tone}`}>
@@ -17,7 +19,10 @@ export default function StatusCard({
         <span>{label}</span>
         <span className={`cardIndicator ${tone}`} aria-hidden="true" />
       </div>
-      <strong className="cardValue">{value}</strong>
+      <div className="cardMetric">
+        <strong className="cardValue">{value}</strong>
+        {unit && <span>{unit}</span>}
+      </div>
       <p>{detail}</p>
     </article>
   );

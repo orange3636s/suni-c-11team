@@ -38,6 +38,25 @@ function formatNumber(value: number): string {
   });
 }
 
+function formatFeatureLabel(value: string): string {
+  const match = value.match(/^Step_?(\d+)_?(R|D|EQ)(?:_(.+))?$/i);
+  if (!match) {
+    return value.length > 24 ? `${value.slice(0, 22)}…` : value;
+  }
+  const [, step, rawType, parameter] = match;
+  const typeLabel =
+    rawType.toUpperCase() === "R"
+      ? "Response"
+      : rawType.toUpperCase() === "D"
+        ? "Delta"
+        : "Equipment";
+  const suffix = parameter
+    ? ` · ${parameter.replaceAll("_", " ")}`
+    : "";
+  const formatted = `Step ${step} · ${typeLabel}${suffix}`;
+  return formatted.length > 30 ? `${formatted.slice(0, 28)}…` : formatted;
+}
+
 function riskLabel(risk: string | null): string {
   if (risk === "danger") return "위험";
   if (risk === "warning") return "주의";
@@ -232,6 +251,8 @@ export default function RootCausePage() {
                 className="button primary"
                 type="button"
                 disabled={!file || !modelId || loading}
+                data-loading={loading}
+                aria-busy={loading}
                 onClick={() => void runAnalysis()}
               >
                 {loading ? "SHAP 계산 중..." : "원인 분석"}
@@ -240,6 +261,8 @@ export default function RootCausePage() {
                 className="button secondary"
                 type="button"
                 disabled={!result || downloading}
+                data-loading={downloading}
+                aria-busy={downloading}
                 onClick={() => void downloadCsv()}
               >
                 {downloading ? "다운로드 중..." : "전체 중요도 CSV"}
@@ -294,18 +317,21 @@ export default function RootCausePage() {
               <section className="analysisChartGrid">
                 <ChartCard
                   title="전체 위험 기여도 Top 15"
+                  description="값이 클수록 모델 예측을 위험 방향으로 더 크게 이동시킨 feature입니다."
                   data={globalChart}
-                  color="#d9485f"
+                  color="#b33a46"
                 />
                 <ChartCard
                   title="공정 Step별 위험 기여도 Top 10"
+                  description="동일 Step에 속한 feature의 위험 기여도를 합산해 비교합니다."
                   data={stepChart}
-                  color="#4666d5"
+                  color="#1769aa"
                 />
                 <ChartCard
                   title="파라미터 유형별 위험 기여도"
+                  description="Response · Delta · Equipment 유형별 영향 크기를 비교합니다."
                   data={typeChart}
-                  color="#d18a22"
+                  color="#a96208"
                 />
               </section>
 
@@ -333,6 +359,17 @@ export default function RootCausePage() {
                           }
                           key={`${String(wafer.identifier)}-${index}`}
                           onClick={() => setSelectedWafer(index)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedWafer(index);
+                            }
+                          }}
+                          tabIndex={0}
+                          role="button"
+                          aria-label={`${String(wafer.identifier)} 상세 기여도 ${
+                            selectedWafer === index ? "선택됨" : "보기"
+                          }`}
                         >
                           <td>{String(wafer.identifier)}</td>
                           <td>{formatNumber(wafer.prediction)}</td>
@@ -385,10 +422,12 @@ export default function RootCausePage() {
 
 function ChartCard({
   title,
+  description,
   data,
   color,
 }: {
   title: string;
+  description: string;
   data: {
     name: string;
     value: number;
@@ -401,16 +440,37 @@ function ChartCard({
   return (
     <article className="resultCard analysisChartCard">
       <h3>{title}</h3>
-      <div className="chartCanvas">
+      <p className="chartDescription">{description}</p>
+      <div
+        className="chartCanvas"
+        role="img"
+        aria-label={`${title}. ${description}`}
+      >
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-            <XAxis type="number" />
+          <BarChart
+            data={data}
+            layout="vertical"
+            margin={{ top: 8, right: 18, bottom: 4, left: 20 }}
+          >
+            <CartesianGrid
+              stroke="rgba(0, 0, 0, 0.07)"
+              strokeDasharray="3 5"
+              horizontal={false}
+            />
+            <XAxis
+              type="number"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 10, fill: "#86868b" }}
+            />
             <YAxis
               type="category"
               dataKey="name"
-              width={105}
-              tick={{ fontSize: 11 }}
+              width={120}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 10, fill: "#6e6e73" }}
+              tickFormatter={formatFeatureLabel}
             />
             <Tooltip
               content={({ active, payload }) => {
@@ -433,7 +493,11 @@ function ChartCard({
                 );
               }}
             />
-            <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+            <Bar
+              dataKey="value"
+              radius={[0, 6, 6, 0]}
+              animationDuration={220}
+            >
               {data.map((item) => (
                 <Cell key={item.name} fill={color} />
               ))}
@@ -457,7 +521,16 @@ function ContributionList({
   return (
     <div>
       <h3>{title}</h3>
-      <div className="localChart">
+      <p className="chartDescription">
+        {field === "harmful_contribution"
+          ? "값이 클수록 해당 Wafer의 수율을 낮추는 방향입니다."
+          : "값이 클수록 해당 Wafer의 수율을 높이는 방향입니다."}
+      </p>
+      <div
+        className="localChart"
+        role="img"
+        aria-label={`${title} feature 영향도 막대 차트`}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={rows.map((row) => ({
@@ -467,20 +540,39 @@ function ContributionList({
             layout="vertical"
             margin={{ left: 12 }}
           >
-            <XAxis type="number" />
+            <XAxis
+              type="number"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 10, fill: "#86868b" }}
+            />
             <YAxis
               type="category"
               dataKey="name"
-              width={100}
-              tick={{ fontSize: 10 }}
+              width={112}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 10, fill: "#6e6e73" }}
+              tickFormatter={formatFeatureLabel}
             />
-            <Tooltip formatter={(value) => formatNumber(Number(value))} />
+            <Tooltip
+              formatter={(value) => [
+                formatNumber(Number(value)),
+                "기여도",
+              ]}
+              contentStyle={{
+                border: "1px solid rgba(0, 0, 0, 0.08)",
+                borderRadius: 12,
+                boxShadow: "0 12px 30px rgba(35, 42, 52, 0.08)",
+              }}
+            />
             <Bar
               dataKey="value"
               fill={
-                field === "harmful_contribution" ? "#d9485f" : "#17825f"
+                field === "harmful_contribution" ? "#b33a46" : "#287a5b"
               }
-              radius={[0, 4, 4, 0]}
+              radius={[0, 6, 6, 0]}
+              animationDuration={220}
             />
           </BarChart>
         </ResponsiveContainer>
@@ -489,7 +581,7 @@ function ContributionList({
         {rows.map((row) => (
           <li key={row.feature}>
             <div>
-              <strong>{row.feature}</strong>
+              <strong title={row.feature}>{formatFeatureLabel(row.feature)}</strong>
               <span>
                 {row.step} · {row.parameter_type} · 값{" "}
                 {String(row.value ?? "-")}

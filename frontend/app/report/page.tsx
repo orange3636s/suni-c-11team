@@ -210,6 +210,8 @@ export default function ReportPage() {
                 className="button primary"
                 type="button"
                 disabled={!file || !modelId || loading}
+                data-loading={loading}
+                aria-busy={loading}
                 onClick={() => void createReport()}
               >
                 {loading ? "보고서 생성 중..." : "분석 보고서 생성"}
@@ -218,6 +220,8 @@ export default function ReportPage() {
                 className="button secondary"
                 type="button"
                 disabled={!report || downloading}
+                data-loading={downloading}
+                aria-busy={downloading}
                 onClick={() => void saveHtml()}
               >
                 {downloading ? "다운로드 중..." : "HTML 보고서 다운로드"}

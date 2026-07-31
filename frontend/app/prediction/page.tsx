@@ -2,6 +2,17 @@
 
 import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
@@ -197,6 +208,28 @@ export default function PredictionPage() {
       });
   }, [result, riskFilter, searchText, sortDirection]);
 
+  const trendData = useMemo(() => {
+    if (!result) return [];
+    const predictedKey = `predicted_${result.model.target}`;
+    const actualKey = `actual_${result.model.target}`;
+    const sampleEvery = Math.max(
+      1,
+      Math.ceil(result.predictions.length / 80),
+    );
+    return result.predictions
+      .filter((_, index) => index % sampleEvery === 0)
+      .map((row, index) => ({
+        index: index + 1,
+        identifier: String(row[result.identifier_column] ?? index + 1),
+        predicted: Number(row[predictedKey]),
+        actual:
+          typeof row[actualKey] === "number"
+            ? Number(row[actualKey])
+            : undefined,
+        risk: String(row.risk_level ?? "normal"),
+      }));
+  }, [result]);
+
   if (!isLoadingModels && models.length === 0) {
     return (
       <div className="appShell">
@@ -353,6 +386,8 @@ export default function PredictionPage() {
                 className="button primary"
                 type="button"
                 disabled={!file || !selectedModelId || isPredicting}
+                data-loading={isPredicting}
+                aria-busy={isPredicting}
                 onClick={handlePredict}
               >
                 {isPredicting ? "예측 중..." : "수율 예측 실행"}
@@ -375,6 +410,8 @@ export default function PredictionPage() {
                     type="button"
                     onClick={handleDownload}
                     disabled={isDownloading}
+                    data-loading={isDownloading}
+                    aria-busy={isDownloading}
                   >
                     {isDownloading ? "다운로드 중..." : "CSV 다운로드"}
                   </button>
@@ -388,6 +425,155 @@ export default function PredictionPage() {
                 </div>
               </section>
 
+              <section
+                className="resultCard predictionTrendCard"
+                aria-labelledby="prediction-trend-title"
+              >
+                <div className="sectionHeading compact">
+                  <div>
+                    <span className="sectionLabel">Yield trend</span>
+                    <h2 id="prediction-trend-title">Wafer 수율 예측 추이</h2>
+                  </div>
+                  <span className="fieldHint">
+                    최대 80개 지점으로 균등 샘플링
+                  </span>
+                </div>
+                <p className="chartDescription">
+                  예측 수율과 실제값이 있으면 함께 표시하며, 주의·위험
+                  기준선을 고정해 이상 구간을 빠르게 확인합니다.
+                </p>
+                <div
+                  className="predictionTrendCanvas"
+                  role="img"
+                  aria-label="Wafer 순서별 실제 수율과 예측 수율 선 차트"
+                >
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={trendData}
+                      margin={{ top: 10, right: 22, bottom: 8, left: 2 }}
+                    >
+                      <CartesianGrid
+                        stroke="rgba(0, 0, 0, 0.07)"
+                        strokeDasharray="3 5"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="index"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 10, fill: "#86868b" }}
+                        label={{
+                          value: "Wafer sequence",
+                          position: "insideBottom",
+                          offset: -2,
+                          fontSize: 10,
+                          fill: "#86868b",
+                        }}
+                      />
+                      <YAxis
+                        domain={["auto", "auto"]}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fontSize: 10, fill: "#86868b" }}
+                        tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
+                        width={44}
+                      />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.[0]) return null;
+                          const item = payload[0].payload as (typeof trendData)[number];
+                          return (
+                            <div className="chartTooltip">
+                              <strong>{item.identifier}</strong>
+                              <span>
+                                예측 수율: {item.predicted.toFixed(2)}%
+                              </span>
+                              {item.actual !== undefined && (
+                                <span>
+                                  실제 수율: {item.actual.toFixed(2)}%
+                                </span>
+                              )}
+                              <span>상태: {riskLabel(item.risk)}</span>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend
+                        verticalAlign="top"
+                        align="right"
+                        iconType="plainline"
+                        wrapperStyle={{ fontSize: 11, color: "#6e6e73" }}
+                      />
+                      <ReferenceLine
+                        y={thresholds.warning_threshold}
+                        stroke="#a96208"
+                        strokeDasharray="5 5"
+                        label={{
+                          value: "Warning",
+                          fill: "#a96208",
+                          fontSize: 10,
+                          position: "insideTopRight",
+                        }}
+                      />
+                      <ReferenceLine
+                        y={thresholds.danger_threshold}
+                        stroke="#b33a46"
+                        strokeDasharray="5 5"
+                        label={{
+                          value: "Critical",
+                          fill: "#b33a46",
+                          fontSize: 10,
+                          position: "insideBottomRight",
+                        }}
+                      />
+                      {trendData.some(
+                        (item) => item.actual !== undefined,
+                      ) && (
+                        <Line
+                          type="monotone"
+                          dataKey="actual"
+                          name="실제 수율"
+                          stroke="#7d8796"
+                          strokeWidth={1.5}
+                          dot={false}
+                          connectNulls
+                          animationDuration={220}
+                        />
+                      )}
+                      <Line
+                        type="monotone"
+                        dataKey="predicted"
+                        name="예측 수율"
+                        stroke="#1769aa"
+                        strokeWidth={2.2}
+                        animationDuration={220}
+                        dot={(dotProps) => {
+                          const point = dotProps.payload as (typeof trendData)[number];
+                          const isRisk = point.risk !== "normal";
+                          return (
+                            <circle
+                              key={`${point.identifier}-${point.index}`}
+                              cx={dotProps.cx}
+                              cy={dotProps.cy}
+                              r={isRisk ? 3.5 : 1.8}
+                              fill={
+                                point.risk === "danger"
+                                  ? "#b33a46"
+                                  : point.risk === "warning"
+                                    ? "#a96208"
+                                    : "#1769aa"
+                              }
+                              stroke="#ffffff"
+                              strokeWidth={isRisk ? 1.5 : 0}
+                            />
+                          );
+                        }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+
               <section className="resultCard" aria-labelledby="prediction-table-title">
                 <div className="resultHeader predictionTableHeader">
                   <div>
@@ -398,10 +584,12 @@ export default function PredictionPage() {
                     <input
                       type="search"
                       placeholder="Lot_Wafer_ID 검색"
+                      aria-label="Wafer 또는 LOT 식별자 검색"
                       value={searchText}
                       onChange={(event) => setSearchText(event.target.value)}
                     />
                     <select
+                      aria-label="위험 상태 필터"
                       value={riskFilter}
                       onChange={(event) =>
                         setRiskFilter(event.target.value as RiskFilter)
@@ -413,6 +601,7 @@ export default function PredictionPage() {
                       <option value="danger">위험</option>
                     </select>
                     <select
+                      aria-label="예측 수율 정렬"
                       value={sortDirection}
                       onChange={(event) =>
                         setSortDirection(event.target.value as SortDirection)

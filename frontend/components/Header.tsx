@@ -3,12 +3,15 @@
 import { useEffect, useState } from "react";
 
 import { getApiHealth } from "@/lib/api";
+import StatusBadge from "@/components/StatusBadge";
 
 type ApiState = "확인 중" | "연결됨" | "연결 실패";
 
 export default function Header() {
   const [apiState, setApiState] = useState<ApiState>("확인 중");
-  const [updatedAt, setUpdatedAt] = useState("확인 중");
+  const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -18,6 +21,7 @@ export default function Header() {
         const result = await getApiHealth();
         if (isMounted) {
           setApiState(result.status === "ok" ? "연결됨" : "연결 실패");
+          setModelReady(result.model_directory_ready ?? null);
         }
       } catch {
         if (isMounted) {
@@ -25,13 +29,7 @@ export default function Header() {
         }
       } finally {
         if (isMounted) {
-          setUpdatedAt(
-            new Intl.DateTimeFormat("ko-KR", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            }).format(new Date()),
-          );
+          setLastUpdated(new Date());
         }
       }
     }
@@ -42,33 +40,102 @@ export default function Header() {
     };
   }, []);
 
+  useEffect(() => {
+    function updateCurrentTime() {
+      setCurrentTime(new Date());
+    }
+
+    updateCurrentTime();
+    const intervalId = window.setInterval(updateCurrentTime, 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const apiStatusClass =
     apiState === "연결됨"
       ? "normal"
       : apiState === "연결 실패"
         ? "danger"
         : "warning";
+  const currentDate = currentTime
+    ? [
+        currentTime.getFullYear(),
+        String(currentTime.getMonth() + 1).padStart(2, "0"),
+        String(currentTime.getDate()).padStart(2, "0"),
+      ].join("-")
+    : "---- -- --";
+  const currentClock = currentTime
+    ? [
+        String(currentTime.getHours()).padStart(2, "0"),
+        String(currentTime.getMinutes()).padStart(2, "0"),
+        String(currentTime.getSeconds()).padStart(2, "0"),
+      ].join(":")
+    : "--:--:--";
+  const lastUpdatedDate = lastUpdated
+    ? [
+        lastUpdated.getFullYear(),
+        String(lastUpdated.getMonth() + 1).padStart(2, "0"),
+        String(lastUpdated.getDate()).padStart(2, "0"),
+      ].join("-")
+    : "---- -- --";
+  const lastUpdatedClock = lastUpdated
+    ? [
+        String(lastUpdated.getHours()).padStart(2, "0"),
+        String(lastUpdated.getMinutes()).padStart(2, "0"),
+        String(lastUpdated.getSeconds()).padStart(2, "0"),
+      ].join(":")
+    : "--:--:--";
 
   return (
     <header className="topHeader">
-      <div className="headerStatus">
-        <span className="statusDot normal" aria-hidden="true" />
-        <div>
-          <span>시스템 상태</span>
-          <strong>정상</strong>
-        </div>
+      <div className="headerContext">
+        <h1>제조 공정 불량 예측 &amp; 원인분석 AI</h1>
       </div>
-      <div className="headerStatus">
-        <span className={`statusDot ${apiStatusClass}`} aria-hidden="true" />
-        <div>
-          <span>API 연결 상태</span>
-          <strong>API {apiState}</strong>
+      <div className="headerMeta" aria-label="시스템 연결 상태">
+        <div className="headerStatusGroup">
+          <span className="headerStatusLabel">API Status</span>
+          <StatusBadge
+            label={apiState}
+            tone={
+              apiStatusClass === "normal"
+                ? "success"
+                : apiStatusClass === "danger"
+                  ? "danger"
+                  : "warning"
+            }
+          />
         </div>
-      </div>
-      <div className="headerStatus updated">
-        <div>
-          <span>최근 업데이트 시간</span>
-          <strong>{updatedAt}</strong>
+        <div className="headerStatusGroup">
+          <span className="headerStatusLabel">Model Status</span>
+          <StatusBadge
+            label={
+              modelReady === true
+                ? "Ready"
+                : modelReady === false
+                  ? "Not Ready"
+                  : "확인 중"
+            }
+            tone={
+              modelReady === true
+                ? "success"
+                : modelReady === false
+                  ? "danger"
+                  : "neutral"
+            }
+          />
+        </div>
+        <div className="headerStatusGroup currentTimeGroup">
+          <span className="headerStatusLabel">Current Time</span>
+          <time dateTime={currentTime?.toISOString()}>
+            <span>{currentDate}</span>
+            <strong>{currentClock}</strong>
+          </time>
+        </div>
+        <div className="headerStatusGroup lastUpdatedGroup">
+          <span className="headerStatusLabel">Last Updated</span>
+          <time dateTime={lastUpdated?.toISOString()}>
+            <span>{lastUpdatedDate}</span>
+            <strong>{lastUpdatedClock}</strong>
+          </time>
         </div>
       </div>
     </header>

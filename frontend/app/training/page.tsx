@@ -170,6 +170,8 @@ export default function TrainingPage() {
                 className="button primary"
                 type="button"
                 disabled={!file || isTraining}
+                data-loading={isTraining}
+                aria-busy={isTraining}
                 onClick={handleTrain}
               >
                 {isTraining ? "모델을 학습하고 있습니다..." : "모델 학습"}
