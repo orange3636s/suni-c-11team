@@ -102,6 +102,18 @@ def test_analysis_builds_relationship_path_and_confidence() -> None:
     assert 0 <= path["path_score"] <= 1
     assert path["confidence"] == "sufficient"
     assert path["eq_vs_d"]
+    assert path["r_vs_y"]
+    assert path["eq_vs_y"]
+    assert {
+        "median",
+        "q1",
+        "q3",
+        "whisker_min",
+        "whisker_max",
+        "outliers",
+        "outlier_count",
+        "count",
+    }.issubset(path["eq_vs_y"][0])
 
 
 def test_small_sample_is_insufficient_and_missing_values_are_counted() -> None:

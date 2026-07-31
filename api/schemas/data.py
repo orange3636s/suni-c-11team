@@ -106,6 +106,39 @@ class ModelListResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ModelDetailMetrics(BaseModel):
+    r2: float | None = None
+    rmse: float | None = None
+    mse: float | None = None
+    mae: float | None = None
+
+
+class ModelDetailResponse(BaseModel):
+    success: bool = True
+    model_id: str
+    model_name: str | None = None
+    model_type: str | None = None
+    model_version: str | None = None
+    created_at: str | None = None
+    target: str | None = None
+    feature_count: int | None = None
+    feature_names: list[str] = Field(default_factory=list)
+    dataset_split: dict[str, float] | None = None
+    dataset_rows: dict[str, int] | None = None
+    metrics: dict[str, ModelDetailMetrics] = Field(default_factory=dict)
+    random_seed: int | None = None
+    split_method: str | None = None
+    preprocessing_version: str | None = None
+    preprocessing_config: dict[str, Any] | None = None
+    training_time_seconds: float | None = None
+    source_filename: str | None = None
+    model_file: str | None = None
+    metadata_file: str | None = None
+    storage_status: str
+    champion: bool | None = None
+    sklearn_version: str | None = None
+
+
 class PredictionModelInfo(BaseModel):
     model_id: str
     target: str

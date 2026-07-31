@@ -3,10 +3,11 @@ from __future__ import annotations
 import csv
 import logging
 import math
+import time
 from collections import Counter
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,8 @@ from api.schemas.data import (
     ExplainResponse,
     ModelArtifacts,
     ModelComparisonItem,
+    ModelDetailMetrics,
+    ModelDetailResponse,
     ModelListResponse,
     ModelMetrics,
     ModelSummary,
@@ -62,6 +65,7 @@ from src.ml.inference import (
     InferenceInputError,
     PredictionResult,
     ModelLoadError,
+    get_prediction_model_detail,
     list_prediction_models,
     load_prediction_model,
     predict_dataframe,
@@ -291,8 +295,12 @@ async def preprocess_csv(
 async def train_model(
     file: UploadFile = File(...),
     target: str = Form("Y"),
+    train_ratio: Annotated[int, Form()] = 64,
+    validation_ratio: Annotated[int, Form()] = 16,
+    test_ratio: Annotated[int, Form()] = 20,
 ) -> TrainResponse:
-    _, dataframe = await _read_csv_upload(file)
+    training_started_at = time.perf_counter()
+    filename, dataframe = await _read_csv_upload(file)
     logger.info(
         "학습 CSV 읽기 완료: rows=%d, columns=%d",
         dataframe.shape[0],
@@ -303,6 +311,18 @@ async def train_model(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="지원하지 않는 목표 변수입니다. Y부터 Y10까지만 사용할 수 있습니다.",
+        )
+
+    split_ratios = (train_ratio, validation_ratio, test_ratio)
+    if sum(split_ratios) != 100 or any(
+        ratio < 5 or ratio > 90 for ratio in split_ratios
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Train/Validation/Test 비율은 각각 5~90%이며 "
+                "합계가 100%여야 합니다."
+            ),
         )
 
     try:
@@ -358,7 +378,13 @@ async def train_model(
     )
 
     try:
-        split = split_dataset(dataset, random_state=RANDOM_STATE)
+        split = split_dataset(
+            dataset,
+            random_state=RANDOM_STATE,
+            train_ratio=train_ratio / 100,
+            validation_ratio=validation_ratio / 100,
+            test_ratio=test_ratio / 100,
+        )
     except ValueError as exc:
         logger.warning("학습 데이터 분할 실패: %s", exc)
         raise HTTPException(
@@ -412,6 +438,20 @@ async def train_model(
             metrics=metrics,
             random_state=RANDOM_STATE,
             split_method=split.split_method,
+            dataset_split={
+                "train": train_ratio / 100,
+                "validation": validation_ratio / 100,
+                "test": test_ratio / 100,
+            },
+            dataset_rows={
+                "train": split.row_counts["train_rows"],
+                "validation": split.row_counts["validation_rows"],
+                "test": split.row_counts["test_rows"],
+            },
+            training_time_seconds=(
+                time.perf_counter() - training_started_at
+            ),
+            source_filename=filename,
             model_dir=MODEL_DIR,
         )
     except Exception as exc:
@@ -487,6 +527,31 @@ def get_models() -> ModelListResponse:
         )
     except ModelLoadError as exc:
         logger.exception("모델 목록 조회 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/models/{model_id}", response_model=ModelDetailResponse)
+def get_model_detail(model_id: str) -> ModelDetailResponse:
+    try:
+        detail = get_prediction_model_detail(model_id, MODEL_DIR)
+        detail_metrics = detail.pop("metrics")
+        return ModelDetailResponse(
+            **detail,
+            metrics={
+                name: ModelDetailMetrics(**values)
+                for name, values in detail_metrics.items()
+            },
+        )
+    except InferenceInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ModelLoadError as exc:
+        logger.exception("모델 상세 조회 실패")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),

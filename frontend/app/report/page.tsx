@@ -1,8 +1,8 @@
 "use client";
 
-import type { ChangeEvent } from "react";
 import { useEffect, useState } from "react";
 
+import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import {
@@ -70,8 +70,7 @@ export default function ReportPage() {
       );
   }, []);
 
-  function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const selected = event.target.files?.[0] ?? null;
+  function handleFile(selected?: File) {
     setReport(null);
     setError("");
     if (selected && !selected.name.toLowerCase().endsWith(".csv")) {
@@ -84,7 +83,7 @@ export default function ReportPage() {
       setError("파일 크기는 20MB 이하여야 합니다.");
       return;
     }
-    setFile(selected);
+    setFile(selected ?? null);
   }
 
   async function createReport() {
@@ -171,11 +170,12 @@ export default function ReportPage() {
             </div>
             <div className="fieldGroup">
               <label htmlFor="report-file">분석 CSV</label>
-              <input
+              <CsvUploadPanel
                 id="report-file"
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleFile}
+                file={file}
+                onFileSelect={handleFile}
+                disabled={loading}
+                compact
               />
             </div>
             <div className="reportOptionGrid">
@@ -264,7 +264,7 @@ export default function ReportPage() {
                 </section>
               )}
 
-              <section className="resultCard">
+              <section className="resultCard reportSummaryCard">
                 <div className="sectionHeading compact">
                   <div>
                     <span className="sectionLabel">Executive Summary</span>
@@ -311,6 +311,9 @@ export default function ReportPage() {
                 </div>
               </section>
 
+              <ReportCauseTables report={report} />
+              <ReportRiskTables report={report} />
+
               <section className="resultCard">
                 <span className="sectionLabel">Key Findings</span>
                 <h2>핵심 분석 결과</h2>
@@ -327,8 +330,6 @@ export default function ReportPage() {
                   ))}
                 </ol>
               </section>
-
-              <ReportTables report={report} />
 
               <section className="reportTwoColumn">
                 <article className="resultCard">
@@ -361,12 +362,48 @@ export default function ReportPage() {
   );
 }
 
-function ReportTables({ report }: { report: ReportResponse }) {
+function ReportCauseTables({ report }: { report: ReportResponse }) {
+  return (
+    <section className="reportCauseGrid">
+      <RankList
+        title="주요 Feature"
+        rows={report.top_features.slice(0, 10).map((item) => ({
+          label: item.feature,
+          value: item.mean_harmful_contribution,
+        }))}
+      />
+      <RankList
+        title="주요 Step"
+        rows={report.top_steps.slice(0, 10).map((item) => ({
+          label: item.step,
+          value: item.harmful_contribution,
+        }))}
+      />
+      {(["R", "D", "EQ"] as const).map((parameterType) => (
+        <RankList
+          key={parameterType}
+          title={`${parameterType} 기여도`}
+          rows={report.parameter_type_summary
+            .filter((item) => item.parameter_type === parameterType)
+            .map((item) => ({
+              label:
+                item.ratio === null
+                  ? parameterType
+                  : `${parameterType} (${number(item.ratio * 100, 1)}%)`,
+              value: item.harmful_contribution,
+            }))}
+        />
+      ))}
+    </section>
+  );
+}
+
+function ReportRiskTables({ report }: { report: ReportResponse }) {
   return (
     <>
       <section className="resultCard">
         <h2>위험 Wafer Top 목록</h2>
-        <div className="tableWrapper">
+        <div className="tableWrapper reportFiveRowScroll">
           <table className="dataTable">
             <thead>
               <tr>
@@ -403,7 +440,7 @@ function ReportTables({ report }: { report: ReportResponse }) {
       {report.lot_summary.length > 0 && (
         <section className="resultCard">
           <h2>LOT별 위험 요약</h2>
-          <div className="tableWrapper">
+          <div className="tableWrapper reportFiveRowScroll">
             <table className="dataTable">
               <thead>
                 <tr>
@@ -433,34 +470,6 @@ function ReportTables({ report }: { report: ReportResponse }) {
           </div>
         </section>
       )}
-
-      <section className="reportThreeColumn">
-        <RankList
-          title="주요 Feature"
-          rows={report.top_features.slice(0, 10).map((item) => ({
-            label: item.feature,
-            value: item.mean_harmful_contribution,
-          }))}
-        />
-        <RankList
-          title="주요 Step"
-          rows={report.top_steps.slice(0, 10).map((item) => ({
-            label: item.step,
-            value: item.harmful_contribution,
-          }))}
-        />
-        <RankList
-          title="R/D/EQ 기여도"
-          rows={report.parameter_type_summary.map((item) => ({
-            label: `${item.parameter_type} ${
-              item.ratio === null
-                ? ""
-                : `(${number(item.ratio * 100, 1)}%)`
-            }`,
-            value: item.harmful_contribution,
-          }))}
-        />
-      </section>
     </>
   );
 }

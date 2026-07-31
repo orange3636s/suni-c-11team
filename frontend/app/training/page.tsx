@@ -1,19 +1,18 @@
 "use client";
 
-import type { ChangeEvent } from "react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
+import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
+import ModelHistoryPanel from "@/components/ModelHistoryPanel";
 import Sidebar from "@/components/Sidebar";
 import { trainModel } from "@/lib/api";
 import type { ModelMetrics, TrainResponse } from "@/types/data";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const TARGETS = ["Y", ...Array.from({ length: 10 }, (_, index) => `Y${index + 1}`)];
-
-function formatFileSize(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
+const DEFAULT_SPLIT = { train: 64, validation: 16, test: 20 };
+type SplitKey = keyof typeof DEFAULT_SPLIT;
 
 function formatMetric(value: number | null): string {
   return value === null ? "-" : value.toFixed(4);
@@ -37,12 +36,13 @@ function MetricRow({
 }
 
 export default function TrainingPage() {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [target, setTarget] = useState("Y");
+  const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [result, setResult] = useState<TrainResponse | null>(null);
   const [error, setError] = useState("");
   const [isTraining, setIsTraining] = useState(false);
+  const [activeView, setActiveView] = useState<"new" | "history">("new");
 
   function selectFile(selectedFile?: File) {
     setResult(null);
@@ -64,18 +64,13 @@ export default function TrainingPage() {
     setFile(selectedFile);
   }
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    selectFile(event.target.files?.[0]);
-    event.target.value = "";
-  }
-
   async function handleTrain() {
     if (!file || isTraining) return;
     setError("");
     setResult(null);
     setIsTraining(true);
     try {
-      setResult(await trainModel(file, target));
+      setResult(await trainModel(file, target, split));
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -85,6 +80,35 @@ export default function TrainingPage() {
     } finally {
       setIsTraining(false);
     }
+  }
+
+  function updateSplit(key: SplitKey, rawValue: number) {
+    const nextValue = Math.min(90, Math.max(5, Math.round(rawValue)));
+    const otherKeys = (
+      ["train", "validation", "test"] as SplitKey[]
+    ).filter((item) => item !== key);
+
+    setSplit((current) => {
+      const remaining = 100 - nextValue;
+      const adjustableTotal =
+        current[otherKeys[0]] + current[otherKeys[1]] - 10;
+      const firstWeight =
+        adjustableTotal > 0
+          ? (current[otherKeys[0]] - 5) / adjustableTotal
+          : 0.5;
+      const firstValue = Math.min(
+        remaining - 5,
+        Math.max(5, 5 + Math.round((remaining - 10) * firstWeight)),
+      );
+
+      return {
+        ...current,
+        [key]: nextValue,
+        [otherKeys[0]]: firstValue,
+        [otherKeys[1]]: remaining - firstValue,
+      };
+    });
+    setResult(null);
   }
 
   return (
@@ -101,14 +125,85 @@ export default function TrainingPage() {
             </p>
           </section>
 
+          <div className="trainingViewTabs" role="tablist">
+            <button
+              className={activeView === "new" ? "active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeView === "new"}
+              onClick={() => setActiveView("new")}
+            >
+              새 모델 학습
+            </button>
+            <button
+              className={activeView === "history" ? "active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeView === "history"}
+              onClick={() => setActiveView("history")}
+            >
+              학습 이력
+            </button>
+          </div>
+
+          {activeView === "new" ? (
+            <>
           <section className="uploadCard" aria-labelledby="training-form-title">
             <div className="sectionHeading compact">
               <div>
                 <span className="sectionLabel">학습 설정</span>
                 <h2 id="training-form-title">데이터와 목표 변수</h2>
               </div>
-              <p>Train 64% · Validation 16% · Test 20%</p>
+              <p>
+                Train {split.train}% · Validation {split.validation}% · Test{" "}
+                {split.test}%
+              </p>
             </div>
+
+            <fieldset className="splitControls">
+              <legend>Dataset Split</legend>
+              <p>한 비율을 변경하면 나머지 두 비율이 자동 보정됩니다.</p>
+              <div className="splitControlGrid">
+                {(
+                  [
+                    ["train", "Train"],
+                    ["validation", "Validation"],
+                    ["test", "Test"],
+                  ] as [SplitKey, string][]
+                ).map(([key, label]) => (
+                  <label className="splitControl" key={key}>
+                    <span>
+                      {label}
+                      <strong>{split[key]}%</strong>
+                    </span>
+                    <input
+                      type="range"
+                      min="5"
+                      max="90"
+                      value={split[key]}
+                      disabled={isTraining}
+                      onChange={(event) =>
+                        updateSplit(key, Number(event.target.value))
+                      }
+                    />
+                    <input
+                      type="number"
+                      min="5"
+                      max="90"
+                      value={split[key]}
+                      disabled={isTraining}
+                      aria-label={`${label} 비율`}
+                      onChange={(event) =>
+                        updateSplit(key, Number(event.target.value))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="splitTotal" aria-live="polite">
+                합계 <strong>{split.train + split.validation + split.test}%</strong>
+              </div>
+            </fieldset>
 
             <div className="trainingControls">
               <div className="fieldGroup">
@@ -132,34 +227,15 @@ export default function TrainingPage() {
 
               <div className="fieldGroup fileField">
                 <label htmlFor="training-file">학습 CSV</label>
-                <input
-                  ref={inputRef}
+                <CsvUploadPanel
                   id="training-file"
-                  className="visuallyHidden"
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleFileChange}
-                />
-                <button
-                  className="fileSelectButton"
-                  type="button"
-                  onClick={() => inputRef.current?.click()}
+                  file={file}
+                  onFileSelect={selectFile}
                   disabled={isTraining}
-                >
-                  CSV 파일 선택
-                </button>
+                  compact
+                />
               </div>
             </div>
-
-            {file && (
-              <div className="selectedFile" aria-live="polite">
-                <div>
-                  <span>선택된 파일</span>
-                  <strong>{file.name}</strong>
-                </div>
-                <span>{formatFileSize(file.size)}</span>
-              </div>
-            )}
 
             {error && (
               <div className="messageBox error" role="alert">{error}</div>
@@ -306,6 +382,12 @@ export default function TrainingPage() {
                 )}
               </section>
             </>
+          )}
+            </>
+          ) : (
+            <section className="resultCard modelHistoryCard">
+              <ModelHistoryPanel />
+            </section>
           )}
         </main>
       </div>

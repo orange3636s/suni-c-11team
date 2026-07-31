@@ -1,6 +1,5 @@
 "use client";
 
-import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
@@ -18,6 +17,7 @@ import {
   YAxis,
 } from "recharts";
 
+import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import {
@@ -39,7 +39,11 @@ const DEFAULT_THRESHOLDS: PredictionThresholds = {
 };
 
 type RiskFilter = "all" | "normal" | "warning" | "danger";
-type SortDirection = "asc" | "desc";
+type ResultSort =
+  | "prediction-desc"
+  | "prediction-asc"
+  | "id-asc"
+  | "id-desc";
 
 function formatMetric(value: number | null | undefined): string {
   return value === null || value === undefined ? "-" : value.toFixed(4);
@@ -56,8 +60,22 @@ function riskLabel(value: unknown): string {
   return "-";
 }
 
+function naturalCompare(left: unknown, right: unknown): number {
+  return String(left ?? "").localeCompare(String(right ?? ""), "ko", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function identifierParts(value: unknown): { lot: string; wafer: string } {
+  const identifier = String(value ?? "");
+  const match = identifier.match(/^(.*?)[_-](?:WF|WAFER)[_-]?(\d+)$/i);
+  return match
+    ? { lot: match[1], wafer: match[2] }
+    : { lot: "-", wafer: "-" };
+}
+
 export default function PredictionPage() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [modelWarnings, setModelWarnings] = useState<string[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -69,11 +87,11 @@ export default function PredictionPage() {
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [isPredicting, setIsPredicting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("all");
   const [searchText, setSearchText] = useState("");
-  const [sortDirection, setSortDirection] =
-    useState<SortDirection>("asc");
+  const [resultSort, setResultSort] =
+    useState<ResultSort>("prediction-desc");
+  const resultTableRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -86,7 +104,15 @@ export default function PredictionPage() {
         const defaultModel =
           response.models.find((model) => model.target === "Y") ??
           response.models[0];
-        setSelectedModelId(defaultModel?.model_id ?? "");
+        const requestedModelId = new URLSearchParams(
+          window.location.search,
+        ).get("model_id");
+        const requestedModel = response.models.find(
+          (model) => model.model_id === requestedModelId,
+        );
+        setSelectedModelId(
+          requestedModel?.model_id ?? defaultModel?.model_id ?? "",
+        );
       } catch (requestError) {
         if (mounted) {
           setError(
@@ -127,17 +153,6 @@ export default function PredictionPage() {
       return;
     }
     setFile(selectedFile);
-  }
-
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    selectFile(event.target.files?.[0]);
-    event.target.value = "";
-  }
-
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setIsDragging(false);
-    selectFile(event.dataTransfer.files?.[0]);
   }
 
   async function handlePredict() {
@@ -187,9 +202,8 @@ export default function PredictionPage() {
     }
   }
 
-  const displayedRows = useMemo(() => {
+  const filteredRows = useMemo(() => {
     if (!result) return [];
-    const predictionColumn = `predicted_${result.model.target}`;
     const normalizedSearch = searchText.trim().toLowerCase();
     return result.predictions
       .filter((row) => {
@@ -202,37 +216,74 @@ export default function PredictionPage() {
           matchesRisk &&
           (!normalizedSearch || identifier.includes(normalizedSearch))
         );
-      })
-      .sort((left, right) => {
-        const leftValue = Number(left[predictionColumn]);
-        const rightValue = Number(right[predictionColumn]);
-        return sortDirection === "asc"
-          ? leftValue - rightValue
-          : rightValue - leftValue;
       });
-  }, [result, riskFilter, searchText, sortDirection]);
+  }, [result, riskFilter, searchText]);
+
+  const displayedRows = useMemo(() => {
+    if (!result) return [];
+    const predictionColumn = `predicted_${result.model.target}`;
+    return [...filteredRows].sort((left, right) => {
+      if (resultSort === "id-asc" || resultSort === "id-desc") {
+        const comparison = naturalCompare(
+          left[result.identifier_column],
+          right[result.identifier_column],
+        );
+        return resultSort === "id-desc" ? -comparison : comparison;
+      }
+      const difference =
+        Number(left[predictionColumn]) - Number(right[predictionColumn]);
+      return resultSort === "prediction-asc" ? difference : -difference;
+    });
+  }, [filteredRows, result, resultSort]);
 
   const trendData = useMemo(() => {
-    if (!result) return [];
+    if (!result || !filteredRows.length) return [];
     const predictedKey = `predicted_${result.model.target}`;
     const actualKey = `actual_${result.model.target}`;
-    const sampleEvery = Math.max(
-      1,
-      Math.ceil(result.predictions.length / 80),
+    const predictedValues = filteredRows.map((row) =>
+      Number(row[predictedKey]),
     );
-    return result.predictions
-      .filter((_, index) => index % sampleEvery === 0)
-      .map((row, index) => ({
+    const overallMean =
+      predictedValues.reduce((sum, value) => sum + value, 0) /
+      predictedValues.length;
+    let cumulativeTotal = 0;
+    const completeTrend = filteredRows.map((row, index) => {
+      const predicted = Number(row[predictedKey]);
+      cumulativeTotal += predicted;
+      return {
         index: index + 1,
         identifier: String(row[result.identifier_column] ?? index + 1),
-        predicted: Number(row[predictedKey]),
+        predicted,
+        overallMean,
+        cumulativeMean: cumulativeTotal / (index + 1),
         actual:
           typeof row[actualKey] === "number"
             ? Number(row[actualKey])
             : undefined,
         risk: String(row.risk_level ?? "normal"),
-      }));
-  }, [result]);
+      };
+    });
+    const sampleEvery = Math.max(
+      1,
+      Math.ceil(completeTrend.length / 80),
+    );
+    return completeTrend.filter(
+      (_, index) =>
+        index % sampleEvery === 0 || index === completeTrend.length - 1,
+    );
+  }, [filteredRows, result]);
+
+  const resultSortLabel = {
+    "prediction-desc": "예측 수율 높은 순",
+    "prediction-asc": "예측 수율 낮은 순",
+    "id-asc": "LOT_WAFER_ID 오름차순",
+    "id-desc": "LOT_WAFER_ID 내림차순",
+  }[resultSort];
+
+  function handleResultSort(nextSort: ResultSort) {
+    setResultSort(nextSort);
+    resultTableRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   const diagnostics = useMemo(() => {
     if (!result) return { points: [], histogram: [] };
@@ -375,34 +426,14 @@ export default function PredictionPage() {
               </div>
             </div>
 
-            <div
-              className={`dropZone compactDrop ${isDragging ? "dragging" : ""}`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragEnter={(event) => {
-                event.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  fileInputRef.current?.click();
-                }
-              }}
-            >
-              <input
-                ref={fileInputRef}
-                className="visuallyHidden"
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleFileChange}
-              />
-              <strong>새 CSV를 드래그하거나 클릭하여 선택하세요.</strong>
-              <span>{file ? file.name : "최대 20MB"}</span>
-            </div>
+            <CsvUploadPanel
+              id="prediction-file"
+              file={file}
+              onFileSelect={selectFile}
+              disabled={isPredicting}
+              compact
+              title="예측할 CSV를 드래그하거나 클릭하여 선택하세요."
+            />
 
             {error && <div className="messageBox error" role="alert">{error}</div>}
             {[...modelWarnings, ...(result?.warnings ?? [])].length > 0 && (
@@ -481,8 +512,9 @@ export default function PredictionPage() {
                   </span>
                 </div>
                 <p className="chartDescription">
-                  예측 수율과 실제값이 있으면 함께 표시하며, 주의·위험
-                  기준선을 고정해 이상 구간을 빠르게 확인합니다.
+                  현재 필터에 포함된 전체 Wafer의 평균과 누적 평균을 함께
+                  표시합니다. 누적 평균은 필터 적용 후 원본 CSV 행 순서
+                  기준이며 시간 추세를 의미하지 않습니다.
                 </p>
                 <div
                   className="predictionTrendCanvas"
@@ -495,7 +527,7 @@ export default function PredictionPage() {
                       margin={{ top: 10, right: 22, bottom: 8, left: 2 }}
                     >
                       <CartesianGrid
-                        stroke="rgba(0, 0, 0, 0.07)"
+                        stroke="var(--chart-grid)"
                         strokeDasharray="3 5"
                         vertical={false}
                       />
@@ -503,20 +535,20 @@ export default function PredictionPage() {
                         dataKey="index"
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fontSize: 10, fill: "#86868b" }}
+                        tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
                         label={{
                           value: "Wafer sequence",
                           position: "insideBottom",
                           offset: -2,
                           fontSize: 10,
-                          fill: "#86868b",
+                          fill: "var(--chart-axis)",
                         }}
                       />
                       <YAxis
                         domain={["auto", "auto"]}
                         axisLine={false}
                         tickLine={false}
-                        tick={{ fontSize: 10, fill: "#86868b" }}
+                        tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
                         tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
                         width={44}
                       />
@@ -535,6 +567,12 @@ export default function PredictionPage() {
                                   실제 수율: {item.actual.toFixed(2)}%
                                 </span>
                               )}
+                              <span>
+                                전체 평균: {item.overallMean.toFixed(2)}%
+                              </span>
+                              <span>
+                                누적 평균: {item.cumulativeMean.toFixed(2)}%
+                              </span>
                               <span>상태: {riskLabel(item.risk)}</span>
                             </div>
                           );
@@ -544,7 +582,10 @@ export default function PredictionPage() {
                         verticalAlign="top"
                         align="right"
                         iconType="plainline"
-                        wrapperStyle={{ fontSize: 11, color: "#6e6e73" }}
+                        wrapperStyle={{
+                          fontSize: 11,
+                          color: "var(--chart-axis)",
+                        }}
                       />
                       <ReferenceLine
                         y={thresholds.warning_threshold}
@@ -586,7 +627,7 @@ export default function PredictionPage() {
                         type="monotone"
                         dataKey="predicted"
                         name="예측 수율"
-                        stroke="#1769aa"
+                        stroke="var(--chart-primary)"
                         strokeWidth={2.2}
                         animationDuration={220}
                         dot={(dotProps) => {
@@ -603,17 +644,40 @@ export default function PredictionPage() {
                                   ? "#b33a46"
                                   : point.risk === "warning"
                                     ? "#a96208"
-                                    : "#1769aa"
+                                    : "var(--chart-primary)"
                               }
-                              stroke="#ffffff"
+                              stroke="var(--surface)"
                               strokeWidth={isRisk ? 1.5 : 0}
                             />
                           );
                         }}
                       />
+                      <Line
+                        type="linear"
+                        dataKey="overallMean"
+                        name="전체 예측 수율 평균"
+                        stroke="var(--chart-secondary)"
+                        strokeWidth={1.4}
+                        strokeDasharray="6 5"
+                        dot={false}
+                        animationDuration={220}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="cumulativeMean"
+                        name="누적 예측 수율 평균"
+                        stroke="var(--warning)"
+                        strokeWidth={1.8}
+                        strokeDasharray="3 3"
+                        dot={false}
+                        animationDuration={220}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
-                </div>
+                  </div>
+                  <p className="trendOrderNote">
+                    표 정렬: {resultSortLabel} · 차트 누적 평균: 원본 CSV 행 순서
+                  </p>
               </section>
 
               {diagnostics.points.length > 0 && (
@@ -628,11 +692,11 @@ export default function PredictionPage() {
                     <div className="predictionDiagnosticCanvas">
                       <ResponsiveContainer width="100%" height="100%">
                         <ScatterChart margin={{ top: 10, right: 16, bottom: 20, left: 8 }}>
-                          <CartesianGrid stroke="rgba(0,0,0,.07)" />
-                          <XAxis type="number" dataKey="actual" name="Actual" tick={{ fontSize: 10 }} />
-                          <YAxis type="number" dataKey="predicted" name="Predicted" tick={{ fontSize: 10 }} />
+                          <CartesianGrid stroke="var(--chart-grid)" />
+                          <XAxis type="number" dataKey="actual" name="Actual" tick={{ fontSize: 10, fill: "var(--chart-axis)" }} />
+                          <YAxis type="number" dataKey="predicted" name="Predicted" tick={{ fontSize: 10, fill: "var(--chart-axis)" }} />
                           <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                          <Scatter data={diagnostics.points} fill="#1769aa" fillOpacity={0.62} />
+                          <Scatter data={diagnostics.points} fill="var(--chart-primary)" fillOpacity={0.72} />
                         </ScatterChart>
                       </ResponsiveContainer>
                     </div>
@@ -647,9 +711,9 @@ export default function PredictionPage() {
                     <div className="predictionDiagnosticCanvas">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={diagnostics.histogram}>
-                          <CartesianGrid stroke="rgba(0,0,0,.07)" vertical={false} />
-                          <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                          <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                          <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                          <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--chart-axis)" }} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--chart-axis)" }} />
                           <Tooltip />
                           <Bar dataKey="count" name="Wafer 수" fill="#647185" radius={[5, 5, 0, 0]} />
                         </BarChart>
@@ -686,22 +750,29 @@ export default function PredictionPage() {
                       <option value="danger">위험</option>
                     </select>
                     <select
-                      aria-label="예측 수율 정렬"
-                      value={sortDirection}
+                      aria-label="Wafer 결과 정렬"
+                      value={resultSort}
                       onChange={(event) =>
-                        setSortDirection(event.target.value as SortDirection)
+                        handleResultSort(event.target.value as ResultSort)
                       }
                     >
-                      <option value="asc">예측 수율 낮은 순</option>
-                      <option value="desc">예측 수율 높은 순</option>
+                      <option value="prediction-desc">예측 수율 높은 순</option>
+                      <option value="prediction-asc">예측 수율 낮은 순</option>
+                      <option value="id-asc">ID 오름차순</option>
+                      <option value="id-desc">ID 내림차순</option>
                     </select>
                   </div>
                 </div>
-                <div className="tableWrap">
+                <div
+                  className="tableWrap predictionResultScroll"
+                  ref={resultTableRef}
+                >
                   <table>
                     <thead>
                       <tr>
                         <th scope="col">{result.identifier_column}</th>
+                        <th className="secondaryColumn" scope="col">Lot ID</th>
+                        <th className="secondaryColumn" scope="col">Wafer ID</th>
                         <th scope="col">예측값</th>
                         <th scope="col">위험 상태</th>
                         {result.predictions.some((row) => actualColumn in row) && (
@@ -710,12 +781,19 @@ export default function PredictionPage() {
                             <th scope="col">절대 오차</th>
                           </>
                         )}
+                        <th className="secondaryColumn" scope="col">모델</th>
+                        <th className="secondaryColumn" scope="col">분석 상태</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {displayedRows.map((row: PredictionRow, index) => (
-                        <tr key={`${String(row[result.identifier_column])}-${index}`}>
-                          <td>{String(row[result.identifier_column] ?? "-")}</td>
+                      {displayedRows.map((row: PredictionRow, index) => {
+                        const identifier = row[result.identifier_column];
+                        const parts = identifierParts(identifier);
+                        return (
+                        <tr key={`${String(identifier)}-${index}`}>
+                          <td>{String(identifier ?? "-")}</td>
+                          <td className="secondaryColumn">{parts.lot}</td>
+                          <td className="secondaryColumn">{parts.wafer}</td>
                           <td>{formatPrediction(row[predictionColumn])}</td>
                           <td>
                             <span className={`riskBadge ${String(row.risk_level ?? "")}`}>
@@ -728,8 +806,29 @@ export default function PredictionPage() {
                               <td>{formatPrediction(row.absolute_error)}</td>
                             </>
                           )}
+                          <td className="secondaryColumn">
+                            {result.model.model_name}
+                          </td>
+                          <td className="secondaryColumn">분석 완료</td>
                         </tr>
-                      ))}
+                        );
+                      })}
+                      {!displayedRows.length && (
+                        <tr>
+                          <td
+                            className="emptyTableCell"
+                            colSpan={
+                              result.predictions.some(
+                                (item) => actualColumn in item,
+                              )
+                                ? 9
+                                : 7
+                            }
+                          >
+                            예측 결과가 없습니다. 필터 조건을 확인하세요.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

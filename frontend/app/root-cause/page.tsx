@@ -1,7 +1,6 @@
 "use client";
 
-import type { ChangeEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -9,6 +8,7 @@ import {
   Cell,
   ComposedChart,
   Line,
+  Legend,
   ReferenceLine,
   ResponsiveContainer,
   Scatter,
@@ -19,10 +19,10 @@ import {
 } from "recharts";
 
 import Header from "@/components/Header";
+import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Sidebar from "@/components/Sidebar";
 import {
   analyzeRelationships,
-  downloadExplanation,
   getModels,
 } from "@/lib/api";
 import type {
@@ -39,6 +39,14 @@ const DEFAULT_OPTIONS: ExplainOptions = {
   top_n: 10,
   per_wafer_top_n: 5,
 };
+
+type WaferSort =
+  | "risk-desc"
+  | "risk-asc"
+  | "id-asc"
+  | "id-desc"
+  | "prediction-desc"
+  | "prediction-asc";
 
 function formatNumber(value: number): string {
   return value.toLocaleString("ko-KR", {
@@ -88,9 +96,11 @@ export default function RootCausePage() {
     useState<"pearson" | "spearman">("pearson");
   const [selectedPath, setSelectedPath] = useState(0);
   const [selectedWafer, setSelectedWafer] = useState(0);
+  const [waferSearch, setWaferSearch] = useState("");
+  const [waferSort, setWaferSort] = useState<WaferSort>("risk-desc");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const waferRowRefs = useRef(new Map<number, HTMLTableRowElement>());
 
   useEffect(() => {
     void getModels()
@@ -117,9 +127,44 @@ export default function RootCausePage() {
     () => relationships?.rankings[rankingMode][rankingGroup] ?? [],
     [rankingGroup, rankingMode, relationships],
   );
+  const sortedWafers = useMemo(() => {
+    const wafers = result?.wafer_explanations.map((wafer, index) => ({
+      wafer,
+      originalIndex: index,
+    })) ?? [];
+    const riskScore = (risk: string | null) =>
+      risk === "danger" ? 2 : risk === "warning" ? 1 : 0;
 
-  function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const selectedFile = event.target.files?.[0] ?? null;
+    return wafers.sort((left, right) => {
+      if (waferSort === "risk-desc") {
+        return (
+          riskScore(right.wafer.risk_level) -
+          riskScore(left.wafer.risk_level)
+        );
+      }
+      if (waferSort === "risk-asc") {
+        return (
+          riskScore(left.wafer.risk_level) -
+          riskScore(right.wafer.risk_level)
+        );
+      }
+      if (waferSort === "prediction-desc") {
+        return right.wafer.prediction - left.wafer.prediction;
+      }
+      if (waferSort === "prediction-asc") {
+        return left.wafer.prediction - right.wafer.prediction;
+      }
+
+      const comparison = String(left.wafer.identifier).localeCompare(
+        String(right.wafer.identifier),
+        "ko",
+        { numeric: true, sensitivity: "base" },
+      );
+      return waferSort === "id-desc" ? -comparison : comparison;
+    });
+  }, [result, waferSort]);
+
+  function handleFile(selectedFile?: File) {
     setResult(null);
     setRelationships(null);
     setError("");
@@ -128,7 +173,45 @@ export default function RootCausePage() {
       setError("CSV(.csv) 파일만 선택할 수 있습니다.");
       return;
     }
-    setFile(selectedFile);
+    setFile(selectedFile ?? null);
+  }
+
+  function handleWaferSearch(value: string) {
+    setWaferSearch(value);
+    const query = value.trim().toLocaleLowerCase("ko");
+    if (!query) return;
+
+    const match = sortedWafers.find(({ wafer }) =>
+      String(wafer.identifier).toLocaleLowerCase("ko").includes(query),
+    );
+    if (!match) return;
+
+    selectWafer(match.originalIndex);
+  }
+
+  function selectWafer(index: number, scroll = true) {
+    setSelectedWafer(index);
+    const identifier = result?.wafer_explanations[index]?.identifier;
+    if (identifier !== undefined) {
+      setWaferSearch(String(identifier));
+      localStorage.setItem("root-cause-recent-wafer", String(identifier));
+    }
+    if (!scroll) return;
+    requestAnimationFrame(() => {
+      waferRowRefs.current.get(index)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }
+
+  function handleQuickWaferSelect(value: string) {
+    setWaferSearch(value);
+    const matchIndex =
+      result?.wafer_explanations.findIndex(
+        (wafer) => String(wafer.identifier) === value,
+      ) ?? -1;
+    if (matchIndex >= 0) selectWafer(matchIndex);
   }
 
   async function runAnalysis() {
@@ -145,8 +228,14 @@ export default function RootCausePage() {
       );
       setRelationships(response);
       setResult(response.explanation);
-      setSelectedWafer(0);
+      const recentWafer = localStorage.getItem("root-cause-recent-wafer");
+      const recentIndex = response.explanation.wafer_explanations.findIndex(
+        (wafer) => String(wafer.identifier) === recentWafer,
+      );
+      setSelectedWafer(recentIndex >= 0 ? recentIndex : 0);
       setSelectedPath(0);
+      setWaferSearch("");
+      setWaferSort("risk-desc");
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -155,29 +244,6 @@ export default function RootCausePage() {
       );
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function downloadCsv() {
-    if (!file || !modelId || downloading) return;
-    setDownloading(true);
-    setError("");
-    try {
-      const blob = await downloadExplanation(file, modelId, options);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `explanation_${modelId}.csv`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "결과 다운로드 중 오류가 발생했습니다.",
-      );
-    } finally {
-      setDownloading(false);
     }
   }
 
@@ -214,13 +280,14 @@ export default function RootCausePage() {
                 ))}
               </select>
             </div>
-            <div className="fieldGroup">
+            <div className="fieldGroup analysisFileField">
               <label htmlFor="analysis-file">분석 CSV</label>
-              <input
+              <CsvUploadPanel
                 id="analysis-file"
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleFile}
+                file={file}
+                onFileSelect={handleFile}
+                disabled={loading}
+                compact
               />
             </div>
             <div className="analysisOptionGrid">
@@ -293,16 +360,6 @@ export default function RootCausePage() {
               >
                 {loading ? "SHAP 계산 중..." : "원인 분석"}
               </button>
-              <button
-                className="button secondary"
-                type="button"
-                disabled={!result || downloading}
-                data-loading={downloading}
-                aria-busy={downloading}
-                onClick={() => void downloadCsv()}
-              >
-                {downloading ? "다운로드 중..." : "전체 중요도 CSV"}
-              </button>
             </div>
             <p className="emptyMessage">
               SHAP 계산은 데이터와 모델 크기에 따라 시간이 걸릴 수 있습니다.
@@ -355,8 +412,8 @@ export default function RootCausePage() {
                   <section className="resultCard relationshipSection">
                     <div className="sectionHeading compact">
                       <div>
-                        <span className="sectionLabel">1단계 · 영향 변수 순위</span>
-                        <h2>전체 및 그룹별 Top N</h2>
+                        <span className="sectionLabel">Feature Importance</span>
+                        <h2>Top Yield Loss Drivers</h2>
                       </div>
                       <p>
                         Ranking basis:{" "}
@@ -415,8 +472,86 @@ export default function RootCausePage() {
                     <span className="sectionLabel">개별 설명</span>
                     <h2>Wafer별 기여 변수</h2>
                   </div>
+                  <label className="waferQuickSelector">
+                    <span>LOT_WAFER_ID</span>
+                    <input
+                      type="search"
+                      list="root-cause-wafer-options"
+                      value={waferSearch || String(selected?.identifier ?? "")}
+                      onChange={(event) =>
+                        handleQuickWaferSelect(event.target.value)
+                      }
+                      placeholder="Wafer 검색"
+                    />
+                    <datalist id="root-cause-wafer-options">
+                      {result.wafer_explanations.map((wafer, index) => (
+                        <option
+                          key={`${String(wafer.identifier)}-${index}`}
+                          value={String(wafer.identifier)}
+                        />
+                      ))}
+                    </datalist>
+                  </label>
                 </div>
-                <div className="tableWrapper">
+                {selected && (
+                  <>
+                    <div className="contributionGrid">
+                      <ContributionList
+                        title="수율 악화 기여"
+                        rows={selected.top_negative_contributors}
+                        field="harmful_contribution"
+                      />
+                      <ContributionList
+                        title="수율 개선 기여"
+                        rows={selected.top_positive_contributors}
+                        field="beneficial_contribution"
+                      />
+                    </div>
+                    <p className="waferDetailSummary">
+                      {result.identifier_column}:{" "}
+                      <strong>{String(selected.identifier)}</strong> · 예측값{" "}
+                      <strong>{formatNumber(selected.prediction)}</strong> ·
+                      기준값 <strong>{formatNumber(selected.base_value)}</strong>{" "}
+                      · 위험도{" "}
+                      <strong>{riskLabel(selected.risk_level)}</strong>
+                    </p>
+                  </>
+                )}
+                <div className="waferListTools">
+                  <label className="waferSearch">
+                    <span className="visuallyHidden">
+                      LOT_WAFER_ID 검색
+                    </span>
+                    <input
+                      type="search"
+                      placeholder="LOT_WAFER_ID 검색"
+                      value={waferSearch}
+                      onChange={(event) =>
+                        handleWaferSearch(event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="waferSort">
+                    <span className="visuallyHidden">LOT 목록 정렬</span>
+                    <select
+                      value={waferSort}
+                      onChange={(event) =>
+                        setWaferSort(event.target.value as WaferSort)
+                      }
+                    >
+                      <option value="risk-desc">위험도 높은 순</option>
+                      <option value="risk-asc">위험도 낮은 순</option>
+                      <option value="id-asc">LOT_WAFER_ID 오름차순</option>
+                      <option value="id-desc">LOT_WAFER_ID 내림차순</option>
+                      <option value="prediction-desc">예측값 높은 순</option>
+                      <option value="prediction-asc">예측값 낮은 순</option>
+                    </select>
+                  </label>
+                </div>
+                <div
+                  className="tableWrapper waferListScroll"
+                  aria-label={`${result.identifier_column} 목록`}
+                >
                   <table className="dataTable">
                     <thead>
                       <tr>
@@ -426,23 +561,32 @@ export default function RootCausePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {result.wafer_explanations.map((wafer, index) => (
+                      {sortedWafers.map(({ wafer, originalIndex }) => (
                         <tr
+                          ref={(node) => {
+                            if (node) {
+                              waferRowRefs.current.set(originalIndex, node);
+                            } else {
+                              waferRowRefs.current.delete(originalIndex);
+                            }
+                          }}
                           className={
-                            selectedWafer === index ? "selectedRow" : ""
+                            selectedWafer === originalIndex ? "selectedRow" : ""
                           }
-                          key={`${String(wafer.identifier)}-${index}`}
-                          onClick={() => setSelectedWafer(index)}
+                          key={`${String(wafer.identifier)}-${originalIndex}`}
+                          onClick={() => selectWafer(originalIndex, false)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              setSelectedWafer(index);
+                              selectWafer(originalIndex, false);
                             }
                           }}
                           tabIndex={0}
                           role="button"
                           aria-label={`${String(wafer.identifier)} 상세 기여도 ${
-                            selectedWafer === index ? "선택됨" : "보기"
+                            selectedWafer === originalIndex
+                              ? "선택됨"
+                              : "보기"
                           }`}
                         >
                           <td>{String(wafer.identifier)}</td>
@@ -461,30 +605,6 @@ export default function RootCausePage() {
                     </tbody>
                   </table>
                 </div>
-                {selected && (
-                  <>
-                    <p className="waferDetailSummary">
-                      {result.identifier_column}:{" "}
-                      <strong>{String(selected.identifier)}</strong> · 예측값{" "}
-                      <strong>{formatNumber(selected.prediction)}</strong> ·
-                      기준값 <strong>{formatNumber(selected.base_value)}</strong>{" "}
-                      · 위험도{" "}
-                      <strong>{riskLabel(selected.risk_level)}</strong>
-                    </p>
-                    <div className="contributionGrid">
-                      <ContributionList
-                        title="수율 악화 기여"
-                        rows={selected.top_negative_contributors}
-                        field="harmful_contribution"
-                      />
-                      <ContributionList
-                        title="수율 개선 기여"
-                        rows={selected.top_positive_contributors}
-                        field="beneficial_contribution"
-                      />
-                    </div>
-                  </>
-                )}
               </section>
             </>
           )}
@@ -521,9 +641,9 @@ function SegmentedControl({
 }
 
 function groupColor(group: string): string {
-  if (group === "R") return "#1769aa";
-  if (group === "D") return "#a96208";
-  return "#647185";
+  if (group === "R") return "var(--chart-primary)";
+  if (group === "D") return "var(--warning)";
+  return "var(--chart-secondary)";
 }
 
 function RankingChart({ data }: { data: RelationshipFeature[] }) {
@@ -537,7 +657,7 @@ function RankingChart({ data }: { data: RelationshipFeature[] }) {
             margin={{ top: 8, right: 18, bottom: 4, left: 28 }}
           >
             <CartesianGrid
-              stroke="rgba(0, 0, 0, 0.07)"
+              stroke="var(--chart-grid)"
               strokeDasharray="3 5"
               horizontal={false}
             />
@@ -545,7 +665,7 @@ function RankingChart({ data }: { data: RelationshipFeature[] }) {
               type="number"
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 10, fill: "#86868b" }}
+              tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
             />
             <YAxis
               type="category"
@@ -553,7 +673,7 @@ function RankingChart({ data }: { data: RelationshipFeature[] }) {
               width={138}
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 10, fill: "#6e6e73" }}
+              tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
               tickFormatter={formatFeatureLabel}
             />
             <Tooltip
@@ -617,8 +737,8 @@ function ParetoSection({
     <section className="resultCard relationshipSection">
       <div className="sectionHeading compact">
         <div>
-          <span className="sectionLabel">2단계 · 검토 우선순위</span>
-          <h2>누적 영향도 80% Pareto</h2>
+          <span className="sectionLabel">Cumulative Impact</span>
+          <h2>Pareto Analysis</h2>
         </div>
         <p>Ranking basis: {pareto.ranking_basis}</p>
       </div>
@@ -639,7 +759,7 @@ function ParetoSection({
           >
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={pareto.features}>
-                <CartesianGrid stroke="rgba(0,0,0,.07)" vertical={false} />
+                <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
                 <XAxis
                   dataKey="display_name"
                   tick={{ fontSize: 10 }}
@@ -666,7 +786,7 @@ function ParetoSection({
                   {pareto.features.map((item) => (
                     <Cell
                       key={item.feature}
-                      fill={item.within_threshold ? groupColor(item.group) : "#c7c7cc"}
+                      fill={item.within_threshold ? groupColor(item.group) : "var(--chart-muted)"}
                     />
                   ))}
                 </Bar>
@@ -709,19 +829,50 @@ function PathSection({
   onSelect: (index: number) => void;
   confidenceCriteria: Record<string, string>;
 }) {
+  const [pathSearch, setPathSearch] = useState("");
   const selected = paths[selectedIndex];
+  const visiblePaths = useMemo(
+    () =>
+      paths
+        .map((path, index) => ({ path, index }))
+        .filter(({ path }) => {
+          const query = pathSearch.trim().toLocaleLowerCase("ko");
+          if (!query) return true;
+          return [
+            `Step ${path.step}`,
+            path.response,
+            path.equipment,
+            path.defect,
+          ].some((value) =>
+            String(value ?? "").toLocaleLowerCase("ko").includes(query),
+          );
+        })
+        .sort((left, right) => right.path.path_score - left.path.path_score),
+    [pathSearch, paths],
+  );
   return (
-    <>
-      <section className="resultCard relationshipSection">
+    <section className="resultCard relationshipSection pathUnifiedCard">
         <div className="sectionHeading compact">
           <div>
-            <span className="sectionLabel">3단계 · 연관 경로</span>
-            <h2>R·EQ → D → Y 우선순위</h2>
+            <span className="sectionLabel">Relationship Analysis</span>
+            <h2>Relationship Path</h2>
           </div>
           <p>Path relevance score · 인과 효과가 아닌 탐색 점수</p>
         </div>
+        <div className="relationshipToolbar pathToolbar">
+          <label className="waferSearch">
+            <span className="visuallyHidden">Relationship Path 검색</span>
+            <input
+              type="search"
+              value={pathSearch}
+              onChange={(event) => setPathSearch(event.target.value)}
+              placeholder="Step, Response, Equipment, Defect 검색"
+            />
+          </label>
+          <span className="pathSortLabel">Score 높은 순</span>
+        </div>
         {paths.length ? (
-          <div className="tableWrapper">
+          <div className="tableWrapper relationshipPathScroll">
             <table className="dataTable pathTable">
               <thead><tr>
                 <th>Rank</th><th>Step</th><th>Response</th><th>Equipment</th>
@@ -729,7 +880,7 @@ function PathSection({
                 <th>SHAP</th><th>Score</th><th>Sample</th><th>Confidence</th>
               </tr></thead>
               <tbody>
-                {paths.map((path, index) => (
+                {visiblePaths.map(({ path, index }) => (
                   <tr
                     key={path.step}
                     className={selectedIndex === index ? "selectedRow" : ""}
@@ -749,40 +900,243 @@ function PathSection({
             </table>
           </div>
         ) : <p className="emptyMessage">동일 Step의 연관 경로를 구성할 데이터가 없습니다.</p>}
+        {paths.length > 0 && visiblePaths.length === 0 && (
+          <p className="emptyMessage">검색 조건과 일치하는 경로가 없습니다.</p>
+        )}
         <p className="chartDescription">
           Confidence 기준: 충분({confidenceCriteria.sufficient}) · 주의({confidenceCriteria.caution}) · 부족({confidenceCriteria.insufficient})
         </p>
-      </section>
-      {selected && <PathDetail path={selected} />}
-    </>
+        {selected && <PathDetail path={selected} />}
+    </section>
   );
 }
 
 function PathDetail({ path }: { path: RelationshipPath }) {
   return (
-    <section className="resultCard relationshipSection">
+    <div className="relationshipDetailBlock">
       <div className="sectionHeading compact">
         <div>
-          <span className="sectionLabel">4단계 · 선택 경로 상세</span>
+          <span className="sectionLabel">Selected Path</span>
           <h2>Step {path.step} 관계 패널</h2>
         </div>
       </div>
       <div className="pathDetailGrid">
-        <ScatterPanel title={`${path.response ?? "R"} vs ${path.defect}`} data={path.r_vs_d} xLabel={path.response ?? "R"} yLabel={path.defect} />
+        <ScatterPanel title={`${path.response ?? "R"} vs ${path.defect}`} data={path.r_vs_d} xLabel={path.response ?? "R"} yLabel={path.defect} xDescription="Response Value" yDescription="Defect Measurement" />
         <EquipmentPanel title={`${path.equipment ?? "EQ"} vs ${path.defect}`} data={path.eq_vs_d} />
-        <ScatterPanel title={`${path.defect} vs Y`} data={path.d_vs_y} xLabel={path.defect} yLabel="Final Yield Y" />
+        <ScatterPanel title={`${path.defect} vs Y`} data={path.d_vs_y} xLabel={path.defect} yLabel="Final Yield Y" xDescription="Defect Value" yDescription="Final Yield (%)" />
       </div>
-      <div className="interpretationPanel">
-        <strong>5단계 · 엔지니어 해석</strong>
-        <p>{path.interpretation}</p>
-        <span>Correlation does not imply causation · 공식 공정 Spec이 아닌 데이터 기반 분석 결과입니다.</span>
+      <YieldBoxPlot path={path} />
+    </div>
+  );
+}
+
+type BoxSummary = {
+  label: string;
+  count: number;
+  median: number;
+  q1: number;
+  q3: number;
+  whiskerMin: number;
+  whiskerMax: number;
+  outliers: number[];
+  outlierCount: number;
+};
+
+function quantile(values: number[], ratio: number): number {
+  if (values.length === 1) return values[0];
+  const position = (values.length - 1) * ratio;
+  const lower = Math.floor(position);
+  const remainder = position - lower;
+  return values[lower] + (values[lower + 1] - values[lower]) * remainder;
+}
+
+function summarizeValues(label: string, rawValues: number[]): BoxSummary | null {
+  const values = rawValues.filter(Number.isFinite).sort((left, right) => left - right);
+  if (!values.length) return null;
+  const q1 = quantile(values, 0.25);
+  const median = quantile(values, 0.5);
+  const q3 = quantile(values, 0.75);
+  const iqr = q3 - q1;
+  const lowerFence = q1 - 1.5 * iqr;
+  const upperFence = q3 + 1.5 * iqr;
+  const inliers = values.filter((value) => value >= lowerFence && value <= upperFence);
+  const outliers = values.filter((value) => value < lowerFence || value > upperFence);
+  return {
+    label,
+    count: values.length,
+    median,
+    q1,
+    q3,
+    whiskerMin: inliers[0] ?? values[0],
+    whiskerMax: inliers[inliers.length - 1] ?? values[values.length - 1],
+    outliers,
+    outlierCount: outliers.length,
+  };
+}
+
+function numericBoxGroups(
+  points: { x: number; y: number }[] | undefined,
+): BoxSummary[] {
+  const sorted = (points ?? [])
+    .filter(({ x, y }) => Number.isFinite(x) && Number.isFinite(y))
+    .sort((left, right) => left.x - right.x);
+  if (!sorted.length) return [];
+  const groupCount = Math.min(4, sorted.length);
+  return Array.from({ length: groupCount }, (_, groupIndex) => {
+    const start = Math.floor((groupIndex * sorted.length) / groupCount);
+    const end = Math.floor(((groupIndex + 1) * sorted.length) / groupCount);
+    const group = sorted.slice(start, end);
+    const first = group[0]?.x ?? 0;
+    const last = group[group.length - 1]?.x ?? first;
+    return summarizeValues(
+      first === last
+        ? formatNumber(first)
+        : `${formatNumber(first)}–${formatNumber(last)}`,
+      group.map(({ y }) => y),
+    );
+  }).filter((summary): summary is BoxSummary => summary !== null);
+}
+
+function YieldBoxPlot({ path }: { path: RelationshipPath }) {
+  const [tab, setTab] = useState<"R" | "D" | "EQ">("R");
+  const groups = useMemo(() => {
+    if (tab === "R") return numericBoxGroups(path.r_vs_y);
+    if (tab === "D") return numericBoxGroups(path.d_vs_y);
+    return (path.eq_vs_y ?? []).map((item) => ({
+      label: item.equipment,
+      count: item.count,
+      median: item.median,
+      q1: item.q1,
+      q3: item.q3,
+      whiskerMin: item.whisker_min ?? item.minimum,
+      whiskerMax: item.whisker_max ?? item.maximum,
+      outliers: item.outliers ?? [],
+      outlierCount: item.outlier_count ?? item.outliers?.length ?? 0,
+    }));
+  }, [path, tab]);
+  const variable =
+    tab === "R"
+      ? path.response ?? "Response"
+      : tab === "D"
+        ? path.defect
+        : path.equipment ?? "Equipment";
+
+  return (
+    <section className="yieldBoxPlotSection">
+      <div className="boxPlotHeading">
+        <div>
+          <span className="sectionLabel">Yield Distribution</span>
+          <h3>{variable} · Yield Box Plot</h3>
+          <p>Median, IQR, 1.5×IQR whisker, outlier와 표본 수를 실제 분석 데이터로 계산합니다.</p>
+        </div>
+        <SegmentedControl
+          options={[["R", "R"], ["D", "D"], ["EQ", "EQ"]]}
+          value={tab}
+          onChange={(value) => setTab(value as "R" | "D" | "EQ")}
+        />
       </div>
+      {groups.length ? (
+        <>
+          <BoxPlotGraphic groups={groups} variable={variable} />
+          <div className="boxStatGrid">
+            {groups.map((group) => (
+              <article key={group.label} className="boxStatItem">
+                <strong title={group.label}>{group.label}</strong>
+                <span>Median {formatNumber(group.median)}</span>
+                <span>IQR {formatNumber(group.q3 - group.q1)}</span>
+                <span>Outlier {group.outlierCount.toLocaleString()} · n={group.count.toLocaleString()}</span>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="emptyMessage">
+          선택 경로의 {tab} 변수와 Yield를 함께 비교할 유효 데이터가 없습니다.
+        </p>
+      )}
     </section>
   );
 }
 
-function ScatterPanel({ title, data, xLabel, yLabel }: {
-  title: string; data: { x: number; y: number }[]; xLabel: string; yLabel: string;
+function BoxPlotGraphic({
+  groups,
+  variable,
+}: {
+  groups: BoxSummary[];
+  variable: string;
+}) {
+  const allValues = groups.flatMap((group) => [
+    group.whiskerMin,
+    group.whiskerMax,
+    ...group.outliers,
+  ]);
+  const rawMin = Math.min(...allValues);
+  const rawMax = Math.max(...allValues);
+  const padding = rawMax === rawMin ? Math.max(Math.abs(rawMax) * 0.05, 1) : (rawMax - rawMin) * 0.08;
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const width = Math.max(720, groups.length * 110);
+  const height = 330;
+  const plotTop = 24;
+  const plotBottom = 270;
+  const scaleY = (value: number) =>
+    plotBottom - ((value - min) / (max - min)) * (plotBottom - plotTop);
+  const ticks = Array.from({ length: 5 }, (_, index) => min + ((max - min) * index) / 4);
+
+  return (
+    <div className="boxPlotScroll" role="img" aria-label={`${variable}별 Yield box plot`}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth: width }}>
+        <text className="boxAxisTitle" x="16" y="18">Final Yield Y</text>
+        {ticks.map((tick) => {
+          const y = scaleY(tick);
+          return (
+            <g key={tick}>
+              <line className="boxGridLine" x1="66" x2={width - 16} y1={y} y2={y} />
+              <text className="boxTick" x="58" y={y + 4} textAnchor="end">{formatNumber(tick)}</text>
+            </g>
+          );
+        })}
+        {groups.map((group, index) => {
+          const slot = (width - 90) / groups.length;
+          const x = 74 + slot * index + slot / 2;
+          const boxWidth = Math.min(52, slot * 0.58);
+          const tooltip = `${group.label}\nMedian: ${formatNumber(group.median)}\nIQR: ${formatNumber(group.q3 - group.q1)}\nOutlier: ${group.outlierCount}\nn: ${group.count}`;
+          return (
+            <g key={`${group.label}-${index}`}>
+              <title>{tooltip}</title>
+              <line className="boxWhisker" x1={x} x2={x} y1={scaleY(group.whiskerMax)} y2={scaleY(group.whiskerMin)} />
+              <line className="boxWhisker" x1={x - boxWidth / 4} x2={x + boxWidth / 4} y1={scaleY(group.whiskerMax)} y2={scaleY(group.whiskerMax)} />
+              <line className="boxWhisker" x1={x - boxWidth / 4} x2={x + boxWidth / 4} y1={scaleY(group.whiskerMin)} y2={scaleY(group.whiskerMin)} />
+              <rect
+                className="boxShape"
+                x={x - boxWidth / 2}
+                y={scaleY(group.q3)}
+                width={boxWidth}
+                height={Math.max(2, scaleY(group.q1) - scaleY(group.q3))}
+                rx="5"
+              />
+              <line className="boxMedian" x1={x - boxWidth / 2} x2={x + boxWidth / 2} y1={scaleY(group.median)} y2={scaleY(group.median)} />
+              {group.outliers.slice(0, 30).map((outlier, outlierIndex) => (
+                <circle className="boxOutlier" key={`${outlier}-${outlierIndex}`} cx={x} cy={scaleY(outlier)} r="3" />
+              ))}
+              <text className="boxCategory" x={x} y="294" textAnchor="middle">{group.label.length > 14 ? `${group.label.slice(0, 12)}…` : group.label}</text>
+              <text className="boxCount" x={x} y="312" textAnchor="middle">n={group.count}</text>
+            </g>
+          );
+        })}
+        <text className="boxAxisTitle" x={width / 2} y="328" textAnchor="middle">{variable}</text>
+      </svg>
+    </div>
+  );
+}
+
+function ScatterPanel({ title, data, xLabel, yLabel, xDescription, yDescription }: {
+  title: string;
+  data: { x: number; y: number }[];
+  xLabel: string;
+  yLabel: string;
+  xDescription: string;
+  yDescription: string;
 }) {
   return (
     <article className="relationshipPanel">
@@ -790,12 +1144,28 @@ function ScatterPanel({ title, data, xLabel, yLabel }: {
       {data.length ? (
         <div className="detailChart">
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 10, right: 12, bottom: 18, left: 5 }}>
-              <CartesianGrid stroke="rgba(0,0,0,.07)" />
-              <XAxis type="number" dataKey="x" name={xLabel} tick={{ fontSize: 10 }} />
-              <YAxis type="number" dataKey="y" name={yLabel} tick={{ fontSize: 10 }} />
-              <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-              <Scatter data={data} fill="#1769aa" fillOpacity={0.62} />
+            <ScatterChart margin={{ top: 10, right: 18, bottom: 42, left: 28 }}>
+              <CartesianGrid stroke="var(--chart-grid)" />
+              <XAxis
+                type="number"
+                dataKey="x"
+                name={xLabel}
+                tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
+                label={{ value: `${xLabel} (${xDescription})`, position: "insideBottom", offset: -24, fill: "var(--chart-axis)" }}
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                name={yLabel}
+                tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
+                label={{ value: `${yLabel} (${yDescription})`, angle: -90, position: "insideLeft", offset: -16, fill: "var(--chart-axis)" }}
+              />
+              <Tooltip
+                cursor={{ strokeDasharray: "3 3" }}
+                formatter={(value, name) => [formatNumber(Number(value)), String(name)]}
+              />
+              <Legend verticalAlign="top" height={28} />
+              <Scatter name={`${yLabel} by ${xLabel}`} data={data} fill="var(--chart-primary)" fillOpacity={0.72} />
             </ScatterChart>
           </ResponsiveContainer>
         </div>
@@ -813,13 +1183,21 @@ function EquipmentPanel({ title, data }: {
       {data.length ? (
         <div className="detailChart">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 10, right: 12, bottom: 18, left: 5 }}>
-              <CartesianGrid stroke="rgba(0,0,0,.07)" vertical={false} />
-              <XAxis dataKey="equipment" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip />
-              <Bar dataKey="q3" fill="#d8e8f5" name="Q3" />
-              <Bar dataKey="median" fill="#647185" name="중앙값" />
+            <ComposedChart data={data} margin={{ top: 10, right: 18, bottom: 42, left: 28 }}>
+              <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+              <XAxis
+                dataKey="equipment"
+                tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
+                label={{ value: "Equipment category", position: "insideBottom", offset: -24, fill: "var(--chart-axis)" }}
+              />
+              <YAxis
+                tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
+                label={{ value: "Defect value", angle: -90, position: "insideLeft", offset: -16, fill: "var(--chart-axis)" }}
+              />
+              <Tooltip formatter={(value, name) => [formatNumber(Number(value)), String(name)]} />
+              <Legend verticalAlign="top" height={28} />
+              <Bar dataKey="q3" fill="var(--chart-primary-soft)" name="Q3" />
+              <Bar dataKey="median" fill="var(--chart-secondary)" name="중앙값" />
               <Line dataKey="mean" stroke="#a96208" name="평균" />
             </ComposedChart>
           </ResponsiveContainer>
@@ -867,7 +1245,7 @@ function ContributionList({
               type="number"
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 10, fill: "#86868b" }}
+              tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
             />
             <YAxis
               type="category"
@@ -875,7 +1253,7 @@ function ContributionList({
               width={112}
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 10, fill: "#6e6e73" }}
+              tick={{ fontSize: 10, fill: "var(--chart-axis)" }}
               tickFormatter={formatFeatureLabel}
             />
             <Tooltip
@@ -884,9 +1262,11 @@ function ContributionList({
                 "기여도",
               ]}
               contentStyle={{
-                border: "1px solid rgba(0, 0, 0, 0.08)",
-                borderRadius: 12,
-                boxShadow: "0 12px 30px rgba(35, 42, 52, 0.08)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--chart-tooltip)",
+                color: "var(--text-primary)",
+                boxShadow: "var(--shadow-elevated)",
               }}
             />
             <Bar

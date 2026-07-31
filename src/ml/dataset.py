@@ -279,6 +279,9 @@ def _take_split(
 def split_dataset(
     dataset: PreparedDataset,
     random_state: int = RANDOM_STATE,
+    train_ratio: float = 0.64,
+    validation_ratio: float = 0.16,
+    test_ratio: float = 0.2,
 ) -> DatasetSplit:
     row_count = len(dataset.features)
     if row_count < MINIMUM_TRAINING_ROWS:
@@ -286,6 +289,23 @@ def split_dataset(
             "Train/Validation/Test 분리를 위해 유효한 데이터가 "
             f"최소 {MINIMUM_TRAINING_ROWS}행 필요합니다."
         )
+    if (
+        any(
+            ratio <= 0
+            for ratio in (train_ratio, validation_ratio, test_ratio)
+        )
+        or not np.isclose(
+            train_ratio + validation_ratio + test_ratio,
+            1.0,
+        )
+    ):
+        raise ValueError(
+            "Train/Validation/Test 비율은 양수이며 합계가 1이어야 합니다."
+        )
+
+    validation_relative_ratio = validation_ratio / (
+        train_ratio + validation_ratio
+    )
 
     split_warnings: list[str] = []
     groups_are_usable = (
@@ -295,7 +315,7 @@ def split_dataset(
         try:
             test_splitter = GroupShuffleSplit(
                 n_splits=1,
-                test_size=0.2,
+                test_size=test_ratio,
                 random_state=random_state,
             )
             remaining_indices, test_indices = next(
@@ -311,7 +331,7 @@ def split_dataset(
 
             validation_splitter = GroupShuffleSplit(
                 n_splits=1,
-                test_size=0.2,
+                test_size=validation_relative_ratio,
                 random_state=random_state,
             )
             train_relative, validation_relative = next(
@@ -353,12 +373,12 @@ def split_dataset(
     all_indices = list(range(row_count))
     remaining_indices, test_indices = train_test_split(
         all_indices,
-        test_size=0.2,
+        test_size=test_ratio,
         random_state=random_state,
     )
     train_indices, validation_indices = train_test_split(
         remaining_indices,
-        test_size=0.2,
+        test_size=validation_relative_ratio,
         random_state=random_state,
     )
     return _take_split(

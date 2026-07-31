@@ -1,12 +1,8 @@
 "use client";
 
-import {
-  ChangeEvent,
-  DragEvent,
-  useRef,
-  useState,
-} from "react";
+import { useState } from "react";
 
+import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import { preprocessCsv, validateCsv } from "@/lib/api";
@@ -16,13 +12,6 @@ import type {
 } from "@/types/data";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function displayValue(value: unknown): string {
   if (value === null || value === undefined) {
@@ -35,14 +24,12 @@ function displayValue(value: unknown): string {
 }
 
 export default function UploadPage() {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [validation, setValidation] =
     useState<ValidationResponse | null>(null);
   const [preprocessing, setPreprocessing] =
     useState<PreprocessResponse | null>(null);
   const [error, setError] = useState("");
-  const [isDragging, setIsDragging] = useState(false);
   const [loadingAction, setLoadingAction] = useState<
     "validate" | "preprocess" | null
   >(null);
@@ -67,17 +54,6 @@ export default function UploadPage() {
       return;
     }
     setFile(selectedFile);
-  }
-
-  function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
-    selectFile(event.target.files?.[0]);
-    event.target.value = "";
-  }
-
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setIsDragging(false);
-    selectFile(event.dataTransfer.files?.[0]);
   }
 
   async function handleValidate() {
@@ -141,46 +117,12 @@ export default function UploadPage() {
               <p>최대 20MB · utf-8-sig, utf-8, cp949</p>
             </div>
 
-            <div
-              className={`dropZone ${isDragging ? "dragging" : ""}`}
-              onClick={() => inputRef.current?.click()}
-              onDragEnter={(event) => {
-                event.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  inputRef.current?.click();
-                }
-              }}
-              role="button"
-              tabIndex={0}
-            >
-              <input
-                ref={inputRef}
-                className="visuallyHidden"
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleInputChange}
-              />
-              <span className="dropIcon" aria-hidden="true">CSV</span>
-              <strong>CSV 파일을 드래그하거나 클릭하여 선택하세요.</strong>
-              <span>업로드 파일은 서버에 영구 저장되지 않습니다.</span>
-            </div>
-
-            {file && (
-              <div className="selectedFile" aria-live="polite">
-                <div>
-                  <span>선택된 파일</span>
-                  <strong>{file.name}</strong>
-                </div>
-                <span>{formatFileSize(file.size)}</span>
-              </div>
-            )}
+            <CsvUploadPanel
+              id="upload-file"
+              file={file}
+              onFileSelect={selectFile}
+              disabled={loadingAction !== null}
+            />
 
             {error && (
               <div className="messageBox error" role="alert">{error}</div>
@@ -327,6 +269,38 @@ export default function UploadPage() {
               </div>
             </section>
           )}
+
+          <section className="resultCard preprocessingRulesCard" aria-labelledby="preprocessing-rules-title">
+            <div className="sectionHeading compact">
+              <div>
+                <span className="sectionLabel">Data Preparation</span>
+                <h2 id="preprocessing-rules-title">데이터 전처리 규칙</h2>
+              </div>
+              <span className="infoCardIcon" aria-hidden="true">i</span>
+            </div>
+            <ol className="preprocessingRuleList">
+              <li>
+                <strong>이상치 처리</strong>
+                <span>LOT 기준 평균 ± 3σ 범위를 벗어나는 값은 LOT 평균값으로 대체합니다.</span>
+              </li>
+              <li>
+                <strong>결측치 처리</strong>
+                <span>결측값은 해당 LOT의 평균값으로 대체합니다.</span>
+              </li>
+              <li>
+                <strong>데이터 검증</strong>
+                <span>컬럼 구조, 데이터 타입, 결측 여부, 중복 여부를 검사합니다.</span>
+              </li>
+              <li>
+                <strong>전처리 결과</strong>
+                <span>처리가 완료된 데이터를 CSV로 다시 생성합니다.</span>
+              </li>
+              <li>
+                <strong>분석 기준</strong>
+                <span>모든 분석은 전처리가 완료된 데이터를 기준으로 수행합니다.</span>
+              </li>
+            </ol>
+          </section>
         </main>
       </div>
     </div>

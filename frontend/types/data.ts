@@ -103,6 +103,39 @@ export type ModelListResponse = {
   warnings: string[];
 };
 
+export type ModelDetailMetrics = {
+  r2: number | null;
+  rmse: number | null;
+  mse: number | null;
+  mae: number | null;
+};
+
+export type ModelDetail = {
+  success: boolean;
+  model_id: string;
+  model_name: string | null;
+  model_type: string | null;
+  model_version: string | null;
+  created_at: string | null;
+  target: string | null;
+  feature_count: number | null;
+  feature_names: string[];
+  dataset_split: Record<string, number> | null;
+  dataset_rows: Record<string, number> | null;
+  metrics: Record<string, ModelDetailMetrics>;
+  random_seed: number | null;
+  split_method: string | null;
+  preprocessing_version: string | null;
+  preprocessing_config: Record<string, unknown> | null;
+  training_time_seconds: number | null;
+  source_filename: string | null;
+  model_file: string | null;
+  metadata_file: string | null;
+  storage_status: string;
+  champion: boolean | null;
+  sklearn_version: string | null;
+};
+
 export type PredictionThresholds = {
   warning_threshold: number;
   danger_threshold: number;
@@ -261,6 +294,10 @@ export type EquipmentDistribution = {
   q3: number;
   minimum: number;
   maximum: number;
+  whisker_min?: number;
+  whisker_max?: number;
+  outliers?: number[];
+  outlier_count?: number;
   sample_warning: boolean;
 };
 
@@ -283,7 +320,9 @@ export type RelationshipPath = {
   path_status: string;
   interpretation: string;
   r_vs_d: { x: number; y: number }[];
+  r_vs_y?: { x: number; y: number }[];
   eq_vs_d: EquipmentDistribution[];
+  eq_vs_y?: EquipmentDistribution[];
   d_vs_y: { x: number; y: number }[];
 };
 

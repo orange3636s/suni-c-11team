@@ -205,7 +205,81 @@ def list_prediction_models(
             warnings.append(
                 f"{model_id}: 유효하지 않은 모델 메타데이터입니다."
             )
+    models.sort(key=lambda item: str(item["created_at"]), reverse=True)
     return models, warnings
+
+
+def get_prediction_model_detail(
+    model_id: str,
+    model_dir: str | Path = DEFAULT_MODEL_DIR,
+) -> dict[str, Any]:
+    model_path, metadata_path = _model_paths(model_id, model_dir)
+    if not metadata_path.is_file():
+        raise InferenceInputError("존재하지 않는 모델 ID입니다.")
+    try:
+        metadata = load_metadata(metadata_path)
+    except (OSError, ValueError) as exc:
+        raise InferenceInputError(
+            "유효하지 않은 모델 메타데이터입니다."
+        ) from exc
+
+    feature_names = metadata.get("feature_columns")
+    if not isinstance(feature_names, list):
+        feature_names = []
+    metrics_source = metadata.get("metrics")
+    metrics: dict[str, dict[str, Any]] = {}
+    if isinstance(metrics_source, dict):
+        for split_name in ("train", "validation", "test"):
+            split_metrics = metrics_source.get(split_name)
+            if isinstance(split_metrics, dict):
+                metrics[split_name] = {
+                    key: split_metrics.get(key)
+                    for key in ("r2", "rmse", "mse", "mae")
+                }
+
+    dataset_split = metadata.get("dataset_split")
+    dataset_rows = metadata.get("dataset_rows")
+    preprocessing_config = metadata.get("preprocessing_config")
+    return {
+        "model_id": model_id,
+        "model_name": metadata.get("model_name"),
+        "model_type": metadata.get("model_type"),
+        "model_version": metadata.get("model_version"),
+        "created_at": metadata.get("created_at"),
+        "target": metadata.get("target"),
+        "feature_count": metadata.get("feature_count", len(feature_names)),
+        "feature_names": feature_names,
+        "dataset_split": (
+            dataset_split if isinstance(dataset_split, dict) else None
+        ),
+        "dataset_rows": (
+            dataset_rows if isinstance(dataset_rows, dict) else None
+        ),
+        "metrics": metrics,
+        "random_seed": metadata.get("random_state"),
+        "split_method": metadata.get("split_method"),
+        "preprocessing_version": metadata.get("preprocessing_version"),
+        "preprocessing_config": (
+            preprocessing_config
+            if isinstance(preprocessing_config, dict)
+            else None
+        ),
+        "training_time_seconds": metadata.get("training_time_seconds"),
+        "source_filename": metadata.get("source_filename"),
+        "model_file": metadata.get("model_file", model_path.name),
+        "metadata_file": metadata.get(
+            "metadata_file",
+            metadata_path.name,
+        ),
+        "storage_status": (
+            "available" if model_path.is_file() else "model_file_missing"
+        ),
+        "champion": metadata.get("champion"),
+        "sklearn_version": (
+            metadata.get("sklearn_version")
+            or metadata.get("scikit_learn_version")
+        ),
+    }
 
 
 def prepare_inference_features(

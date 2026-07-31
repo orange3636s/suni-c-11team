@@ -130,7 +130,7 @@ export default function Home() {
             </dl>
           </section>
 
-          <section aria-labelledby="summary-title">
+          <section className="overviewKpiSection" aria-labelledby="summary-title">
             <div className="sectionHeading">
               <div>
                 <span className="sectionLabel">운영 요약</span>
@@ -143,21 +143,6 @@ export default function Home() {
                 <StatusCard key={card.label} {...card} />
               ))}
             </div>
-          </section>
-
-          <section className="overviewLinks quickActions" aria-label="주요 기능 바로가기">
-            {[
-              ["데이터 업로드", "/upload"],
-              ["모델 학습", "/training"],
-              ["수율 예측", "/prediction"],
-              ["원인 분석", "/root-cause"],
-              ["분석 보고서", "/report"],
-              ["자동화 상태", "/automation"],
-            ].map(([label, href]) => (
-              <a className="button secondary" href={href} key={href}>
-                {label}
-              </a>
-            ))}
           </section>
 
           <section className="dashboardAnalysisGrid" aria-label="분석 시각화">

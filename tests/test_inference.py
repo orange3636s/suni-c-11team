@@ -11,6 +11,7 @@ from fastapi import HTTPException, UploadFile
 import api.routes.data as data_routes
 from src.ml.dataset import prepare_dataset, split_dataset
 from src.ml.inference import (
+    get_prediction_model_detail,
     InferenceInputError,
     list_prediction_models,
     load_prediction_model,
@@ -95,6 +96,102 @@ def test_models_api_returns_valid_models(
 
     assert response.success is True
     assert response.models[0].model_id == inference_environment["model_id"]
+
+
+def test_model_list_is_sorted_by_created_at_descending(
+    inference_environment,
+) -> None:
+    model_dir = inference_environment["model_dir"]
+    source_id = inference_environment["model_id"]
+    source_metadata = json.loads(
+        (model_dir / f"{source_id}.json").read_text(encoding="utf-8")
+    )
+    older_id = "Y_older_model_20200101_000000"
+    older_metadata = {**source_metadata, "created_at": "2020-01-01T00:00:00+00:00"}
+    older_json = model_dir / f"{older_id}.json"
+    older_model = model_dir / f"{older_id}.joblib"
+    older_json.write_text(
+        json.dumps(older_metadata),
+        encoding="utf-8",
+    )
+    older_model.write_bytes(
+        (model_dir / f"{source_id}.joblib").read_bytes()
+    )
+    try:
+        models, _ = list_prediction_models(model_dir)
+    finally:
+        older_json.unlink()
+        older_model.unlink()
+
+    assert models[0]["model_id"] == source_id
+    assert models[-1]["model_id"] == older_id
+
+
+def test_model_detail_handles_legacy_missing_optional_metadata(
+    inference_environment,
+) -> None:
+    detail = get_prediction_model_detail(
+        inference_environment["model_id"],
+        inference_environment["model_dir"],
+    )
+
+    assert detail["model_id"] == inference_environment["model_id"]
+    assert detail["dataset_split"] is None
+    assert detail["dataset_rows"] is None
+    assert detail["training_time_seconds"] is None
+    assert detail["metrics"]["test"]["mse"] is None
+    assert detail["storage_status"] == "available"
+
+
+def test_model_detail_api_returns_optional_fields(
+    inference_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        data_routes,
+        "MODEL_DIR",
+        inference_environment["model_dir"],
+    )
+
+    response = data_routes.get_model_detail(
+        inference_environment["model_id"]
+    )
+
+    assert response.success is True
+    assert response.model_id == inference_environment["model_id"]
+    assert response.metrics["test"].mse is None
+
+
+def test_model_detail_api_rejects_missing_model(
+    inference_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        data_routes,
+        "MODEL_DIR",
+        inference_environment["model_dir"],
+    )
+
+    with pytest.raises(HTTPException) as error:
+        data_routes.get_model_detail("missing-model")
+
+    assert error.value.status_code == 404
+
+
+def test_empty_model_directory_returns_empty_list() -> None:
+    empty_dir = (
+        Path(__file__).parent
+        / ".tmp_inference_models"
+        / f"empty_{uuid4().hex}"
+    )
+    empty_dir.mkdir(parents=True)
+    try:
+        models, warnings = list_prediction_models(empty_dir)
+    finally:
+        empty_dir.rmdir()
+
+    assert models == []
+    assert warnings == []
 
 
 def test_broken_model_metadata_is_skipped(inference_environment) -> None:

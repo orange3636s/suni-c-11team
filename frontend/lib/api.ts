@@ -1,6 +1,7 @@
 import type {
   ExplainOptions,
   ExplainResponse,
+  ModelDetail,
   ModelListResponse,
   PreprocessResponse,
   PredictionResponse,
@@ -108,10 +109,14 @@ export function preprocessCsv(file: File): Promise<PreprocessResponse> {
 export async function trainModel(
   file: File,
   target: string,
+  split: { train: number; validation: number; test: number },
 ): Promise<TrainResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("target", target);
+  formData.append("train_ratio", String(split.train));
+  formData.append("validation_ratio", String(split.validation));
+  formData.append("test_ratio", String(split.test));
 
   let response: Response;
   try {
@@ -150,6 +155,29 @@ export async function getModels(): Promise<ModelListResponse> {
     throw new Error(await getErrorMessage(response));
   }
   return response.json() as Promise<ModelListResponse>;
+}
+
+export async function getModelDetail(modelId: string): Promise<ModelDetail> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiBaseUrl()}/api/models/${encodeURIComponent(modelId)}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      },
+    );
+  } catch (error) {
+    rethrowApiConfigurationError(error);
+    throw new Error(
+      "모델 상세 정보를 불러올 수 없습니다. 백엔드 상태를 확인해 주세요.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+  return response.json() as Promise<ModelDetail>;
 }
 
 function predictionFormData(

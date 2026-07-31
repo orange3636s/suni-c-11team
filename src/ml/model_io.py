@@ -49,6 +49,11 @@ def save_model_bundle(
     metrics: dict[str, dict[str, float | None]],
     random_state: int,
     split_method: str,
+    dataset_split: dict[str, float] | None = None,
+    dataset_rows: dict[str, int] | None = None,
+    training_time_seconds: float | None = None,
+    source_filename: str | None = None,
+    preprocessing_config: dict[str, Any] | None = None,
     model_dir: str | Path = DEFAULT_MODEL_DIR,
     created_at: datetime | None = None,
 ) -> tuple[Path, Path, dict[str, Any]]:
@@ -60,19 +65,37 @@ def save_model_bundle(
     model_path = output_dir / f"{base_name}.joblib"
     metadata_path = output_dir / f"{base_name}.json"
 
-    metadata = to_json_safe(
-        {
+    metadata_values: dict[str, Any] = {
+            "model_id": base_name,
             "target": target,
             "model_name": model_name,
+            "model_type": model_name,
             "feature_columns": feature_columns,
+            "feature_count": len(feature_columns),
             "created_at": timestamp.isoformat(),
             "metrics": metrics,
             "random_state": random_state,
             "split_method": split_method,
+            "model_file": model_path.name,
+            "metadata_file": metadata_path.name,
             "scikit_learn_version": sklearn.__version__,
             "sklearn_version": sklearn.__version__,
         }
+    optional_metadata = {
+        "dataset_split": dataset_split,
+        "dataset_rows": dataset_rows,
+        "training_time_seconds": training_time_seconds,
+        "source_filename": source_filename,
+        "preprocessing_config": preprocessing_config,
+    }
+    metadata_values.update(
+        {
+            key: value
+            for key, value in optional_metadata.items()
+            if value is not None
+        }
     )
+    metadata = to_json_safe(metadata_values)
     joblib.dump(model, model_path)
     metadata_path.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),

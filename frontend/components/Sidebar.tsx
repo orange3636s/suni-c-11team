@@ -1,5 +1,14 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+
+import {
+  type ThemePreference,
+  useTheme,
+} from "@/components/ThemeProvider";
+import { getApiHealth, getModels } from "@/lib/api";
 
 const navigationItems = [
   { label: "개요", href: "/", icon: "overview" },
@@ -24,7 +33,98 @@ type SidebarProps = {
     | "자동화 상태";
 };
 
+type MenuStatus = {
+  tone: "green" | "yellow" | "gray" | "red";
+  label: string;
+};
+
 export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
+  const { theme, setTheme } = useTheme();
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<{
+    api: "loading" | "ready" | "error";
+    models: "loading" | "ready" | "empty" | "error";
+  }>({ api: "loading", models: "loading" });
+  const themeMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    void Promise.allSettled([getApiHealth(), getModels()]).then(
+      ([healthResult, modelsResult]) => {
+        if (!mounted) return;
+        setSystemStatus({
+          api:
+            healthResult.status === "fulfilled" &&
+            healthResult.value.status === "ok"
+              ? "ready"
+              : "error",
+          models:
+            modelsResult.status === "rejected"
+              ? "error"
+              : modelsResult.value.models.length
+                ? "ready"
+                : "empty",
+        });
+      },
+    );
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+
+    function closeThemeMenu(event: MouseEvent) {
+      if (!themeMenuRef.current?.contains(event.target as Node)) {
+        setThemeMenuOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setThemeMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", closeThemeMenu);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeThemeMenu);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [themeMenuOpen]);
+
+  function getMenuStatus(label: string): MenuStatus {
+    if (systemStatus.api === "loading") {
+      return { tone: "gray", label: "상태 확인 중" };
+    }
+    if (systemStatus.api === "error") {
+      return { tone: "red", label: "API Error" };
+    }
+    if (label === "분석 보고서") {
+      return { tone: "gray", label: "아직 실행 안함" };
+    }
+    if (label === "모델 학습") {
+      if (systemStatus.models === "loading") {
+        return { tone: "yellow", label: "모델 확인 중" };
+      }
+      if (systemStatus.models === "error") {
+        return { tone: "red", label: "Model Error" };
+      }
+      if (systemStatus.models === "empty") {
+        return { tone: "yellow", label: "Model 없음" };
+      }
+      return { tone: "green", label: "Model Ready" };
+    }
+    if (["수율 예측", "원인 분석"].includes(label)) {
+      return systemStatus.models === "ready"
+        ? { tone: "green", label: "Ready" }
+        : { tone: "yellow", label: "Model 필요" };
+    }
+    return { tone: "green", label: "Ready" };
+  }
+
   return (
     <aside className="sidebar">
       <Link
@@ -47,6 +147,7 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
         <ul className="navigationList">
           {navigationItems.map((item) => {
             const isActive = item.label === activeItem;
+            const status = getMenuStatus(item.label);
             return (
               <li key={item.label}>
                 <Link
@@ -56,6 +157,12 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
                 >
                   <NavIcon name={item.icon} />
                   <span>{item.label}</span>
+                  <span
+                    className={`menuStatusDot ${status.tone}`}
+                    data-tooltip={status.label}
+                    aria-label={status.label}
+                    role="status"
+                  />
                 </Link>
               </li>
             );
@@ -63,14 +170,50 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
         </ul>
       </nav>
 
-      <div className="sidebarFooter">
-        <span className="sidebarStatusIcon" aria-hidden="true">
-          <span />
-        </span>
-        <div>
-          <strong>Analysis workspace</strong>
-          <span>API와 모델 상태는 상단에서 확인</span>
-        </div>
+      <div className="sidebarFooter" ref={themeMenuRef}>
+        {themeMenuOpen && (
+          <div className="themeMenu" role="dialog" aria-label="Theme 선택">
+            <strong>Theme</strong>
+            <div className="themeOptions" role="radiogroup">
+              {(
+                [
+                  ["system", "System"],
+                  ["light", "Light"],
+                  ["dark", "Dark"],
+                ] as [ThemePreference, string][]
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={theme === value ? "active" : ""}
+                  role="radio"
+                  aria-checked={theme === value}
+                  onClick={() => {
+                    setTheme(value);
+                    setThemeMenuOpen(false);
+                  }}
+                >
+                  <span>{label}</span>
+                  {theme === value && <span aria-hidden="true">✓</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <button
+          className="themeTriggerArea"
+          type="button"
+          aria-label="Theme 선택"
+          aria-haspopup="dialog"
+          aria-expanded={themeMenuOpen}
+          onClick={() => setThemeMenuOpen((open) => !open)}
+        >
+          <span className="themeTrigger" aria-hidden="true">N</span>
+          <span className="sidebarFooterCopy">
+            <strong>Theme</strong>
+            <span>{theme[0].toUpperCase() + theme.slice(1)}</span>
+          </span>
+        </button>
       </div>
     </aside>
   );

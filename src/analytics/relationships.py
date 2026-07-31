@@ -346,16 +346,34 @@ def _equipment_groups(
     groups: list[dict[str, Any]] = []
     for name, group in frame.groupby("equipment", observed=True):
         values = group["value"]
+        q1 = float(values.quantile(0.25))
+        q3 = float(values.quantile(0.75))
+        iqr = q3 - q1
+        lower_fence = q1 - 1.5 * iqr
+        upper_fence = q3 + 1.5 * iqr
+        inliers = values[
+            (values >= lower_fence) & (values <= upper_fence)
+        ]
+        outliers = values[
+            (values < lower_fence) | (values > upper_fence)
+        ]
         groups.append(
             {
                 "equipment": str(name),
                 "count": int(len(values)),
                 "mean": float(values.mean()),
                 "median": float(values.median()),
-                "q1": float(values.quantile(0.25)),
-                "q3": float(values.quantile(0.75)),
+                "q1": q1,
+                "q3": q3,
                 "minimum": float(values.min()),
                 "maximum": float(values.max()),
+                "whisker_min": float(inliers.min()),
+                "whisker_max": float(inliers.max()),
+                "outliers": [
+                    float(value)
+                    for value in outliers.head(30).tolist()
+                ],
+                "outlier_count": int(len(outliers)),
                 "sample_warning": len(values) < 10,
             }
         )
@@ -511,7 +529,22 @@ def _relationship_paths(
                     if response
                     else []
                 ),
+                "r_vs_y": (
+                    _sample_points(
+                        dataframe[response], dataframe[target]
+                    )
+                    if response
+                    else []
+                ),
                 "eq_vs_d": eq_groups,
+                "eq_vs_y": (
+                    _equipment_groups(
+                        dataframe[equipment], dataframe[target]
+                    )
+                    if equipment
+                    and _is_categorical_equipment(dataframe[equipment])
+                    else []
+                ),
                 "d_vs_y": _sample_points(
                     dataframe[defect], dataframe[target]
                 ),

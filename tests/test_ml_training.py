@@ -224,6 +224,30 @@ def test_train_validation_test_split_ratio(
     }
 
 
+def test_custom_train_validation_test_split_ratio(
+    training_dataframe: pd.DataFrame,
+) -> None:
+    dataset = prepare_dataset(training_dataframe)
+
+    split = split_dataset(
+        dataset,
+        train_ratio=0.7,
+        validation_ratio=0.15,
+        test_ratio=0.15,
+    )
+
+    expected = {
+        "train_rows": 70,
+        "validation_rows": 15,
+        "test_rows": 15,
+    }
+    assert sum(split.row_counts.values()) == 100
+    assert all(
+        abs(split.row_counts[key] - value) <= 4
+        for key, value in expected.items()
+    )
+
+
 def test_same_lot_is_not_shared_between_splits(
     prepared_training_data,
 ) -> None:
@@ -379,7 +403,21 @@ def test_train_api_response_is_json_serializable(
     assert response.split.group_split_used is True
     assert json.loads(serialized)["metrics"]["test"]["rmse"] is not None
     assert (model_output_dir / response.artifacts.model_file).exists()
-    assert (model_output_dir / response.artifacts.metadata_file).exists()
+    metadata_path = model_output_dir / response.artifacts.metadata_file
+    assert metadata_path.exists()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["dataset_split"] == {
+        "train": 0.64,
+        "validation": 0.16,
+        "test": 0.2,
+    }
+    assert metadata["dataset_rows"] == {
+        "train": response.split.train_rows,
+        "validation": response.split.validation_rows,
+        "test": response.split.test_rows,
+    }
+    assert metadata["source_filename"] == "training.csv"
+    assert metadata["training_time_seconds"] >= 0
 
 
 def test_train_api_succeeds_with_fixture_csv(
