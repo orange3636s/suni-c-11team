@@ -43,6 +43,7 @@ from api.schemas.data import (
     ValidationResponse,
     ValidationResult,
 )
+from api.settings import settings
 from src.data_validation import load_data_schema, validate_dataframe
 from src.automation.analyzer import build_automation_response
 from src.ml.dataset import (
@@ -51,7 +52,7 @@ from src.ml.dataset import (
     prepare_dataset,
     split_dataset,
 )
-from src.ml.model_io import DEFAULT_MODEL_DIR, save_model_bundle
+from src.ml.model_io import save_model_bundle
 from src.ml.inference import (
     DEFAULT_DANGER_THRESHOLD,
     DEFAULT_WARNING_THRESHOLD,
@@ -79,9 +80,9 @@ from src.reporting.report_builder import build_report
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["data"])
 
-MAX_FILE_SIZE = 20 * 1024 * 1024
+MAX_FILE_SIZE = settings.max_upload_size_bytes
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
-MODEL_DIR = DEFAULT_MODEL_DIR
+MODEL_DIR = settings.model_dir
 
 
 def _duplicate_names(values: list[str]) -> list[str]:
@@ -119,7 +120,10 @@ async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="파일 크기는 20MB 이하여야 합니다.",
+            detail=(
+                "파일 크기는 "
+                f"{settings.max_upload_size_mb}MB 이하여야 합니다."
+            ),
         )
     if not content:
         raise HTTPException(

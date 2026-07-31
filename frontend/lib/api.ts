@@ -13,10 +13,34 @@ import type {
 
 export type ApiHealth = {
   status: string;
+  service?: string;
+  environment?: string;
+  version?: string;
+  model_directory_ready?: boolean;
 };
 
 function getApiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
+  const configuredUrl =
+    process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/$/, "");
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+  if (process.env.NODE_ENV === "development") {
+    return "http://127.0.0.1:8000";
+  }
+  throw new Error(
+    "NEXT_PUBLIC_API_BASE_URL이 설정되지 않았습니다. " +
+      "Vercel 프로젝트 환경변수에 Render API URL을 설정한 뒤 재배포해 주세요.",
+  );
+}
+
+function rethrowApiConfigurationError(error: unknown): void {
+  if (
+    error instanceof Error &&
+    error.message.startsWith("NEXT_PUBLIC_API_BASE_URL")
+  ) {
+    throw error;
+  }
 }
 
 async function getErrorMessage(response: Response): Promise<string> {
@@ -94,7 +118,8 @@ export async function trainModel(
       method: "POST",
       body: formData,
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error(
       "FastAPI 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
     );
@@ -114,7 +139,8 @@ export async function getModels(): Promise<ModelListResponse> {
       method: "GET",
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error(
       "FastAPI 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
     );
@@ -155,7 +181,8 @@ export async function predictCsv(
       method: "POST",
       body: predictionFormData(file, modelId, thresholds),
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error(
       "예측 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
     );
@@ -177,7 +204,8 @@ export async function downloadPredictions(
       method: "POST",
       body: predictionFormData(file, modelId, thresholds),
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error(
       "예측 다운로드 서버에 연결할 수 없습니다.",
     );
@@ -213,7 +241,8 @@ export async function explainCsv(
       method: "POST",
       body: explanationFormData(file, modelId, options),
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error(
       "원인 분석 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
     );
@@ -235,7 +264,8 @@ export async function downloadExplanation(
       method: "POST",
       body: explanationFormData(file, modelId, options),
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error("원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {
@@ -276,7 +306,8 @@ export async function generateReport(
       method: "POST",
       body: reportFormData(file, modelId, options),
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error(
       "분석 보고서 서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.",
     );
@@ -298,7 +329,8 @@ export async function downloadReport(
       method: "POST",
       body: reportFormData(file, modelId, options),
     });
-  } catch {
+  } catch (error) {
+    rethrowApiConfigurationError(error);
     throw new Error("HTML 보고서 다운로드 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {

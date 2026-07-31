@@ -51,7 +51,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 쉼표로 구분한 값을 설정한다.
 
 ```env
-CORS_ALLOWED_ORIGINS=https://example.com,https://dashboard.example.com
+FRONTEND_ORIGINS=https://example.com,https://dashboard.example.com
 ```
 
 ## 실행 방법
@@ -303,3 +303,49 @@ NEXT_PUBLIC_N8N_WEBHOOK_URL=http://localhost:5678/webhook/manufacturing-ai-analy
 credential 설정이 필요하다. 운영 전에는 HTTPS Webhook URL, API 인증,
 n8n 실행 데이터 보존 정책과 Vercel·Render 또는 별도 배포 환경 설정이
 추가로 필요하다.
+
+## 운영 배포 구성
+
+운영 배포는 다음 구조를 기준으로 한다.
+
+```text
+Vercel Next.js (frontend/)
+  → Render FastAPI (저장소 루트, api.main:app)
+  → models/ 기반 예측·SHAP·보고서
+
+n8n Cloud 또는 별도 n8n
+  → Render POST /api/analyze
+  → n8n Slack credential을 이용한 알림
+```
+
+백엔드 환경변수는 `.env.example`, 프런트 예시는
+`frontend/.env.local.example`을 참고한다. 실제 값은 배포 플랫폼의
+환경변수 화면에 설정하고 저장소에 넣지 않는다.
+
+- FastAPI: `APP_ENV`, `FRONTEND_ORIGINS`, `MODEL_DIR`,
+  `MAX_UPLOAD_SIZE_MB`, `LOG_LEVEL`
+- Next.js: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_N8N_WEBHOOK_URL`
+- n8n: `FASTAPI_BASE_URL`, 필요 시 `SLACK_CHANNEL_ID`
+
+Render의 Root Directory는 저장소 루트이고 시작 명령은
+`uvicorn api.main:app --host 0.0.0.0 --port $PORT`이다. Vercel의 Root
+Directory는 `frontend`이다. 자세한 절차는 다음 문서를 따른다.
+
+- `docs/VERCEL_DEPLOYMENT_GUIDE.md`
+- `docs/RENDER_DEPLOYMENT_GUIDE.md`
+- `docs/N8N_WORKFLOW_GUIDE.md`
+- `docs/SLACK_INTEGRATION_GUIDE.md`
+- `docs/DEPLOYMENT_CHECKLIST.md`
+
+## 모델 파일 운영 정책
+
+현재 초기 모델 `.joblib`은 약 540KB이고 JSON 메타데이터에는 모델 설정과
+feature 목록이 들어 있다. 파일 크기가 작고 현재 확인된 비밀값은 없어
+이 초기 모델 한 쌍만 배포용 저장소에 포함하는 정책이다. 새 학습 모델은
+`.gitignore`로 기본 제외한다.
+
+Render의 로컬 파일 시스템은 영구 모델 저장소로 간주하지 않는다. 운영
+중 새로 학습한 모델은 재배포나 인스턴스 재생성 때 유실될 수 있다.
+장기적으로는 Persistent Disk 또는 외부 Object Storage를 연결해야 한다.
+모델을 새로 저장소에 포함하기 전에는 크기, 학습 데이터 유출 가능성,
+직렬화 파일 신뢰성을 다시 검토한다.

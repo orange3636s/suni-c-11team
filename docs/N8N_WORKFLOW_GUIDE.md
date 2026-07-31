@@ -64,6 +64,31 @@ FASTAPI_BASE_URL=http://host.docker.internal:8000
 운영 환경에서는 실제 HTTPS FastAPI 기본 주소로 교체하되 워크플로우 JSON에
 운영 URL을 직접 하드코딩하지 않는다.
 
+n8n Cloud에서는 다음과 같이 Render의 공개 HTTPS origin을 n8n 환경
+설정에 등록한다.
+
+```env
+FASTAPI_BASE_URL=https://your-api.onrender.com
+```
+
+n8n Cloud의 `127.0.0.1` 또는 `localhost`는 사용자 PC가 아니라 n8n Cloud
+실행 환경 자신을 가리킨다. 따라서 사용자 PC에서 실행 중인 FastAPI에는
+접근할 수 없으며 운영 Render URL을 사용해야 한다.
+
+## Test URL과 Production URL
+
+- Test URL의 경로는 `/webhook-test/manufacturing-ai-analysis`이며 편집
+  화면에서 **Listen for test event**를 실행하는 동안만 요청을 받는다.
+- Production URL의 경로는 `/webhook/manufacturing-ai-analysis`이며
+  workflow를 활성화한 뒤 지속적으로 요청을 받는다.
+- workflow 활성화 전에는 Production URL이 정상 처리되지 않을 수 있고,
+  활성화 후 운영 호출에는 Test URL을 사용하면 안 된다.
+
+각 n8n 환경의 실제 host는 다르므로 n8n 화면에 표시된 URL을 복사하고,
+Vercel의 `NEXT_PUBLIC_N8N_WEBHOOK_URL`에는 활성화된 Production URL만
+설정한다. Webhook URL은 접근 경로 자체가 민감할 수 있으므로 저장소에
+실제 값을 기록하지 않는다.
+
 ## 요청 필드
 
 n8n Webhook은 다음 multipart 필드를 받는다.

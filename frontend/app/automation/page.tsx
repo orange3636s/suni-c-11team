@@ -88,7 +88,7 @@ export default function AutomationPage() {
             <pre>
               <code>
                 NEXT_PUBLIC_N8N_WEBHOOK_URL=
-                http://localhost:5678/webhook/manufacturing-ai-analysis
+                https://your-n8n.example/webhook/manufacturing-ai-analysis
               </code>
             </pre>
             {webhookUrl && (

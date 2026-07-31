@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Virtual Environment
 .venv/
@@ -10,9 +11,17 @@ __pycache__/
 
 # Environment
 .env
+.env.*
+!.env.example
+!frontend/.env.local.example
+frontend/.env.local
 
 # Models
 models/*.pkl
+models/*.joblib
+models/*.json
+!models/Y_hist_gradient_boosting_regressor_20260730_230445.joblib
+!models/Y_hist_gradient_boosting_regressor_20260730_230445.json
 
 # Data
 data/raw/*
@@ -27,3 +36,13 @@ data/results/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend build and dependencies
+frontend/node_modules/
+frontend/.next/
+
+# Runtime files
+*.log
+*.tmp
+tmp/
+uploads/

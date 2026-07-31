@@ -11,8 +11,10 @@ import joblib
 import numpy as np
 import sklearn
 
+from api.settings import settings
 
-DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
+
+DEFAULT_MODEL_DIR = settings.model_dir
 
 
 def to_json_safe(value: Any) -> Any:
