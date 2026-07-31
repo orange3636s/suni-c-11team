@@ -65,9 +65,14 @@ const pipelineSteps = [
     status: "구현 완료" as const,
   },
   {
-    title: "n8n 알림",
-    description: "검증된 위험 신호의 알림을 자동화할 예정입니다.",
-    status: "다음 단계" as const,
+    title: "n8n Automation",
+    description: "Webhook으로 통합 분석과 위험 분기를 자동 실행합니다.",
+    status: "구현 완료" as const,
+  },
+  {
+    title: "Slack Alert",
+    description: "실제 알림 사용을 위해 Slack credential 설정이 필요합니다.",
+    status: "설정 필요" as const,
   },
 ];
 
@@ -116,6 +121,7 @@ export default function Home() {
               ["수율 예측", "/prediction"],
               ["원인 분석", "/root-cause"],
               ["분석 보고서", "/report"],
+              ["자동화 상태", "/automation"],
             ].map(([label, href]) => (
               <a className="button secondary" href={href} key={href}>
                 {label}

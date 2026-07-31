@@ -1,0 +1,493 @@
+{
+  "name": "제조 공정 예측 및 불량분석 AI 자동화",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "manufacturing-ai-analysis",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "id": "webhook-manufacturing-analysis",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        120
+      ],
+      "webhookId": "manufacturing-ai-analysis"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\nconst body = item.json.body ?? item.json;\nconst binary = item.binary?.data;\nconst filename = binary?.fileName ?? '';\nconst modelId = String(body.model_id ?? '').trim();\nconst warning = Number(body.warning_threshold ?? 95);\nconst danger = Number(body.danger_threshold ?? 90);\nconst maxRows = Number(body.max_rows ?? 500);\nconst topN = Number(body.top_n ?? 20);\nconst perWaferTopN = Number(body.per_wafer_top_n ?? 5);\nlet error = '';\nif (!binary) error = 'binary.data CSV 파일이 필요합니다.';\nelse if (!filename.toLowerCase().endsWith('.csv')) error = 'CSV(.csv) 파일만 전송할 수 있습니다.';\nelse if (!modelId) error = 'model_id가 필요합니다.';\nelse if (![warning, danger, maxRows, topN, perWaferTopN].every(Number.isFinite)) error = 'threshold와 분석 옵션은 숫자여야 합니다.';\nelse if (warning <= danger) error = 'warning_threshold는 danger_threshold보다 커야 합니다.';\nelse if (maxRows < 1 || maxRows > 1000) error = 'max_rows는 1부터 1000 사이여야 합니다.';\nelse if (topN < 1 || topN > 100) error = 'top_n은 1부터 100 사이여야 합니다.';\nreturn [{ json: { valid: !error, error, error_type: 'validation_error', model_id: modelId, warning_threshold: warning, danger_threshold: danger, max_rows: maxRows, top_n: topN, per_wafer_top_n: perWaferTopN, include_report: body.include_report ?? true }, binary: item.binary }];"
+      },
+      "id": "validate-input-code",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "input-valid-condition",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "input-valid-if",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -680,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\nreturn [{ json: { model_id: item.json.model_id, warning_threshold: item.json.warning_threshold, danger_threshold: item.json.danger_threshold, max_rows: item.json.max_rows, top_n: item.json.top_n, per_wafer_top_n: item.json.per_wafer_top_n, include_report: item.json.include_report }, binary: item.binary }];"
+      },
+      "id": "prepare-request-code",
+      "name": "Prepare Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FASTAPI_BASE_URL + '/api/analyze' }}",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model_id",
+              "value": "={{ $json.model_id }}"
+            },
+            {
+              "name": "warning_threshold",
+              "value": "={{ $json.warning_threshold }}"
+            },
+            {
+              "name": "danger_threshold",
+              "value": "={{ $json.danger_threshold }}"
+            },
+            {
+              "name": "max_rows",
+              "value": "={{ $json.max_rows }}"
+            },
+            {
+              "name": "top_n",
+              "value": "={{ $json.top_n }}"
+            },
+            {
+              "name": "per_wafer_top_n",
+              "value": "={{ $json.per_wafer_top_n }}"
+            },
+            {
+              "name": "include_report",
+              "value": "={{ $json.include_report }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "fastapi-analyze-http",
+      "name": "HTTP Request - FastAPI Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        20
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "analysis-success-condition",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "analysis-success-if",
+      "name": "Analysis Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -20,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "alert-required-condition",
+              "leftValue": "={{ $json.alert.required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "alert-required-if",
+      "name": "Alert Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        200,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "danger-severity-condition",
+              "leftValue": "={{ $json.alert.severity }}",
+              "rightValue": "danger",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "danger-warning-if",
+      "name": "Danger or Warning?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        420,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID || '' }}",
+          "mode": "id"
+        },
+        "text": "=🚨 제조 공정 위험 알림\n\n파일: {{ $json.filename }}\n분석 Wafer: {{ $json.summary.total_wafers }}\n위험 Wafer: {{ $json.summary.danger_count }}\n주의 Wafer: {{ $json.summary.warning_count }}\n평균 예측 수율: {{ $json.summary.average_predicted_yield }}%\n최저 예측 수율: {{ $json.summary.minimum_predicted_yield }}%\n\n{{ $json.automation_message.top_cause }}\n\n분석 ID: {{ $json.analysis_id }}\n\nSHAP은 실제 인과관계가 아닌 모델 예측 기여도입니다.",
+        "otherOptions": {}
+      },
+      "id": "slack-danger",
+      "name": "Slack Alert - Danger",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        -240
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID || '' }}",
+          "mode": "id"
+        },
+        "text": "=⚠️ 제조 공정 주의 알림\n\n파일: {{ $json.filename }}\n위험 Wafer는 없지만 주의 Wafer {{ $json.summary.warning_count }}개가 탐지되었습니다.\n평균 예측 수율: {{ $json.summary.average_predicted_yield }}%\n\n{{ $json.automation_message.top_cause }}\n분석 ID: {{ $json.analysis_id }}\n\nSHAP은 인과관계가 아니라 모델 예측 기여도입니다.",
+        "otherOptions": {}
+      },
+      "id": "slack-warning",
+      "name": "Slack Alert - Warning",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        -80
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all();"
+      },
+      "id": "no-alert-code",
+      "name": "No Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: $('HTTP Request - FastAPI Analyze').first().json.success, analysis_id: $('HTTP Request - FastAPI Analyze').first().json.analysis_id, summary: $('HTTP Request - FastAPI Analyze').first().json.summary, alert: $('HTTP Request - FastAPI Analyze').first().json.alert, top_findings: $('HTTP Request - FastAPI Analyze').first().json.top_findings, top_risk_wafers: $('HTTP Request - FastAPI Analyze').first().json.top_risk_wafers, top_features: $('HTTP Request - FastAPI Analyze').first().json.top_features, warnings: $('HTTP Request - FastAPI Analyze').first().json.warnings } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-webhook-success",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        900,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: '입력 파일 또는 분석 요청을 확인해주세요.', error_type: $json.error_type || 'analysis_error', detail: $json.error || $json.detail || $json.message || '분석 요청 처리 실패' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-webhook-error",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        240,
+        240
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - FastAPI Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - FastAPI Analyze": {
+      "main": [
+        [
+          {
+            "node": "Analysis Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analysis Success?": {
+      "main": [
+        [
+          {
+            "node": "Alert Required?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Required?": {
+      "main": [
+        [
+          {
+            "node": "Danger or Warning?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Danger or Warning?": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert - Danger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack Alert - Warning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alert - Danger": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alert - Warning": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Alert": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "manufacturing-ai-workflow-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

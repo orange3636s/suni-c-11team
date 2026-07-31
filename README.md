@@ -83,6 +83,7 @@ npm run dev
 - 수율 예측 페이지: http://localhost:3000/prediction
 - 원인 분석 페이지: http://localhost:3000/root-cause
 - 분석 보고서 페이지: http://localhost:3000/report
+- 자동화 상태 페이지: http://localhost:3000/automation
 - FastAPI: http://127.0.0.1:8000
 - Swagger: http://127.0.0.1:8000/docs
 
@@ -246,5 +247,59 @@ Lot을 추출하지 못하면 LOT 섹션을 생략하고 경고에 이유를 기
 - 원인 분석 중요도 차트 및 CSV 다운로드
 - 예측·위험 분류·SHAP 결과를 결합한 규칙 기반 자동 분석 보고서
 - 위험 Wafer 및 LOT 집계와 독립형 HTML 보고서 다운로드
+- n8n용 통합 분석 API와 import 가능한 위험 분기 워크플로우
 
-n8n 및 Slack 알림과 Vercel·Render 배포 기능은 아직 구현하지 않았다.
+실제 Slack credential 연결과 Vercel·Render 배포는 아직 완료하지 않았다.
+
+## n8n 통합 자동화
+
+`POST /api/analyze`는 CSV 검증과 전처리부터 모델 예측, 위험 분류, SHAP
+분석 및 규칙 기반 보고서 요약까지 한 번에 실행한다. 기존 predict, explain,
+report 내부 함수를 재사용하며 업로드 CSV를 영구 저장하지 않는다.
+
+- 통합 분석 API: `POST /api/analyze`
+- 요청 형식: `multipart/form-data`
+- 요청 필드: `file`, `model_id`, `warning_threshold`,
+  `danger_threshold`, `max_rows`, `top_n`, `per_wafer_top_n`,
+  `include_report`
+- n8n Webhook path: `manufacturing-ai-analysis`
+- 워크플로우 파일:
+  `workflows/n8n_manufacturing_ai_workflow.json`
+- 상세 설정 문서: `docs/N8N_WORKFLOW_GUIDE.md`
+
+n8n의 FastAPI 주소는 워크플로우에 하드코딩하지 않고 다음 환경변수로
+설정한다.
+
+```env
+FASTAPI_BASE_URL=http://127.0.0.1:8000
+```
+
+n8n을 Docker에서 실행하면 일반적으로
+`http://host.docker.internal:8000`을 사용한다. 환경변수에는 기본 서버
+주소만 넣으며 `/api/analyze`는 HTTP Request 노드가 추가한다.
+
+Alert 분기 정책:
+
+- 위험 Wafer가 하나 이상이면 `danger`, 알림 필요
+- 위험은 없고 주의 Wafer가 하나 이상이면 `warning`, 알림 필요
+- 위험과 주의가 모두 없으면 `normal`, 알림 없음
+
+Test R² 저하, Test 지표 누락, DummyRegressor 및 SHAP fallback은 모델 품질
+경고에 포함하지만 공정 위험 Alert를 강제로 발생시키지는 않는다.
+
+Slack 노드에는 credential이나 운영 채널이 저장되어 있지 않다. n8n에서
+`Slack Alert - Danger`, `Slack Alert - Warning` 노드에 credential을
+연결하고 `SLACK_CHANNEL_ID` 또는 실제 채널을 설정해야 한다. Slack 전송
+실패가 분석 전체를 실패시키지 않도록 두 노드에 실패 계속 처리를 적용했다.
+
+Next.js `/automation` 페이지에서는 FastAPI 상태와
+`NEXT_PUBLIC_N8N_WEBHOOK_URL` 설정 여부를 확인할 수 있다.
+
+```env
+NEXT_PUBLIC_N8N_WEBHOOK_URL=http://localhost:5678/webhook/manufacturing-ai-analysis
+```
+
+현재 n8n 워크플로우와 통합 API는 구현되어 있지만 실제 Slack 알림에는
+credential 설정이 필요하다. 운영 전에는 HTTPS Webhook URL, API 인증,
+n8n 실행 데이터 보존 정책과 Vercel·Render 또는 별도 배포 환경 설정이
+추가로 필요하다.

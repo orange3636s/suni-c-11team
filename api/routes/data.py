@@ -21,6 +21,7 @@ from fastapi import (
 from fastapi.responses import Response
 
 from api.schemas.data import (
+    AnalyzeResponse,
     ColumnDetectionResult,
     DataSummary,
     DatasetSplit,
@@ -43,6 +44,7 @@ from api.schemas.data import (
     ValidationResult,
 )
 from src.data_validation import load_data_schema, validate_dataframe
+from src.automation.analyzer import build_automation_response
 from src.ml.dataset import (
     ALLOWED_TARGETS,
     RANDOM_STATE,
@@ -738,6 +740,7 @@ async def _run_report(
     danger_threshold: float,
     max_rows: int,
     top_n: int,
+    per_wafer_top_n: int = DEFAULT_WAFER_TOP_N,
 ) -> dict[str, Any]:
     filename, dataframe = await _read_csv_upload(file)
     try:
@@ -757,7 +760,7 @@ async def _run_report(
             loaded,
             max_rows=max_rows,
             top_n=top_n,
-            per_wafer_top_n=DEFAULT_WAFER_TOP_N,
+            per_wafer_top_n=per_wafer_top_n,
             warning_threshold=warning_threshold,
             danger_threshold=danger_threshold,
             prediction_result=prediction,
@@ -846,3 +849,40 @@ async def download_report(
             "Content-Disposition": f'attachment; filename="{filename}"'
         },
     )
+
+
+@router.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_csv(
+    file: UploadFile = File(...),
+    model_id: str = Form(...),
+    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
+    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
+    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
+    top_n: int = Form(DEFAULT_TOP_N),
+    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
+    include_report: bool = Form(True),
+) -> AnalyzeResponse:
+    report = await _run_report(
+        file,
+        model_id,
+        warning_threshold,
+        danger_threshold,
+        max_rows,
+        top_n,
+        per_wafer_top_n,
+    )
+    try:
+        response = AnalyzeResponse(
+            **build_automation_response(
+                report,
+                include_report=include_report,
+            )
+        )
+        response.model_dump_json()
+        return response
+    except Exception as exc:
+        logger.exception("통합 분석 응답 생성 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="통합 분석 결과 응답을 생성하지 못했습니다.",
+        ) from exc

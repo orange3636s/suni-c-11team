@@ -1254,6 +1254,50 @@ a {
   width: 24px;
 }
 
+.automationStatusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.automationStatusCard {
+  min-height: 150px;
+}
+
+.automationStatusCard > strong {
+  display: block;
+  font-size: 22px;
+  margin: 18px 0 8px;
+}
+
+.automationStatusCard p {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.automationStatusHeading {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+}
+
+.automationGuide pre {
+  background: #101c2f;
+  border-radius: 10px;
+  color: #f3f6fb;
+  margin: 18px 0;
+  overflow-x: auto;
+  padding: 16px;
+}
+
+.configuredWebhook {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1100px) {
   .cardGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1285,6 +1329,10 @@ a {
   .reportOptionGrid,
   .reportKpiGrid,
   .reportThreeColumn {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .automationStatusGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1435,6 +1483,10 @@ a {
   .reportTwoColumn,
   .reportThreeColumn,
   .findingGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .automationStatusGrid {
     grid-template-columns: 1fr;
   }
 

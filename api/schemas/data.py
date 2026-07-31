@@ -294,3 +294,62 @@ class ReportResponse(BaseModel):
     explanation_method: str
     is_fallback: bool
     warnings: list[str] = Field(default_factory=list)
+
+
+class AnalyzeModelInfo(BaseModel):
+    model_id: str
+    target: str
+    model_name: str
+    test_r2: float | None
+    test_rmse: float | None
+
+
+class AnalyzeSummary(BaseModel):
+    total_wafers: int
+    average_predicted_yield: float
+    normal_count: int
+    warning_count: int
+    danger_count: int
+    risk_count: int
+    risk_ratio: float
+    minimum_predicted_yield: float | None
+
+
+class AnalyzeAlert(BaseModel):
+    required: bool
+    severity: str
+    reason: str
+    danger_count: int
+    warning_count: int
+
+
+class AutomationMessage(BaseModel):
+    title: str
+    summary: str
+    detail: str
+    top_cause: str
+
+
+class AnalyzeReportReference(BaseModel):
+    included: bool
+    report_id: str | None
+    download_endpoint: str | None
+
+
+class AnalyzeResponse(BaseModel):
+    success: bool = True
+    analysis_id: str
+    created_at: str
+    filename: str
+    model: AnalyzeModelInfo
+    summary: AnalyzeSummary
+    alert: AnalyzeAlert
+    automation_message: AutomationMessage
+    top_findings: list[ReportFinding]
+    top_risk_wafers: list[ReportRiskWafer]
+    top_features: list[GlobalImportanceItem]
+    top_steps: list[StepSummaryItem]
+    parameter_type_summary: list[ReportParameterTypeSummary]
+    model_quality_warnings: list[str] = Field(default_factory=list)
+    report: AnalyzeReportReference
+    warnings: list[str] = Field(default_factory=list)
