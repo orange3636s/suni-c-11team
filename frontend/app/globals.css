@@ -2256,6 +2256,39 @@ html[data-theme="dark"] ::placeholder {
   gap: 4px 10px;
 }
 
+.trendLegend {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.trendLegend button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 4px;
+  gap: 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--chart-axis);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.trendLegend button[aria-pressed="false"] {
+  opacity: 0.42;
+  text-decoration: line-through;
+}
+
+.trendLegend button:hover,
+.trendLegend button:focus-visible {
+  background: var(--surface-secondary);
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 1px;
+}
+
 .trainingViewTabs {
   display: inline-flex;
   margin-bottom: 20px;
@@ -2602,6 +2635,11 @@ html[data-theme="dark"] .savedModelList > button.active {
   --chart-primary-soft: #dce5f3;
   --chart-secondary: #647185;
   --chart-muted: #c7c7cc;
+  --chart-actual: #347d78;
+  --chart-mean: #766892;
+  --chart-moving-average: #b46d2d;
+  --chart-warning: #a96208;
+  --chart-critical: #b33a46;
 }
 
 html {
@@ -3832,6 +3870,32 @@ select,
   margin-top: 10px;
 }
 
+.predictionTrendHeading {
+  align-items: end;
+}
+
+.movingAverageControl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.movingAverageControl label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.movingAverageControl select {
+  min-height: 36px;
+  padding: 0 30px 0 10px;
+}
+
+.thresholdLabelSurface {
+  fill: color-mix(in srgb, var(--surface) 88%, transparent);
+  stroke: var(--border-strong);
+}
+
 .predictionTrendCard {
   overflow: hidden;
 }
@@ -4475,6 +4539,11 @@ html[data-theme="dark"] {
   --chart-primary-soft: #24487f;
   --chart-secondary: #9097a3;
   --chart-muted: #4b5059;
+  --chart-actual: #65a9a2;
+  --chart-mean: #a99bc1;
+  --chart-moving-average: #d09658;
+  --chart-warning: #d39a43;
+  --chart-critical: #df727c;
 }
 
 html[data-theme="dark"] .topHeader {
@@ -4584,6 +4653,20 @@ html[data-theme="dark"] .button.secondary:hover:not(:disabled) {
   .themeMenu {
     inset: calc(100% + 8px) 0 auto auto;
     width: 184px;
+  }
+}
+
+@media (max-width: 680px) {
+  .predictionTrendHeading {
+    align-items: stretch;
+  }
+
+  .movingAverageControl {
+    justify-content: space-between;
+  }
+
+  .predictionTrendCanvas {
+    height: 390px;
   }
 }
 

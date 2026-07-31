@@ -16,6 +16,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import type { LabelProps, LegendPayload } from "recharts";
 
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
@@ -37,8 +38,73 @@ const DEFAULT_THRESHOLDS: PredictionThresholds = {
   warning_threshold: 95,
   danger_threshold: 90,
 };
+const DEFAULT_MOVING_AVERAGE_WINDOW = 5;
+const MOVING_AVERAGE_WINDOWS = [3, 5, 10] as const;
+
+function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+export function calculateMovingAverage(
+  values: unknown[],
+  windowSize: number,
+): Array<number | null> {
+  return values.map((_, index) => {
+    const windowValues = values
+      .slice(Math.max(0, index - windowSize + 1), index + 1)
+      .map(finiteNumber)
+      .filter((value): value is number => value !== null);
+    if (!windowValues.length) return null;
+    return (
+      windowValues.reduce((sum, value) => sum + value, 0) /
+      windowValues.length
+    );
+  });
+}
+
+function ThresholdLabel({
+  viewBox,
+  label,
+  value,
+  color,
+  yShift,
+}: LabelProps & {
+  label: string;
+  value: number;
+  color: string;
+  yShift: number;
+}) {
+  if (!viewBox || !("x" in viewBox)) return null;
+  const x = viewBox.x + viewBox.width + 10;
+  const y = viewBox.y + yShift;
+  return (
+    <g aria-hidden="true">
+      <line x1={x - 7} y1={viewBox.y} x2={x} y2={y} stroke={color} />
+      <rect
+        x={x}
+        y={y - 10}
+        width={88}
+        height={20}
+        rx={9}
+        className="thresholdLabelSurface"
+      />
+      <text x={x + 7} y={y + 3.5} fill={color} fontSize={10} fontWeight={650}>
+        {label} {value.toFixed(1)}%
+      </text>
+    </g>
+  );
+}
 
 type RiskFilter = "all" | "normal" | "warning" | "danger";
+type TrendSeries =
+  | "actual"
+  | "predicted"
+  | "predictedYieldMean"
+  | "predictedYieldMovingAverage"
+  | "warning"
+  | "critical";
 type ResultSort =
   | "prediction-desc"
   | "prediction-asc"
@@ -51,6 +117,10 @@ function formatMetric(value: number | null | undefined): string {
 
 function formatPrediction(value: unknown): string {
   return typeof value === "number" ? value.toFixed(2) : "-";
+}
+
+function formatYieldPercent(value: number | null | undefined): string {
+  return value === null || value === undefined ? "-" : `${value.toFixed(2)}%`;
 }
 
 function riskLabel(value: unknown): string {
@@ -91,6 +161,12 @@ export default function PredictionPage() {
   const [searchText, setSearchText] = useState("");
   const [resultSort, setResultSort] =
     useState<ResultSort>("prediction-desc");
+  const [movingAverageWindow, setMovingAverageWindow] = useState(
+    DEFAULT_MOVING_AVERAGE_WINDOW,
+  );
+  const [hiddenTrendSeries, setHiddenTrendSeries] = useState<
+    Set<TrendSeries>
+  >(new Set());
   const resultTableRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -240,22 +316,27 @@ export default function PredictionPage() {
     if (!result || !filteredRows.length) return [];
     const predictedKey = `predicted_${result.model.target}`;
     const actualKey = `actual_${result.model.target}`;
-    const predictedValues = filteredRows.map((row) =>
-      Number(row[predictedKey]),
+    const predictedValues = filteredRows.map((row) => row[predictedKey]);
+    const validPredictedValues = result.predictions
+      .map((row) => row[predictedKey])
+      .map(finiteNumber)
+      .filter((value): value is number => value !== null);
+    const predictedYieldMean = validPredictedValues.length
+      ? validPredictedValues.reduce((sum, value) => sum + value, 0) /
+        validPredictedValues.length
+      : null;
+    const predictedYieldMovingAverage = calculateMovingAverage(
+      predictedValues,
+      movingAverageWindow,
     );
-    const overallMean =
-      predictedValues.reduce((sum, value) => sum + value, 0) /
-      predictedValues.length;
-    let cumulativeTotal = 0;
     const completeTrend = filteredRows.map((row, index) => {
-      const predicted = Number(row[predictedKey]);
-      cumulativeTotal += predicted;
+      const predicted = finiteNumber(row[predictedKey]);
       return {
         index: index + 1,
         identifier: String(row[result.identifier_column] ?? index + 1),
         predicted,
-        overallMean,
-        cumulativeMean: cumulativeTotal / (index + 1),
+        predictedYieldMean,
+        predictedYieldMovingAverage: predictedYieldMovingAverage[index],
         actual:
           typeof row[actualKey] === "number"
             ? Number(row[actualKey])
@@ -271,7 +352,40 @@ export default function PredictionPage() {
       (_, index) =>
         index % sampleEvery === 0 || index === completeTrend.length - 1,
     );
-  }, [filteredRows, result]);
+  }, [filteredRows, movingAverageWindow, result]);
+
+  const thresholdsNeedSeparation =
+    Math.abs(thresholds.warning_threshold - thresholds.danger_threshold) < 2;
+  const hasActualTrend = trendData.some((item) => item.actual !== undefined);
+  const trendLegendPayload: LegendPayload[] = [
+    ...(hasActualTrend
+      ? [{ value: "실제 수율", dataKey: "actual", color: "var(--chart-actual)", type: "line" as const }]
+      : []),
+    { value: "예측 수율", dataKey: "predicted", color: "var(--chart-primary)", type: "line" as const },
+    { value: "예측 수율 평균", dataKey: "predictedYieldMean", color: "var(--chart-mean)", type: "plainline" as const },
+    { value: "예측 수율 이동 평균", dataKey: "predictedYieldMovingAverage", color: "var(--chart-moving-average)", type: "line" as const },
+    { value: "Warning", dataKey: "warning", color: "var(--chart-warning)", type: "plainline" as const },
+    { value: "Critical", dataKey: "critical", color: "var(--chart-critical)", type: "plainline" as const },
+  ].map((entry) => ({
+    ...entry,
+    inactive: hiddenTrendSeries.has(entry.dataKey as TrendSeries),
+  }));
+
+  function toggleTrendSeries(entry: LegendPayload) {
+    const series = entry.dataKey as TrendSeries;
+    setHiddenTrendSeries((current) => {
+      const next = new Set(current);
+      if (next.has(series)) next.delete(series);
+      else next.add(series);
+      return next;
+    });
+  }
+
+  const trendDashPattern: Partial<Record<TrendSeries, string>> = {
+    predictedYieldMean: "2 5",
+    warning: "4 5",
+    critical: "7 3 2 3",
+  };
 
   const resultSortLabel = {
     "prediction-desc": "예측 수율 높은 순",
@@ -502,29 +616,42 @@ export default function PredictionPage() {
                 className="resultCard predictionTrendCard"
                 aria-labelledby="prediction-trend-title"
               >
-                <div className="sectionHeading compact">
+                <div className="sectionHeading compact predictionTrendHeading">
                   <div>
                     <span className="sectionLabel">Yield trend</span>
                     <h2 id="prediction-trend-title">Wafer 수율 예측 추이</h2>
                   </div>
-                  <span className="fieldHint">
-                    최대 80개 지점으로 균등 샘플링
-                  </span>
+                  <div className="movingAverageControl">
+                    <label htmlFor="moving-average-window">이동평균 구간</label>
+                    <select
+                      id="moving-average-window"
+                      value={movingAverageWindow}
+                      onChange={(event) =>
+                        setMovingAverageWindow(Number(event.target.value))
+                      }
+                    >
+                      {MOVING_AVERAGE_WINDOWS.map((windowSize) => (
+                        <option key={windowSize} value={windowSize}>
+                          {windowSize}개
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <p className="chartDescription">
-                  현재 필터에 포함된 전체 Wafer의 평균과 누적 평균을 함께
-                  표시합니다. 누적 평균은 필터 적용 후 원본 CSV 행 순서
-                  기준이며 시간 추세를 의미하지 않습니다.
+                  예측 수율 평균은 현재 예측 데이터 전체의 평균값입니다.
+                  예측 수율 이동 평균은 최근 {movingAverageWindow}개 Wafer의
+                  예측 수율 평균으로 단기 변동을 완화해 추세를 보여줍니다.
                 </p>
                 <div
                   className="predictionTrendCanvas"
                   role="img"
-                  aria-label="Wafer 순서별 실제 수율과 예측 수율 선 차트"
+                  aria-label={`Wafer 원본 순서별 실제 수율, 예측 수율, 예측 수율 평균과 최근 ${movingAverageWindow}개 Wafer 이동 평균 선 차트`}
                 >
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
                       data={trendData}
-                      margin={{ top: 10, right: 22, bottom: 8, left: 2 }}
+                      margin={{ top: 10, right: 112, bottom: 8, left: 2 }}
                     >
                       <CartesianGrid
                         stroke="var(--chart-grid)"
@@ -560,20 +687,21 @@ export default function PredictionPage() {
                             <div className="chartTooltip">
                               <strong>{item.identifier}</strong>
                               <span>
-                                예측 수율: {item.predicted.toFixed(2)}%
+                                예측 수율: {formatYieldPercent(item.predicted)}
                               </span>
                               {item.actual !== undefined && (
                                 <span>
-                                  실제 수율: {item.actual.toFixed(2)}%
+                                  실제 수율: {formatYieldPercent(item.actual)}
                                 </span>
                               )}
                               <span>
-                                전체 평균: {item.overallMean.toFixed(2)}%
+                                예측 수율 평균: {formatYieldPercent(item.predictedYieldMean)}
                               </span>
                               <span>
-                                누적 평균: {item.cumulativeMean.toFixed(2)}%
+                                예측 수율 이동 평균({movingAverageWindow}): {formatYieldPercent(item.predictedYieldMovingAverage)}
                               </span>
-                              <span>상태: {riskLabel(item.risk)}</span>
+                              <span>이동평균 구간: {movingAverageWindow}개 Wafer</span>
+                              <span>위험도: {riskLabel(item.risk)}</span>
                             </div>
                           );
                         }}
@@ -586,41 +714,77 @@ export default function PredictionPage() {
                           fontSize: 11,
                           color: "var(--chart-axis)",
                         }}
+                        content={() => (
+                          <div className="trendLegend" aria-label="차트 계열 표시 설정">
+                            {trendLegendPayload.map((entry) => {
+                              const series = entry.dataKey as TrendSeries;
+                              const isVisible = !hiddenTrendSeries.has(series);
+                              return (
+                                <button
+                                  key={series}
+                                  type="button"
+                                  aria-pressed={isVisible}
+                                  onClick={() => toggleTrendSeries(entry)}
+                                >
+                                  <svg width="24" height="10" aria-hidden="true">
+                                    <line
+                                      x1="1"
+                                      y1="5"
+                                      x2="23"
+                                      y2="5"
+                                      stroke={entry.color}
+                                      strokeWidth={series === "predicted" || series === "predictedYieldMovingAverage" ? 3 : 2}
+                                      strokeDasharray={trendDashPattern[series]}
+                                    />
+                                  </svg>
+                                  {entry.value}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       />
-                      <ReferenceLine
-                        y={thresholds.warning_threshold}
-                        stroke="#a96208"
-                        strokeDasharray="5 5"
-                        label={{
-                          value: "Warning",
-                          fill: "#a96208",
-                          fontSize: 10,
-                          position: "insideTopRight",
-                        }}
-                      />
-                      <ReferenceLine
-                        y={thresholds.danger_threshold}
-                        stroke="#b33a46"
-                        strokeDasharray="5 5"
-                        label={{
-                          value: "Critical",
-                          fill: "#b33a46",
-                          fontSize: 10,
-                          position: "insideBottomRight",
-                        }}
-                      />
-                      {trendData.some(
-                        (item) => item.actual !== undefined,
-                      ) && (
+                      {!hiddenTrendSeries.has("warning") && (
+                        <ReferenceLine
+                          y={thresholds.warning_threshold}
+                          stroke="var(--chart-warning)"
+                          strokeDasharray="4 5"
+                          label={
+                            <ThresholdLabel
+                              label="Warning"
+                              value={thresholds.warning_threshold}
+                              color="var(--chart-warning)"
+                              yShift={thresholdsNeedSeparation ? -12 : 0}
+                            />
+                          }
+                        />
+                      )}
+                      {!hiddenTrendSeries.has("critical") && (
+                        <ReferenceLine
+                          y={thresholds.danger_threshold}
+                          stroke="var(--chart-critical)"
+                          strokeDasharray="7 3 2 3"
+                          label={
+                            <ThresholdLabel
+                              label="Critical"
+                              value={thresholds.danger_threshold}
+                              color="var(--chart-critical)"
+                              yShift={thresholdsNeedSeparation ? 12 : 0}
+                            />
+                          }
+                        />
+                      )}
+                      {hasActualTrend && (
                         <Line
                           type="monotone"
                           dataKey="actual"
                           name="실제 수율"
-                          stroke="#7d8796"
-                          strokeWidth={1.5}
+                          stroke="var(--chart-actual)"
+                          strokeWidth={2.1}
                           dot={false}
                           connectNulls
                           animationDuration={220}
+                          hide={hiddenTrendSeries.has("actual")}
                         />
                       )}
                       <Line
@@ -628,8 +792,9 @@ export default function PredictionPage() {
                         dataKey="predicted"
                         name="예측 수율"
                         stroke="var(--chart-primary)"
-                        strokeWidth={2.2}
+                        strokeWidth={2.8}
                         animationDuration={220}
+                        hide={hiddenTrendSeries.has("predicted")}
                         dot={(dotProps) => {
                           const point = dotProps.payload as (typeof trendData)[number];
                           const isRisk = point.risk !== "normal";
@@ -654,29 +819,30 @@ export default function PredictionPage() {
                       />
                       <Line
                         type="linear"
-                        dataKey="overallMean"
-                        name="전체 예측 수율 평균"
-                        stroke="var(--chart-secondary)"
-                        strokeWidth={1.4}
-                        strokeDasharray="6 5"
+                        dataKey="predictedYieldMean"
+                        name="예측 수율 평균"
+                        stroke="var(--chart-mean)"
+                        strokeWidth={1.8}
+                        strokeDasharray="2 5"
                         dot={false}
                         animationDuration={220}
+                        hide={hiddenTrendSeries.has("predictedYieldMean")}
                       />
                       <Line
                         type="monotone"
-                        dataKey="cumulativeMean"
-                        name="누적 예측 수율 평균"
-                        stroke="var(--warning)"
-                        strokeWidth={1.8}
-                        strokeDasharray="3 3"
+                        dataKey="predictedYieldMovingAverage"
+                        name="예측 수율 이동 평균"
+                        stroke="var(--chart-moving-average)"
+                        strokeWidth={2.7}
                         dot={false}
                         animationDuration={220}
+                        hide={hiddenTrendSeries.has("predictedYieldMovingAverage")}
                       />
                     </LineChart>
                   </ResponsiveContainer>
                   </div>
                   <p className="trendOrderNote">
-                    표 정렬: {resultSortLabel} · 차트 누적 평균: 원본 CSV 행 순서
+                    분석 순서: 원본 Wafer 순서 · 이동평균 구간: 최근 {movingAverageWindow}개 Wafer · 표 정렬: {resultSortLabel}
                   </p>
               </section>
 
