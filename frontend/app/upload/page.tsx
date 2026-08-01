@@ -96,15 +96,15 @@ export default function UploadPage() {
 
   return (
     <div className="appShell">
-      <Sidebar activeItem="데이터 업로드" />
+      <Sidebar activeItem="데이터 전처리" />
       <div className="contentShell">
         <Header />
         <main className="mainContent uploadPage">
           <section className="uploadIntro">
             <span className="eyebrow">데이터 준비</span>
-            <h1>CSV 데이터 업로드</h1>
+            <h1>CSV 데이터 전처리</h1>
             <p>
-              공정 데이터를 검증하고 설정 기반 전처리 결과를 미리 확인합니다.
+              제조 공정 CSV 파일을 업로드하고 데이터 구조 검증, 이상치 처리 및 결측치 보정을 수행합니다.
             </p>
           </section>
 

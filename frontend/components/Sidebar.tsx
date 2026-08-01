@@ -12,7 +12,7 @@ import { getApiHealth, getModels } from "@/lib/api";
 
 const navigationItems = [
   { label: "개요", href: "/", icon: "overview" },
-  { label: "데이터 업로드", href: "/upload", icon: "upload" },
+  { label: "데이터 전처리", href: "/upload", icon: "upload" },
   { label: "모델 학습", href: "/training", icon: "model" },
   { label: "수율 예측", href: "/prediction", icon: "trend" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
@@ -25,7 +25,7 @@ const navigationItems = [
 type SidebarProps = {
   activeItem?:
     | "개요"
-    | "데이터 업로드"
+    | "데이터 전처리"
     | "모델 학습"
     | "수율 예측"
     | "원인 분석"
@@ -172,9 +172,9 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
 
       <div className="sidebarFooter" ref={themeMenuRef}>
         {themeMenuOpen && (
-          <div className="themeMenu" role="dialog" aria-label="Theme 선택">
+          <div className="themeMenu" role="menu" aria-label="Theme 선택">
             <strong>Theme</strong>
-            <div className="themeOptions" role="radiogroup">
+            <div className="themeOptions">
               {(
                 [
                   ["system", "System"],
@@ -186,14 +186,17 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
                   key={value}
                   type="button"
                   className={theme === value ? "active" : ""}
-                  role="radio"
+                  role="menuitemradio"
                   aria-checked={theme === value}
                   onClick={() => {
                     setTheme(value);
                     setThemeMenuOpen(false);
                   }}
                 >
-                  <span>{label}</span>
+                  <span className="themeOptionLabel">
+                    <ThemeIcon theme={value} />
+                    <span>{label}</span>
+                  </span>
                   {theme === value && <span aria-hidden="true">✓</span>}
                 </button>
               ))}
@@ -203,19 +206,59 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
         <button
           className="themeTriggerArea"
           type="button"
-          aria-label="Theme 선택"
-          aria-haspopup="dialog"
+          aria-label={`Theme: ${theme[0].toUpperCase() + theme.slice(1)}`}
+          aria-haspopup="menu"
           aria-expanded={themeMenuOpen}
           onClick={() => setThemeMenuOpen((open) => !open)}
         >
-          <span className="themeTrigger" aria-hidden="true">N</span>
+          <span className="themeTrigger" aria-hidden="true">
+            <ThemeIcon theme={theme} />
+          </span>
           <span className="sidebarFooterCopy">
             <strong>Theme</strong>
             <span>{theme[0].toUpperCase() + theme.slice(1)}</span>
           </span>
+          <svg
+            className="themeChevron"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m4 6 4 4 4-4" />
+          </svg>
         </button>
       </div>
     </aside>
+  );
+}
+
+function ThemeIcon({ theme }: { theme: ThemePreference }) {
+  if (theme === "light") {
+    return (
+      <svg className="themeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" />
+      </svg>
+    );
+  }
+
+  if (theme === "dark") {
+    return (
+      <svg className="themeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M20.4 14.6A8.5 8.5 0 0 1 9.4 3.6 8.5 8.5 0 1 0 20.4 14.6Z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="themeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="13" rx="2.5" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
   );
 }
 
