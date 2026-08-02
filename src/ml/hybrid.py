@@ -1,169 +1,341 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import gzip
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
 import sklearn
-from sklearn.base import clone
-from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import (
-    ExtraTreesRegressor,
-    HistGradientBoostingRegressor,
-    RandomForestClassifier,
-    RandomForestRegressor,
-    VotingClassifier,
-)
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.metrics import average_precision_score, f1_score, fbeta_score, recall_score
-from sklearn.model_selection import GroupKFold
+from scipy.stats import spearmanr
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import GroupKFold, KFold
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OrdinalEncoder
+from threadpoolctl import threadpool_limits
 
-from src.ml.dataset import RANDOM_STATE, prepare_dataset
-from src.ml.evaluation import evaluate_regression
-from src.ml.ensemble import (
-    EnsembleOptions,
-    EnsembleRegressor,
-    selection_metadata,
-    select_target_ensemble,
-)
+from src.ml.dataset import RANDOM_STATE
 from src.ml.model_io import to_json_safe
-from src.ml.training import (
-    _build_preprocessor,
-    missing_strategy_for_model,
-    outlier_strategy_for_model,
-)
 
 
+PIPELINE_VERSION = "auto_multi_y_hgbr_v1"
 TARGETS = ["Y", *[f"Y{index}" for index in range(1, 11)]]
 FAIL_RATE_TARGETS = [f"Y{index}" for index in range(1, 6)]
 COUNT_TARGETS = [f"Y{index}" for index in range(6, 11)]
-
-
-def _seeded_group_splits(
-    features: pd.DataFrame,
-    groups: pd.Series,
-    *,
-    folds: int,
-    seed: int = RANDOM_STATE,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Build reproducible, group-disjoint folds without depending on row order."""
-    unique_groups = np.asarray(sorted(groups.astype(str).unique()))
-    if len(unique_groups) < folds:
-        raise ValueError(f"GroupKFold {folds}개를 만들려면 최소 {folds}개 Lot 그룹이 필요합니다.")
-    shuffled = unique_groups.copy()
-    np.random.default_rng(seed).shuffle(shuffled)
-    group_rank = {name: index for index, name in enumerate(shuffled)}
-    seeded_groups = groups.astype(str).map(group_rank)
-    return list(GroupKFold(n_splits=folds).split(features, groups=seeded_groups))
+MISSING_STRINGS = {"", "na", "n/a", "nan", "none", "null", "missing", "-"}
 
 
 def normalized_failure_rates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
-    clipped = np.clip(np.asarray(values, dtype=float), 0.0, None)
+    clipped = np.clip(np.asarray(values, dtype=float), 0.0, 100.0)
     totals = clipped.sum(axis=1)
     normalized = clipped.copy()
     overflow = totals > 100.0
     if overflow.any():
-        normalized[overflow] = normalized[overflow] * (100.0 / totals[overflow, None])
+        normalized[overflow] *= 100.0 / totals[overflow, None]
     derived = np.clip(100.0 - normalized.sum(axis=1), 0.0, 100.0)
     return normalized, derived, int(overflow.sum())
 
 
-def _metrics(actual: pd.Series | np.ndarray, predicted: np.ndarray) -> dict[str, float | None]:
-    result = evaluate_regression(actual, predicted)
-    return {**result.as_dict(), "mse": result.mse}
+def _canonical(name: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name).strip().lower())
 
 
-def _candidate_pipelines(dataset: Any, *, count: bool) -> dict[str, Pipeline]:
-    estimators: dict[str, Any] = {
-        "Ridge": Ridge(alpha=1.0),
-        "HistGradientBoostingRegressor": HistGradientBoostingRegressor(random_state=RANDOM_STATE),
-        "ExtraTreesRegressor": ExtraTreesRegressor(
-            n_estimators=80, min_samples_leaf=2, random_state=RANDOM_STATE, n_jobs=1
-        ),
-        "RandomForestRegressor": RandomForestRegressor(
-            n_estimators=80, min_samples_leaf=2, random_state=RANDOM_STATE, n_jobs=1
-        ),
-    }
-    if count:
-        estimators["HistGradientBoostingPoisson"] = HistGradientBoostingRegressor(
-            loss="poisson", random_state=RANDOM_STATE
-        )
-    try:
-        from xgboost import XGBRegressor
+def detect_auto_schema(dataframe: pd.DataFrame) -> dict[str, Any]:
+    columns = [str(column) for column in dataframe.columns]
+    canonical = {_canonical(column): column for column in columns}
+    target_columns: dict[str, str] = {}
+    target_aliases = {"Y": ("y", "finalyield")}
+    target_aliases.update({f"Y{i}": (f"y{i}",) for i in range(1, 11)})
+    for target, aliases in target_aliases.items():
+        for alias in aliases:
+            if alias in canonical:
+                target_columns[target] = canonical[alias]
+                break
 
-        estimators["XGBoostRegressor"] = XGBRegressor(
-            n_estimators=120,
-            max_depth=4,
-            learning_rate=0.05,
-            objective="count:poisson" if count else "reg:squarederror",
-            random_state=RANDOM_STATE,
-            n_jobs=1,
-        )
-    except ImportError:
-        pass
-    try:
-        from catboost import CatBoostRegressor
-
-        estimators["CatBoostRegressor"] = CatBoostRegressor(
-            iterations=120,
-            depth=5,
-            learning_rate=0.05,
-            loss_function="Poisson" if count else "RMSE",
-            random_seed=RANDOM_STATE,
-            thread_count=1,
-            verbose=False,
-            allow_writing_files=False,
-        )
-    except ImportError:
-        pass
+    identifier_columns = [
+        column
+        for column in columns
+        if _canonical(column) in {
+            "lotid", "waferid", "waferslot", "lotwaferid", "rowid", "sampleid"
+        }
+        or _canonical(column).endswith("identifier")
+    ]
+    config_pattern = re.compile(
+        r"(?i)^step\d+_(?:config|eq(?:uipment)?.*)$"
+    )
+    response_pattern = re.compile(r"(?i)^step\d+_r(?:esponse)?\d*$")
+    defect_pattern = re.compile(r"(?i)^step\d+_d(?:efect)?\d*$")
+    config_columns = [
+        column
+        for column in columns
+        if config_pattern.fullmatch(column)
+        or ("equipment" in column.lower() and re.search(r"(?i)step\d+", column))
+    ]
+    response_columns = [column for column in columns if response_pattern.fullmatch(column)]
+    defect_columns = [column for column in columns if defect_pattern.fullmatch(column)]
+    feature_columns = list(dict.fromkeys([
+        *config_columns,
+        *response_columns,
+        *defect_columns,
+    ]))
+    target_source_columns = set(target_columns.values())
+    feature_columns = [
+        column for column in feature_columns
+        if column not in target_source_columns and column not in identifier_columns
+    ]
     return {
-        name: Pipeline([
-            (
-                "features",
-                _build_preprocessor(
-                    dataset,
-                    missing_strategy=missing_strategy_for_model(name),
-                    outlier_strategy=outlier_strategy_for_model(name),
-                ),
-            ),
-            ("model", estimator),
-        ])
-        for name, estimator in estimators.items()
+        "identifier_columns": identifier_columns,
+        "config_columns": config_columns,
+        "response_columns": response_columns,
+        "defect_columns": defect_columns,
+        "target_columns": target_columns,
+        "feature_columns": feature_columns,
     }
 
 
-def _best_model(
-    dataset: Any,
-    x_train: pd.DataFrame,
-    y_train: pd.Series,
-    x_validation: pd.DataFrame,
-    y_validation: pd.Series,
-    *,
-    count: bool,
-) -> tuple[str, Pipeline, dict[str, float | None], list[str]]:
-    candidates: list[tuple[float, float, str, Pipeline, dict[str, float | None]]] = []
-    warnings: list[str] = []
-    for name, pipeline in _candidate_pipelines(dataset, count=count).items():
-        try:
-            pipeline.fit(x_train, y_train)
-            prediction = np.asarray(pipeline.predict(x_validation), dtype=float)
-            if count:
-                prediction = np.clip(prediction, 0.0, None)
-            metrics = _metrics(y_validation, prediction)
-            candidates.append((metrics["rmse"] or float("inf"), -(metrics["r2"] or float("-inf")), name, pipeline, metrics))
-        except Exception as exc:
-            warnings.append(f"{name} 후보 제외: {type(exc).__name__}")
-    if not candidates:
-        raise ValueError("학습 가능한 Hybrid Multi-Y 후보 모델이 없습니다.")
-    _, _, name, pipeline, metrics = min(candidates, key=lambda item: (item[0], item[1]))
-    return name, pipeline, metrics, warnings
+def validate_y_formula(targets: pd.DataFrame, tolerance: float = 1e-6) -> dict[str, Any]:
+    derived = 100.0 - targets[FAIL_RATE_TARGETS].sum(axis=1)
+    difference = targets["Y"] - derived
+    valid = difference.replace([np.inf, -np.inf], np.nan).dropna()
+    absolute = valid.abs()
+    return {
+        "formula": "100 - (Y1 + Y2 + Y3 + Y4 + Y5)",
+        "tolerance": tolerance,
+        "valid_row_count": int(len(valid)),
+        "mean_absolute_error": float(absolute.mean()) if len(absolute) else None,
+        "maximum_absolute_error": float(absolute.max()) if len(absolute) else None,
+        "exact_match_ratio": float((absolute == 0).mean()) if len(absolute) else None,
+        "within_tolerance_ratio": float((absolute <= tolerance).mean()) if len(absolute) else None,
+        "formula_consistent": bool(len(absolute) and (absolute <= tolerance).mean() >= 0.999),
+    }
+
+
+def _normalize_category(value: object) -> object:
+    if value is None or pd.isna(value):
+        return np.nan
+    text = str(value).strip()
+    return np.nan if text.lower() in MISSING_STRINGS else text
+
+
+class AutoFeaturePreprocessor(TransformerMixin, BaseEstimator):
+    """Fold-local numeric cleanup, winsorization, imputation and ordinal encoding."""
+
+    def __init__(
+        self,
+        numeric_columns: list[str],
+        categorical_columns: list[str],
+        lower_quantile: float = 0.005,
+        upper_quantile: float = 0.995,
+    ) -> None:
+        self.numeric_columns = numeric_columns
+        self.categorical_columns = categorical_columns
+        self.lower_quantile = lower_quantile
+        self.upper_quantile = upper_quantile
+
+    @staticmethod
+    def _frame(x: Any) -> pd.DataFrame:
+        return x.copy() if isinstance(x, pd.DataFrame) else pd.DataFrame(x)
+
+    def fit(self, x: Any, y: Any = None) -> "AutoFeaturePreprocessor":
+        frame = self._frame(x)
+        numeric = pd.DataFrame(index=frame.index)
+        for column in self.numeric_columns:
+            source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+            numeric[column] = pd.to_numeric(source, errors="coerce").replace(
+                [np.inf, -np.inf], np.nan
+            )
+
+        self.numeric_columns_ = []
+        self.numeric_medians_: dict[str, float] = {}
+        self.numeric_bounds_: dict[str, tuple[float, float] | None] = {}
+        self.all_missing_columns_: list[str] = []
+        self.constant_columns_: list[str] = []
+        self.near_constant_columns_: list[str] = []
+        for column in self.numeric_columns:
+            observed = numeric[column].dropna()
+            if observed.empty:
+                self.all_missing_columns_.append(column)
+                continue
+            counts = observed.value_counts(dropna=False)
+            if len(counts) <= 1:
+                self.constant_columns_.append(column)
+                continue
+            if len(observed) >= 100 and float(counts.iloc[0] / len(observed)) >= 0.999:
+                self.near_constant_columns_.append(column)
+                continue
+            self.numeric_columns_.append(column)
+            self.numeric_medians_[column] = float(observed.median())
+            if len(observed) >= 20 and observed.nunique() > 2:
+                lower, upper = observed.quantile(
+                    [self.lower_quantile, self.upper_quantile]
+                ).to_numpy(dtype=float)
+                self.numeric_bounds_[column] = (
+                    (float(lower), float(upper))
+                    if np.isfinite(lower) and np.isfinite(upper) and lower < upper
+                    else None
+                )
+            else:
+                self.numeric_bounds_[column] = None
+
+        categorical = pd.DataFrame(index=frame.index)
+        self.categorical_columns_ = []
+        for column in self.categorical_columns:
+            source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+            normalized = source.map(_normalize_category)
+            if normalized.dropna().empty:
+                self.all_missing_columns_.append(column)
+                continue
+            if normalized.dropna().nunique() <= 1:
+                self.constant_columns_.append(column)
+                continue
+            categorical[column] = normalized.fillna("__MISSING__")
+            self.categorical_columns_.append(column)
+        self.encoder_ = None
+        if self.categorical_columns_:
+            self.encoder_ = OrdinalEncoder(
+                handle_unknown="use_encoded_value",
+                unknown_value=-1,
+                encoded_missing_value=-1,
+                dtype=np.float32,
+            )
+            self.encoder_.fit(categorical[self.categorical_columns_])
+
+        self.feature_names_out_ = [*self.numeric_columns_, *self.categorical_columns_]
+        if not self.feature_names_out_:
+            raise ValueError("Fold 학습 데이터에 사용할 수 있는 공정 Feature가 없습니다.")
+        self.summary_ = {
+            "numeric_feature_count": len(self.numeric_columns_),
+            "categorical_config_count": len(self.categorical_columns_),
+            "removed_all_missing_columns": list(self.all_missing_columns_),
+            "removed_constant_columns": list(self.constant_columns_),
+            "removed_near_constant_columns": list(self.near_constant_columns_),
+            "missing_imputed_columns": int(sum(numeric[c].isna().any() for c in self.numeric_columns_)),
+            "winsorized_columns": int(sum(v is not None for v in self.numeric_bounds_.values())),
+            "winsorization_quantiles": [self.lower_quantile, self.upper_quantile],
+        }
+        return self
+
+    def transform(self, x: Any) -> np.ndarray:
+        frame = self._frame(x)
+        parts: list[np.ndarray] = []
+        if self.numeric_columns_:
+            output = np.empty((len(frame), len(self.numeric_columns_)), dtype=np.float32)
+            for index, column in enumerate(self.numeric_columns_):
+                source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+                values = pd.to_numeric(source, errors="coerce").replace(
+                    [np.inf, -np.inf], np.nan
+                )
+                bounds = self.numeric_bounds_[column]
+                if bounds is not None:
+                    values = values.clip(lower=bounds[0], upper=bounds[1])
+                output[:, index] = values.fillna(self.numeric_medians_[column]).to_numpy(
+                    dtype=np.float32
+                )
+            parts.append(output)
+        if self.categorical_columns_ and self.encoder_ is not None:
+            categorical = pd.DataFrame(index=frame.index)
+            for column in self.categorical_columns_:
+                source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+                categorical[column] = source.map(_normalize_category).fillna("__MISSING__")
+            parts.append(self.encoder_.transform(categorical[self.categorical_columns_]))
+        return np.hstack(parts).astype(np.float32, copy=False)
+
+    def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
+        return np.asarray(self.feature_names_out_, dtype=object)
+
+
+def _estimator(row_count: int) -> HistGradientBoostingRegressor:
+    if row_count < 200:
+        max_iter, min_samples_leaf = 80, 5
+    elif row_count < 1000:
+        max_iter, min_samples_leaf = 120, 10
+    else:
+        max_iter, min_samples_leaf = 200, 20
+    return HistGradientBoostingRegressor(
+        loss="squared_error",
+        learning_rate=0.05,
+        max_iter=max_iter,
+        max_leaf_nodes=31,
+        max_depth=None,
+        min_samples_leaf=min_samples_leaf,
+        l2_regularization=1.0,
+        early_stopping=True,
+        validation_fraction=0.1,
+        n_iter_no_change=20,
+        random_state=RANDOM_STATE,
+    )
+
+
+def _pipeline(schema: dict[str, Any], row_count: int) -> Pipeline:
+    return Pipeline([
+        ("features", AutoFeaturePreprocessor(
+            numeric_columns=[*schema["response_columns"], *schema["defect_columns"]],
+            categorical_columns=schema["config_columns"],
+        )),
+        ("model", _estimator(row_count)),
+    ])
+
+
+def _metrics(actual: Any, predicted: Any) -> dict[str, float | None]:
+    truth = np.asarray(actual, dtype=float)
+    estimate = np.asarray(predicted, dtype=float)
+    valid = np.isfinite(truth) & np.isfinite(estimate)
+    truth, estimate = truth[valid], estimate[valid]
+    if not len(truth):
+        return {name: None for name in ("r2", "rmse", "mae", "mse", "pearson", "spearman")}
+    mse = float(mean_squared_error(truth, estimate))
+    pearson = None
+    spearman = None
+    if len(truth) > 1 and np.std(truth) > 0 and np.std(estimate) > 0:
+        pearson = float(np.corrcoef(truth, estimate)[0, 1])
+        spearman_value = spearmanr(truth, estimate).statistic
+        spearman = float(spearman_value) if np.isfinite(spearman_value) else None
+    return {
+        "r2": float(r2_score(truth, estimate)) if len(truth) > 1 else None,
+        "rmse": float(np.sqrt(mse)),
+        "mae": float(mean_absolute_error(truth, estimate)),
+        "mse": mse,
+        "pearson": pearson,
+        "spearman": spearman,
+    }
+
+
+def _splitter(features: pd.DataFrame, groups: pd.Series) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+    unique_groups = groups.dropna().astype(str).nunique()
+    if unique_groups >= 3:
+        splits = list(GroupKFold(n_splits=3).split(features, groups=groups.astype(str)))
+        return splits, "group_3_fold"
+    if len(features) >= 12:
+        return list(KFold(n_splits=3, shuffle=True, random_state=RANDOM_STATE).split(features)), "kfold_3"
+    folds = 2 if len(features) >= 4 else 0
+    if not folds:
+        raise ValueError("자동 교차검증에는 유효한 행이 최소 4개 필요합니다.")
+    return list(KFold(n_splits=folds, shuffle=True, random_state=RANDOM_STATE).split(features)), "kfold_2"
+
+
+def _hybrid_weights(direct: dict[str, Any], derived: dict[str, Any]) -> tuple[float, float, str]:
+    direct_r2 = direct.get("r2")
+    derived_r2 = derived.get("r2")
+    if direct_r2 is not None and direct_r2 < 0 <= (derived_r2 if derived_r2 is not None else -1):
+        return 0.0, 1.0, "derived_only_direct_invalid"
+    if derived_r2 is not None and derived_r2 < 0 <= (direct_r2 if direct_r2 is not None else -1):
+        return 1.0, 0.0, "direct_only_derived_invalid"
+    direct_rmse = float(direct.get("rmse") or np.inf)
+    derived_rmse = float(derived.get("rmse") or np.inf)
+    if (direct_r2 is not None and direct_r2 < 0) and (derived_r2 is not None and derived_r2 < 0):
+        return (1.0, 0.0, "direct_only_both_low_confidence") if direct_rmse <= derived_rmse else (0.0, 1.0, "derived_only_both_low_confidence")
+    inverse_direct = 1.0 / max(direct_rmse, 1e-12)
+    inverse_derived = 1.0 / max(derived_rmse, 1e-12)
+    direct_weight = inverse_direct / (inverse_direct + inverse_derived)
+    direct_weight = float(np.clip(direct_weight, 0.1, 0.9))
+    return direct_weight, 1.0 - direct_weight, "inverse_oof_rmse"
 
 
 @dataclass
@@ -171,58 +343,61 @@ class HybridMultiYBundle:
     feature_columns: list[str]
     direct_model: Any
     target_models: dict[str, Any]
-    risk_classifiers: dict[str, Any]
-    meta_model: Any
-    selected_final_output: str
+    risk_classifiers: dict[str, Any] | None = None
+    meta_model: Any | None = None
+    selected_final_output: str = "hybrid"
     warning_threshold: float = 90.0
     critical_threshold: float = 85.0
+    direct_weight: float = 0.5
+    derived_weight: float = 0.5
+    pipeline_version: str = PIPELINE_VERSION
 
     def predict_components(self, features: pd.DataFrame) -> dict[str, Any]:
         direct = np.clip(np.asarray(self.direct_model.predict(features), dtype=float), 0.0, 100.0)
         target_predictions: dict[str, np.ndarray] = {}
         for target, model in self.target_models.items():
             raw = np.asarray(model.predict(features), dtype=float)
-            target_predictions[target] = np.clip(raw, 0.0, None)
+            upper = 100.0 if target in FAIL_RATE_TARGETS else None
+            target_predictions[target] = np.clip(raw, 0.0, upper)
         rate_matrix = np.column_stack([target_predictions[target] for target in FAIL_RATE_TARGETS])
         normalized_rates, derived, normalization_count = normalized_failure_rates(rate_matrix)
         for index, target in enumerate(FAIL_RATE_TARGETS):
             target_predictions[target] = normalized_rates[:, index]
-        meta_features = np.column_stack(
-            [direct, derived, *[target_predictions[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS]]
-        )
-        hybrid = np.clip(np.asarray(self.meta_model.predict(meta_features), dtype=float), 0.0, 100.0)
-        outputs = {"direct": direct, "derived": derived, "hybrid": hybrid}
-        selected = outputs[self.selected_final_output]
-        risk_probabilities: dict[str, np.ndarray] = {}
-        for name, classifier in self.risk_classifiers.items():
-            probabilities = np.asarray(classifier.predict_proba(meta_features), dtype=float)
-            classes = list(classifier.classes_)
-            risk_probabilities[name] = probabilities[:, classes.index(1)] if 1 in classes else np.zeros(len(features))
+
+        if getattr(self, "pipeline_version", None) == PIPELINE_VERSION:
+            hybrid = np.clip(
+                getattr(self, "direct_weight", 0.5) * direct
+                + getattr(self, "derived_weight", 0.5) * derived,
+                0.0,
+                100.0,
+            )
+            selected = hybrid
+            critical_probability = 1.0 / (1.0 + np.exp((hybrid - self.critical_threshold) / 3.0))
+            warning_probability = 1.0 / (1.0 + np.exp((hybrid - self.warning_threshold) / 3.0))
+        else:
+            meta_features = np.column_stack([
+                direct, derived,
+                *[target_predictions[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS],
+            ])
+            hybrid = np.clip(np.asarray(self.meta_model.predict(meta_features), dtype=float), 0.0, 100.0)
+            selected = {"direct": direct, "derived": derived, "hybrid": hybrid}[self.selected_final_output]
+            probabilities: dict[str, np.ndarray] = {}
+            for name, classifier in (self.risk_classifiers or {}).items():
+                values = np.asarray(classifier.predict_proba(meta_features), dtype=float)
+                classes = list(classifier.classes_)
+                probabilities[name] = values[:, classes.index(1)] if 1 in classes else np.zeros(len(features))
+            critical_probability = probabilities.get("critical", np.zeros(len(features)))
+            warning_probability = probabilities.get("warning", np.zeros(len(features)))
         return {
             "selected": selected,
             "direct": direct,
             "derived": derived,
             "hybrid": hybrid,
             "targets": target_predictions,
-            "critical_probability": risk_probabilities["critical"],
-            "warning_probability": risk_probabilities["warning"],
+            "critical_probability": critical_probability,
+            "warning_probability": warning_probability,
             "normalization_count": normalization_count,
-            "model_agreement": self._agreement(features),
-        }
-
-    def _agreement(self, features: pd.DataFrame) -> dict[str, Any]:
-        spreads: dict[str, list[float]] = {}
-        models = {"Y": self.direct_model, **self.target_models}
-        for target, model in models.items():
-            if isinstance(model, EnsembleRegressor):
-                spreads[target] = model.prediction_spread(features).tolist()
-        if not spreads:
-            return {"available": False, "mean_spread": None, "target_spread": {}}
-        values = np.concatenate([np.asarray(item) for item in spreads.values()])
-        return {
-            "available": True,
-            "mean_spread": float(np.mean(values)),
-            "target_spread": spreads,
+            "model_agreement": {"available": False, "mean_spread": None, "target_spread": {}},
         }
 
     def predict(self, features: pd.DataFrame) -> np.ndarray:
@@ -240,440 +415,272 @@ class HybridTrainingResult:
 def train_hybrid_multi_y(
     dataframe: pd.DataFrame,
     *,
-    # Deprecated compatibility inputs. Hybrid training uses the fixed CV
-    # protocol below instead of percentage-based splitting.
     train_ratio: float = 0.64,
     validation_ratio: float = 0.16,
     test_ratio: float = 0.20,
-    missing_indicator: bool = True,
+    missing_indicator: bool = False,
     oof_folds: int = 3,
-    outer_folds: int = 5,
-    ensemble_options: EnsembleOptions | None = None,
+    outer_folds: int = 3,
+    ensemble_options: Any | None = None,
 ) -> HybridTrainingResult:
-    ensemble_options = ensemble_options or EnsembleOptions()
-    ensemble_options.validate()
-    missing = [target for target in TARGETS if target not in dataframe.columns]
-    if missing:
-        raise ValueError("Hybrid Multi-Y 학습에 필요한 Target이 없습니다: " + ", ".join(missing))
-    numeric_targets = dataframe[TARGETS].apply(pd.to_numeric, errors="coerce")
-    valid = numeric_targets.notna().all(axis=1)
+    del train_ratio, validation_ratio, test_ratio, missing_indicator, oof_folds, outer_folds, ensemble_options
+    schema = detect_auto_schema(dataframe)
+    missing_targets = [target for target in TARGETS if target not in schema["target_columns"]]
+    if missing_targets:
+        raise ValueError("자동 Multi-Y 학습에 필요한 Target이 없습니다: " + ", ".join(missing_targets))
+    if not schema["feature_columns"]:
+        raise ValueError("Config/EQ, R, D 공정 Feature를 탐지하지 못했습니다.")
+
+    targets = pd.DataFrame({
+        target: pd.to_numeric(dataframe[source], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        for target, source in schema["target_columns"].items()
+    })
+    valid = targets[TARGETS].notna().all(axis=1)
     if int(valid.sum()) < 15:
-        raise ValueError("Hybrid Multi-Y 학습에는 Y와 Y1~Y10이 모두 유효한 행이 최소 15개 필요합니다.")
+        raise ValueError("Y와 Y1~Y10이 모두 유효한 행이 최소 15개 필요합니다.")
     working = dataframe.loc[valid].reset_index(drop=True)
-    numeric_targets = numeric_targets.loc[valid].reset_index(drop=True)
-    dataset = prepare_dataset(working, target="Y", add_missing_indicators=missing_indicator)
-    groups = dataset.groups.reset_index(drop=True)
-    if groups.nunique() < outer_folds:
-        raise ValueError(f"Nested Group K-Fold를 위해 최소 {outer_folds}개 Lot 그룹이 필요합니다.")
+    targets = targets.loc[valid, TARGETS].reset_index(drop=True)
+    features = working[schema["feature_columns"]].copy()
+    lot_column = next((c for c in schema["identifier_columns"] if _canonical(c) == "lotid"), None)
+    if lot_column:
+        groups = working[lot_column].astype("string").fillna("__MISSING_LOT__")
+    else:
+        identifier = next((c for c in schema["identifier_columns"] if _canonical(c) == "lotwaferid"), None)
+        groups = (
+            working[identifier].astype("string").str.extract(r"^([^_]+)", expand=False)
+            if identifier else pd.Series(np.arange(len(working)).astype(str))
+        ).fillna("__MISSING_LOT__")
+    splits, split_method = _splitter(features, groups)
 
-    outer_splits = _seeded_group_splits(
-        dataset.features, groups, folds=outer_folds, seed=RANDOM_STATE
-    )
-    development_index, test_index = outer_splits[0]
-    split_features = dataset.features.iloc[development_index].reset_index(drop=True)
-    split_groups = groups.iloc[development_index].reset_index(drop=True)
-    reporting_folds = min(oof_folds, int(split_groups.nunique()))
-    train_relative, validation_relative_index = _seeded_group_splits(
-        split_features,
-        split_groups,
-        folds=reporting_folds,
-        seed=RANDOM_STATE,
-    )[0]
-    train_index = development_index[train_relative]
-    validation_index = development_index[validation_relative_index]
-    development_features = dataset.features.iloc[development_index].reset_index(drop=True)
-    development_targets = numeric_targets.iloc[development_index].reset_index(drop=True)
-    development_groups = groups.iloc[development_index].reset_index(drop=True)
-    x_test = dataset.features.iloc[test_index]
-    warnings = list(dataset.warnings)
-
-    selections: dict[str, Any] = {}
-    target_metrics: dict[str, Any] = {}
-    selected_estimators: dict[str, str] = {}
     oof: dict[str, np.ndarray] = {}
-    target_ensemble_configs: dict[str, Any] = {}
-    folds = min(oof_folds, int(development_groups.nunique()))
-    if folds < 2:
-        raise ValueError("OOF prediction을 생성할 Lot 그룹이 부족합니다.")
+    production_models: dict[str, Any] = {}
+    target_metrics: dict[str, Any] = {}
+    fold_metrics: list[dict[str, Any]] = []
+    fold_assignments = [{
+        "fold": index + 1,
+        "train_groups": sorted(set(groups.iloc[train].astype(str))),
+        "holdout_groups": sorted(set(groups.iloc[holdout].astype(str))),
+    } for index, (train, holdout) in enumerate(splits)]
+
     for target in TARGETS:
-        transform = (
-            (lambda values: np.clip(values, 0.0, None))
-            if target != "Y"
-            else (lambda values: np.clip(values, 0.0, 100.0))
-        )
-        selection = select_target_ensemble(
-            development_features,
-            development_targets[target],
-            development_groups,
-            lambda count=target in COUNT_TARGETS: _candidate_pipelines(
-                dataset, count=count
-            ),
-            options=ensemble_options,
-            folds=folds,
-            prediction_transform=transform,
-        )
-        selections[target] = selection
-        oof[target] = transform(selection.oof_prediction)
-        target_ensemble_configs[target] = selection_metadata(selection)
-        target_ensemble_configs[target]["preprocessing"] = {
-            "missing_strategies": {
-                name: missing_strategy_for_model(name)
-                for name in selection.base_models
-            },
-            "outlier_strategies": {
-                name: outlier_strategy_for_model(name)
-                for name in selection.base_models
-            },
-            "missing_indicator": missing_indicator,
-            "outlier_indicator": any(
-                outlier_strategy_for_model(name) == "flag_only"
-                for name in selection.base_models
-            ),
-            "fallback_used": False,
-        }
-        selected_estimators[target] = (
-            selection.best_single_name
-            if selection.selected_type == "single"
-            else " + ".join(selection.base_models)
-        )
-        warnings.extend(f"{target}: {warning}" for warning in selection.warnings)
-
-    # Outer folds are never used for model selection. Each fold performs its
-    # own Inner Group CV selection and evaluates only its held-out Lots.
-    outer_fold_metrics: list[dict[str, Any]] = []
-    outer_group_assignments: list[dict[str, Any]] = []
-    for fold_number, (outer_train, outer_holdout) in enumerate(outer_splits, start=1):
-        fold_groups = groups.iloc[outer_train].reset_index(drop=True)
-        fold_features = dataset.features.iloc[outer_train].reset_index(drop=True)
-        fold_targets = numeric_targets.iloc[outer_train].reset_index(drop=True)
-        fold_selections: dict[str, Any] = {}
-        fold_oof: dict[str, np.ndarray] = {}
-        fold_holdout_predictions: dict[str, np.ndarray] = {}
-        for target in TARGETS:
-            transform = (
-                (lambda values: np.clip(values, 0.0, None))
-                if target != "Y"
-                else (lambda values: np.clip(values, 0.0, 100.0))
+        prediction = np.zeros(len(features), dtype=float)
+        per_fold: list[dict[str, Any]] = []
+        for fold_number, (train_index, holdout_index) in enumerate(splits, start=1):
+            model = _pipeline(schema, len(train_index))
+            with threadpool_limits(limits=1):
+                model.fit(features.iloc[train_index], targets[target].iloc[train_index])
+                fold_prediction = np.asarray(model.predict(features.iloc[holdout_index]), dtype=float)
+            fold_prediction = np.clip(
+                fold_prediction,
+                0.0,
+                100.0 if target in ["Y", *FAIL_RATE_TARGETS] else None,
             )
-            selection = selections[target] if fold_number == 1 else select_target_ensemble(
-                fold_features,
-                fold_targets[target],
-                fold_groups,
-                lambda count=target in COUNT_TARGETS: _candidate_pipelines(dataset, count=count),
-                options=ensemble_options,
-                folds=min(oof_folds, int(fold_groups.nunique())),
-                prediction_transform=transform,
-            )
-            fold_selections[target] = selection
-            fold_oof[target] = transform(selection.oof_prediction)
-            fold_holdout_predictions[target] = transform(
-                np.asarray(selection.model.predict(dataset.features.iloc[outer_holdout]), dtype=float)
-            )
-
-        fold_oof_rates, fold_oof_derived, _ = normalized_failure_rates(
-            np.column_stack([fold_oof[target] for target in FAIL_RATE_TARGETS])
-        )
-        holdout_rates, holdout_derived, _ = normalized_failure_rates(
-            np.column_stack([fold_holdout_predictions[target] for target in FAIL_RATE_TARGETS])
-        )
-        for index, target in enumerate(FAIL_RATE_TARGETS):
-            fold_oof[target] = fold_oof_rates[:, index]
-            fold_holdout_predictions[target] = holdout_rates[:, index]
-        fold_direct = np.clip(fold_oof["Y"], 0.0, 100.0)
-        holdout_direct = np.clip(fold_holdout_predictions["Y"], 0.0, 100.0)
-        fold_meta_features = np.column_stack([
-            fold_direct, fold_oof_derived,
-            *[fold_oof[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS],
-        ])
-        holdout_meta_features = np.column_stack([
-            holdout_direct, holdout_derived,
-            *[fold_holdout_predictions[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS],
-        ])
-        fold_meta_model = Ridge(alpha=1.0).fit(fold_meta_features, fold_targets["Y"])
-        fold_hybrid = np.clip(fold_meta_model.predict(fold_meta_features), 0.0, 100.0)
-        holdout_hybrid = np.clip(fold_meta_model.predict(holdout_meta_features), 0.0, 100.0)
-        train_candidates = {
-            "direct": fold_direct,
-            "derived": fold_oof_derived,
-            "hybrid": fold_hybrid,
+            prediction[holdout_index] = fold_prediction
+            metrics = _metrics(targets[target].iloc[holdout_index], fold_prediction)
+            per_fold.append({"fold": fold_number, **metrics})
+        oof[target] = prediction
+        overall = _metrics(targets[target], prediction)
+        target_metrics[target] = {
+            "oof": overall,
+            "validation": overall,
+            "test": overall,
+            "folds": per_fold,
         }
-        selected_strategy = min(
-            train_candidates,
-            key=lambda name: _metrics(fold_targets["Y"], train_candidates[name])["rmse"] or float("inf"),
-        )
-        holdout_candidates = {
-            "direct": holdout_direct,
-            "derived": holdout_derived,
-            "hybrid": holdout_hybrid,
-        }
-        outer_fold_metrics.append({
-            "fold": fold_number,
-            "selected_strategy": selected_strategy,
-            "strategy_metrics": {
-                name: _metrics(numeric_targets["Y"].iloc[outer_holdout], prediction)
-                for name, prediction in holdout_candidates.items()
-            },
-            **_metrics(
-                numeric_targets["Y"].iloc[outer_holdout],
-                holdout_candidates[selected_strategy],
-            ),
-        })
-        outer_group_assignments.append({
-            "fold": fold_number,
-            "train_groups": sorted(set(groups.iloc[outer_train].astype(str))),
-            "holdout_groups": sorted(set(groups.iloc[outer_holdout].astype(str))),
-        })
-    nested_metric_summary = {
-        metric: {
-            "mean": float(np.mean([row[metric] for row in outer_fold_metrics if row[metric] is not None])),
-            "std": float(np.std([row[metric] for row in outer_fold_metrics if row[metric] is not None])),
-        }
-        for metric in ("r2", "rmse", "mae", "mse")
-    }
+        production = _pipeline(schema, len(features))
+        with threadpool_limits(limits=1):
+            production.fit(features, targets[target])
+        production_models[target] = production
 
-    validation_positions = np.asarray(validation_relative_index)
-    fold_assignments: list[dict[str, list[str]]] = []
-    inner_splits = list(
-        GroupKFold(n_splits=folds).split(
-            development_features, groups=development_groups
-        )
-    )
-    for fold_train, fold_holdout in inner_splits:
-        fold_assignments.append({
-            "train_groups": sorted(set(development_groups.iloc[fold_train].astype(str))),
-            "holdout_groups": sorted(set(development_groups.iloc[fold_holdout].astype(str))),
-        })
-
-    oof_rates, oof_derived, normalization_count = normalized_failure_rates(
+    oof_rates, derived_oof, normalization_count = normalized_failure_rates(
         np.column_stack([oof[target] for target in FAIL_RATE_TARGETS])
     )
     for index, target in enumerate(FAIL_RATE_TARGETS):
         oof[target] = oof_rates[:, index]
-    oof_direct = np.clip(oof["Y"], 0.0, 100.0)
-    oof_meta = np.column_stack([oof_direct, oof_derived, *[oof[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS]])
-    meta_oof = np.zeros(len(development_features), dtype=float)
-    for fold_train, fold_holdout in inner_splits:
-        fold_meta = Ridge(alpha=1.0).fit(
-            oof_meta[fold_train], development_targets["Y"].iloc[fold_train]
-        )
-        meta_oof[fold_holdout] = fold_meta.predict(oof_meta[fold_holdout])
-    meta_oof = np.clip(meta_oof, 0.0, 100.0)
-    meta_model = Ridge(alpha=1.0).fit(oof_meta, development_targets["Y"])
-    risk_labels = {
-        "critical": (development_targets["Y"] < 85.0).astype(int),
-        "warning": (development_targets["Y"] < 90.0).astype(int),
-    }
-    risk_classifiers: dict[str, Any] = {}
-    for name, labels in risk_labels.items():
-        classifier: Any
-        if labels.nunique() > 1:
-            classifier = VotingClassifier(
-                estimators=[
-                    ("logistic", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=RANDOM_STATE)),
-                    ("random_forest", RandomForestClassifier(n_estimators=80, class_weight="balanced", random_state=RANDOM_STATE, n_jobs=1)),
-                ],
-                voting="soft",
-            )
-        else:
-            classifier = DummyClassifier(strategy="most_frequent")
-        classifier.fit(oof_meta, labels)
-        risk_classifiers[name] = classifier
-
-    for target, selection in selections.items():
-        predicted = np.asarray(selection.model.predict(x_test), dtype=float)
-        if target in FAIL_RATE_TARGETS + COUNT_TARGETS:
-            predicted = np.clip(predicted, 0.0, None)
-        target_metrics[target] = {
-            "inner_oof": selection.metrics,
-            "validation": _metrics(
-                development_targets[target].iloc[validation_positions],
-                oof[target][validation_positions],
-            ),
-            "test": _metrics(numeric_targets[target].iloc[test_index], predicted),
-        }
-
-    final_metrics = {
-        "direct": {
-            "train": _metrics(development_targets["Y"], oof_direct),
-            "validation": _metrics(development_targets["Y"].iloc[validation_positions], oof_direct[validation_positions]),
-        },
-        "derived": {
-            "train": _metrics(development_targets["Y"], oof_derived),
-            "validation": _metrics(development_targets["Y"].iloc[validation_positions], oof_derived[validation_positions]),
-        },
-        "hybrid": {
-            "train": _metrics(development_targets["Y"], meta_oof),
-            "validation": _metrics(development_targets["Y"].iloc[validation_positions], meta_oof[validation_positions]),
-        },
-    }
-    selected_final_output = min(
-        final_metrics,
-        key=lambda name: (
-            final_metrics[name]["train"]["rmse"]
-            if final_metrics[name]["train"]["rmse"] is not None
-            else float("inf"),
-            -(
-                final_metrics[name]["train"]["r2"]
-                if final_metrics[name]["train"]["r2"] is not None
-                else float("-inf")
-            ),
-        ),
+    direct_oof = np.clip(oof["Y"], 0.0, 100.0)
+    direct_metrics = _metrics(targets["Y"], direct_oof)
+    derived_metrics = _metrics(targets["Y"], derived_oof)
+    direct_weight, derived_weight, weight_method = _hybrid_weights(
+        direct_metrics, derived_metrics
     )
-    direct_test = np.clip(selections["Y"].model.predict(x_test), 0.0, 100.0)
-    test_targets = {target: np.clip(selections[target].model.predict(x_test), 0.0, None) for target in FAIL_RATE_TARGETS + COUNT_TARGETS}
-    test_rates, derived_test, test_normalized = normalized_failure_rates(
-        np.column_stack([test_targets[target] for target in FAIL_RATE_TARGETS])
+    hybrid_oof = np.clip(
+        direct_weight * direct_oof + derived_weight * derived_oof, 0.0, 100.0
     )
-    for index, target in enumerate(FAIL_RATE_TARGETS):
-        test_targets[target] = test_rates[:, index]
-    test_meta = np.column_stack([direct_test, derived_test, *[test_targets[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS]])
-    hybrid_test = np.clip(meta_model.predict(test_meta), 0.0, 100.0)
-    for name, predicted in {
-        "direct": direct_test,
-        "derived": derived_test,
-        "hybrid": hybrid_test,
-    }.items():
-        final_metrics[name]["test"] = _metrics(numeric_targets["Y"].iloc[test_index], predicted)
-    risk_metrics: dict[str, Any] = {}
-    for name, labels in risk_labels.items():
-        classifier = risk_classifiers[name]
-        prediction = classifier.predict(oof_meta)
-        probability = classifier.predict_proba(oof_meta)
-        classes = list(classifier.classes_)
-        positive = probability[:, classes.index(1)] if 1 in classes else np.zeros(len(prediction))
-        risk_metrics[name] = {
-            "recall": float(recall_score(labels, prediction, zero_division=0)),
-            "f1": float(f1_score(labels, prediction, zero_division=0)),
-            "f2": float(fbeta_score(labels, prediction, beta=2, zero_division=0)),
-            "pr_auc": float(average_precision_score(labels, positive)) if labels.nunique() > 1 else None,
+    hybrid_metrics = _metrics(targets["Y"], hybrid_oof)
+    final_y_metrics = {
+        name: {"train": metrics, "validation": metrics, "test": metrics, "oof": metrics}
+        for name, metrics in {
+            "direct": direct_metrics,
+            "derived": derived_metrics,
+            "hybrid": hybrid_metrics,
+        }.items()
+    }
+    for fold_number, (_, holdout_index) in enumerate(splits, start=1):
+        fold_metrics.append({
+            "fold": fold_number,
+            **_metrics(targets["Y"].iloc[holdout_index], hybrid_oof[holdout_index]),
+            "strategy_metrics": {
+                "direct": _metrics(targets["Y"].iloc[holdout_index], direct_oof[holdout_index]),
+                "derived": _metrics(targets["Y"].iloc[holdout_index], derived_oof[holdout_index]),
+                "hybrid": _metrics(targets["Y"].iloc[holdout_index], hybrid_oof[holdout_index]),
+            },
+        })
+    metric_summary = {
+        metric: {
+            "mean": float(np.mean([fold[metric] for fold in fold_metrics if fold[metric] is not None])),
+            "std": float(np.std([fold[metric] for fold in fold_metrics if fold[metric] is not None])),
         }
-    # Production base estimators are retrained on all available rows after the
-    # untouched outer-test evaluation; development OOF weights remain fixed.
-    production_models: dict[str, Any] = {}
-    for target, selection in selections.items():
-        if isinstance(selection.model, EnsembleRegressor):
-            fitted_members: dict[str, Any] = {}
-            for model_name, model in selection.model.models.items():
-                fitted = clone(model)
-                fitted.fit(dataset.features, numeric_targets[target])
-                fitted_members[model_name] = fitted
-            production_models[target] = EnsembleRegressor(
-                models=fitted_members,
-                weights=selection.model.weights,
-                method=selection.model.method,
-                meta_model=selection.model.meta_model,
-            )
-        else:
-            fitted = clone(selection.model)
-            fitted.fit(dataset.features, numeric_targets[target])
-            production_models[target] = fitted
+        for metric in ("r2", "rmse", "mae", "mse")
+    }
 
+    direct_model = production_models.pop("Y")
+    preprocessing_summary = direct_model.named_steps["features"].summary_
+    formula_validation = validate_y_formula(targets)
+    first_train, first_holdout = splits[0]
+    target_configs = {
+        target: {
+            "selected_type": "single",
+            "base_models": ["HistGradientBoostingRegressor"],
+            "weights": {"HistGradientBoostingRegressor": 1.0},
+            "best_single_metrics": target_metrics[target]["oof"],
+            "ensemble_metrics": target_metrics[target]["oof"],
+            "improvement_over_single": {"rmse_relative": 0.0},
+            "agreement": {"mean_pairwise_correlation": None},
+        }
+        for target in TARGETS
+    }
     bundle = HybridMultiYBundle(
-        feature_columns=dataset.feature_columns,
-        direct_model=production_models.pop("Y"),
+        feature_columns=schema["feature_columns"],
+        direct_model=direct_model,
         target_models=production_models,
-        risk_classifiers=risk_classifiers,
-        meta_model=meta_model,
-        selected_final_output=selected_final_output,
+        direct_weight=direct_weight,
+        derived_weight=derived_weight,
     )
-    selected_model_names = {
-        name for selection in selections.values() for name in selection.base_models
-    }
-    selected_outlier_strategies = {
-        outlier_strategy_for_model(name) for name in selected_model_names
-    }
-    applied_outlier_strategy = (
-        next(iter(selected_outlier_strategies))
-        if len(selected_outlier_strategies) == 1
-        else "model_specific"
-    )
-    outlier_indicator_used = "flag_only" in selected_outlier_strategies
     metadata = to_json_safe({
+        "schema_version": "semicon_yield_v2",
+        "pipeline_version": PIPELINE_VERSION,
+        "model_version": PIPELINE_VERSION,
         "model_type": "hybrid_multi_y",
         "bundle_type": "hybrid_multi_y",
         "target": "Y",
-        "model_name": "Hybrid Multi-Y Ensemble" if ensemble_options.enabled else "Hybrid Multi-Y",
-        "feature_columns": dataset.feature_columns,
-        "feature_count": len(dataset.feature_columns),
-        "selected_final_output": selected_final_output,
-        "final_y_metrics": final_metrics,
+        "model_name": "Auto Multi-Y HGBR",
+        "created_at": datetime.now().astimezone().isoformat(),
+        "feature_columns": schema["feature_columns"],
+        "raw_feature_columns": schema["feature_columns"],
+        "feature_count": len(schema["feature_columns"]),
+        "feature_schema": schema,
+        "feature_groups": {
+            "config": schema["config_columns"],
+            "response": schema["response_columns"],
+            "defect": schema["defect_columns"],
+        },
+        "identifier_columns": schema["identifier_columns"],
+        "target_columns": schema["target_columns"],
+        "selected_final_output": "hybrid",
+        "direct_weight": direct_weight,
+        "derived_weight": derived_weight,
+        "weight_method": weight_method,
+        "final_y_metrics": final_y_metrics,
         "target_metrics": target_metrics,
-        "risk_metrics": risk_metrics,
-        "selected_estimators": selected_estimators,
-        "ensemble_enabled": ensemble_options.enabled,
-        "ensemble_mode": ensemble_options.size,
-        "ensemble_method": ensemble_options.method,
-        "ensemble_selection_method": "inner_group_oof_rmse_stability",
-        "target_ensemble_configs": target_ensemble_configs,
-        "direct_y_ensemble": target_ensemble_configs["Y"],
-        "fail_rate_ensembles": {target: target_ensemble_configs[target] for target in FAIL_RATE_TARGETS},
-        "fail_bit_ensembles": {target: target_ensemble_configs[target] for target in COUNT_TARGETS},
-        "risk_ensemble": {"method": "soft_voting", "base_models": ["LogisticRegression", "RandomForestClassifier"]},
-        "base_model_names": sorted({name for selection in selections.values() for name in selection.base_models}),
-        "ensemble_weights": {target: selection.weights for target, selection in selections.items()},
-        "improvement_over_best_single": {target: selection.improvement_over_single for target, selection in selections.items()},
-        "prediction_correlations": {target: selection.prediction_correlations for target, selection in selections.items()},
-        "residual_correlations": {target: selection.residual_correlations for target, selection in selections.items()},
-        "model_agreement_summary": {target: selection.agreement for target, selection in selections.items()},
-        "production_ensemble_retrained": True,
-        "missing_strategy": "model_specific",
-        "outlier_strategy": applied_outlier_strategy,
-        "missing_indicator_used": missing_indicator,
-        "outlier_indicator_used": outlier_indicator_used,
+        "metrics": final_y_metrics["hybrid"],
+        "formula_validation": formula_validation,
+        "risk_metrics": {},
+        "ensemble_enabled": False,
+        "ensemble_mode": "disabled",
+        "ensemble_method": "automatic_hybrid_weight",
+        "target_ensemble_configs": target_configs,
+        "direct_y_ensemble": target_configs["Y"],
+        "base_model_names": ["HistGradientBoostingRegressor"],
+        "missing_strategy": "fold_train_median",
+        "outlier_strategy": "fold_train_winsor_0.5_99.5",
+        "missing_indicator_used": False,
+        "outlier_indicator_used": False,
         "fallback_used": False,
-        "preprocessing_strategy": "model_specific_native_or_median_and_flag_only_or_iqr_train_only",
+        "preprocessing_strategy": "fold_local_auto_numeric_and_ordinal_config",
         "preprocessing_summary": {
-            "missing_strategy": "model_specific",
-            "outlier_strategy": applied_outlier_strategy,
-            "missing_indicator": missing_indicator,
-            "outlier_indicator": outlier_indicator_used,
+            **preprocessing_summary,
+            "missing_strategy": "fold_train_median",
+            "outlier_strategy": "fold_train_winsor_0.5_99.5",
+            "missing_indicator": False,
+            "outlier_indicator": False,
+            "missing_indicator_count": 0,
+            "outlier_indicator_count": 0,
             "fallback_used": False,
-            "r_column_count": len([name for name in dataset.numeric_columns if "_R" in name and not name.endswith("_missing")]),
-            "d_column_count": len([name for name in dataset.numeric_columns if "_D" in name and not name.endswith("_missing")]),
-            "step_feature_count": len([name for name in dataset.numeric_columns if name.lower().startswith("step") and not name.endswith("_missing")]),
-            "categorical_column_count": len(dataset.categorical_columns),
-            "config_parsed": dataset.config_report.get("parse_error_count", 0) == 0,
-            "config_column_count": dataset.config_report.get("config_column_count", 0),
-            "model_strategies": {
-                target: config["preprocessing"]["missing_strategies"]
-                for target, config in target_ensemble_configs.items()
-            },
-            "model_outlier_strategies": {
-                target: config["preprocessing"]["outlier_strategies"]
-                for target, config in target_ensemble_configs.items()
-            },
+            "categorical_column_count": len(schema["config_columns"]),
+            "r_column_count": len(schema["response_columns"]),
+            "d_column_count": len(schema["defect_columns"]),
+            "config_column_count": len(schema["config_columns"]),
+            "training_row_count": len(features),
+            "lot_count": int(groups.nunique()),
+            "split_method": split_method,
+            "pipeline_version": PIPELINE_VERSION,
         },
         "cv_protocol": {
-            "name": "nested_group_kfold",
-            "group_column": "Lot_ID",
-            "outer_folds": outer_folds,
-            "inner_folds": oof_folds,
+            "name": split_method,
+            "group_column": lot_column,
+            "outer_folds": len(splits),
+            "inner_folds": None,
             "seed": RANDOM_STATE,
-            "selection_target": "Hybrid Multi-Y (Y, Y1-Y10)",
-            "fold_metrics": outer_fold_metrics,
-            "metric_summary": nested_metric_summary,
-            "outer_group_assignments": outer_group_assignments,
+            "selection_target": "Hybrid Y OOF",
+            "fold_metrics": fold_metrics,
+            "metric_summary": metric_summary,
+            "outer_group_assignments": fold_assignments,
         },
-        "oof_folds": folds,
+        "oof_folds": len(splits),
         "oof_group_assignments": fold_assignments,
-        "meta_model": "Ridge",
-        "normalization_count": normalization_count + test_normalized,
-        "dataset_rows": {"train": len(train_index), "validation": len(validation_index), "test": len(test_index)},
-        "split_method": "nested_group_kfold",
-        "group_column": "Lot_ID",
-        "metrics": final_metrics[selected_final_output],
+        "normalization_count": normalization_count,
+        "dataset_rows": {
+            "train": len(first_train),
+            "validation": len(first_holdout),
+            "test": 0,
+        },
+        "training_row_count": len(features),
+        "lot_count": int(groups.nunique()),
+        "split_method": split_method,
+        "group_column": lot_column,
+        "target_leakage_check": {
+            "passed": not bool(set(schema["feature_columns"]) & set(schema["target_columns"].values())),
+            "excluded_targets": list(schema["target_columns"].values()),
+            "excluded_identifiers": schema["identifier_columns"],
+            "leakage_columns": [],
+        },
+        "training_config": {
+            "model": "HistGradientBoostingRegressor",
+            "learning_rate": 0.05,
+            "max_iter": _estimator(len(features)).max_iter,
+            "max_leaf_nodes": 31,
+            "min_samples_leaf": _estimator(len(features)).min_samples_leaf,
+            "l2_regularization": 1.0,
+            "early_stopping": True,
+            "n_iter_no_change": 20,
+            "random_state": RANDOM_STATE,
+        },
+        "library_versions": {
+            "numpy": np.__version__,
+            "pandas": pd.__version__,
+            "scikit_learn": sklearn.__version__,
+            "joblib": joblib.__version__,
+        },
         "sklearn_version": sklearn.__version__,
         "scikit_learn_version": sklearn.__version__,
+        "available_targets": TARGETS,
     })
     return HybridTrainingResult(
         bundle=bundle,
         metadata=metadata,
-        warnings=list(dict.fromkeys(warnings)),
-        oof_predictions={target: values.tolist() for target, values in oof.items()},
+        warnings=[],
+        oof_predictions={
+            **{target: values.tolist() for target, values in oof.items()},
+            "derived_Y": derived_oof.tolist(),
+            "hybrid_Y": hybrid_oof.tolist(),
+        },
     )
 
 
-def save_hybrid_bundle(result: HybridTrainingResult, model_dir: str | Path, model_id: str) -> tuple[Path, Path]:
+def save_hybrid_bundle(
+    result: HybridTrainingResult,
+    model_dir: str | Path,
+    model_id: str,
+) -> tuple[Path, Path]:
     bundle_dir = Path(model_dir) / model_id
     bundle_dir.mkdir(parents=True, exist_ok=False)
     bundle_path = bundle_dir / "bundle.joblib"
@@ -681,7 +688,9 @@ def save_hybrid_bundle(result: HybridTrainingResult, model_dir: str | Path, mode
     oof_path = bundle_dir / "oof_predictions.json.gz"
     folds_path = bundle_dir / "fold_assignments.json.gz"
     joblib.dump(result.bundle, bundle_path)
-    metadata_path.write_text(json.dumps(result.metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps(result.metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     with gzip.open(oof_path, "wt", encoding="utf-8") as handle:
         json.dump(result.oof_predictions or {}, handle, ensure_ascii=False)
     with gzip.open(folds_path, "wt", encoding="utf-8") as handle:

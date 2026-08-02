@@ -22,8 +22,10 @@ import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import ModelSelector from "@/components/models/ModelSelector";
 import SelectedModelSummary from "@/components/models/SelectedModelSummary";
+import OperationProgress from "@/components/OperationProgress";
 import PreprocessingSummary from "@/components/PreprocessingSummary";
 import Sidebar from "@/components/Sidebar";
+import useElapsedTime from "@/hooks/useElapsedTime";
 import {
   deletePredictionHistory,
   downloadPredictions,
@@ -214,6 +216,7 @@ export default function PredictionPage() {
   const [error, setError] = useState("");
   const selectedModel = models.find((model) => model.model_id === selectedModelId);
   const [isPredicting, setIsPredicting] = useState(false);
+  const [predictionRunKey, setPredictionRunKey] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("all");
   const [searchText, setSearchText] = useState("");
@@ -231,6 +234,10 @@ export default function PredictionPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [restoredHistory, setRestoredHistory] = useState<PredictionHistorySummary | null>(null);
+  const { formattedElapsed: formattedPredictionElapsed } = useElapsedTime({
+    running: isPredicting,
+    resetKey: predictionRunKey,
+  });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -311,6 +318,7 @@ export default function PredictionPage() {
     if (!file || !selectedModelId || isPredicting) return;
     setError("");
     setResult(null);
+    setPredictionRunKey((current) => current + 1);
     setIsPredicting(true);
     try {
       const response = await predictCsv(file, selectedModelId, thresholds);
@@ -543,7 +551,7 @@ export default function PredictionPage() {
         <main className="mainContent uploadPage">
           <section className="uploadIntro">
             <span className="eyebrow">머신러닝 추론</span>
-            <h1>Wafer 수율 예측</h1>
+            <h1>수율 예측</h1>
             <p>
               저장된 학습 모델로 신규 공정 데이터의 목표값을 예측합니다.
             </p>
@@ -613,16 +621,18 @@ export default function PredictionPage() {
                 />
               </div>
             </div>
-            <SelectedModelSummary model={selectedModel} />
+            <div className="predictionInputStack">
+              <SelectedModelSummary model={selectedModel} />
 
-            <CsvUploadPanel
-              id="prediction-file"
-              file={file}
-              onFileSelect={selectFile}
-              disabled={isPredicting}
-              compact
-              title="예측할 CSV를 드래그하거나 클릭하여 선택하세요."
-            />
+              <CsvUploadPanel
+                id="prediction-file"
+                file={file}
+                onFileSelect={selectFile}
+                disabled={isPredicting}
+                compact
+                title="예측할 CSV를 드래그하거나 클릭하여 선택하세요."
+              />
+            </div>
 
             {error && <div className="messageBox error" role="alert">{error}</div>}
             {visibleWarnings.length > 0 && (
@@ -645,7 +655,13 @@ export default function PredictionPage() {
                 aria-busy={isPredicting}
                 onClick={handlePredict}
               >
-                {isPredicting ? "예측 중..." : "수율 예측 실행"}
+                {isPredicting ? (
+                  <OperationProgress
+                    message="수율을 예측하고 있습니다…"
+                    timeLabel="추론 시간"
+                    formattedElapsed={formattedPredictionElapsed}
+                  />
+                ) : "수율 예측 실행"}
               </button>
             </div>
           </section>
@@ -658,7 +674,7 @@ export default function PredictionPage() {
                     <div><strong>저장된 예측 결과</strong><span>{new Date(restoredHistory.created_at).toLocaleString("ko-KR")} · {restoredHistory.source_filename}</span></div>
                     <div className="historyRowActions">
                       <button className="button secondary" type="button" onClick={() => { setResult(null); setRestoredHistory(null); const url = new URL(window.location.href); url.searchParams.delete("prediction_id"); window.history.replaceState({}, "", url); }}>새 예측</button>
-                      <a className="button secondary" href={`/root-cause?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}&model_id=${encodeURIComponent(restoredHistory.model_id ?? "")}`}>원인 분석 열기</a>
+                      <a className="button secondary" href={`/root-cause?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}&model_id=${encodeURIComponent(restoredHistory.model_id ?? "")}`}>불량 원인 분석 열기</a>
                     </div>
                   </div>
                 )}
@@ -707,7 +723,7 @@ export default function PredictionPage() {
                 <div className="sectionHeading compact predictionTrendHeading">
                   <div>
                     <span className="sectionLabel">Yield trend</span>
-                    <h2 id="prediction-trend-title">Wafer 수율 예측 추이</h2>
+                    <h2 id="prediction-trend-title">수율 예측 추이</h2>
                   </div>
                   <div className="movingAverageControl">
                     <label htmlFor="moving-average-window">이동평균 구간</label>

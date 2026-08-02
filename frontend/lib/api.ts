@@ -340,7 +340,7 @@ export async function explainCsv(
   } catch (error) {
     rethrowApiConfigurationError(error);
     throw new Error(
-      "원인 분석 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
+      "불량 원인 분석 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
     );
   }
   if (!response.ok) {
@@ -455,7 +455,7 @@ export async function downloadExplanation(
     });
   } catch (error) {
     rethrowApiConfigurationError(error);
-    throw new Error("원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
+    throw new Error("불량 원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));

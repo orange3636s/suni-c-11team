@@ -190,6 +190,13 @@ def compute_shap_values(
     model: Any,
     features: pd.DataFrame,
 ) -> ShapComputation:
+    # The automatic Multi-Y bundle exposes the production Y model through
+    # ``direct_model``.  Explain that fitted Pipeline instead of treating the
+    # bundle itself as a numeric estimator.
+    if not isinstance(model, Pipeline) and isinstance(
+        getattr(model, "direct_model", None), Pipeline
+    ):
+        model = model.direct_model
     if isinstance(model, EnsembleRegressor):
         member_results = {
             name: compute_shap_values(member, features)
@@ -572,10 +579,14 @@ def explain_dataframe(
         raise InferenceInputError(
             "설명에 전달된 예측 결과의 행 수가 CSV와 일치하지 않습니다."
         )
+    is_auto_pipeline = (
+        loaded.metadata.get("pipeline_version") == "auto_multi_y_hgbr_v1"
+    )
     processed, preprocessing_report = preprocess_dataframe(dataframe)
     all_features, feature_warnings = prepare_inference_features(
-        processed,
+        dataframe if is_auto_pipeline else processed,
         list(loaded.metadata["feature_columns"]),
+        allow_missing=is_auto_pipeline,
     )
     indices, sampling_strategy = _sampling_indices(
         predictions.predictions,

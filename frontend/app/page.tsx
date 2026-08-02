@@ -140,7 +140,7 @@ export default function Home() {
   const [historyError, setHistoryError] = useState("");
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
   const selectedAnalysisIdRef = useRef<string | null>(null);
-  const [selectionLabel, setSelectionLabel] = useState<"최근 원인 분석" | "선택한 원인 분석">("최근 원인 분석");
+  const [selectionLabel, setSelectionLabel] = useState<"최근 불량 원인 분석" | "선택한 불량 원인 분석">("최근 불량 원인 분석");
   const [selectionNotice, setSelectionNotice] = useState("");
   const [overview, setOverview] = useState<AnalysisOverviewResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
@@ -150,7 +150,7 @@ export default function Home() {
   const persistSelection = useCallback((analysisId: string | null, selectedByUser: boolean) => {
     selectedAnalysisIdRef.current = analysisId;
     setSelectedAnalysisId(analysisId);
-    setSelectionLabel(selectedByUser ? "선택한 원인 분석" : "최근 원인 분석");
+    setSelectionLabel(selectedByUser ? "선택한 불량 원인 분석" : "최근 불량 원인 분석");
     const url = new URL(window.location.href);
     if (analysisId) {
       url.searchParams.set("analysis_id", analysisId);
@@ -211,7 +211,7 @@ export default function Home() {
       setHistoryError(
         requestError instanceof Error
           ? requestError.message
-          : "원인 분석 이력 목록을 불러오지 못했습니다.",
+          : "불량 원인 분석 이력 목록을 불러오지 못했습니다.",
       );
     } finally {
       setHistoryLoading(false);
@@ -250,7 +250,7 @@ export default function Home() {
           setOverviewError(
             requestError instanceof Error
               ? requestError.message
-              : "선택한 원인 분석 결과를 불러오지 못했습니다.",
+              : "선택한 불량 원인 분석 결과를 불러오지 못했습니다.",
           );
         })
         .finally(() => {
@@ -364,11 +364,11 @@ export default function Home() {
       <div className="contentShell">
         <Header />
         <main id="overview" className="mainContent overviewDashboard" data-dashboard-state={dashboardState}>
-          <section className="overviewToolbar" aria-label="원인 분석 이력 선택">
+          <section className="overviewToolbar" aria-label="불량 원인 분석 이력 선택">
             <div>
               <span className="sectionLabel">Analysis source</span>
               <h2>{selectionLabel}</h2>
-              <p>원인 분석 이력을 선택하면 페이지를 새로고침하지 않고 모든 지표가 갱신됩니다.</p>
+              <p>불량 원인 분석 이력을 선택하면 페이지를 새로고침하지 않고 모든 지표가 갱신됩니다.</p>
             </div>
             <AnalysisHistorySelector
               items={historyItems}
@@ -405,16 +405,16 @@ export default function Home() {
                   <StatusBadge label={selectionLabel} tone={source.type === "analysis" ? "info" : "neutral"} dot={false} />
                   <StatusBadge label={sourcePresentation.label} tone={sourcePresentation.tone} dot={false} />
                 </div>
-                <h2 id="overview-source-title">{source.source_filename ?? "원인 분석 이력을 선택해 주세요"}</h2>
+                <h2 id="overview-source-title">{source.source_filename ?? "불량 원인 분석 이력을 선택해 주세요"}</h2>
                 <p>
                   {source.model_name ?? source.model_id ?? "모델 정보 없음"}
                   {source.created_at ? ` · ${formatDate(source.completed_at ?? source.created_at)}` : ""}
                 </p>
                 <p className="overviewSourceId">{source.analysis_id ?? "analysis_id 없음"}</p>
                 {analysisBase ? (
-                  <a className="overviewSourceLink" href={analysisBase}>원인 분석 상세 보기 →</a>
+                  <a className="overviewSourceLink" href={analysisBase}>불량 원인 분석 상세 보기 →</a>
                 ) : (
-                  <a className="overviewSourceLink" href="/root-cause">원인 분석 실행 →</a>
+                  <a className="overviewSourceLink" href="/root-cause">불량 원인 분석 실행 →</a>
                 )}
               </div>
             </div>

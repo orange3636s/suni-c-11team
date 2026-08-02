@@ -16,9 +16,12 @@ from src.ml.explainability import explain_dataframe
 from src.ml.hybrid import (
     COUNT_TARGETS,
     FAIL_RATE_TARGETS,
+    PIPELINE_VERSION,
+    detect_auto_schema,
     normalized_failure_rates,
     save_hybrid_bundle,
     train_hybrid_multi_y,
+    validate_y_formula,
 )
 from src.ml.inference import (
     list_prediction_models,
@@ -94,14 +97,20 @@ def test_hybrid_oof_bundle_prediction_and_target_explanation(
     assert trained.metadata["selected_final_output"] in {"direct", "derived", "hybrid"}
     assert set(trained.metadata["final_y_metrics"]) == {"direct", "derived", "hybrid"}
     protocol = trained.metadata["cv_protocol"]
-    assert protocol["name"] == "nested_group_kfold"
-    assert protocol["outer_folds"] == 5
-    assert protocol["inner_folds"] == 3
+    assert protocol["name"] == "group_3_fold"
+    assert protocol["outer_folds"] == 3
+    assert protocol["inner_folds"] is None
     assert protocol["seed"] == 42
+    assert trained.metadata["pipeline_version"] == PIPELINE_VERSION
     assert trained.metadata["fallback_used"] is False
-    assert trained.metadata["outlier_strategy"] in {"flag_only", "iqr", "model_specific"}
-    assert trained.metadata["preprocessing_summary"]["model_outlier_strategies"]
-    assert len(protocol["fold_metrics"]) == 5
+    assert trained.metadata["outlier_strategy"] == "fold_train_winsor_0.5_99.5"
+    assert trained.metadata["preprocessing_summary"]["winsorization_quantiles"] == [0.005, 0.995]
+    assert trained.metadata["preprocessing_summary"]["missing_indicator_count"] == 0
+    assert trained.metadata["preprocessing_summary"]["outlier_indicator_count"] == 0
+    assert trained.metadata["preprocessing_summary"]["categorical_column_count"] == len(
+        trained.metadata["feature_schema"]["config_columns"]
+    )
+    assert len(protocol["fold_metrics"]) == 3
     assert all(
         set(fold["train_groups"]).isdisjoint(fold["holdout_groups"])
         for fold in protocol["outer_group_assignments"]
@@ -134,6 +143,10 @@ def test_hybrid_oof_bundle_prediction_and_target_explanation(
     assert set(first["failure_rates"]) == set(FAIL_RATE_TARGETS)
     assert set(first["fail_bit_counts"]) == set(COUNT_TARGETS)
     assert first["derived_y"] == pytest.approx(100 - sum(first["failure_rates"].values()))
+    assert first["predicted_Y"] == pytest.approx(first["hybrid_y"])
+    assert first["direct_Y"] == pytest.approx(first["direct_y"])
+    assert first["derived_Y"] == pytest.approx(first["derived_y"])
+    assert all(target in first for target in [*FAIL_RATE_TARGETS, *COUNT_TARGETS])
 
     y6_model = load_prediction_model_target(model_id, "Y6", hybrid_model_dir)
     y6_prediction = predict_dataframe(hybrid_dataframe, y6_model, max_rows=None)
@@ -211,3 +224,42 @@ def test_train_and_predict_api_use_one_hybrid_bundle_without_target_selection(
     assert set(first["failure_rates"]) == set(FAIL_RATE_TARGETS)
     assert set(first["fail_bit_counts"]) == set(COUNT_TARGETS)
     assert prediction.preprocessing
+
+
+def test_auto_schema_formula_and_fold_local_inference_resilience(
+    hybrid_dataframe: pd.DataFrame,
+    hybrid_model_dir: Path,
+) -> None:
+    schema = detect_auto_schema(hybrid_dataframe)
+    assert schema["identifier_columns"] == ["Lot_Wafer_ID"]
+    assert schema["response_columns"] == ["Step1_R1"]
+    assert schema["defect_columns"] == ["Step1_D1"]
+    assert schema["config_columns"] == ["Step1_EQ"]
+    assert not set(schema["feature_columns"]) & {"Y", *FAIL_RATE_TARGETS, *COUNT_TARGETS}
+
+    targets = hybrid_dataframe[["Y", *FAIL_RATE_TARGETS, *COUNT_TARGETS]]
+    formula = validate_y_formula(targets)
+    assert formula["formula_consistent"] is True
+    assert formula["within_tolerance_ratio"] == pytest.approx(1.0)
+
+    trained = train_hybrid_multi_y(hybrid_dataframe)
+    assert trained.metadata["direct_weight"] + trained.metadata["derived_weight"] == pytest.approx(1.0)
+    assert trained.metadata["target_leakage_check"]["passed"] is True
+    model_id = "AUTO_MULTI_Y_RESILIENCE"
+    trained.metadata.update({
+        "model_id": model_id,
+        "created_at": "2026-08-02T00:00:00+09:00",
+        "schema_version": "semicon_yield_v2",
+        "schema_fingerprint": schema_fingerprint(schema["feature_columns"]),
+    })
+    save_hybrid_bundle(trained, hybrid_model_dir, model_id)
+    loaded = load_prediction_model(model_id, hybrid_model_dir)
+    inference = hybrid_dataframe.drop(columns=["Step1_D1"]).copy()
+    inference.loc[0, "Step1_R1"] = np.nan
+    inference.loc[0, "Step1_EQ"] = "NEW_EQ"
+    inference["Step99_R1"] = 123.0
+    prediction = predict_dataframe(inference, loaded, max_rows=None)
+    assert len(prediction.predictions) == len(inference)
+    assert prediction.preprocessing_summary["missing_input_features"] == ["Step1_D1"]
+    assert prediction.preprocessing_summary["ignored_extra_features"] == ["Step99_R1"]
+    assert all(0 <= row["predicted_Y"] <= 100 for row in prediction.predictions)

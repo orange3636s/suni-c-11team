@@ -68,7 +68,7 @@ export default function Header() {
   return (
     <header className="topHeader">
       <div className="headerContext">
-        <h1>제조 공정 불량 예측 &amp; 원인분석 AI</h1>
+        <h1>제조 공정 불량 예측 &amp; 불량 원인 분석 AI</h1>
       </div>
       <div className="headerMeta" aria-label="시스템 연결 상태">
         <div className="headerStatusGroup">

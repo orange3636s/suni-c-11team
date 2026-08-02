@@ -49,14 +49,8 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str | bool]:
-    return {
-        "status": "ok",
-        "service": SERVICE_NAME,
-        "environment": settings.app_env,
-        "version": APP_VERSION,
-        "model_directory_ready": settings.model_directory_ready(),
-    }
+def health_check() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/ready")

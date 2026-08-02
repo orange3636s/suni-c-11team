@@ -14,8 +14,10 @@ import {
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import ModelHistoryPanel from "@/components/ModelHistoryPanel";
+import OperationProgress from "@/components/OperationProgress";
 import PreprocessingSummary from "@/components/PreprocessingSummary";
 import Sidebar from "@/components/Sidebar";
+import useElapsedTime from "@/hooks/useElapsedTime";
 import { trainModel } from "@/lib/api";
 import { normalizeMetricSummary } from "@/lib/training";
 import type { MetricSummary, ModelMetrics, TrainResponse } from "@/types/data";
@@ -57,8 +59,13 @@ export default function TrainingPage() {
   const [result, setResult] = useState<TrainResponse | null>(null);
   const [error, setError] = useState("");
   const [isTraining, setIsTraining] = useState(false);
+  const [trainingRunKey, setTrainingRunKey] = useState(0);
   const [activeView, setActiveView] = useState<"new" | "history">("new");
   const cvMetricSummary = normalizeMetricSummary(result);
+  const { formattedElapsed: formattedTrainingElapsed } = useElapsedTime({
+    running: isTraining,
+    resetKey: trainingRunKey,
+  });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -106,6 +113,7 @@ export default function TrainingPage() {
     if (!file || isTraining) return;
     setError("");
     setResult(null);
+    setTrainingRunKey((current) => current + 1);
     setIsTraining(true);
     try {
       setResult(await trainModel(file));
@@ -130,7 +138,7 @@ export default function TrainingPage() {
             <span className="eyebrow">머신러닝</span>
             <h1>모델 학습</h1>
             <p>
-              Hybrid Multi-Y와 Lot 기반 Nested Group K-Fold로 안정적인 모델을 선택합니다.
+              공정 구조를 자동 감지하고 Lot을 분리한 Multi-Y 모델로 최종 수율을 계산합니다.
             </p>
           </section>
 
@@ -177,19 +185,11 @@ export default function TrainingPage() {
               />
             </div>
 
-            <div className="trainingControls">
-              <div className="hybridTrainingCard structureCard cvProtocolCard" aria-label="Nested Group K-Fold 검증">
-                <span>교차 검증</span>
-                <strong>Nested Group K-Fold</strong>
-                <p>Outer 5-Fold에서 일반화 성능을 평가하고 Inner 3-Fold에서 모델과 앙상블을 선택합니다.</p>
-                <small>그룹: Lot_ID · 동일 Lot 교차 혼입 방지 · seed 42</small>
-              </div>
-              <div className="hybridTrainingCard structureCard" aria-label="학습 구조 Hybrid Multi-Y">
-                <span>학습 구조</span>
-                <strong>Hybrid Multi-Y</strong>
-                <p>Y1~Y5 불량률과 Y6~Y10 Fail Bit Count를 각각 예측하고 Direct Y와 결합해 최종 수율을 산출합니다.</p>
-                <small>학습 대상: Final Y · Y1~Y5 · Y6~Y10 · Risk Classification</small>
-              </div>
+            <div className="hybridTrainingCard structureCard" aria-label="자동 학습 설정">
+              <span>자동 학습 설정</span>
+              <strong>데이터에 맞춰 안전하게 자동 구성</strong>
+              <p>데이터 구조 자동 탐지 · Group 3-Fold 교차검증 · Multi-Y 불량률 예측 · 최종 수율 자동 계산</p>
+              <small>결측치·이상치 자동 처리 · 범주형 Config 자동 인코딩 · 사용자 설정 불필요</small>
             </div>
 
             {error && (
@@ -205,7 +205,13 @@ export default function TrainingPage() {
                 aria-busy={isTraining}
                 onClick={handleTrain}
               >
-                {isTraining ? "모델을 학습하고 있습니다..." : "모델 학습 시작"}
+                {isTraining ? (
+                  <OperationProgress
+                    message="모델을 학습하고 있습니다…"
+                    timeLabel="학습 시간"
+                    formattedElapsed={formattedTrainingElapsed}
+                  />
+                ) : "모델 학습"}
               </button>
             </div>
           </section>
@@ -245,26 +251,13 @@ export default function TrainingPage() {
                 </div>
                 <PreprocessingSummary summary={result.preprocessing} />
 
-                {result.ensemble && (
-                  <div className="trainingWarnings">
-                    <strong>앙상블 선택 결과 · {result.ensemble.selected ? result.ensemble.selected_type : "Single Model"}</strong>
-                    <p>{result.ensemble.base_models.join(" / ")} · RMSE 개선률 {(100 * (result.ensemble.improvement_over_single.rmse_relative ?? 0)).toFixed(2)}% · Ensemble Agreement 상관 {formatMetric(result.ensemble.agreement.mean_pairwise_correlation)}</p>
-                    <div className="tableWrap">
-                      <table><thead><tr><th>Target</th><th>선택 유형</th><th>Base Models</th><th>Weight</th><th>개선률</th><th>Fold 안정성</th></tr></thead>
-                      <tbody>{Object.entries(result.ensemble.target_configs).map(([targetName, config]) => (
-                        <tr key={targetName}><th>{targetName}</th><td>{config.selected_type}</td><td>{config.base_models.join(" / ")}</td><td>{Object.entries(config.weights).map(([name, weight]) => `${name} ${weight.toFixed(2)}`).join(" · ")}</td><td>{(100 * (config.improvement_over_single.rmse_relative ?? 0)).toFixed(2)}%</td><td>{config.fold_rmse_std.toFixed(4)}</td></tr>
-                      ))}</tbody></table>
-                    </div>
-                  </div>
-                )}
-
                 <p className="metricNotice">
                   R²가 0 이하이면 기준선보다 예측력이 낮을 수 있습니다.
                 </p>
 
                 <div className="splitSummary">
-                  <span>Outer 5-Fold</span>
-                  <span>Inner 3-Fold</span>
+                  <span>Group 3-Fold</span>
+                  <span>OOF 평가</span>
                   <span>Group Lot_ID</span>
                   <span>Seed 42</span>
                 </div>

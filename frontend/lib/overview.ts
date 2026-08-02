@@ -217,7 +217,7 @@ export function createEmptyOverview(): AnalysisOverviewResponse {
     source_type: "empty",
     source_id: null,
     created_at: null,
-    source_label: "저장된 원인 분석 결과 없음",
+    source_label: "저장된 불량 원인 분석 결과 없음",
     filename: null,
     model: null,
     data_quality: {},
@@ -240,7 +240,7 @@ export function normalizeOverviewAnalysis(payload: unknown): AnalysisOverviewRes
   const inferredType = text(nestedSource.type) ?? legacyType;
   if (inferredType === "empty") return createEmptyOverview();
   if (inferredType !== "analysis") {
-    throw new Error("Dashboard API가 원인 분석 이력이 아닌 Source를 반환했습니다.");
+    throw new Error("Dashboard API가 불량 원인 분석 이력이 아닌 Source를 반환했습니다.");
   }
 
   const summarySource = record(payload.summary);
@@ -349,7 +349,7 @@ export function normalizeOverviewAnalysis(payload: unknown): AnalysisOverviewRes
     source_type: "analysis",
     source_id: source.analysis_id,
     created_at: source.created_at,
-    source_label: text(payload.source_label) ?? "원인 분석 이력",
+    source_label: text(payload.source_label) ?? "불량 원인 분석 이력",
     filename: source.source_filename,
     model: Object.keys(modelSource).length ? modelSource : null,
     data_quality: record(payload.data_quality),
@@ -400,7 +400,7 @@ export function overviewFromHistory(item: AnalysisHistorySummary): AnalysisOverv
     source_type: "analysis",
     source_id: item.analysis_id,
     created_at: item.created_at,
-    source_label: "선택한 원인 분석",
+    source_label: "선택한 불량 원인 분석",
     filename: item.source_filename,
     model: {
       model_id: item.model_id,

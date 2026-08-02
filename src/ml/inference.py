@@ -781,6 +781,8 @@ def get_prediction_model_detail(
 def prepare_inference_features(
     dataframe: pd.DataFrame,
     feature_columns: list[str],
+    *,
+    allow_missing: bool = False,
 ) -> tuple[pd.DataFrame, list[str]]:
     duplicate_columns = dataframe.columns[
         dataframe.columns.duplicated()
@@ -795,7 +797,7 @@ def prepare_inference_features(
         column for column in ordered_features
         if column not in dataframe.columns
     ]
-    if missing_features:
+    if missing_features and not allow_missing:
         raise InferenceInputError(
             "예측에 필요한 feature가 누락되었습니다: "
             + ", ".join(missing_features)
@@ -821,7 +823,11 @@ def prepare_inference_features(
             "학습에 사용하지 않은 feature를 제외했습니다: "
             + ", ".join(extra_features)
         )
-    features = dataframe.loc[:, ordered_features].copy()
+    features = dataframe.copy()
+    if allow_missing:
+        for column in missing_features:
+            features[column] = np.nan
+    features = features.loc[:, ordered_features].copy()
     if features.empty:
         raise InferenceInputError("유효한 예측 행이 없습니다.")
     return features, warnings
@@ -969,6 +975,7 @@ def predict_dataframe(
             "예측 데이터 검증에 실패했습니다: "
             + " ".join(validation["errors"])
         )
+    is_auto_pipeline = loaded.metadata.get("pipeline_version") == "auto_multi_y_hgbr_v1"
     processed, preprocessing_report = preprocess_dataframe(dataframe)
     schema = load_data_schema()
     detected_raw = detect_feature_columns(list(dataframe.columns), schema)
@@ -979,15 +986,16 @@ def predict_dataframe(
         *detected_raw.get("config_columns", []),
     ]))
     compatibility = model_schema_status(loaded.metadata, raw_features)
-    if compatibility == "incompatible":
+    if compatibility == "incompatible" and not is_auto_pipeline:
         raise InferenceInputError(
             "선택한 모델은 현재 데이터 스키마와 호환되지 않습니다. "
             "신규 데이터로 모델을 다시 학습해 주세요."
         )
     feature_columns = list(loaded.metadata["feature_columns"])
     features, feature_warnings = prepare_inference_features(
-        processed,
+        dataframe if is_auto_pipeline else processed,
         feature_columns,
+        allow_missing=is_auto_pipeline,
     )
     if len(features) == 0:
         raise InferenceInputError("유효한 예측 행이 없습니다.")
@@ -1014,8 +1022,8 @@ def predict_dataframe(
     warnings = list(
         dict.fromkeys(
             [
-                *preprocessing_report["warnings"],
-                *feature_warnings,
+                *([] if is_auto_pipeline else preprocessing_report["warnings"]),
+                *([] if is_auto_pipeline else feature_warnings),
             ]
         )
     )
@@ -1099,6 +1107,8 @@ def predict_dataframe(
                 "direct_y": float(hybrid_components["direct"][position]),
                 "derived_y": float(hybrid_components["derived"][position]),
                 "hybrid_y": float(hybrid_components["hybrid"][position]),
+                "direct_Y": float(hybrid_components["direct"][position]),
+                "derived_Y": float(hybrid_components["derived"][position]),
                 "selected_final_output": loaded.metadata.get("selected_final_output"),
                 "failure_rates": failure_rates,
                 "fail_bit_counts": fail_bit_counts,
@@ -1124,6 +1134,8 @@ def predict_dataframe(
                 },
                 "warnings": [],
             })
+            row.update(failure_rates)
+            row.update(fail_bit_counts)
         if target == "Y":
             risk = _risk_level(
                 prediction,
@@ -1187,5 +1199,11 @@ def predict_dataframe(
             "missing_indicator": loaded.metadata.get("missing_indicator_used"),
             "outlier_policy": loaded.metadata.get("outlier_policy"),
             "policy": _metadata_dict(loaded.metadata.get("preprocessing_config")),
+            "missing_input_features": [
+                column for column in feature_columns if column not in dataframe.columns
+            ] if is_auto_pipeline else [],
+            "ignored_extra_features": [
+                column for column in raw_features if column not in feature_columns
+            ] if is_auto_pipeline else [],
         },
     )

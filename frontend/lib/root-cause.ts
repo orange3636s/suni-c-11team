@@ -299,7 +299,7 @@ function parseExplainResponse(value: unknown): ExplainResponse | null {
 export function normalizeExplainResponse(value: unknown): ExplainResponse {
   const response = parseExplainResponse(value);
   if (!response) {
-    throw new Error("원인 분석 응답에 필수 explanation 데이터가 없습니다.");
+    throw new Error("불량 원인 분석 응답에 필수 explanation 데이터가 없습니다.");
   }
   return response;
 }

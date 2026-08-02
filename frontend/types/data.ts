@@ -64,6 +64,17 @@ export type ProcessingSummary = {
   config_column_count?: number;
   config_parser_version?: string;
   measurement_coverage?: { r?: number; d?: number };
+  numeric_feature_count?: number;
+  categorical_config_count?: number;
+  removed_all_missing_columns?: string[];
+  removed_constant_columns?: string[];
+  removed_near_constant_columns?: string[];
+  missing_imputed_columns?: number;
+  winsorized_columns?: number;
+  training_row_count?: number;
+  lot_count?: number;
+  split_method?: string;
+  pipeline_version?: string;
   model_strategies?: Record<string, unknown>;
   model_outlier_strategies?: Record<string, unknown>;
   schema_version?: string;

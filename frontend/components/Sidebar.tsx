@@ -21,7 +21,7 @@ const navigationItems = [
   { label: "개요", href: "/", icon: "overview" },
   { label: "모델 학습", href: "/training", icon: "model" },
   { label: "수율 예측", href: "/prediction", icon: "trend" },
-  { label: "원인 분석", href: "/root-cause", icon: "analysis" },
+  { label: "불량 원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "사전 알람 로그", href: "/alerts", icon: "alert" },
   { label: "자동화 상태", href: "/automation", icon: "automation" },
 ];
@@ -31,7 +31,7 @@ type SidebarProps = {
     | "개요"
     | "모델 학습"
     | "수율 예측"
-    | "원인 분석"
+    | "불량 원인 분석"
     | "사전 알람 로그"
     | "자동화 상태";
 };
@@ -133,9 +133,9 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
       if (systemStatus.predictions === "ready") return { tone: "green", label: "예측 이력 정상" };
       return systemStatus.models === "ready" ? { tone: "yellow", label: "모델 준비 · 예측 필요" } : { tone: "yellow", label: "Model 필요" };
     }
-    if (label === "원인 분석") {
+    if (label === "불량 원인 분석") {
       if (systemStatus.analyses === "error") return { tone: "red", label: "이력 조회 실패" };
-      if (systemStatus.analyses === "ready") return { tone: "green", label: "원인 분석 Ready" };
+      if (systemStatus.analyses === "ready") return { tone: "green", label: "불량 원인 분석 Ready" };
       return systemStatus.predictions === "ready" ? { tone: "yellow", label: "예측 완료 · 분석 필요" } : { tone: "yellow", label: "예측 필요" };
     }
     if (label === "개요") {

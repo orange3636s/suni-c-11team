@@ -18,6 +18,25 @@ function missingLabel(value: ProcessingSummary["missing_strategy"]): string {
 
 export default function PreprocessingSummary({ summary }: PreprocessingSummaryProps) {
   if (!summary) return null;
+  if (summary.pipeline_version === "auto_multi_y_hgbr_v1") {
+    const removedColumns = [
+      ...(summary.removed_all_missing_columns ?? []),
+      ...(summary.removed_constant_columns ?? []),
+      ...(summary.removed_near_constant_columns ?? []),
+    ];
+    const items = [
+      ["숫자형 Feature", `${summary.numeric_feature_count ?? 0}개`],
+      ["범주형 Config", `${summary.categorical_config_count ?? 0}개`],
+      ["제거된 상수·준상수 열", `${removedColumns.length}개`],
+      ["결측치 대체 열", `${summary.missing_imputed_columns ?? 0}개`],
+      ["이상치 완화 열", `${summary.winsorized_columns ?? 0}개`],
+      ["학습 행", (summary.training_row_count ?? 0).toLocaleString()],
+      ["Lot", (summary.lot_count ?? 0).toLocaleString()],
+      ["분할 방식", summary.split_method ?? "자동 분할"],
+      ["Pipeline", summary.pipeline_version],
+    ];
+    return <section className="preprocessingSummaryCard" aria-labelledby="preprocessing-summary-title"><div><span className="sectionLabel">Auto Pipeline</span><h3 id="preprocessing-summary-title">데이터 처리 요약</h3></div><ul>{items.map(([label, value]) => <li key={label}><span aria-hidden="true">✓</span><strong>{label}</strong><small>{value}</small></li>)}</ul></section>;
+  }
   const coverage = summary.measurement_coverage ?? {};
   const missingStrategy = summary.missing_strategy ?? summary.missing_handling;
   const outlierStrategy = summary.outlier_strategy ?? summary.outlier_policy;

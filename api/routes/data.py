@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import logging
 import math
+from functools import partial
+import threading
 import time
 from collections import Counter
 from datetime import datetime
@@ -22,6 +24,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from api.schemas.data import (
     AnalyzeResponse,
@@ -110,6 +113,7 @@ MAX_FILE_SIZE = settings.max_upload_size_bytes
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
 MODEL_DIR = settings.model_dir
 TRAINABLE_TARGETS = tuple(["Y", *[f"Y{index}" for index in range(1, 6)]])
+_TRAINING_LOCK = threading.Lock()
 
 
 def _duplicate_names(values: list[str]) -> list[str]:
@@ -384,7 +388,9 @@ async def train_model(
         )
 
     try:
-        validation = validate_dataframe(dataframe, validation_mode="training")
+        validation = await run_in_threadpool(
+            partial(validate_dataframe, dataframe, validation_mode="training")
+        )
     except Exception as exc:
         logger.exception("학습 데이터 검증 중 내부 오류")
         raise HTTPException(
@@ -402,7 +408,9 @@ async def train_model(
     logger.info("학습 데이터 검증 완료")
 
     try:
-        processed, preprocessing_report = preprocess_dataframe(dataframe)
+        processed, preprocessing_report = await run_in_threadpool(
+            preprocess_dataframe, dataframe
+        )
     except Exception as exc:
         logger.exception("학습 데이터 전처리 중 내부 오류")
         raise HTTPException(
@@ -416,28 +424,21 @@ async def train_model(
     )
 
     if target is None:
-        try:
-            hybrid = train_hybrid_multi_y(
-                dataframe,
-                missing_indicator=missing_indicator,
-                outer_folds=5,
-                oof_folds=3,
-                ensemble_options=EnsembleOptions(
-                    enabled=ensemble_enabled,
-                    size=ensemble_size,
-                    method=ensemble_method,
-                    min_improvement=ensemble_min_improvement,
-                    diversity_check=diversity_check,
-                    max_base_models=max_base_models,
-                ),
+        if not _TRAINING_LOCK.acquire(blocking=False):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="다른 모델 학습이 진행 중입니다. 완료 후 다시 시도해 주세요.",
             )
+        try:
+            try:
+                hybrid = await run_in_threadpool(
+                    partial(train_hybrid_multi_y, dataframe)
+                )
+            finally:
+                _TRAINING_LOCK.release()
             created_at = datetime.now().astimezone()
-            model_id = f"HYBRID_MULTI_Y_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
-            raw_features = prepare_dataset(
-                dataframe,
-                target="Y",
-                add_missing_indicators=missing_indicator,
-            ).raw_feature_columns
+            model_id = f"AUTO_MULTI_Y_HGBR_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
+            raw_features = list(hybrid.metadata["raw_feature_columns"])
             hybrid_processing_summary = {
                 **preprocessing_report.get("processing_summary", {}),
                 **hybrid.metadata.get("preprocessing_summary", {}),
@@ -450,11 +451,11 @@ async def train_model(
                 "raw_feature_columns": raw_features,
                 "config_parser_version": CONFIG_PARSER_VERSION,
                 "preprocessing_config": {
-                    **preprocessing_report.get("preprocessing_policy", {}),
-                    "missing_strategy": hybrid.metadata.get("missing_strategy", "model_specific"),
-                    "outlier_strategy": hybrid.metadata.get("outlier_strategy", "model_specific"),
-                    "model_strategies": hybrid.metadata.get("preprocessing_summary", {}).get("model_strategies", {}),
-                    "model_outlier_strategies": hybrid.metadata.get("preprocessing_summary", {}).get("model_outlier_strategies", {}),
+                    "missing_strategy": hybrid.metadata.get("missing_strategy"),
+                    "outlier_strategy": hybrid.metadata.get("outlier_strategy"),
+                    "missing_indicator": False,
+                    "outlier_indicator": False,
+                    "statistics_scope": "each_cv_training_fold_and_full_refit",
                     "fallback_used": hybrid.metadata.get("fallback_used", False),
                 },
                 "preprocessing_summary": hybrid_processing_summary,
@@ -471,18 +472,18 @@ async def train_model(
             rows = hybrid.metadata["dataset_rows"]
             response = TrainResponse(
                 target="Y",
-                best_model="Hybrid Multi-Y",
+                best_model="Auto Multi-Y HGBR",
                 split=DatasetSplit(
                     train_rows=rows["train"],
                     validation_rows=rows["validation"],
                     test_rows=rows["test"],
                     group_split_used=True,
-                    split_method="nested_group_kfold",
+                    split_method=hybrid.metadata["split_method"],
                 ),
                 metrics={name: ModelMetrics(**values) for name, values in selected_metrics.items()},
                 model_comparison=[],
                 feature_count=len(hybrid.bundle.feature_columns),
-                warnings=list(dict.fromkeys([*preprocessing_report["warnings"], *hybrid.warnings])),
+                warnings=hybrid.warnings,
                 artifacts=ModelArtifacts(
                     model_file=str(bundle_path.relative_to(MODEL_DIR)),
                     metadata_file=str(metadata_path.relative_to(MODEL_DIR)),
@@ -499,25 +500,10 @@ async def train_model(
                     "schema_version": "semicon_yield_v2",
                     "config_parser_version": CONFIG_PARSER_VERSION,
                     "measurement_coverage": hybrid.metadata["measurement_coverage"],
-                    "policy": preprocessing_report.get("preprocessing_policy", {}),
+                    "policy": hybrid.metadata["preprocessing_config"],
                     **hybrid_processing_summary,
                 },
-                ensemble={
-                    "enabled": hybrid.metadata["ensemble_enabled"],
-                    "selected": any(
-                        config["selected_type"] != "single"
-                        for config in hybrid.metadata["target_ensemble_configs"].values()
-                    ),
-                    "selected_type": hybrid.metadata["direct_y_ensemble"]["selected_type"],
-                    "size": len(hybrid.metadata["direct_y_ensemble"]["base_models"]),
-                    "base_models": hybrid.metadata["direct_y_ensemble"]["base_models"],
-                    "weights": hybrid.metadata["direct_y_ensemble"]["weights"],
-                    "best_single_metrics": hybrid.metadata["direct_y_ensemble"]["best_single_metrics"],
-                    "ensemble_metrics": hybrid.metadata["direct_y_ensemble"]["ensemble_metrics"],
-                    "improvement_over_single": hybrid.metadata["direct_y_ensemble"]["improvement_over_single"],
-                    "agreement": hybrid.metadata["direct_y_ensemble"]["agreement"],
-                    "target_configs": hybrid.metadata["target_ensemble_configs"],
-                },
+                ensemble=None,
             )
             response.model_dump_json()
             return response

@@ -21,7 +21,9 @@ import Header from "@/components/Header";
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import ModelSelector from "@/components/models/ModelSelector";
 import SelectedModelSummary from "@/components/models/SelectedModelSummary";
+import OperationProgress from "@/components/OperationProgress";
 import Sidebar from "@/components/Sidebar";
+import useElapsedTime from "@/hooks/useElapsedTime";
 import {
   analyzeRelationships,
   deleteAnalysisHistory,
@@ -182,6 +184,7 @@ export default function RootCausePage() {
   const [waferSort, setWaferSort] = useState<WaferSort>("risk-desc");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analysisRunKey, setAnalysisRunKey] = useState(0);
   const waferRowRefs = useRef(new Map<number, HTMLTableRowElement>());
   const [activeView, setActiveView] = useState<"new" | "history">("new");
   const [historyItems, setHistoryItems] = useState<AnalysisHistorySummary[]>([]);
@@ -190,6 +193,10 @@ export default function RootCausePage() {
   const [restoredHistory, setRestoredHistory] = useState<AnalysisHistorySummary | null>(null);
   const [restoredAnalysis, setRestoredAnalysis] = useState<AnalysisResult | null>(null);
   const [restoredReport, setRestoredReport] = useState<ReportResponse | null>(null);
+  const { formattedElapsed: formattedAnalysisElapsed } = useElapsedTime({
+    running: loading,
+    resetKey: analysisRunKey,
+  });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -537,6 +544,7 @@ export default function RootCausePage() {
 
   async function runAnalysis() {
     if (!file || !modelId || loading) return;
+    setAnalysisRunKey((current) => current + 1);
     setLoading(true);
     setError("");
     try {
@@ -573,7 +581,7 @@ export default function RootCausePage() {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "원인 분석 중 오류가 발생했습니다.",
+          : "불량 원인 분석 중 오류가 발생했습니다.",
       );
     } finally {
       setLoading(false);
@@ -582,14 +590,14 @@ export default function RootCausePage() {
 
   return (
     <div className="appShell">
-      <Sidebar activeItem="원인 분석" />
+      <Sidebar activeItem="불량 원인 분석" />
       <div className="contentShell">
         <Header />
         <main className="mainContent rootCausePage">
           <section className="intro">
             <div>
               <span className="eyebrow">Explainable AI</span>
-              <h1>SHAP 기반 원인 분석</h1>
+              <h1>불량 원인 분석</h1>
               <p>
                 저장된 모델의 예측을 공정 단계·파라미터·Wafer별로
                 분해합니다.
@@ -597,7 +605,7 @@ export default function RootCausePage() {
             </div>
           </section>
 
-          <div className="trainingViewTabs" role="tablist" aria-label="원인 분석 보기">
+          <div className="trainingViewTabs" role="tablist" aria-label="불량 원인 분석 보기">
             <button className={activeView === "new" ? "active" : ""} type="button" role="tab" aria-selected={activeView === "new"} onClick={() => setActiveView("new")}>새 분석</button>
             <button className={activeView === "history" ? "active" : ""} type="button" role="tab" aria-selected={activeView === "history"} onClick={() => { setActiveView("history"); void loadHistory(); }}>분석 이력</button>
           </div>
@@ -640,7 +648,7 @@ export default function RootCausePage() {
                   setError("");
                 }}
                 onModelsChange={(nextModels) => setModels(nextModels)}
-                ariaLabel="원인 분석 모델 선택"
+                ariaLabel="불량 원인 분석 모델 선택"
               />
             </div>
             <div className="fieldGroup analysisTargetField">
@@ -666,7 +674,13 @@ export default function RootCausePage() {
                 aria-busy={loading}
                 onClick={() => void runAnalysis()}
               >
-                {loading ? "분석 중..." : "원인 분석"}
+                {loading ? (
+                  <OperationProgress
+                    message="불량 원인 분석 중…"
+                    timeLabel="추론 시간"
+                    formattedElapsed={formattedAnalysisElapsed}
+                  />
+                ) : "불량 원인 분석"}
               </button>
             </div>
             {!models.length && (
@@ -680,9 +694,9 @@ export default function RootCausePage() {
             {error && <p className="errorMessage">{error}</p>}
           </section>
 
-            {restoredHistory && <div className="historyRestoreBanner"><div><strong>저장된 원인 분석</strong><span>{formatDateTime(restoredHistory.created_at)} · {restoredHistory.source_filename}</span></div><div className="historyRowActions">{restoredHistory.prediction_id ? <a className="button secondary" href={`/prediction?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}`}>예측 결과 보기</a> : <span>연결된 예측 없음</span>}<button className="button secondary" type="button" onClick={() => { setResult(null); setRelationships(null); setRestoredAnalysis(null); setRestoredReport(null); setRestoredHistory(null); const url = new URL(window.location.href); url.searchParams.delete("analysis_id"); window.history.replaceState({}, "", url); }}>새 분석</button></div></div>}
+            {restoredHistory && <div className="historyRestoreBanner"><div><strong>저장된 불량 원인 분석</strong><span>{formatDateTime(restoredHistory.created_at)} · {restoredHistory.source_filename}</span></div><div className="historyRowActions">{restoredHistory.prediction_id ? <a className="button secondary" href={`/prediction?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}`}>예측 결과 보기</a> : <span>연결된 예측 없음</span>}<button className="button secondary" type="button" onClick={() => { setResult(null); setRelationships(null); setRestoredAnalysis(null); setRestoredReport(null); setRestoredHistory(null); const url = new URL(window.location.href); url.searchParams.delete("analysis_id"); window.history.replaceState({}, "", url); }}>새 분석</button></div></div>}
 
-          <nav className="workspaceTabs" aria-label="원인 분석 워크스페이스">
+          <nav className="workspaceTabs" aria-label="불량 원인 분석 워크스페이스">
             {WORKSPACE_TABS.map(([value, label]) => (
               <button
                 key={value}
@@ -700,7 +714,7 @@ export default function RootCausePage() {
             <section className="resultCard">
               <p className="emptyMessage">
                 {workspaceTab === "report"
-                  ? "원인 분석 이력을 선택하거나 새 분석을 실행해 주세요."
+                  ? "불량 원인 분석 이력을 선택하거나 새 분석을 실행해 주세요."
                   : "예측 결과 또는 분석할 데이터를 먼저 선택해 주세요."}
               </p>
             </section>
@@ -941,7 +955,7 @@ export default function RootCausePage() {
           </> : (
             <section className="resultCard historyCard" aria-labelledby="analysis-history-title">
               <div className="sectionHeading compact"><div><span className="sectionLabel">Analysis History</span><h2 id="analysis-history-title">분석 이력</h2></div><button className="button secondary" type="button" onClick={() => void loadHistory()}>새로고침</button></div>
-              {historyLoading ? <p className="emptyMessage">분석 이력을 불러오는 중입니다.</p> : historyError ? <div className="retryMessage"><p className="errorMessage">{historyError}</p><button className="button secondary" type="button" onClick={() => void loadHistory()}>다시 시도</button></div> : !historyItems.length ? <p className="emptyMessage">저장된 원인 분석 이력이 없습니다.</p> : <div className="tableWrap historyTableScroll"><table><thead><tr><th>생성 시각</th><th>파일명</th><th>모델</th><th>연결 예측</th><th>Wafer</th><th>Lot</th><th>Target</th><th>상태</th><th>작업</th></tr></thead><tbody>{historyItems.map((item) => <tr key={item.analysis_id}><td>{formatDateTime(item.created_at)}</td><td>{item.source_filename ?? "데이터 없음"}</td><td>{item.model_name_snapshot ?? item.model_id ?? "삭제된 모델"}</td><td>{item.prediction_id ?? "연결 없음"}</td><td>{item.row_count ?? "데이터 없음"}</td><td>{item.lot_count ?? "데이터 없음"}</td><td>{item.default_target ?? "데이터 없음"}</td><td>{item.status}</td><td><div className="historyRowActions"><button className="button secondary" type="button" onClick={() => void openHistory(item)}>상세 보기</button>{item.prediction_id && <a className="button secondary" href={`/prediction?prediction_id=${encodeURIComponent(item.prediction_id)}`}>예측 보기</a>}<button className="button danger" type="button" onClick={() => void removeHistory(item)}>삭제</button></div></td></tr>)}</tbody></table></div>}
+              {historyLoading ? <p className="emptyMessage">분석 이력을 불러오는 중입니다.</p> : historyError ? <div className="retryMessage"><p className="errorMessage">{historyError}</p><button className="button secondary" type="button" onClick={() => void loadHistory()}>다시 시도</button></div> : !historyItems.length ? <p className="emptyMessage">저장된 불량 원인 분석 이력이 없습니다.</p> : <div className="tableWrap historyTableScroll"><table><thead><tr><th>생성 시각</th><th>파일명</th><th>모델</th><th>연결 예측</th><th>Wafer</th><th>Lot</th><th>Target</th><th>상태</th><th>작업</th></tr></thead><tbody>{historyItems.map((item) => <tr key={item.analysis_id}><td>{formatDateTime(item.created_at)}</td><td>{item.source_filename ?? "데이터 없음"}</td><td>{item.model_name_snapshot ?? item.model_id ?? "삭제된 모델"}</td><td>{item.prediction_id ?? "연결 없음"}</td><td>{item.row_count ?? "데이터 없음"}</td><td>{item.lot_count ?? "데이터 없음"}</td><td>{item.default_target ?? "데이터 없음"}</td><td>{item.status}</td><td><div className="historyRowActions"><button className="button secondary" type="button" onClick={() => void openHistory(item)}>상세 보기</button>{item.prediction_id && <a className="button secondary" href={`/prediction?prediction_id=${encodeURIComponent(item.prediction_id)}`}>예측 보기</a>}<button className="button danger" type="button" onClick={() => void removeHistory(item)}>삭제</button></div></td></tr>)}</tbody></table></div>}
             </section>
           )}
         </main>
@@ -1113,7 +1127,7 @@ function downloadSnapshot(filename: string, content: string, type: string) {
 
 function AnalysisReport({ report, analysis, relationships }: { report: ReportResponse | null; analysis: AnalysisResult | null; relationships: RelationshipAnalysisResponse | null }) {
   if (!report && !analysis) {
-    return <section className="resultCard"><p className="emptyMessage">원인 분석 이력을 선택하거나 새 분석을 실행해 주세요.</p></section>;
+    return <section className="resultCard"><p className="emptyMessage">불량 원인 분석 이력을 선택하거나 새 분석을 실행해 주세요.</p></section>;
   }
   const analysisId = analysis?.analysis_id ?? report?.analysis_id ?? "analysis";
   const summary = report?.executive_summary;
@@ -1238,7 +1252,7 @@ function AnalysisReport({ report, analysis, relationships }: { report: ReportRes
   return (
     <div id="analysis-report" className="operationalReport">
       <section className="resultCard reportHero">
-        <div><span className="sectionLabel">Analysis Report</span><h2>원인 분석 보고서</h2><p>{analysis?.dataset.filename ?? report?.filename ?? "-"} · {analysis?.model.model_name ?? report?.model.model_name ?? "-"} · {analysis?.target.label ?? report?.model.target ?? "-"}</p></div>
+        <div><span className="sectionLabel">Analysis Report</span><h2>불량 원인 분석 보고서</h2><p>{analysis?.dataset.filename ?? report?.filename ?? "-"} · {analysis?.model.model_name ?? report?.model.model_name ?? "-"} · {analysis?.target.label ?? report?.model.target ?? "-"}</p></div>
         <div className="reportExportActions">
           <button className="button secondary" type="button" onClick={exportJson}>JSON</button>
           <button className="button secondary" type="button" onClick={exportHtml}>HTML</button>

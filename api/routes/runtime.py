@@ -342,7 +342,7 @@ def _empty_overview() -> dict[str, Any]:
         "causes": causes, "risk_lots": [], "risk_wafers": [], "pareto": [],
         "relationships": [], "warnings": [], "availability": availability,
         "source_type": "empty", "source_id": None, "created_at": None,
-        "source_label": "저장된 원인 분석 결과 없음", "filename": None,
+        "source_label": "저장된 불량 원인 분석 결과 없음", "filename": None,
         "model": None, "data_quality": {},
     }
 

@@ -1059,6 +1059,29 @@ a {
   margin-top: 20px;
 }
 
+.operationProgress {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+}
+
+.operationProgressTime {
+  min-width: 112px;
+  color: color-mix(in srgb, currentColor 76%, transparent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.operationProgressDetail {
+  flex-basis: 100%;
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-size: 11px;
+}
+
 .analysisTimeNote {
   margin: 0 auto 0 0;
   color: var(--muted);
@@ -1548,6 +1571,18 @@ a {
   margin-bottom: 18px;
   grid-template-columns: minmax(280px, 1fr) 150px 150px;
   gap: 14px;
+}
+
+.predictionInputStack {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+@media (max-width: 680px) {
+  .predictionInputStack {
+    gap: 18px;
+  }
 }
 
 .fieldGroup input,
