@@ -4,7 +4,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -71,6 +71,72 @@ class ExplainResult:
     warnings: list[str]
     # 전체 local SHAP는 Lot 집계에만 사용한다. API에는 상위 기여값만 노출한다.
     local_contributions: list[dict[str, Any]] = field(default_factory=list)
+
+
+def compose_final_y_explanation(results: Iterable[ExplainResult], *, top_n: int) -> ExplainResult:
+    """Compose final-y explanations from Y1--Y5 without fitting a Y model.
+
+    Each component explains an increase in failure rate.  Final yield is
+    ``100 - sum(failure_rates)``, therefore every signed component is summed
+    and sign-reversed.  Input results are consumed one target at a time by the
+    caller, keeping only this compact aggregate.
+    """
+    items = list(results)
+    expected = {f"Y{i}" for i in range(1, 6)}
+    available = {item.target for item in items}
+    if available != expected:
+        raise InferenceInputError("최종 수율 Y 원인 분석에 필요한 Y1~Y5 모델이 모두 준비되지 않았습니다. 모델 학습을 다시 실행해 주세요.")
+    global_rows: dict[str, dict[str, Any]] = {}
+    for item in items:
+        for row in item.global_importance:
+            feature = str(row["feature"])
+            entry = global_rows.setdefault(feature, {"feature": feature, "step": row.get("step"), "parameter_type": row.get("parameter_type"), "parameter_name": row.get("parameter_name"), "components": {target: 0.0 for target in expected}})
+            # global summary contains real mean signed SHAP only indirectly via
+            # harmful/direction, so use local aggregates below when possible.
+            signed = float(row.get("mean_harmful_contribution") or 0.0)
+            if row.get("direction") == "defect_down": signed = -signed
+            entry["components"][item.target] += signed
+    local_by_id: dict[str, dict[str, Any]] = {}
+    for item in items:
+        for local in item.local_contributions:
+            identifier = str(local.get("identifier"))
+            combined = local_by_id.setdefault(identifier, {key: local.get(key) for key in ("identifier", "lot_id", "wafer_id", "wafer_slot", "risk_level")})
+            features = combined.setdefault("_features", {})
+            for row in local.get("contributions") or []:
+                feature = str(row["feature"])
+                entry = features.setdefault(feature, {"feature": feature, "value": row.get("value"), "step": row.get("step"), "parameter_type": row.get("parameter_type"), "components": {target: 0.0 for target in expected}})
+                entry["components"][item.target] += float(row.get("shap_value") or 0.0)
+    # Prefer the sampled local aggregate for global final-y direction and
+    # magnitude: it is the same raw contribution used by lot/wafer analysis.
+    local_global: dict[str, list[float]] = {}
+    for local in local_by_id.values():
+        for feature, row in local["_features"].items():
+            local_global.setdefault(feature, []).append(-sum(row["components"].values()))
+    final_global: list[dict[str, Any]] = []
+    for feature, row in global_rows.items():
+        signed = float(np.mean(local_global[feature])) if local_global.get(feature) else -sum(row["components"].values())
+        final_global.append({"feature": feature, "step": row["step"], "parameter_type": row["parameter_type"], "parameter_name": row["parameter_name"], "mean_abs_shap": abs(signed), "mean_harmful_contribution": max(0.0, -signed), "mean_improvement_contribution": max(0.0, signed), "direction": _contribution_direction(signed, "Y"), "target_contributions": {target: -value for target, value in row["components"].items()}})
+    final_global.sort(key=lambda row: (row["mean_harmful_contribution"], row["mean_abs_shap"]), reverse=True)
+    for rank, row in enumerate(final_global, 1): row["rank"] = rank
+    local_contributions: list[dict[str, Any]] = []
+    wafer_explanations: list[dict[str, Any]] = []
+    for local in local_by_id.values():
+        rows = []
+        for row in local.pop("_features").values():
+            signed = -sum(row["components"].values())
+            rows.append({"feature": row["feature"], "value": row["value"], "shap_value": signed, "absolute_shap": abs(signed), "harmful_contribution": max(0.0, -signed), "beneficial_contribution": max(0.0, signed), "step": row["step"], "parameter_type": row["parameter_type"], "direction": _contribution_direction(signed, "Y"), "target_contributions": {target: -value for target, value in row["components"].items()}})
+        rows.sort(key=lambda row: row["absolute_shap"], reverse=True)
+        compact = rows[:max(top_n, DEFAULT_WAFER_TOP_N * 2)]
+        local_contributions.append({**local, "prediction": None, "contributions": compact})
+        wafer_explanations.append({**local, "prediction": None, "base_value": None, "top_negative_contributors": [row for row in rows if row["harmful_contribution"] > 0][:DEFAULT_WAFER_TOP_N], "top_positive_contributors": [row for row in rows if row["beneficial_contribution"] > 0][:DEFAULT_WAFER_TOP_N]})
+    def summary(field: str, key: str) -> list[dict[str, Any]]:
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in final_global:
+            label = str(row.get(field) or "unknown"); entry = grouped.setdefault(label, {key: label, "mean_abs_shap": 0.0, "harmful_contribution": 0.0, "feature_count": 0})
+            entry["mean_abs_shap"] += row["mean_abs_shap"]; entry["harmful_contribution"] += row["mean_harmful_contribution"]; entry["feature_count"] += 1
+        return sorted(grouped.values(), key=lambda row: row["harmful_contribution"], reverse=True)
+    first = items[0]
+    return ExplainResult(model_id=first.model_id, target="Y", model_name="Y1~Y5 합성 최종 수율 원인", total_rows=first.total_rows, analyzed_rows=first.analyzed_rows, sampling_used=first.sampling_used, sampling_strategy=first.sampling_strategy, explanation_method="sequential_y1_y5_contribution_composition", is_fallback=any(item.is_fallback for item in items), global_importance=to_json_safe(final_global[:top_n]), step_summary=to_json_safe(summary("step", "step")), parameter_type_summary=to_json_safe(summary("parameter_type", "parameter_type")), equipment_summary=[], identifier_column=first.identifier_column, wafer_explanations=to_json_safe(wafer_explanations), model_quality_warnings=list(dict.fromkeys(message for item in items for message in item.model_quality_warnings)), warnings=list(dict.fromkeys(message for item in items for message in item.warnings)), local_contributions=to_json_safe(local_contributions))
 
 
 def parse_feature_name(feature: str) -> dict[str, str | None]:

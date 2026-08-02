@@ -1,24 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import StatusBadge from "@/components/StatusBadge";
 import {
   analyzeRelationships,
-  deleteAnalysisHistory,
-  getAnalysisHistory,
-  getAnalysisHistoryDetail,
-  getModels,
 } from "@/lib/api";
 import type {
-  AnalysisHistorySummary,
   CategoricalStatistic,
   LotCauseItem,
   LotFeatureImportanceItem,
   LotWaferItem,
-  ModelSummary,
   RelationshipAnalysisResponse,
   RelationshipFeature,
 } from "@/types/data";
@@ -26,7 +20,7 @@ import type {
 type WorkspaceTab = "target" | "lot" | "wafer" | "relationships";
 type LotFeatureGroup = "all" | "r" | "d" | "config";
 
-const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
+const TARGETS = ["Y", "Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 const TABS: Array<[WorkspaceTab, string]> = [
   ["target", "Target 분석"],
   ["lot", "Lot별 원인"],
@@ -41,12 +35,6 @@ function formatNumber(value: number | null | undefined, digits = 2): string {
     : "-";
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("ko-KR");
-}
-
 function waferKey(wafer: LotWaferItem): string {
   return String(wafer.identifier ?? wafer.wafer_id ?? wafer.wafer_slot ?? "");
 }
@@ -56,19 +44,11 @@ function compactFeatureName(feature: string | null | undefined): string {
   return feature.replace(/_frequency$/i, "").replace(/_freq$/i, "");
 }
 
-function responseFromHistory(detail: Awaited<ReturnType<typeof getAnalysisHistoryDetail>>): RelationshipAnalysisResponse | null {
-  return detail.artifact?.response ?? null;
-}
-
 export default function RootCausePage() {
-  const [models, setModels] = useState<ModelSummary[]>([]);
-  const [modelId, setModelId] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [target, setTarget] = useState<(typeof TARGETS)[number]>("Y1");
+  const [target, setTarget] = useState<(typeof TARGETS)[number]>("Y");
   const [correlation, setCorrelation] = useState<"pearson" | "spearman">("spearman");
   const [result, setResult] = useState<RelationshipAnalysisResponse | null>(null);
-  const [history, setHistory] = useState<AnalysisHistorySummary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WorkspaceTab>("target");
@@ -77,63 +57,6 @@ export default function RootCausePage() {
   const [lotGroup, setLotGroup] = useState<LotFeatureGroup>("all");
   const [lotSearch, setLotSearch] = useState("");
   const [stepFilter, setStepFilter] = useState<number | "all">("all");
-  const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null);
-
-  const loadHistory = useCallback(async () => {
-    setHistoryLoading(true);
-    try {
-      const response = await getAnalysisHistory({ limit: 100 });
-      setHistory(response.items);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "원인 분석 이력을 불러오지 못했습니다.");
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
-
-  const openHistory = useCallback(async (itemOrId: AnalysisHistorySummary | string) => {
-    const analysisId = typeof itemOrId === "string" ? itemOrId : itemOrId.analysis_id;
-    setError(null);
-    try {
-      const detail = await getAnalysisHistoryDetail(analysisId);
-      const stored = responseFromHistory(detail);
-      if (!stored) throw new Error("저장된 분석 상세 결과가 없습니다.");
-      setResult(stored);
-      setActiveAnalysisId(analysisId);
-      const restoredTarget = TARGETS.find((candidate) => candidate === (stored.target || detail.metadata.default_target));
-      if (restoredTarget) setTarget(restoredTarget);
-      const params = new URLSearchParams(window.location.search);
-      const lotId = params.get("lot_id");
-      const savedWaferId = params.get("wafer_id");
-      setSelectedLotId(lotId);
-      setSelectedWaferId(savedWaferId);
-      setTab(savedWaferId ? "wafer" : lotId ? "lot" : "target");
-      params.set("analysis_id", analysisId);
-      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "원인 분석 상세를 불러오지 못했습니다.");
-    }
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    void getModels()
-      .then((response) => {
-        if (!mounted) return;
-        const usable = response.models.filter((model) => model.available && model.loadable);
-        setModels(usable);
-        setModelId((current) => current || usable[0]?.model_id || "");
-      })
-      .catch((loadError) => {
-        if (mounted) setError(loadError instanceof Error ? loadError.message : "모델 목록을 불러오지 못했습니다.");
-      });
-    const analysisId = new URLSearchParams(window.location.search).get("analysis_id");
-    const initialLoad = window.setTimeout(() => {
-      void loadHistory();
-      if (analysisId) void openHistory(analysisId);
-    }, 0);
-    return () => { mounted = false; window.clearTimeout(initialLoad); };
-  }, [loadHistory, openHistory]);
 
   const lots = useMemo(() => result?.lot_analysis?.lots ?? [], [result]);
   const riskLots = useMemo(
@@ -163,7 +86,6 @@ export default function RootCausePage() {
 
   function setQuerySelection(lotId: string, waferId?: string) {
     const params = new URLSearchParams(window.location.search);
-    if (activeAnalysisId) params.set("analysis_id", activeAnalysisId);
     params.set("lot_id", lotId);
     if (waferId) params.set("wafer_id", waferId);
     else params.delete("wafer_id");
@@ -185,13 +107,13 @@ export default function RootCausePage() {
   }
 
   async function runAnalysis() {
-    if (!file || !modelId) return;
+    if (!file) return;
     setRunning(true);
     setError(null);
     try {
       const response = await analyzeRelationships(
         file,
-        modelId,
+        null,
         ANALYSIS_OPTIONS,
         correlation,
         "wafer_observed_only",
@@ -199,33 +121,14 @@ export default function RootCausePage() {
         target,
       );
       setResult(response);
-      setActiveAnalysisId(response.analysis_id ?? null);
       setSelectedLotId(null);
       setSelectedWaferId(null);
       setTab("target");
-      const params = new URLSearchParams();
-      if (response.analysis_id) params.set("analysis_id", response.analysis_id);
-      window.history.replaceState({}, "", params.size ? `${window.location.pathname}?${params}` : window.location.pathname);
-      await loadHistory();
+      window.history.replaceState({}, "", window.location.pathname);
     } catch (analysisError) {
       setError(analysisError instanceof Error ? analysisError.message : "원인 분석 중 오류가 발생했습니다.");
     } finally {
       setRunning(false);
-    }
-  }
-
-  async function removeHistory(item: AnalysisHistorySummary) {
-    if (!window.confirm("선택한 원인 분석 이력을 삭제하시겠습니까? 연결된 예측 이력은 유지됩니다.")) return;
-    try {
-      await deleteAnalysisHistory(item.analysis_id);
-      if (activeAnalysisId === item.analysis_id) {
-        setResult(null);
-        setActiveAnalysisId(null);
-        window.history.replaceState({}, "", window.location.pathname);
-      }
-      await loadHistory();
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "이력을 삭제하지 못했습니다.");
     }
   }
 
@@ -242,10 +145,9 @@ export default function RootCausePage() {
 
           <section className="resultCard rcControlBar" aria-label="분석 조건">
             <label className="fieldGroup"><span>CSV</span><input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>
-            <label className="fieldGroup"><span>모델</span><select value={modelId} onChange={(event) => setModelId(event.target.value)}><option value="">모델 선택</option>{models.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_name ?? "Y1~Y5 자동 모델"} · {model.model_id}</option>)}</select></label>
             <label className="fieldGroup rcSmallField"><span>Target</span><select value={target} onChange={(event) => setTarget(event.target.value as typeof target)}>{TARGETS.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="fieldGroup rcSmallField"><span>상관</span><select value={correlation} onChange={(event) => setCorrelation(event.target.value as typeof correlation)}><option value="spearman">Spearman</option><option value="pearson">Pearson</option></select></label>
-            <button className="button primary" type="button" disabled={!file || !modelId || running} onClick={() => void runAnalysis()}>{running ? "분석 중…" : "원인 분석 실행"}</button>
+            <button className="button primary" type="button" disabled={!file || running} onClick={() => void runAnalysis()}>{running ? "분석 중…" : "원인 분석 실행"}</button>
           </section>
 
           {error && <div className="errorMessage" role="alert">{error}</div>}
@@ -255,7 +157,7 @@ export default function RootCausePage() {
           </nav>
 
           {!result ? (
-            <section className="resultCard rcEmpty"><h2>분석할 데이터를 선택해 주세요</h2><p>학습된 Y1~Y5 자동 모델과 CSV를 선택하거나 아래 저장 이력을 여세요.</p></section>
+            <section className="resultCard rcEmpty"><h2>분석할 데이터를 선택해 주세요</h2><p>현재 활성 Champion 모델로 CSV의 Y1~Y5 불량률과 공정 원인을 분석합니다.</p></section>
           ) : tab === "target" ? (
             <TargetView result={result} dangerWafers={dangerWafers} onWaferClick={openWafer} />
           ) : tab === "lot" ? (
@@ -266,10 +168,6 @@ export default function RootCausePage() {
             <RelationshipsView result={result} stepFilter={stepFilter} onStepFilter={setStepFilter} />
           )}
 
-          <section className="resultCard rcHistory">
-            <div className="sectionHeader"><div><span className="sectionLabel">Saved analyses</span><h2>원인 분석 이력</h2></div><button className="button secondary" type="button" onClick={() => void loadHistory()}>새로고침</button></div>
-            {historyLoading ? <p className="emptyMessage">이력을 불러오는 중입니다.</p> : history.length === 0 ? <p className="emptyMessage">저장된 원인 분석 이력이 없습니다.</p> : <div className="tableWrap"><table><thead><tr><th>생성 시각</th><th>파일</th><th>Target</th><th>Wafer / Lot</th><th>작업</th></tr></thead><tbody>{history.map((item) => <tr key={item.analysis_id}><td>{formatDateTime(item.created_at)}</td><td>{item.source_filename ?? "-"}</td><td>{item.default_target ?? "Y1"}</td><td>{formatNumber(item.row_count, 0)} / {formatNumber(item.lot_count, 0)}</td><td><div className="historyRowActions"><button className="button secondary" type="button" onClick={() => void openHistory(item)}>열기</button><button className="button danger" type="button" onClick={() => void removeHistory(item)}>삭제</button></div></td></tr>)}</tbody></table></div>}
-          </section>
         </main>
       </div>
     </div>
@@ -281,7 +179,7 @@ function TargetView({ result, dangerWafers, onWaferClick }: { result: Relationsh
   const risk = result.analysis_result?.risk;
   const failures = result.analysis_result?.multi_y.failure_rate_averages ?? {};
   return <div className="rcGrid">
-    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Failure targets</span><h2>Y1~Y5 예측 불량률</h2></div><StatusBadge label={`최종 Y = 100 - Σ(Y1~Y5)`} tone="neutral" /></div><div className="rcMetricStrip">{TARGETS.map((item) => <div key={item}><span>{item}</span><strong>{formatNumber(failures[item])}%</strong></div>)}</div><p className="microcopy">각 불량률 예측은 0 이상으로 제한하며, 최종 수율은 0~100 범위로 제한합니다.</p></section>
+    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Failure targets</span><h2>{result.target === "Y" ? "최종 수율 Y 원인 분석" : "Y1~Y5 예측 불량률"}</h2></div><StatusBadge label={`최종 Y = 100 - Σ(Y1~Y5)`} tone="neutral" /></div><div className="rcMetricStrip">{TARGETS.filter((item) => item !== "Y").map((item) => <div key={item}><span>{item}</span><strong>{formatNumber(failures[item])}%</strong></div>)}</div><p className="microcopy">{result.target === "Y" ? "Y1~Y5 Fail Rate 기여도를 합산한 뒤 부호를 반전하여 최종 수율을 낮추거나 높이는 원인을 표시합니다." : "각 불량률 예측은 0 이상으로 제한하며, 최종 수율은 0~100 범위로 제한합니다."}</p></section>
     <section className="resultCard"><span className="sectionLabel">Risk mix</span><h2>Wafer 위험 분포</h2><div className="rcRiskCounts"><span className="normal">정상 <strong>{risk?.normal_count ?? 0}</strong></span><span className="warning">주의 <strong>{risk?.warning_count ?? 0}</strong></span><span className="danger">위험 <strong>{risk?.critical_count ?? 0}</strong></span></div></section>
     <section className="resultCard"><span className="sectionLabel">SHAP coverage</span><h2>설명 범위</h2><strong className="rcHeroNumber">{formatNumber(explanation?.analysis_summary.analyzed_rows, 0)}</strong><p>전체 {formatNumber(explanation?.analysis_summary.total_rows, 0)} Wafer · {explanation?.explanation_method ?? "-"}</p></section>
     <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Global importance</span><h2>상위 영향 Feature</h2></div></div><FeatureTable features={(explanation?.global_importance ?? []).slice(0, 12).map((item) => ({ feature: item.feature, display_name: compactFeatureName(item.feature), group: item.parameter_type, score: item.mean_abs_shap, direction: item.direction, valid_count: null } as RelationshipFeature))} /></section>

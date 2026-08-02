@@ -99,6 +99,7 @@ from src.ml.explainability import (
     DEFAULT_WAFER_TOP_N,
     MAX_TOP_N,
     ExplainResult,
+    compose_final_y_explanation,
     explain_dataframe,
 )
 from src.ml.training import train_regression_models
@@ -1856,11 +1857,6 @@ async def analyze_feature_relationships(
         effective_target = resolved_analysis_target or (
             "Y1" if bundle_loaded.metadata.get("model_type") == "hybrid_multi_y" else None
         )
-        loaded = (
-            load_prediction_model_target(resolved_model_id, effective_target, MODEL_DIR)
-            if effective_target
-            else bundle_loaded
-        )
         prediction = predict_dataframe(
             dataframe,
             bundle_loaded,
@@ -1868,21 +1864,21 @@ async def analyze_feature_relationships(
             danger_threshold=danger_threshold,
             max_rows=None,
         )
-        multi_y, multi_y_warnings = _collect_multi_y_predictions(
-            dataframe,
-            loaded,
-            prediction,
-        )
-        explanation = explain_dataframe(
-            dataframe,
-            loaded,
-            max_rows=max_rows,
-            top_n=MAX_TOP_N,
-            per_wafer_top_n=per_wafer_top_n,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            prediction_result=prediction,
-        )
+        multi_y, multi_y_warnings = _collect_multi_y_predictions(dataframe, bundle_loaded, prediction)
+        if effective_target == "Y":
+            component_explanations: list[ExplainResult] = []
+            for component_target in ("Y1", "Y2", "Y3", "Y4", "Y5"):
+                loaded_component = load_prediction_model_target(resolved_model_id, component_target, MODEL_DIR)
+                try:
+                    component_explanations.append(explain_dataframe(dataframe, loaded_component, max_rows=max_rows, top_n=MAX_TOP_N, per_wafer_top_n=per_wafer_top_n, warning_threshold=warning_threshold, danger_threshold=danger_threshold, prediction_result=prediction))
+                finally:
+                    del loaded_component
+                    gc.collect()
+            explanation = compose_final_y_explanation(component_explanations, top_n=MAX_TOP_N)
+            loaded = bundle_loaded
+        else:
+            loaded = load_prediction_model_target(resolved_model_id, effective_target, MODEL_DIR) if effective_target else bundle_loaded
+            explanation = explain_dataframe(dataframe, loaded, max_rows=max_rows, top_n=MAX_TOP_N, per_wafer_top_n=per_wafer_top_n, warning_threshold=warning_threshold, danger_threshold=danger_threshold, prediction_result=prediction)
         analysis = analyze_relationships(
             dataframe,
             target=explanation.target,
@@ -1979,6 +1975,7 @@ async def analyze_feature_relationships(
                 "mean_predicted_yield": summary.get("average_predicted_yield"),
                 "critical_wafer_count": prediction.danger_count, "warning_wafer_count": prediction.warning_count,
                 "critical_lot_count": summary.get("risk_lot_count"),
+                "top_yield_loss_causes": explanation.global_importance if explanation.target == "Y" else [],
                 "top_r_causes": common.get("top_r_causes", []), "top_d_causes": common.get("top_d_causes", []),
                 "top_config_causes": common.get("top_config_causes", []), "lot_ranking": common.get("lot_summary", [])[:20],
                 "risky_wafers": compact_common.get("multi_y", {}).get("wafer_results", []),

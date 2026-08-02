@@ -8,7 +8,7 @@ import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 
 const navigationItems = [
   { label: "개요", href: "/", icon: "overview" },
-  { label: "모델 갱신", href: "/training", icon: "model" },
+  { label: "모델 학습", href: "/training", icon: "model" },
   { label: "수율 예측", href: "/prediction", icon: "trend" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "사전 알람 로그", href: "/alerts", icon: "alert" },
@@ -75,6 +75,7 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
                 >
                   <NavIcon name={item.icon} />
                   <span>{item.label}</span>
+                  <i className={`menuStatusDot ${item.label === "자동화 상태" ? "idle" : "ready"}`} aria-label={item.label === "자동화 상태" ? "자동화 대기" : "사용 가능"} />
                 </Link>
               </li>
             );
@@ -112,13 +113,17 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
           </div>
         )}
         <button
-          className="themeToggle"
+          className="themeToggle themeTrigger"
           type="button"
           aria-expanded={themeMenuOpen}
+          aria-label="Theme 선택"
+          aria-haspopup="menu"
+          title="Theme 선택"
           onClick={() => setThemeMenuOpen((open) => !open)}
         >
           <ThemeIcon />
-          <span>Theme</span>
+          <span className="themeTriggerLabel">Theme</span>
+          <ChevronDown />
         </button>
       </div>
     </aside>
@@ -138,5 +143,9 @@ function NavIcon({ name }: { name: string }) {
 }
 
 function ThemeIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></svg>;
+  return <svg className="themeIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></svg>;
+}
+
+function ChevronDown() {
+  return <svg className="themeChevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>;
 }

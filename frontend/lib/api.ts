@@ -390,12 +390,12 @@ export async function deleteModel(modelId: string): Promise<DeleteModelResponse>
 
 function predictionFormData(
   file: File,
-  modelId: string,
+  modelId: string | null,
   thresholds: PredictionThresholds,
 ): FormData {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("model_id", modelId);
+  if (modelId) formData.append("model_id", modelId);
   formData.append(
     "warning_threshold",
     String(thresholds.warning_threshold),
@@ -409,7 +409,7 @@ function predictionFormData(
 
 export async function predictCsv(
   file: File,
-  modelId: string,
+  modelId: string | null,
   thresholds: PredictionThresholds,
 ): Promise<PredictionResponse> {
   let response: Response;
@@ -432,7 +432,7 @@ export async function predictCsv(
 
 export async function downloadPredictions(
   file: File,
-  modelId: string,
+  modelId: string | null,
   thresholds: PredictionThresholds,
 ): Promise<Blob> {
   let response: Response;
