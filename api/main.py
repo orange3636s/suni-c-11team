@@ -1,16 +1,20 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.routes.admin import router as admin_router
-from api.routes.data import router as data_router
+from api.routes.data import (
+    recover_interrupted_training_jobs,
+    router as data_router,
+)
 from api.routes.runtime import router as runtime_router
 from api.settings import settings
 from src.runtime.operation_coordinator import (
-    ACTIVE_JOB_MESSAGE,
+    HEAVY_JOB_MESSAGE,
     ActiveOperationError,
     OperationKind,
     operation_coordinator,
@@ -35,9 +39,19 @@ if (
         "origins are allowed."
     )
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        recover_interrupted_training_jobs()
+    except Exception:
+        logger.exception("중단된 학습 Job 시작 복구 실패")
+    yield
+
+
 app = FastAPI(
     title="Manufacturing AI API",
     version=APP_VERSION,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -72,10 +86,10 @@ async def protect_active_operations(request: Request, call_next):
     try:
         with operation_coordinator.job(kind):
             return await call_next(request)
-    except ActiveOperationError:
+    except ActiveOperationError as exc:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content={"detail": ACTIVE_JOB_MESSAGE},
+            content={"detail": str(exc) or HEAVY_JOB_MESSAGE},
         )
 
 
@@ -90,7 +104,7 @@ def read_root() -> dict[str, str]:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
+async def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 

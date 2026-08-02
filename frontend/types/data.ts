@@ -208,6 +208,37 @@ export type TrainingResult = {
 
 export type TrainResponse = TrainingResult;
 
+export type TrainingJobState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted";
+
+export type TrainingJobResult = {
+  model_id: string;
+  target: string;
+  best_model: string;
+  test_metrics: ModelMetrics | null;
+  feature_count: number;
+  warning_count: number;
+};
+
+export type TrainingJobCreateResponse = {
+  job_id: string;
+  status: "queued";
+};
+
+export type TrainingJobStatusResponse = {
+  job_id: string;
+  status: TrainingJobState;
+  stage: string;
+  progress: number;
+  elapsed_seconds: number;
+  result: TrainingJobResult | null;
+  error: string | null;
+};
+
 export type ModelSummary = {
   model_id: string;
   target: string;
@@ -360,6 +391,8 @@ export type PredictionResponse = {
   prediction_id?: string | null;
   history_saved?: boolean;
   history_warning?: string | null;
+  artifact_available?: boolean | null;
+  preview_row_count?: number | null;
 };
 
 export type HistoryStatus =
@@ -798,6 +831,7 @@ export type RelationshipAnalysisResponse = {
   prediction_id?: string | null;
   history_saved?: boolean;
   history_warning?: string | null;
+  artifact_available?: boolean | null;
 };
 
 export type AnalysisHistoryDetail = {

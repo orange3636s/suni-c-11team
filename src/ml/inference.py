@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import logging
 import math
 import re
@@ -30,11 +31,16 @@ DEFAULT_DANGER_THRESHOLD = 85.0
 MAX_PREDICTION_ROWS = 5000
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 MODEL_DELETE_STAGING_DIR = ".deleting"
+HYBRID_TARGET_MODEL_FILES = tuple(
+    f"target_{target}.joblib"
+    for target in ["Y", *[f"Y{index}" for index in range(1, 11)]]
+)
 HYBRID_BUNDLE_FILES = (
     "bundle.joblib",
     "metadata.json",
     "oof_predictions.json.gz",
     "fold_assignments.json.gz",
+    *HYBRID_TARGET_MODEL_FILES,
 )
 _MODEL_DELETE_LOCK = Lock()
 REQUIRED_METADATA_FIELDS = {
@@ -197,6 +203,9 @@ def load_prediction_model(
         raise ModelLoadError("모델 파일을 불러오지 못했습니다.") from exc
     if not callable(getattr(model, "predict", None)):
         raise ModelLoadError("예측 가능한 모델 파일이 아닙니다.")
+    attach_artifact_root = getattr(model, "attach_artifact_root", None)
+    if callable(attach_artifact_root):
+        attach_artifact_root(model_path.parent)
     return LoadedPredictionModel(
         model_id=model_id,
         model=model,
@@ -238,29 +247,82 @@ def _model_availability(
             "compatibility_status": "model_file_missing",
             "incompatibility_reason": "모델 파일이 존재하지 않습니다.",
         }
-    try:
-        model = load_model(model_path)
-    except Exception as exc:
-        dependency = _missing_dependency_name(exc)
-        if dependency:
+    target_artifacts = metadata.get("target_model_artifacts")
+    if isinstance(target_artifacts, dict):
+        root = model_path.parent.resolve()
+        for filename in target_artifacts.values():
+            if not isinstance(filename, str):
+                return {
+                    "available": False,
+                    "loadable": False,
+                    "compatibility_status": "invalid_metadata",
+                    "incompatibility_reason": "모델 Target Artifact 정보가 올바르지 않습니다.",
+                }
+            candidate = (root / filename).resolve()
+            if (
+                candidate.parent != root
+                or candidate.is_symlink()
+                or not candidate.is_file()
+            ):
+                return {
+                    "available": False,
+                    "loadable": False,
+                    "compatibility_status": "model_file_missing",
+                    "incompatibility_reason": "모델 Target Artifact가 존재하지 않습니다.",
+                }
+    dependency_markers = {
+        "xgboost": ("xgboost", "xgbregressor", "xgb"),
+        "catboost": ("catboost", "catboostregressor"),
+    }
+    declared_models = [
+        metadata.get("model_name"),
+        metadata.get("model_type"),
+        metadata.get("bundle_type"),
+        *(
+            metadata.get("base_model_names", [])
+            if isinstance(metadata.get("base_model_names"), list)
+            else []
+        ),
+        model_path.stem,
+        model_path.parent.name,
+    ]
+    declaration = " ".join(str(value).lower() for value in declared_models if value)
+    for dependency, markers in dependency_markers.items():
+        if any(marker in declaration for marker in markers) and importlib.util.find_spec(dependency) is None:
             return {
                 "available": False,
                 "loadable": False,
                 "compatibility_status": "dependency_missing",
                 "incompatibility_reason": f"{dependency}가 설치되어 있지 않습니다.",
             }
+
+    # Listing/detail endpoints deliberately do not deserialize model files.
+    # A tiny signature read catches obvious truncation/text files while keeping
+    # the expensive compatibility check on the actual prediction path.
+    try:
+        with model_path.open("rb") as handle:
+            header = handle.read(8)
+    except OSError:
         return {
             "available": False,
             "loadable": False,
             "compatibility_status": "load_error",
             "incompatibility_reason": "모델 파일을 불러올 수 없습니다.",
         }
-    if not callable(getattr(model, "predict", None)):
+    known_headers = (
+        b"\x80",  # pickle/joblib without compression
+        b"\x78",  # zlib
+        b"\x1f\x8b",  # gzip
+        b"BZh",  # bzip2
+        b"\xfd7zXZ\x00",  # xz
+        b"\x04\x22\x4d\x18",  # lz4 frame
+    )
+    if not header or not any(header.startswith(prefix) for prefix in known_headers):
         return {
             "available": False,
             "loadable": False,
-            "compatibility_status": "invalid_model",
-            "incompatibility_reason": "예측 가능한 모델 형식이 아닙니다.",
+            "compatibility_status": "load_error",
+            "incompatibility_reason": "모델 파일을 불러올 수 없습니다.",
         }
     if schema_status == "incompatible":
         return {
@@ -577,11 +639,21 @@ def _delete_prediction_model_locked(
 
 def _delete_model_result(model_id: str, deleted_files: list[str]) -> DeleteModelResult:
     hybrid_layout = any(name.startswith(f"{model_id}/") for name in deleted_files)
-    expected_files = (
-        [f"{model_id}/{name}" for name in HYBRID_BUNDLE_FILES]
-        if hybrid_layout
-        else [f"{model_id}.joblib", f"{model_id}.json"]
-    )
+    if hybrid_layout:
+        deleted_names = {
+            name.split("/", 1)[1]
+            for name in deleted_files
+            if "/" in name
+        }
+        core_files = HYBRID_BUNDLE_FILES[:4]
+        expected_names = (
+            HYBRID_BUNDLE_FILES
+            if deleted_names.intersection(HYBRID_TARGET_MODEL_FILES)
+            else core_files
+        )
+        expected_files = [f"{model_id}/{name}" for name in expected_names]
+    else:
+        expected_files = [f"{model_id}.joblib", f"{model_id}.json"]
     deleted_set = set(deleted_files)
     metadata_names = {f"{model_id}.json", f"{model_id}/metadata.json"}
     bundle_names = {f"{model_id}.joblib", f"{model_id}/bundle.joblib"}
@@ -621,7 +693,10 @@ def load_prediction_model_target(
         if loaded.metadata.get("target") != target:
             raise InferenceInputError("선택한 Legacy 모델에는 요청한 Target 서브모델이 없습니다.")
         return loaded
-    if target == "Y":
+    model_for_target = getattr(loaded.model, "model_for_target", None)
+    if callable(model_for_target):
+        selected_model = model_for_target(target)
+    elif target == "Y":
         selected_model = loaded.model.direct_model
     else:
         selected_model = loaded.model.target_models.get(target)
@@ -666,6 +741,32 @@ def _metadata_available_targets(metadata: dict[str, Any]) -> list[str]:
     )
 
 
+def _compact_cv_summary(value: Any) -> dict[str, Any]:
+    """Keep model discovery payloads small; fold assignments live on disk."""
+    if not isinstance(value, dict):
+        return {}
+    scalar_fields = (
+        "name",
+        "group_column",
+        "outer_folds",
+        "inner_folds",
+        "seed",
+        "selection_target",
+    )
+    result = {
+        field: value.get(field)
+        for field in scalar_fields
+        if field in value
+    }
+    metric_summary = value.get("metric_summary")
+    if isinstance(metric_summary, dict):
+        result["metric_summary"] = metric_summary
+    fold_metrics = value.get("fold_metrics")
+    if isinstance(fold_metrics, list):
+        result["fold_metrics"] = fold_metrics[:3]
+    return result
+
+
 def list_prediction_models(
     model_dir: str | Path = DEFAULT_MODEL_DIR,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -705,7 +806,9 @@ def list_prediction_models(
                     "model_type": metadata.get("model_type"),
                     "bundle_type": metadata.get("bundle_type"),
                     "selected_final_output": metadata.get("selected_final_output"),
-                    "cv_summary": metadata.get("cv_protocol"),
+                    "cv_summary": _compact_cv_summary(
+                        metadata.get("cv_summary") or metadata.get("cv_protocol")
+                    ),
                     "available_targets": _metadata_available_targets(metadata),
                     **availability,
                 }
@@ -839,7 +942,9 @@ def get_prediction_model_detail(
         "outer_fold_metrics": normalized_list(metadata.get("outer_fold_metrics")),
         "inner_fold_metrics": normalized_list(metadata.get("inner_fold_metrics")),
         "available_targets": available_targets,
-        "cv_summary": normalized_dict(metadata.get("cv_summary") or metadata.get("cv_protocol")),
+        "cv_summary": _compact_cv_summary(
+            metadata.get("cv_summary") or metadata.get("cv_protocol")
+        ),
         "ensemble_weights": normalized_dict(metadata.get("ensemble_weights")),
         "hybrid_summary": normalized_dict(metadata.get("hybrid_summary")),
         "risk_metrics": normalized_dict(metadata.get("risk_metrics")),
@@ -896,11 +1001,12 @@ def prepare_inference_features(
             "학습에 사용하지 않은 feature를 제외했습니다: "
             + ", ".join(extra_features)
         )
-    features = dataframe.copy()
     if allow_missing:
-        for column in missing_features:
-            features[column] = np.nan
-    features = features.loc[:, ordered_features].copy()
+        features = dataframe.reindex(columns=ordered_features)
+    else:
+        features = dataframe.loc[:, ordered_features]
+    # Copy only the selected model features, never the complete upload frame.
+    features = features.copy()
     if features.empty:
         raise InferenceInputError("유효한 예측 행이 없습니다.")
     return features, warnings
@@ -1049,7 +1155,11 @@ def predict_dataframe(
             + " ".join(validation["errors"])
         )
     is_auto_pipeline = loaded.metadata.get("pipeline_version") == "auto_multi_y_hgbr_v1"
-    processed, preprocessing_report = preprocess_dataframe(dataframe)
+    if is_auto_pipeline:
+        processed = dataframe
+        preprocessing_report = {"warnings": []}
+    else:
+        processed, preprocessing_report = preprocess_dataframe(dataframe)
     schema = load_data_schema()
     detected_raw = detect_feature_columns(list(dataframe.columns), schema)
     raw_features = list(dict.fromkeys([
@@ -1077,11 +1187,14 @@ def predict_dataframe(
     try:
         if callable(getattr(loaded.model, "predict_components", None)):
             hybrid_components = loaded.model.predict_components(features)
-            raw_predictions = np.asarray(hybrid_components["selected"], dtype=float)
+            raw_predictions = np.asarray(
+                hybrid_components["selected"],
+                dtype=np.float32,
+            )
         else:
             raw_predictions = np.asarray(
                 loaded.model.predict(features),
-                dtype=float,
+                dtype=np.float32,
             )
     except Exception as exc:
         raise ModelLoadError("모델 예측 실행에 실패했습니다.") from exc
@@ -1091,7 +1204,7 @@ def predict_dataframe(
         raise ModelLoadError("모델 예측 결과에 유효하지 않은 값이 있습니다.")
 
     target = str(loaded.metadata["target"])
-    display_predictions = raw_predictions.copy()
+    display_predictions = raw_predictions
     warnings = list(
         dict.fromkeys(
             [

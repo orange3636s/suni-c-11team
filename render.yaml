@@ -3,7 +3,7 @@ services:
     name: manufacturing-ai-api
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /health
     envVars:
       - key: APP_ENV
@@ -12,6 +12,12 @@ services:
         sync: false
       - key: MODEL_DIR
         value: models
+      - key: RUNTIME_DB_PATH
+        value: data/runtime/dashboard.db
+      - key: RUNTIME_ARTIFACT_DIR
+        value: data/runtime
+      - key: TRAINING_JOB_ARTIFACT_DIR
+        value: data/runtime/training_jobs
       - key: MAX_UPLOAD_SIZE_MB
         value: "20"
       - key: LOG_LEVEL

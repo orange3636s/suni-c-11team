@@ -6723,3 +6723,1142 @@ html[data-theme="dark"] .historyResetDialog {
     transition-duration: 0.01ms;
   }
 }
+
+/* Compact workspace density
+   Shared by overview, training, prediction, root-cause, and report content only. */
+:root {
+  --font-page-title: 26px;
+  --font-section-title: 17px;
+  --font-card-title: 15px;
+  --font-body: 14px;
+  --font-secondary: 12.5px;
+  --space-page: 24px;
+  --space-section: 20px;
+  --space-card: 16px;
+  --space-compact: 12px;
+  --control-height: 38px;
+  --card-radius: 14px;
+  --compact-page-inline: 28px;
+  --compact-page-start: var(--space-page);
+  --compact-page-end: 52px;
+  --compact-section-gap: var(--space-compact);
+  --compact-card-padding: var(--space-card);
+  --compact-card-padding-inner: 14px;
+  --compact-control-height: var(--control-height);
+  --compact-table-block: 9px;
+  --compact-table-inline: 11px;
+  --compact-chart-height: 300px;
+  --compact-empty-height: 152px;
+}
+
+.mainContent {
+  padding: var(--compact-page-start) var(--compact-page-inline) var(--compact-page-end);
+}
+
+.mainContent > *,
+.sectionHeading > *,
+.resultHeader > *,
+.previewHeader > *,
+.reportHero > *,
+.analysisControls > *,
+.reportControls > * {
+  min-width: 0;
+}
+
+.intro,
+.uploadIntro {
+  margin-bottom: 22px;
+}
+
+.intro {
+  gap: 20px;
+}
+
+.eyebrow,
+.sectionLabel {
+  margin-bottom: 5px;
+  font-size: 10px;
+}
+
+.intro h1,
+.uploadIntro h1 {
+  font-size: var(--font-page-title);
+  line-height: 1.16;
+}
+
+.intro p,
+.uploadIntro p {
+  margin-top: 9px;
+  font-size: var(--font-body);
+  line-height: 1.52;
+}
+
+.overviewToolbar {
+  margin-bottom: 12px;
+  gap: 16px;
+}
+
+.overviewToolbar h2 {
+  font-size: 19px;
+}
+
+.sectionHeading,
+.sectionHeading.compact {
+  margin-bottom: 12px;
+  gap: 16px;
+}
+
+.sectionHeading h2,
+.resultCard h2,
+.surfaceCard h2,
+.resultHeader h2 {
+  font-size: var(--font-section-title);
+}
+
+.previewHeader h3,
+.analysisChartCard h3,
+.contributionGrid h3 {
+  font-size: var(--font-card-title);
+}
+
+.sectionHeading p,
+.chartDescription {
+  font-size: var(--font-secondary);
+}
+
+.cardGrid,
+.kpiGrid,
+.dashboardKpis {
+  gap: 10px;
+}
+
+.statusCard {
+  min-height: 0;
+  padding: 15px;
+}
+
+.kpiGrid .statusCard {
+  min-height: 0;
+  padding: 14px;
+}
+
+.cardValue,
+.kpiGrid .cardValue {
+  margin-top: 12px;
+  font-size: clamp(22px, 1.8vw, 27px);
+}
+
+.statusCard p {
+  margin-top: 4px;
+}
+
+.uploadCard,
+.resultCard,
+.surfaceCard {
+  padding: var(--compact-card-padding);
+}
+
+.resultCard {
+  margin-top: var(--compact-section-gap);
+}
+
+.overviewLinks {
+  margin: 14px 0 24px;
+  gap: 8px;
+}
+
+.quickActions {
+  padding: 8px;
+  gap: 6px;
+}
+
+.overviewKpiSection {
+  margin-bottom: var(--space-section);
+}
+
+.dashboardAnalysisGrid {
+  margin-bottom: 24px;
+  gap: var(--compact-section-gap);
+}
+
+.overviewChartGrid {
+  margin-bottom: var(--compact-section-gap);
+  gap: var(--compact-section-gap);
+}
+
+.overviewChartCard {
+  min-height: 288px;
+}
+
+.analysisHistorySelector > summary {
+  min-height: 52px;
+  padding: 8px 12px;
+  gap: 10px;
+}
+
+.analysisHistoryPopover {
+  padding: 8px;
+}
+
+.analysisHistoryOptions {
+  max-height: 360px;
+  margin-top: 6px;
+}
+
+.analysisHistoryOption {
+  padding: 9px 34px 9px 10px;
+}
+
+.overviewNotice,
+.overviewErrorBanner,
+.runtimeNotice {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  gap: 12px;
+}
+
+.riskSummaryBanner {
+  margin-bottom: var(--compact-section-gap);
+  padding: 18px 20px;
+  gap: 18px;
+}
+
+.riskSummaryMessage {
+  gap: 12px;
+}
+
+.riskSummaryIcon {
+  width: 38px;
+  height: 38px;
+}
+
+.riskSummaryMessage h2 {
+  margin-top: 6px;
+  font-size: 17px;
+}
+
+.riskSummaryMessage p {
+  font-size: 12px;
+}
+
+.riskSummaryMetrics > div {
+  padding-inline: 14px;
+}
+
+.riskSummaryMetrics dd {
+  font-size: 16px;
+}
+
+.overviewCauseSummary > div {
+  padding: 12px;
+}
+
+.overviewCauseSummary dt {
+  margin-bottom: 5px;
+}
+
+.overviewRiskGrid,
+.overviewSectionCard {
+  margin-bottom: var(--compact-section-gap);
+}
+
+.overviewSectionCard .tableWrap {
+  min-height: 96px;
+}
+
+.dashboardSectionState,
+.emptyState {
+  min-height: var(--compact-empty-height);
+  padding: 18px;
+  gap: 10px;
+}
+
+.dashboardSectionState.compact {
+  min-height: 68px;
+}
+
+.emptyState.compact {
+  min-height: 128px;
+}
+
+.selectorState {
+  min-height: 84px;
+  padding: 12px;
+}
+
+.emptyStateMark {
+  width: 36px;
+  height: 36px;
+}
+
+.emptyModelState {
+  padding: 34px 20px;
+}
+
+.emptyModelState p {
+  margin: 10px 0 18px;
+}
+
+.emptyListMessage,
+.modelDetailLoading {
+  padding: 20px 12px;
+}
+
+.emptyTableCell {
+  height: 68px !important;
+}
+
+.overviewBarChart {
+  min-height: 170px;
+  gap: 10px;
+}
+
+.dropZone {
+  min-height: 172px;
+  padding: 22px;
+}
+
+.compactDrop {
+  min-height: 126px;
+}
+
+.dropIcon {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+}
+
+.selectedFile {
+  margin-top: 12px;
+  padding: 11px 13px;
+  gap: 12px;
+}
+
+.uploadActions {
+  margin-top: 14px;
+  gap: 8px;
+}
+
+.analysisControls,
+.reportControls {
+  margin-bottom: 18px;
+  padding: 16px;
+  gap: var(--compact-section-gap);
+}
+
+.analysisOptionGrid,
+.reportOptionGrid {
+  padding: 12px;
+  gap: 12px;
+}
+
+.fieldGroup {
+  gap: 6px;
+}
+
+.fieldGroup select,
+.fieldGroup input,
+.fileSelectButton,
+.tableTools input,
+.tableTools select,
+.modelSelectorTrigger,
+.analysisTargetField select,
+.modelSelectorToolbar input,
+.modelSelectorPopupTools input,
+.modelHistoryTools input,
+.modelHistoryTools select,
+.movingAverageControl select,
+.lotSelectorTools input,
+.lotSelectorTools select,
+.dashboardFilters input,
+.dashboardFilters select,
+.historyResetConfirmation input,
+.csvUploadButton {
+  min-height: var(--compact-control-height);
+}
+
+.button {
+  min-width: 112px;
+  min-height: var(--compact-control-height);
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.modelSelectorOption {
+  min-height: 46px;
+  padding: 7px 9px;
+}
+
+.selectedModelSummary,
+.targetFeatureToolbar {
+  padding: 12px 14px;
+}
+
+.messageBox,
+.errorMessage,
+.warningMessage,
+.emptyMessage {
+  font-size: 12px;
+  line-height: 1.48;
+}
+
+.messageBox {
+  margin-top: 11px;
+  padding: 10px 12px;
+}
+
+.errorMessage,
+.warningMessage,
+.emptyMessage {
+  margin-top: 10px;
+  padding: 10px 12px;
+}
+
+.trainingWarnings,
+.reportWarningBanner {
+  margin-top: 14px;
+  padding: 12px 14px;
+}
+
+.reportWarningBanner {
+  margin-bottom: var(--compact-section-gap);
+}
+
+.metricGrid,
+.comparisonGrid,
+.trainingSummaryGrid,
+.predictionKpiGrid {
+  margin-top: 14px;
+  gap: 8px;
+}
+
+.metricGrid > div,
+.comparisonGrid > div,
+.trainingSummaryGrid > div,
+.predictionKpiGrid > div,
+.reportKpiGrid .metricCard {
+  min-height: 76px;
+  padding: 12px;
+  gap: 5px;
+}
+
+.metricGrid strong,
+.comparisonGrid strong,
+.trainingSummaryGrid strong {
+  font-size: 18px;
+}
+
+.predictionKpiGrid span {
+  font-size: 12px;
+}
+
+.predictionKpiGrid strong {
+  font-size: 22px;
+}
+
+.trainingControls {
+  gap: 12px;
+}
+
+.trainingFileField {
+  margin-bottom: 14px;
+}
+
+.splitControls {
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.splitControls > p {
+  margin-bottom: 12px;
+}
+
+.splitControlGrid {
+  gap: 9px;
+}
+
+.splitControl {
+  padding: 11px;
+}
+
+.hybridTrainingCard,
+.hybridTrainingCard.structureCard {
+  padding: 12px 14px;
+}
+
+.trainingJobStatus {
+  display: grid;
+  margin-top: 14px;
+  padding: 12px 14px;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.trainingJobStatus > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trainingJobStatus strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.trainingJobStatus span {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trainingJobStatus progress {
+  width: 100%;
+  height: 7px;
+  accent-color: var(--accent);
+}
+
+.trainingResultMeta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px 12px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-menu);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.trainingResultMeta code {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 240px;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.predictionControls {
+  margin-bottom: 14px;
+  gap: 10px;
+}
+
+.predictionInputStack {
+  gap: 16px;
+}
+
+.analysisChartGrid {
+  margin: 18px 0;
+  gap: var(--compact-section-gap);
+}
+
+.contributionGrid {
+  margin-top: 18px;
+  gap: var(--compact-section-gap);
+}
+
+.contributionGrid > div,
+.relationshipPanel,
+.interpretationPanel {
+  padding: var(--compact-card-padding-inner);
+}
+
+.analysisChartCard h3,
+.contributionGrid h3 {
+  margin-bottom: 11px;
+  font-size: var(--font-card-title);
+}
+
+.chartCanvas {
+  height: var(--compact-chart-height);
+}
+
+.predictionTrendCanvas {
+  height: 300px;
+  margin-top: 8px;
+}
+
+.predictionDiagnosticCanvas {
+  height: 260px;
+}
+
+.localChart {
+  height: 200px;
+  margin-bottom: 12px;
+}
+
+.relationshipChart {
+  height: 300px;
+}
+
+.rankingTable {
+  max-height: 300px;
+}
+
+.paretoChart {
+  height: 300px;
+}
+
+.detailChart {
+  height: 240px;
+}
+
+.modelMetricChart {
+  height: 190px;
+}
+
+.chartCanvas,
+.predictionTrendCanvas,
+.predictionDiagnosticCanvas,
+.localChart,
+.relationshipChart,
+.detailChart,
+.modelMetricChart,
+.analysisChartCard,
+.predictionTrendCard,
+.relationshipPanel,
+.modelMetricCharts article {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.relationshipSection {
+  margin-top: 14px;
+}
+
+.relationshipToolbar {
+  margin: 12px 0;
+  gap: 8px;
+}
+
+.segmentedControl button {
+  padding: 6px 11px;
+}
+
+.rankingLayout,
+.pathDetailGrid,
+.lotWorkspace {
+  gap: var(--compact-section-gap);
+}
+
+.paretoSummary {
+  margin: 12px 0;
+  gap: 8px;
+}
+
+.paretoSummary > div {
+  padding: 11px 13px;
+}
+
+.interpretationPanel {
+  margin-top: 12px;
+}
+
+.lotPareto {
+  margin-top: 14px;
+}
+
+.workspaceTabs {
+  padding: 4px;
+  gap: 5px;
+}
+
+.workspaceTabs button {
+  min-height: 38px;
+  padding: 8px 13px;
+  font-size: 13px;
+}
+
+.tableWrap,
+.tableWrapper {
+  max-width: 100%;
+  margin-top: 12px;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tableWrap table,
+.tableWrapper table,
+.dataTable {
+  font-size: var(--font-secondary);
+}
+
+.tableWrap th,
+.tableWrap td,
+.tableWrapper th,
+.tableWrapper td,
+.dataTable th,
+.dataTable td {
+  padding: var(--compact-table-block) var(--compact-table-inline);
+  line-height: 1.35;
+}
+
+.tableWrap th,
+.tableWrapper th,
+.dataTable th {
+  font-size: 12px;
+}
+
+.predictionResultScroll tbody tr,
+.predictionResultScroll td,
+.predictionResultScroll th {
+  height: 38px;
+}
+
+.predictionPreviewNotice {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tablePagination {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 10px;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tablePagination .button {
+  min-width: 72px;
+}
+
+.reportControls,
+.reportProgress {
+  gap: 12px;
+}
+
+.reportProgress {
+  padding: 12px;
+}
+
+.dashboardPage {
+  gap: var(--compact-section-gap);
+}
+
+.operationalReport {
+  gap: 16px;
+}
+
+.failureBreakdownGrid,
+.reportTwoColumn,
+.reportThreeColumn {
+  margin-top: 16px;
+  gap: 16px;
+}
+
+.analysisContextGrid,
+.reportKpiGrid.improved {
+  gap: 10px;
+}
+
+.analysisContextGrid > div,
+.reportKpiGrid.improved > div {
+  padding: 14px;
+  gap: 6px;
+}
+
+.reportHero {
+  gap: var(--compact-section-gap);
+}
+
+.reportThreeColumn ol,
+.recommendationList,
+.methodologyList,
+.rankList,
+.findingGrid {
+  margin-top: 12px;
+}
+
+.reportThreeColumn li {
+  padding: 6px 0;
+}
+
+.findingGrid {
+  gap: 12px;
+}
+
+.findingCard {
+  padding: 13px;
+}
+
+.trainingViewTabs {
+  margin-bottom: 14px;
+}
+
+.trainingViewTabs button {
+  min-height: 36px;
+  padding-inline: 14px;
+}
+
+.modelHistoryInitial {
+  gap: 12px;
+}
+
+.modelHistoryHeader,
+.modelDetailHeading {
+  gap: 12px;
+}
+
+.modelHistoryLayout {
+  margin-top: 14px;
+  gap: var(--compact-section-gap);
+}
+
+.savedModelBrowser,
+.modelDetailPanel {
+  padding: var(--compact-card-padding-inner);
+}
+
+.savedModelList {
+  max-height: 400px;
+  gap: 6px;
+}
+
+.savedModelList > button {
+  min-height: 50px;
+  padding: 8px 9px;
+}
+
+.modelMetadataGrid {
+  margin-top: 12px;
+  gap: 7px;
+}
+
+.modelMetadataGrid > div {
+  min-height: 64px;
+  padding: 9px;
+}
+
+.modelMetricsTable,
+.modelMetricCharts {
+  margin-top: 12px;
+}
+
+.modelMetricCharts article {
+  padding: 11px;
+}
+
+.preprocessingDisclosure,
+.preprocessingSummaryCard {
+  margin-top: 12px;
+}
+
+.preprocessingDisclosure summary {
+  padding: 10px 12px;
+}
+
+.preprocessingSummaryCard {
+  padding: 14px;
+}
+
+.preprocessingSummaryCard ul {
+  margin-top: 12px;
+  gap: 8px;
+}
+
+.preprocessingSummaryCard li {
+  padding: 8px 10px;
+}
+
+.relationshipPathScroll,
+.reportFiveRowScroll {
+  max-height: 248px;
+}
+
+.relationshipPathScroll tr,
+.reportFiveRowScroll tr {
+  height: 40px;
+}
+
+.relationshipDetailBlock {
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.yieldBoxPlotSection {
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.boxPlotHeading {
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.boxPlotHeading p {
+  font-size: 12px;
+}
+
+.boxPlotScroll svg {
+  height: 290px;
+}
+
+.subsectionHeading {
+  margin-top: var(--space-section);
+}
+
+.statisticsBlock + .statisticsBlock {
+  margin-top: 18px;
+}
+
+.boxStatGrid {
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.boxStatItem {
+  padding: 10px;
+}
+
+.reportCauseGrid {
+  gap: 16px;
+}
+
+.reportCauseGrid .resultCard:nth-child(n + 3) {
+  min-height: 160px;
+}
+
+.preprocessingRuleList {
+  margin-top: 14px;
+  gap: 10px;
+}
+
+.preprocessingRuleList li {
+  padding: 12px 14px;
+}
+
+@media (max-width: 820px) {
+  :root {
+    --compact-page-inline: 18px;
+    --compact-page-start: 22px;
+    --compact-page-end: 44px;
+    --compact-card-padding: 16px;
+    --compact-empty-height: 140px;
+  }
+
+  .intro,
+  .uploadIntro {
+    margin-bottom: 18px;
+  }
+
+  .intro {
+    gap: 12px;
+  }
+
+  .intro h1,
+  .uploadIntro h1 {
+    font-size: var(--font-page-title);
+  }
+
+  .sectionHeading,
+  .resultHeader,
+  .previewHeader {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .overviewChartCard {
+    min-height: 264px;
+  }
+
+  .chartCanvas,
+  .relationshipChart {
+    height: 270px;
+  }
+
+  .predictionTrendCanvas {
+    height: 280px;
+  }
+
+  .predictionDiagnosticCanvas,
+  .detailChart {
+    height: 230px;
+  }
+
+  .paretoChart {
+    height: 280px;
+  }
+
+  .modelMetricChart {
+    height: 180px;
+  }
+
+  .boxPlotScroll svg {
+    height: 270px;
+  }
+
+  .analysisHistorySelector > summary {
+    min-height: 48px;
+  }
+
+  .riskSummaryBanner {
+    padding: 16px;
+  }
+
+  .modelHistoryLayout {
+    gap: 12px;
+  }
+
+  .savedModelList {
+    max-height: 340px;
+  }
+}
+
+@media (max-width: 600px) {
+  :root {
+    --font-page-title: 23px;
+    --compact-page-inline: 16px;
+    --compact-page-start: 16px;
+    --compact-page-end: 36px;
+    --compact-card-padding: 14px;
+    --compact-card-padding-inner: 12px;
+    --compact-control-height: 40px;
+    --compact-table-block: 8px;
+    --compact-table-inline: 10px;
+    --compact-empty-height: 128px;
+  }
+
+  .intro h1,
+  .uploadIntro h1 {
+    font-size: var(--font-page-title);
+  }
+
+  .sectionHeading h2,
+  .resultCard h2,
+  .surfaceCard h2,
+  .resultHeader h2,
+  .previewHeader h3 {
+    font-size: 17px;
+  }
+
+  .statusCard,
+  .kpiGrid .statusCard {
+    min-height: 0;
+    padding: 13px;
+  }
+
+  .cardValue,
+  .kpiGrid .cardValue {
+    font-size: 22px;
+  }
+
+  .predictionKpiGrid strong {
+    font-size: 20px;
+  }
+
+  .dropZone {
+    min-height: 148px;
+    padding: 18px 14px;
+  }
+
+  .compactDrop {
+    min-height: 118px;
+  }
+
+  .emptyState {
+    padding: 16px;
+  }
+
+  .emptyState.compact {
+    min-height: 112px;
+  }
+
+  .overviewChartCard {
+    min-height: 244px;
+  }
+
+  .chartCanvas,
+  .relationshipChart,
+  .paretoChart {
+    height: 250px;
+  }
+
+  .predictionTrendCanvas {
+    height: 260px;
+  }
+
+  .predictionDiagnosticCanvas,
+  .detailChart {
+    height: 220px;
+  }
+
+  .localChart,
+  .modelMetricChart {
+    height: 180px;
+  }
+
+  .boxPlotScroll svg {
+    height: 250px;
+  }
+
+  .analysisControls,
+  .reportControls {
+    padding: 14px;
+  }
+
+  .button {
+    min-width: 0;
+  }
+
+  .tableWrap,
+  .tableWrapper {
+    max-width: calc(100% + 8px);
+  }
+
+  .trainingJobStatus,
+  .trainingResultMeta {
+    padding: 10px 12px;
+  }
+
+  .trainingResultMeta code {
+    flex-basis: 100%;
+  }
+
+  .tablePagination {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .tablePagination .button {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .tablePagination span {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  .analysisContextGrid > div,
+  .reportKpiGrid.improved > div {
+    padding: 12px;
+  }
+
+  .reportCauseGrid .resultCard:nth-child(n + 3) {
+    min-height: 0;
+  }
+}

@@ -240,6 +240,20 @@ class RuntimeStore:
                 ON analysis_runs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_analysis_prediction
                 ON analysis_runs(prediction_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS training_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    status TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    source_filename TEXT,
+                    result_json TEXT,
+                    error_message TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_training_jobs_created
+                ON training_jobs(created_at DESC);
                 """
             )
 
@@ -352,6 +366,121 @@ class RuntimeStore:
     def _read_artifact(self, path: str | None) -> dict[str, Any] | None:
         artifact, _ = self._read_artifact_state(path)
         return artifact
+
+    def create_training_job(
+        self,
+        job_id: str,
+        *,
+        source_filename: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO training_jobs
+                (job_id,created_at,status,stage,progress,source_filename)
+                VALUES (?,?,?,?,?,?)""",
+                (
+                    job_id,
+                    now,
+                    "queued",
+                    "학습 준비",
+                    0,
+                    Path(source_filename).name,
+                ),
+            )
+
+    def start_training_job(self, job_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE training_jobs SET
+                status='running',started_at=?,stage='데이터 검증',progress=5,
+                error_message=NULL
+                WHERE job_id=? AND status='queued'""",
+                (now, job_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("학습 Job을 running 상태로 전환하지 못했습니다.")
+
+    def update_training_job(
+        self,
+        job_id: str,
+        *,
+        stage: str,
+        progress: int,
+    ) -> None:
+        normalized_progress = max(0, min(int(progress), 99))
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE training_jobs SET stage=?,progress=?
+                WHERE job_id=? AND status='running'""",
+                (stage, normalized_progress, job_id),
+            )
+
+    def complete_training_job(
+        self,
+        job_id: str,
+        *,
+        result: dict[str, Any],
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE training_jobs SET
+                status='completed',completed_at=?,stage='학습 완료',progress=100,
+                result_json=?,error_message=NULL
+                WHERE job_id=? AND status='running'""",
+                (now, self._json(result), job_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("학습 Job 완료 상태를 저장하지 못했습니다.")
+
+    def fail_training_job(self, job_id: str, message: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE training_jobs SET
+                status='failed',completed_at=?,stage='학습 실패',
+                error_message=?,result_json=NULL
+                WHERE job_id=? AND status IN ('queued','running')""",
+                (now, str(message)[:1000], job_id),
+            )
+
+    def interrupt_training_jobs(self) -> list[str]:
+        """Recover work that cannot survive a single-worker process restart."""
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                """SELECT job_id FROM training_jobs
+                WHERE status IN ('queued','running')"""
+            ).fetchall()
+            job_ids = [str(row["job_id"]) for row in rows]
+            if job_ids:
+                connection.execute(
+                    """UPDATE training_jobs SET
+                    status='interrupted',completed_at=?,stage='서버 재시작으로 중단',
+                    error_message='서버가 재시작되어 학습이 중단되었습니다.',
+                    result_json=NULL
+                    WHERE status IN ('queued','running')""",
+                    (now,),
+                )
+            return job_ids
+
+    def get_training_job(self, job_id: str) -> dict[str, Any] | None:
+        with _lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM training_jobs WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        raw_result = result.pop("result_json", None)
+        try:
+            result["result"] = json.loads(raw_result) if raw_result else None
+        except (TypeError, json.JSONDecodeError):
+            result["result"] = None
+        return result
 
     def start_prediction(self, **values: Any) -> str:
         prediction_id = str(values.get("prediction_id") or f"prediction_{uuid4().hex}")

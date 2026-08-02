@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import itertools
 import logging
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from sklearn.base import clone
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GroupKFold
+
+from src.ml.memory_usage import log_memory_stage
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +57,7 @@ class EnsembleRegressor:
 
     def _matrix(self, features: pd.DataFrame) -> np.ndarray:
         predictions = [
-            np.asarray(model.predict(features), dtype=float)
+            np.asarray(model.predict(features), dtype=np.float32)
             for model in self.models.values()
         ]
         return np.column_stack(predictions)
@@ -62,9 +65,9 @@ class EnsembleRegressor:
     def predict(self, features: pd.DataFrame) -> np.ndarray:
         matrix = self._matrix(features)
         if self.method == "stacking" and self.meta_model is not None:
-            return np.asarray(self.meta_model.predict(matrix), dtype=float)
+            return np.asarray(self.meta_model.predict(matrix), dtype=np.float32)
         weights = np.asarray(
-            [self.weights[name] for name in self.models], dtype=float
+            [self.weights[name] for name in self.models], dtype=np.float32
         )
         return matrix @ weights
 
@@ -168,29 +171,34 @@ def select_target_ensemble(
     """Select only from group-OOF predictions, then refit on all development rows."""
     options = options or EnsembleOptions()
     options.validate()
-    y = np.asarray(target, dtype=float)
+    y = np.asarray(target, dtype=np.float32)
     group_values = np.asarray(groups)
-    n_splits = min(folds, len(np.unique(group_values)))
+    n_splits = min(folds, 3, len(np.unique(group_values)))
     if n_splits < 2:
         raise ValueError("Inner Group CV를 위한 Lot 그룹이 2개 이상 필요합니다.")
     transform = prediction_transform or (lambda values: values)
     candidates = candidate_factory()
     predictions: dict[str, np.ndarray] = {}
-    fold_ids = np.full(len(features), -1, dtype=int)
+    fold_ids = np.full(len(features), -1, dtype=np.int8)
     warnings: list[str] = []
     splitter = GroupKFold(n_splits=n_splits)
     splits = list(splitter.split(features, y, group_values))
     for fold, (_, holdout) in enumerate(splits):
         fold_ids[holdout] = fold
     for name, estimator in candidates.items():
-        oof = np.full(len(features), np.nan, dtype=float)
+        oof = np.full(len(features), np.nan, dtype=np.float32)
         try:
             for train_index, holdout_index in splits:
                 fitted = clone(estimator)
                 fitted.fit(features.iloc[train_index], y[train_index])
                 oof[holdout_index] = transform(
-                    np.asarray(fitted.predict(features.iloc[holdout_index]), dtype=float)
+                    np.asarray(
+                        fitted.predict(features.iloc[holdout_index]),
+                        dtype=np.float32,
+                    )
                 )
+                del fitted
+                gc.collect()
             if not np.isfinite(oof).all():
                 raise ValueError("OOF prediction이 완성되지 않았습니다.")
             predictions[name] = oof
@@ -199,6 +207,12 @@ def select_target_ensemble(
             warnings.append(f"{name} 후보 제외: {type(exc).__name__}")
     if not predictions:
         raise ValueError("OOF 학습에 성공한 Base Model이 없습니다.")
+    log_memory_stage(
+        logger,
+        "ensemble_oof_complete",
+        candidates=len(predictions),
+        folds=n_splits,
+    )
 
     single_metrics = {
         name: regression_metrics(y, prediction)

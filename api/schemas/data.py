@@ -316,6 +316,8 @@ class PredictionResponse(BaseModel):
     prediction_id: str | None = None
     history_saved: bool = False
     history_warning: str | None = None
+    artifact_available: bool | None = None
+    preview_row_count: int | None = None
 
 
 class ExplainAnalysisSummary(BaseModel):
@@ -428,6 +430,7 @@ class RelationshipAnalysisResponse(BaseModel):
     prediction_id: str | None = None
     history_saved: bool = False
     history_warning: str | None = None
+    artifact_available: bool | None = None
 
 
 class ReportExecutiveSummary(BaseModel):

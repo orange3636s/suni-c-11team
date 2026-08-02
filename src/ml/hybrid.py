@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import gc
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import gzip
+from io import BytesIO
 import json
+import logging
 from pathlib import Path
 import re
+import shutil
+from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 import joblib
 import numpy as np
@@ -22,24 +28,42 @@ from sklearn.preprocessing import OrdinalEncoder
 from threadpoolctl import threadpool_limits
 
 from src.ml.dataset import RANDOM_STATE
+from src.ml.memory_usage import log_memory_stage
 from src.ml.model_io import to_json_safe
 
 
 PIPELINE_VERSION = "auto_multi_y_hgbr_v1"
 TARGETS = ["Y", *[f"Y{index}" for index in range(1, 11)]]
+TRAINING_TARGET_ORDER = [*[f"Y{index}" for index in range(1, 11)], "Y"]
 FAIL_RATE_TARGETS = [f"Y{index}" for index in range(1, 6)]
 COUNT_TARGETS = [f"Y{index}" for index in range(6, 11)]
+TARGET_MODEL_ARTIFACTS = {
+    target: f"target_{target}.joblib"
+    for target in TARGETS
+}
 MISSING_STRINGS = {"", "na", "n/a", "nan", "none", "null", "missing", "-"}
+logger = logging.getLogger(__name__)
+_STAGING_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_ACTIVE_STAGING_PATHS: set[Path] = set()
+_STAGING_LOCK = Lock()
 
 
 def normalized_failure_rates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
-    clipped = np.clip(np.asarray(values, dtype=float), 0.0, 100.0)
+    clipped = np.clip(
+        np.asarray(values, dtype=np.float32),
+        np.float32(0.0),
+        np.float32(100.0),
+    )
     totals = clipped.sum(axis=1)
     normalized = clipped.copy()
     overflow = totals > 100.0
     if overflow.any():
         normalized[overflow] *= 100.0 / totals[overflow, None]
-    derived = np.clip(100.0 - normalized.sum(axis=1), 0.0, 100.0)
+    derived = np.clip(
+        np.float32(100.0) - normalized.sum(axis=1),
+        np.float32(0.0),
+        np.float32(100.0),
+    ).astype(np.float32, copy=False)
     return normalized, derived, int(overflow.sum())
 
 
@@ -141,7 +165,9 @@ class AutoFeaturePreprocessor(TransformerMixin, BaseEstimator):
 
     @staticmethod
     def _frame(x: Any) -> pd.DataFrame:
-        return x.copy() if isinstance(x, pd.DataFrame) else pd.DataFrame(x)
+        # fit/transform never mutate the caller's frame. Avoid a full fold-sized
+        # copy before the numeric and categorical output arrays are allocated.
+        return x if isinstance(x, pd.DataFrame) else pd.DataFrame(x)
 
     def fit(self, x: Any, y: Any = None) -> "AutoFeaturePreprocessor":
         frame = self._frame(x)
@@ -257,7 +283,7 @@ def _estimator(row_count: int) -> HistGradientBoostingRegressor:
     elif row_count < 1000:
         max_iter, min_samples_leaf = 120, 10
     else:
-        max_iter, min_samples_leaf = 200, 20
+        max_iter, min_samples_leaf = 160, 20
     return HistGradientBoostingRegressor(
         loss="squared_error",
         learning_rate=0.05,
@@ -268,7 +294,7 @@ def _estimator(row_count: int) -> HistGradientBoostingRegressor:
         l2_regularization=1.0,
         early_stopping=True,
         validation_fraction=0.1,
-        n_iter_no_change=20,
+        n_iter_no_change=12,
         random_state=RANDOM_STATE,
     )
 
@@ -338,6 +364,168 @@ def _hybrid_weights(direct: dict[str, Any], derived: dict[str, Any]) -> tuple[fl
     return direct_weight, 1.0 - direct_weight, "inverse_oof_rmse"
 
 
+@dataclass(frozen=True)
+class SerializedEstimator:
+    """Compressed, lazily materialized estimator used by new Hybrid bundles.
+
+    Older bundles still contain fitted estimators directly and remain supported.
+    New training serializes each target as soon as it is fitted, so the next
+    target/fold does not coexist with every prior fitted production model.
+    """
+
+    payload: bytes
+
+    @classmethod
+    def from_estimator(cls, estimator: Any) -> "SerializedEstimator":
+        buffer = BytesIO()
+        joblib.dump(estimator, buffer, compress=3)
+        return cls(payload=buffer.getvalue())
+
+    def load(self) -> Any:
+        return joblib.load(BytesIO(self.payload))
+
+    def predict(self, features: pd.DataFrame) -> np.ndarray:
+        estimator = self.load()
+        try:
+            return np.asarray(estimator.predict(features), dtype=np.float32)
+        finally:
+            del estimator
+            gc.collect()
+
+
+@dataclass
+class ModelArtifactRef:
+    """Reference one target estimator without keeping it resident in RAM."""
+
+    artifact_path: str
+    artifact_root: str | None = field(default=None, repr=False)
+
+    def attach(self, root: str | Path) -> None:
+        self.artifact_root = str(Path(root).resolve())
+
+    def resolved_path(self) -> Path:
+        configured = Path(self.artifact_path)
+        if configured.is_absolute():
+            candidate = configured.resolve()
+        else:
+            if self.artifact_root is None:
+                raise FileNotFoundError("모델 Artifact 기준 경로가 설정되지 않았습니다.")
+            root = Path(self.artifact_root).resolve()
+            candidate = (root / configured).resolve()
+            if candidate.parent != root:
+                raise ValueError("모델 Artifact 경로가 Bundle 외부를 가리킵니다.")
+        if not candidate.is_file() or candidate.is_symlink():
+            raise FileNotFoundError("모델 Target Artifact를 찾을 수 없습니다.")
+        return candidate
+
+    def load(self) -> Any:
+        return joblib.load(self.resolved_path())
+
+    def predict(self, features: pd.DataFrame) -> np.ndarray:
+        estimator = self.load()
+        try:
+            return np.asarray(estimator.predict(features), dtype=np.float32)
+        finally:
+            del estimator
+            gc.collect()
+
+
+def _is_junction(path: Path) -> bool:
+    check = getattr(path, "is_junction", None)
+    return bool(check()) if callable(check) else False
+
+
+def _cleanup_stale_staging(root: Path) -> None:
+    """Remove only abandoned, fully allowlisted target-shard directories."""
+    if not root.is_dir() or root.is_symlink() or _is_junction(root):
+        return
+    allowed_files = set(TARGET_MODEL_ARTIFACTS.values())
+    for candidate in root.iterdir():
+        if (
+            candidate in _ACTIVE_STAGING_PATHS
+            or not _STAGING_NAME_PATTERN.fullmatch(candidate.name)
+            or candidate.is_symlink()
+            or _is_junction(candidate)
+            or not candidate.is_dir()
+        ):
+            continue
+        entries = list(candidate.iterdir())
+        if any(
+            entry.name not in allowed_files
+            or entry.is_symlink()
+            or _is_junction(entry)
+            or not entry.is_file()
+            for entry in entries
+        ):
+            logger.warning("안전하지 않은 ML staging 경로를 보존합니다: %s", candidate.name)
+            continue
+        shutil.rmtree(candidate)
+        logger.info("중단된 ML staging 정리: %s", candidate.name)
+
+
+class ModelStagingDirectory:
+    """Workspace-local staging with deterministic, allowlisted cleanup."""
+
+    def __init__(self) -> None:
+        workspace = Path.cwd().resolve()
+        self.root = workspace / ".ml-training-staging"
+        if self.root.exists() and (
+            self.root.is_symlink()
+            or _is_junction(self.root)
+            or not self.root.is_dir()
+        ):
+            raise ValueError("ML staging root가 안전하지 않습니다.")
+        self.root.mkdir(exist_ok=True)
+        with _STAGING_LOCK:
+            _cleanup_stale_staging(self.root)
+            self.path = self.root / uuid4().hex
+            self.path.mkdir(exist_ok=False)
+            _ACTIVE_STAGING_PATHS.add(self.path)
+        self._cleaned = False
+
+    def cleanup(self) -> None:
+        if self._cleaned:
+            return
+        resolved = self.path.resolve()
+        if resolved.parent != self.root or resolved.is_symlink():
+            raise ValueError("모델 임시 저장 경로가 안전하지 않습니다.")
+        with _STAGING_LOCK:
+            if resolved.is_dir():
+                entries = list(resolved.iterdir())
+                allowed_files = set(TARGET_MODEL_ARTIFACTS.values())
+                if any(
+                    entry.name not in allowed_files
+                    or entry.is_symlink()
+                    or _is_junction(entry)
+                    or not entry.is_file()
+                    for entry in entries
+                ):
+                    raise ValueError("모델 임시 저장 경로에 허용되지 않은 파일이 있습니다.")
+                shutil.rmtree(resolved)
+            _ACTIVE_STAGING_PATHS.discard(self.path)
+            try:
+                self.root.rmdir()
+            except OSError:
+                pass
+            self._cleaned = True
+
+    def __del__(self) -> None:
+        try:
+            self.cleanup()
+        except Exception:
+            # Best effort only during interpreter shutdown; explicit save paths
+            # still propagate cleanup failures.
+            pass
+
+
+def _materialize_estimator(value: Any) -> Any:
+    return (
+        value.load()
+        if isinstance(value, (SerializedEstimator, ModelArtifactRef))
+        else value
+    )
+
+
 @dataclass
 class HybridMultiYBundle:
     feature_columns: list[str]
@@ -352,13 +540,44 @@ class HybridMultiYBundle:
     derived_weight: float = 0.5
     pipeline_version: str = PIPELINE_VERSION
 
+    def attach_artifact_root(self, root: str | Path) -> None:
+        for stored in [self.direct_model, *self.target_models.values()]:
+            if isinstance(stored, ModelArtifactRef):
+                stored.attach(root)
+
+    def model_for_target(self, target: str) -> Any:
+        stored = self.direct_model if target == "Y" else self.target_models.get(target)
+        if stored is None:
+            return None
+        return _materialize_estimator(stored)
+
     def predict_components(self, features: pd.DataFrame) -> dict[str, Any]:
-        direct = np.clip(np.asarray(self.direct_model.predict(features), dtype=float), 0.0, 100.0)
+        direct_model = _materialize_estimator(self.direct_model)
+        try:
+            direct = np.clip(
+                np.asarray(direct_model.predict(features), dtype=np.float32),
+                np.float32(0.0),
+                np.float32(100.0),
+            )
+        finally:
+            if isinstance(self.direct_model, (SerializedEstimator, ModelArtifactRef)):
+                del direct_model
+                gc.collect()
         target_predictions: dict[str, np.ndarray] = {}
-        for target, model in self.target_models.items():
-            raw = np.asarray(model.predict(features), dtype=float)
+        for target, stored_model in self.target_models.items():
+            model = _materialize_estimator(stored_model)
+            try:
+                raw = np.asarray(model.predict(features), dtype=np.float32)
+            finally:
+                if isinstance(stored_model, (SerializedEstimator, ModelArtifactRef)):
+                    del model
+                    gc.collect()
             upper = 100.0 if target in FAIL_RATE_TARGETS else None
-            target_predictions[target] = np.clip(raw, 0.0, upper)
+            target_predictions[target] = np.clip(
+                raw,
+                np.float32(0.0),
+                np.float32(upper) if upper is not None else None,
+            ).astype(np.float32, copy=False)
         rate_matrix = np.column_stack([target_predictions[target] for target in FAIL_RATE_TARGETS])
         normalized_rates, derived, normalization_count = normalized_failure_rates(rate_matrix)
         for index, target in enumerate(FAIL_RATE_TARGETS):
@@ -409,7 +628,11 @@ class HybridTrainingResult:
     bundle: HybridMultiYBundle
     metadata: dict[str, Any]
     warnings: list[str]
-    oof_predictions: dict[str, list[float]] | None = None
+    oof_predictions: dict[str, np.ndarray] | None = None
+    _staging_directory: ModelStagingDirectory | None = field(
+        default=None,
+        repr=False,
+    )
 
 
 def train_hybrid_multi_y(
@@ -424,6 +647,12 @@ def train_hybrid_multi_y(
     ensemble_options: Any | None = None,
 ) -> HybridTrainingResult:
     del train_ratio, validation_ratio, test_ratio, missing_indicator, oof_folds, outer_folds, ensemble_options
+    log_memory_stage(
+        logger,
+        "hybrid_csv_loaded",
+        rows=len(dataframe),
+        columns=len(dataframe.columns),
+    )
     schema = detect_auto_schema(dataframe)
     missing_targets = [target for target in TARGETS if target not in schema["target_columns"]]
     if missing_targets:
@@ -431,45 +660,81 @@ def train_hybrid_multi_y(
     if not schema["feature_columns"]:
         raise ValueError("Config/EQ, R, D 공정 Feature를 탐지하지 못했습니다.")
 
+    log_memory_stage(
+        logger,
+        "hybrid_schema_detected",
+        features=len(schema["feature_columns"]),
+        targets=len(schema["target_columns"]),
+    )
     targets = pd.DataFrame({
-        target: pd.to_numeric(dataframe[source], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        target: pd.to_numeric(dataframe[source], errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .astype(np.float32)
         for target, source in schema["target_columns"].items()
     })
     valid = targets[TARGETS].notna().all(axis=1)
     if int(valid.sum()) < 15:
         raise ValueError("Y와 Y1~Y10이 모두 유효한 행이 최소 15개 필요합니다.")
-    working = dataframe.loc[valid].reset_index(drop=True)
     targets = targets.loc[valid, TARGETS].reset_index(drop=True)
-    features = working[schema["feature_columns"]].copy()
+    # Select only model features instead of copying the complete CSV (IDs and
+    # all targets included) into a second working DataFrame.
+    features = dataframe.loc[valid, schema["feature_columns"]].reset_index(drop=True)
+    for column in [*schema["response_columns"], *schema["defect_columns"]]:
+        features[column] = (
+            pd.to_numeric(features[column], errors="coerce")
+            .replace([np.inf, -np.inf], np.nan)
+            .astype(np.float32)
+        )
     lot_column = next((c for c in schema["identifier_columns"] if _canonical(c) == "lotid"), None)
     if lot_column:
-        groups = working[lot_column].astype("string").fillna("__MISSING_LOT__")
+        groups = (
+            dataframe.loc[valid, lot_column]
+            .reset_index(drop=True)
+            .astype("string")
+            .fillna("__MISSING_LOT__")
+        )
     else:
         identifier = next((c for c in schema["identifier_columns"] if _canonical(c) == "lotwaferid"), None)
         groups = (
-            working[identifier].astype("string").str.extract(r"^([^_]+)", expand=False)
-            if identifier else pd.Series(np.arange(len(working)).astype(str))
+            dataframe.loc[valid, identifier]
+            .reset_index(drop=True)
+            .astype("string")
+            .str.extract(r"^([^_]+)", expand=False)
+            if identifier else pd.Series(np.arange(len(features)).astype(str))
         ).fillna("__MISSING_LOT__")
     splits, split_method = _splitter(features, groups)
+    log_memory_stage(
+        logger,
+        "hybrid_features_prepared",
+        rows=len(features),
+        features=len(features.columns),
+        split=split_method,
+    )
 
+    staging_directory = ModelStagingDirectory()
+    staging_root = staging_directory.path
     oof: dict[str, np.ndarray] = {}
     production_models: dict[str, Any] = {}
     target_metrics: dict[str, Any] = {}
     fold_metrics: list[dict[str, Any]] = []
+    direct_preprocessing_summary: dict[str, Any] | None = None
     fold_assignments = [{
         "fold": index + 1,
         "train_groups": sorted(set(groups.iloc[train].astype(str))),
         "holdout_groups": sorted(set(groups.iloc[holdout].astype(str))),
     } for index, (train, holdout) in enumerate(splits)]
 
-    for target in TARGETS:
-        prediction = np.zeros(len(features), dtype=float)
+    for target in TRAINING_TARGET_ORDER:
+        prediction = np.zeros(len(features), dtype=np.float32)
         per_fold: list[dict[str, Any]] = []
         for fold_number, (train_index, holdout_index) in enumerate(splits, start=1):
             model = _pipeline(schema, len(train_index))
             with threadpool_limits(limits=1):
                 model.fit(features.iloc[train_index], targets[target].iloc[train_index])
-                fold_prediction = np.asarray(model.predict(features.iloc[holdout_index]), dtype=float)
+                fold_prediction = np.asarray(
+                    model.predict(features.iloc[holdout_index]),
+                    dtype=np.float32,
+                )
             fold_prediction = np.clip(
                 fold_prediction,
                 0.0,
@@ -478,6 +743,15 @@ def train_hybrid_multi_y(
             prediction[holdout_index] = fold_prediction
             metrics = _metrics(targets[target].iloc[holdout_index], fold_prediction)
             per_fold.append({"fold": fold_number, **metrics})
+            del fold_prediction
+            del model
+            gc.collect()
+            log_memory_stage(
+                logger,
+                "hybrid_fold_released",
+                target=target,
+                fold=fold_number,
+            )
         oof[target] = prediction
         overall = _metrics(targets[target], prediction)
         target_metrics[target] = {
@@ -489,7 +763,21 @@ def train_hybrid_multi_y(
         production = _pipeline(schema, len(features))
         with threadpool_limits(limits=1):
             production.fit(features, targets[target])
-        production_models[target] = production
+        if target == "Y":
+            direct_preprocessing_summary = dict(
+                production.named_steps["features"].summary_
+            )
+        target_artifact = staging_root / TARGET_MODEL_ARTIFACTS[target]
+        joblib.dump(production, target_artifact, compress=3)
+        production_models[target] = ModelArtifactRef(str(target_artifact))
+        del production
+        gc.collect()
+        log_memory_stage(
+            logger,
+            "hybrid_target_serialized",
+            target=target,
+            retained_fitted_models=0,
+        )
 
     oof_rates, derived_oof, normalization_count = normalized_failure_rates(
         np.column_stack([oof[target] for target in FAIL_RATE_TARGETS])
@@ -504,7 +792,7 @@ def train_hybrid_multi_y(
     )
     hybrid_oof = np.clip(
         direct_weight * direct_oof + derived_weight * derived_oof, 0.0, 100.0
-    )
+    ).astype(np.float32, copy=False)
     hybrid_metrics = _metrics(targets["Y"], hybrid_oof)
     final_y_metrics = {
         name: {"train": metrics, "validation": metrics, "test": metrics, "oof": metrics}
@@ -533,7 +821,9 @@ def train_hybrid_multi_y(
     }
 
     direct_model = production_models.pop("Y")
-    preprocessing_summary = direct_model.named_steps["features"].summary_
+    if direct_preprocessing_summary is None:
+        raise ValueError("Y 전처리 학습 요약을 생성하지 못했습니다.")
+    preprocessing_summary = direct_preprocessing_summary
     formula_validation = validate_y_formula(targets)
     first_train, first_holdout = splits[0]
     target_configs = {
@@ -651,7 +941,7 @@ def train_hybrid_multi_y(
             "min_samples_leaf": _estimator(len(features)).min_samples_leaf,
             "l2_regularization": 1.0,
             "early_stopping": True,
-            "n_iter_no_change": 20,
+            "n_iter_no_change": 12,
             "random_state": RANDOM_STATE,
         },
         "library_versions": {
@@ -663,17 +953,52 @@ def train_hybrid_multi_y(
         "sklearn_version": sklearn.__version__,
         "scikit_learn_version": sklearn.__version__,
         "available_targets": TARGETS,
+        "memory_policy": {
+            "numeric_dtype": "float32",
+            "categorical_encoder": "OrdinalEncoder",
+            "maximum_cv_folds": 3,
+            "target_training": "sequential",
+            "fold_models_released_immediately": True,
+            "production_models": "disk_backed_lazy_target_shards",
+        },
+        "target_model_artifacts": TARGET_MODEL_ARTIFACTS,
     })
-    return HybridTrainingResult(
+    result = HybridTrainingResult(
         bundle=bundle,
         metadata=metadata,
         warnings=[],
         oof_predictions={
-            **{target: values.tolist() for target, values in oof.items()},
-            "derived_Y": derived_oof.tolist(),
-            "hybrid_Y": hybrid_oof.tolist(),
+            **oof,
+            "derived_Y": derived_oof.astype(np.float32, copy=False),
+            "hybrid_Y": hybrid_oof,
         },
+        _staging_directory=staging_directory,
     )
+    log_memory_stage(
+        logger,
+        "hybrid_training_complete",
+        rows=len(features),
+        targets=len(TARGETS),
+    )
+    return result
+
+
+def _write_oof_predictions(
+    path: Path,
+    predictions: dict[str, np.ndarray] | None,
+) -> None:
+    """Write one target at a time to avoid materializing all Python float lists."""
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        handle.write("{")
+        for index, (target, values) in enumerate((predictions or {}).items()):
+            if index:
+                handle.write(",")
+            json.dump(str(target), handle, ensure_ascii=False)
+            handle.write(":")
+            target_values = np.asarray(values, dtype=np.float32).tolist()
+            json.dump(target_values, handle, ensure_ascii=False)
+            del target_values
+        handle.write("}")
 
 
 def save_hybrid_bundle(
@@ -687,12 +1012,62 @@ def save_hybrid_bundle(
     metadata_path = bundle_dir / "metadata.json"
     oof_path = bundle_dir / "oof_predictions.json.gz"
     folds_path = bundle_dir / "fold_assignments.json.gz"
-    joblib.dump(result.bundle, bundle_path)
-    metadata_path.write_text(
-        json.dumps(result.metadata, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    with gzip.open(oof_path, "wt", encoding="utf-8") as handle:
-        json.dump(result.oof_predictions or {}, handle, ensure_ascii=False)
-    with gzip.open(folds_path, "wt", encoding="utf-8") as handle:
-        json.dump(result.metadata.get("oof_group_assignments", []), handle, ensure_ascii=False)
+    target_paths = {
+        target: bundle_dir / filename
+        for target, filename in TARGET_MODEL_ARTIFACTS.items()
+    }
+    log_memory_stage(logger, "hybrid_bundle_save_start", model_id=model_id)
+    try:
+        persistent_models: dict[str, ModelArtifactRef] = {}
+        stored_by_target = {
+            "Y": result.bundle.direct_model,
+            **result.bundle.target_models,
+        }
+        for target in TARGETS:
+            stored = stored_by_target[target]
+            destination = target_paths[target]
+            if isinstance(stored, ModelArtifactRef):
+                shutil.copy2(stored.resolved_path(), destination)
+            else:
+                estimator = _materialize_estimator(stored)
+                try:
+                    joblib.dump(estimator, destination, compress=3)
+                finally:
+                    if estimator is not stored:
+                        del estimator
+            persistent_models[target] = ModelArtifactRef(
+                TARGET_MODEL_ARTIFACTS[target]
+            )
+        persistent_bundle = replace(
+            result.bundle,
+            direct_model=persistent_models.pop("Y"),
+            target_models=persistent_models,
+        )
+        joblib.dump(persistent_bundle, bundle_path)
+        persistent_bundle.attach_artifact_root(bundle_dir)
+        metadata_path.write_text(
+            json.dumps(result.metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        _write_oof_predictions(oof_path, result.oof_predictions)
+        with gzip.open(folds_path, "wt", encoding="utf-8") as handle:
+            json.dump(result.metadata.get("oof_group_assignments", []), handle, ensure_ascii=False)
+    except Exception:
+        for generated in (
+            bundle_path,
+            metadata_path,
+            oof_path,
+            folds_path,
+            *target_paths.values(),
+        ):
+            if generated.is_file():
+                generated.unlink()
+        bundle_dir.rmdir()
+        raise
+    result.bundle = persistent_bundle
+    result.oof_predictions = None
+    if result._staging_directory is not None:
+        result._staging_directory.cleanup()
+        result._staging_directory = None
+    gc.collect()
+    log_memory_stage(logger, "hybrid_bundle_save_complete", model_id=model_id)
     return bundle_path, metadata_path

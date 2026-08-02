@@ -17,6 +17,7 @@ from src.ml.hybrid import (
     COUNT_TARGETS,
     FAIL_RATE_TARGETS,
     PIPELINE_VERSION,
+    TARGET_MODEL_ARTIFACTS,
     detect_auto_schema,
     normalized_failure_rates,
     save_hybrid_bundle,
@@ -127,6 +128,11 @@ def test_hybrid_oof_bundle_prediction_and_target_explanation(
     save_hybrid_bundle(trained, hybrid_model_dir, model_id)
     assert (hybrid_model_dir / model_id / "oof_predictions.json.gz").is_file()
     assert (hybrid_model_dir / model_id / "fold_assignments.json.gz").is_file()
+    assert all(
+        (hybrid_model_dir / model_id / filename).is_file()
+        for filename in TARGET_MODEL_ARTIFACTS.values()
+    )
+    assert not (Path.cwd() / ".ml-training-staging").exists()
     models, warnings = list_prediction_models(hybrid_model_dir)
     assert warnings == []
     assert len(models) == 1

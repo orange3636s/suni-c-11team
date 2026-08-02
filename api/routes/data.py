@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import csv
+import gc
 import logging
 import math
+import os
+from contextvars import ContextVar
 from functools import partial
 import threading
 import time
 from collections import Counter
 from datetime import datetime
-from io import StringIO
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -53,6 +57,7 @@ from api.schemas.data import (
     ValidationResponse,
     ValidationResult,
 )
+from api.schemas.jobs import TrainJobAccepted, TrainJobResult, TrainJobStatus
 from api.settings import settings
 from src.analytics.relationships import analyze_relationships
 from src.analytics.lot_analysis import build_lot_cause_analysis
@@ -77,7 +82,6 @@ from src.ml.ensemble import EnsembleOptions
 from src.ml.inference import (
     DEFAULT_DANGER_THRESHOLD,
     DEFAULT_WARNING_THRESHOLD,
-    MAX_PREDICTION_ROWS,
     InferenceInputError,
     InvalidModelIdError,
     ModelDeletionError,
@@ -95,6 +99,7 @@ from src.ml.explainability import (
     DEFAULT_MAX_EXPLAIN_ROWS,
     DEFAULT_TOP_N,
     DEFAULT_WAFER_TOP_N,
+    MAX_TOP_N,
     ExplainResult,
     explain_dataframe,
 )
@@ -104,6 +109,16 @@ from src.preprocessing import preprocess_dataframe
 from src.reporting.export import render_report_html
 from src.reporting.report_builder import build_report
 from src.runtime.store import RuntimeStore, safe_runtime_call
+from src.runtime.operation_coordinator import (
+    HEAVY_JOB_MESSAGE,
+    ActiveOperationError,
+    operation_coordinator,
+)
+from src.runtime.training_jobs import (
+    ProgressCallback,
+    TrainingJobManager,
+    new_training_job_id,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -113,7 +128,44 @@ MAX_FILE_SIZE = settings.max_upload_size_bytes
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
 MODEL_DIR = settings.model_dir
 TRAINABLE_TARGETS = tuple(["Y", *[f"Y{index}" for index in range(1, 6)]])
+PREDICTION_PREVIEW_ROWS = 10
 _TRAINING_LOCK = threading.Lock()
+_TRAINING_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar(
+    "training_progress",
+    default=None,
+)
+_TRAINING_JOB_MANAGER: TrainingJobManager | None = None
+_TRAINING_JOB_MANAGER_LOCK = threading.Lock()
+
+
+def get_training_job_manager() -> TrainingJobManager:
+    global _TRAINING_JOB_MANAGER
+    with _TRAINING_JOB_MANAGER_LOCK:
+        if _TRAINING_JOB_MANAGER is None:
+            store = RuntimeStore(
+                settings.runtime_db_path,
+                settings.runtime_artifact_dir,
+            )
+            _TRAINING_JOB_MANAGER = TrainingJobManager(
+                store=store,
+                input_root=settings.training_job_artifact_dir,
+                coordinator=operation_coordinator,
+            )
+        return _TRAINING_JOB_MANAGER
+
+
+def recover_interrupted_training_jobs() -> int:
+    return get_training_job_manager().recover_interrupted()
+
+
+def _report_training_progress(stage: str, progress: int) -> None:
+    callback = _TRAINING_PROGRESS.get()
+    if callback is None:
+        return
+    try:
+        callback(stage, progress)
+    except Exception:
+        logger.warning("학습 Job 진행률 저장 실패", exc_info=True)
 
 
 def _duplicate_names(values: list[str]) -> list[str]:
@@ -139,16 +191,27 @@ async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
         )
 
     try:
-        content = await file.read(MAX_FILE_SIZE + 1)
+        dataframe = await run_in_threadpool(
+            _read_csv_stream,
+            file.file,
+        )
+        return filename, dataframe
+    finally:
+        await file.close()
+
+
+def _read_csv_stream(source: Any) -> pd.DataFrame:
+    """Parse a seekable upload without retaining bytes and decoded text copies."""
+    try:
+        source.seek(0, os.SEEK_END)
+        size = int(source.tell())
+        source.seek(0)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="업로드한 파일을 읽을 수 없습니다.",
         ) from exc
-    finally:
-        await file.close()
-
-    if len(content) > MAX_FILE_SIZE:
+    if size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
@@ -156,16 +219,18 @@ async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
                 f"{settings.max_upload_size_mb}MB 이하여야 합니다."
             ),
         )
-    if not content:
+    if size == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="비어 있는 CSV 파일은 처리할 수 없습니다.",
         )
 
     for encoding in SUPPORTED_ENCODINGS:
+        wrapper: TextIOWrapper | None = None
         try:
-            decoded_content = content.decode(encoding)
-            header = next(csv.reader(StringIO(decoded_content)), [])
+            source.seek(0)
+            wrapper = TextIOWrapper(source, encoding=encoding, newline="")
+            header = next(csv.reader(wrapper), [])
             duplicate_columns = _duplicate_names(header)
             if duplicate_columns:
                 raise HTTPException(
@@ -175,8 +240,10 @@ async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
                         + ", ".join(duplicate_columns)
                     ),
                 )
-            dataframe = pd.read_csv(StringIO(decoded_content))
-            return filename, dataframe
+            wrapper.detach()
+            wrapper = None
+            source.seek(0)
+            return pd.read_csv(source, encoding=encoding)
         except UnicodeDecodeError:
             continue
         except HTTPException:
@@ -196,11 +263,107 @@ async def _read_csv_upload(file: UploadFile) -> tuple[str, pd.DataFrame]:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="CSV 파일을 읽는 중 오류가 발생했습니다.",
             ) from exc
+        finally:
+            if wrapper is not None:
+                try:
+                    wrapper.detach()
+                except (OSError, ValueError):
+                    pass
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="CSV 인코딩을 확인해 주세요. utf-8-sig, utf-8, cp949를 지원합니다.",
     )
+
+
+async def _persist_training_job_upload(
+    file: UploadFile,
+    destination: Path,
+) -> str:
+    filename = Path(file.filename or "").name
+    if not filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CSV 파일을 선택해 주세요.",
+        )
+    if Path(filename).suffix.lower() != ".csv":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CSV(.csv) 파일만 업로드할 수 있습니다.",
+        )
+
+    temporary = destination.with_name(f"{destination.name}.tmp")
+    total = 0
+    try:
+        with temporary.open("xb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=(
+                            "파일 크기는 "
+                            f"{settings.max_upload_size_mb}MB 이하여야 합니다."
+                        ),
+                    )
+                output.write(chunk)
+        if total == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="비어 있는 CSV 파일은 처리할 수 없습니다.",
+            )
+        os.replace(temporary, destination)
+        return filename
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="학습 CSV를 작업 저장소에 보관하지 못했습니다.",
+        ) from exc
+    finally:
+        await file.close()
+        if temporary.exists():
+            try:
+                temporary.unlink()
+            except OSError:
+                logger.warning("학습 Job 임시 업로드 파일 정리 실패", exc_info=True)
+
+
+def _training_job_result(response: TrainResponse) -> dict[str, Any]:
+    test_metrics = response.metrics.get("test")
+    model_id = response.model_id or Path(response.artifacts.metadata_file).stem
+    return TrainJobResult(
+        model_id=model_id,
+        target=response.target,
+        best_model=response.best_model,
+        test_metrics=(
+            test_metrics.model_dump(mode="json")
+            if test_metrics is not None
+            else None
+        ),
+        feature_count=response.feature_count,
+        warning_count=len(response.warnings),
+    ).model_dump(mode="json")
+
+
+def _run_persisted_training_job(
+    input_path: Path,
+    filename: str,
+    options: dict[str, Any],
+    progress: ProgressCallback,
+) -> dict[str, Any]:
+    token = _TRAINING_PROGRESS.set(progress)
+    try:
+        with input_path.open("rb") as source:
+            upload = UploadFile(file=source, filename=filename)
+            response = asyncio.run(train_model(upload, **options))
+        return _training_job_result(response)
+    finally:
+        _TRAINING_PROGRESS.reset(token)
 
 
 def _validation_payload(
@@ -368,6 +531,7 @@ async def train_model(
         dataframe.shape[0],
         dataframe.shape[1],
     )
+    _report_training_progress("학습 CSV 확인", 10)
 
     if target is not None and target not in TRAINABLE_TARGETS:
         raise HTTPException(
@@ -406,22 +570,36 @@ async def train_model(
             },
         )
     logger.info("학습 데이터 검증 완료")
+    _report_training_progress("학습 데이터 검증", 20)
 
-    try:
-        processed, preprocessing_report = await run_in_threadpool(
-            preprocess_dataframe, dataframe
+    if target is None:
+        # Hybrid training owns fold-scoped preprocessing.  Building another
+        # full processed DataFrame here doubled peak memory without being used.
+        preprocessing_report = {
+            "warnings": [],
+            "processing_summary": {
+                "report_source": "hybrid_fold_scoped_preprocessing",
+            },
+        }
+    else:
+        try:
+            processed, preprocessing_report = await run_in_threadpool(
+                preprocess_dataframe, dataframe
+            )
+        except Exception as exc:
+            logger.exception("학습 데이터 전처리 중 내부 오류")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="데이터 전처리 중 서버 내부 오류가 발생했습니다.",
+            ) from exc
+        logger.info(
+            "학습 데이터 전처리 Summary 완료: rows=%d, columns=%d",
+            processed.shape[0],
+            processed.shape[1],
         )
-    except Exception as exc:
-        logger.exception("학습 데이터 전처리 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="데이터 전처리 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-    logger.info(
-        "학습 데이터 전처리 완료: rows=%d, columns=%d",
-        processed.shape[0],
-        processed.shape[1],
-    )
+        del processed
+        gc.collect()
+    _report_training_progress("학습 데이터 전처리", 30)
 
     if target is None:
         if not _TRAINING_LOCK.acquire(blocking=False):
@@ -431,11 +609,13 @@ async def train_model(
             )
         try:
             try:
+                _report_training_progress("Multi-Y 모델 학습", 40)
                 hybrid = await run_in_threadpool(
                     partial(train_hybrid_multi_y, dataframe)
                 )
             finally:
                 _TRAINING_LOCK.release()
+            _report_training_progress("Multi-Y 모델 저장", 90)
             created_at = datetime.now().astimezone()
             model_id = f"AUTO_MULTI_Y_HGBR_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
             raw_features = list(hybrid.metadata["raw_feature_columns"])
@@ -467,6 +647,7 @@ async def train_model(
                 "training_time_seconds": time.perf_counter() - training_started_at,
             })
             bundle_path, metadata_path = save_hybrid_bundle(hybrid, MODEL_DIR, model_id)
+            _report_training_progress("학습 결과 정리", 98)
             selected = hybrid.metadata["selected_final_output"]
             selected_metrics = hybrid.metadata["final_y_metrics"][selected]
             rows = hybrid.metadata["dataset_rows"]
@@ -539,6 +720,7 @@ async def train_model(
         target,
         len(dataset.feature_columns),
     )
+    _report_training_progress(f"{target} Feature 준비", 38)
 
     try:
         split = split_dataset(
@@ -567,8 +749,10 @@ async def train_model(
         split.row_counts["validation_rows"],
         split.row_counts["test_rows"],
     )
+    _report_training_progress(f"{target} 학습 데이터 분할", 45)
 
     try:
+        _report_training_progress(f"{target} 모델 학습", 50)
         training = train_regression_models(
             dataset,
             split,
@@ -587,6 +771,7 @@ async def train_model(
             detail="모델 학습 중 서버 내부 오류가 발생했습니다.",
         ) from exc
     logger.info("최적 모델 선정 완료: %s", training.best_model_name)
+    _report_training_progress(f"{target} 모델 평가", 82)
 
     missingness_sensitivity: dict[str, Any] | None = None
     if compare_missingness:
@@ -681,7 +866,8 @@ async def train_model(
         except Exception:
             transformed_feature_columns = list(dataset.feature_columns)
         raw_features = dataset.raw_feature_columns or dataset.feature_columns
-        model_path, metadata_path, _ = save_model_bundle(
+        _report_training_progress(f"{target} 모델 저장", 92)
+        model_path, metadata_path, saved_metadata = save_model_bundle(
             training.best_model,
             target=target,
             model_name=training.best_model_name,
@@ -769,6 +955,7 @@ async def train_model(
             detail="모델 학습에는 성공했지만 파일 저장에 실패했습니다.",
         ) from exc
     logger.info("학습 모델 저장 완료")
+    _report_training_progress("학습 결과 정리", 98)
 
     warnings = list(
         dict.fromkeys(
@@ -815,6 +1002,8 @@ async def train_model(
             ),
             missingness_sensitivity=missingness_sensitivity,
             evaluation_summary=evaluation_summary,
+            model_id=str(saved_metadata["model_id"]),
+            model_type=str(saved_metadata.get("model_type") or training.best_model_name),
             preprocessing={
                 "schema_version": "semicon_yield_v2",
                 "config_parser_version": CONFIG_PARSER_VERSION,
@@ -841,6 +1030,107 @@ async def train_model(
         ) from exc
     logger.info("학습 API 응답 직렬화 완료")
     return response
+
+
+@router.post(
+    "/train/jobs",
+    response_model=TrainJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={409: {"description": "Another heavy operation is running"}},
+)
+async def create_training_job(
+    file: UploadFile = File(...),
+    target: str | None = Form(None),
+    train_ratio: Annotated[int, Form()] = 64,
+    validation_ratio: Annotated[int, Form()] = 16,
+    test_ratio: Annotated[int, Form()] = 20,
+    missing_indicator: Annotated[bool, Form()] = True,
+    compare_missingness: Annotated[bool, Form()] = False,
+    ensemble_enabled: Annotated[bool, Form()] = True,
+    ensemble_size: Annotated[str, Form()] = "auto",
+    ensemble_method: Annotated[str, Form()] = "auto",
+    ensemble_min_improvement: Annotated[float, Form()] = 0.01,
+    diversity_check: Annotated[bool, Form()] = True,
+    max_base_models: Annotated[int, Form()] = 3,
+) -> TrainJobAccepted:
+    manager = get_training_job_manager()
+    job_id = new_training_job_id()
+    try:
+        input_path = manager.allocate_input_path(job_id)
+    except Exception as exc:
+        logger.exception("학습 Job 임시 경로 생성 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="학습 Job 저장소를 준비하지 못했습니다.",
+        ) from exc
+
+    try:
+        filename = await _persist_training_job_upload(file, input_path)
+    except Exception:
+        manager.cleanup_input(job_id)
+        raise
+
+    options = {
+        "target": target,
+        "train_ratio": train_ratio,
+        "validation_ratio": validation_ratio,
+        "test_ratio": test_ratio,
+        "missing_indicator": missing_indicator,
+        "compare_missingness": compare_missingness,
+        "ensemble_enabled": ensemble_enabled,
+        "ensemble_size": ensemble_size,
+        "ensemble_method": ensemble_method,
+        "ensemble_min_improvement": ensemble_min_improvement,
+        "diversity_check": diversity_check,
+        "max_base_models": max_base_models,
+    }
+    try:
+        manager.submit(
+            job_id=job_id,
+            source_filename=filename,
+            input_path=input_path,
+            runner=partial(
+                _run_persisted_training_job,
+                input_path,
+                filename,
+                options,
+            ),
+        )
+    except ActiveOperationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=HEAVY_JOB_MESSAGE,
+        ) from exc
+    except Exception as exc:
+        logger.exception("학습 Job 등록 실패")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="학습 Job을 등록하지 못했습니다.",
+        ) from exc
+    return TrainJobAccepted(job_id=job_id)
+
+
+@router.get(
+    "/train/jobs/{job_id}",
+    response_model=TrainJobStatus,
+    responses={404: {"description": "Training job not found"}},
+)
+def get_training_job(job_id: str) -> TrainJobStatus:
+    row = get_training_job_manager().get(job_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="학습 Job을 찾을 수 없습니다.",
+        )
+    return TrainJobStatus(
+        job_id=str(row["job_id"]),
+        status=row["status"],
+        stage=str(row["stage"]),
+        progress=int(row["progress"]),
+        elapsed_seconds=float(row["elapsed_seconds"]),
+        result=row.get("result"),
+        error=row.get("error_message"),
+    )
 
 
 @router.get("/models", response_model=ModelListResponse)
@@ -968,6 +1258,7 @@ def _prediction_response(
     prediction_id: str | None = None,
     history_saved: bool = False,
     history_warning: str | None = None,
+    artifact_available: bool | None = None,
 ) -> PredictionResponse:
     evaluation = (
         ModelMetrics(**result.evaluation.as_dict())
@@ -990,13 +1281,21 @@ def _prediction_response(
             evaluation=evaluation,
         ),
         identifier_column=result.identifier_column,
-        predictions=result.predictions,
+        predictions=result.predictions[:PREDICTION_PREVIEW_ROWS],
         warnings=result.warnings,
-        truncated=result.truncated,
+        truncated=(
+            result.truncated
+            or len(result.predictions) > PREDICTION_PREVIEW_ROWS
+        ),
         preprocessing=result.preprocessing_summary,
         prediction_id=prediction_id,
         history_saved=history_saved,
         history_warning=history_warning,
+        artifact_available=artifact_available,
+        preview_row_count=min(
+            len(result.predictions),
+            PREDICTION_PREVIEW_ROWS,
+        ),
     )
     response.model_dump_json()
     return response
@@ -1226,9 +1525,14 @@ async def predict_csv(
     try:
         filename, dataframe, loaded, result = await _run_prediction(
             file, model_id, warning_threshold, danger_threshold,
-            max_rows=MAX_PREDICTION_ROWS, runtime_id=prediction_id,
+            max_rows=None, runtime_id=prediction_id,
         )
-        response = _prediction_response(filename, result, prediction_id=prediction_id)
+        response = _prediction_response(
+            filename,
+            result,
+            prediction_id=prediction_id,
+            artifact_available=history_started,
+        )
         history_warning = None
         history_saved = False
         if history_started:
@@ -1256,9 +1560,11 @@ async def predict_csv(
             )
             history_saved = completed is True
             if not history_saved:
+                response.artifact_available = False
                 history_warning = "예측 결과는 생성했지만 이력 저장에 실패했습니다."
                 safe_runtime_call("fail_prediction", prediction_id=prediction_id, message=history_warning)
         else:
+            response.artifact_available = False
             history_warning = "예측 결과는 생성했지만 이력 저장소를 사용할 수 없습니다."
         response.history_saved = history_saved
         response.history_warning = history_warning
@@ -1337,6 +1643,88 @@ def _explain_response(
     )
     response.model_dump_json()
     return response
+
+
+def _compact_lot_analysis(
+    value: dict[str, Any] | None,
+    *,
+    lot_limit: int = 5,
+    wafer_limit: int = 50,
+) -> dict[str, Any]:
+    source = value or {}
+    lots = source.get("lots")
+    if not isinstance(lots, list):
+        lots = []
+    compact_lots: list[dict[str, Any]] = []
+    for raw_lot in lots[:lot_limit]:
+        if not isinstance(raw_lot, dict):
+            continue
+        lot = dict(raw_lot)
+        wafers = raw_lot.get("wafer_list")
+        wafer_rows = wafers if isinstance(wafers, list) else []
+        lot["wafer_list"] = wafer_rows[:wafer_limit]
+        lot["returned_wafer_count"] = len(lot["wafer_list"])
+        lot["wafer_list_truncated"] = len(wafer_rows) > wafer_limit
+        compact_lots.append(lot)
+    return {
+        **source,
+        "lots": compact_lots,
+        "returned_lot_count": len(compact_lots),
+        "lot_list_truncated": len(lots) > lot_limit,
+    }
+
+
+def _compact_analysis_result(
+    value: dict[str, Any],
+    explanation: ExplainResult,
+    compact_lot_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    source_multi_y = value.get("multi_y")
+    multi_y = source_multi_y if isinstance(source_multi_y, dict) else {}
+    sampled_identifiers = {
+        str(
+            item.get("identifier")
+            if isinstance(item, dict)
+            else getattr(item, "identifier", None)
+        )
+        for item in explanation.wafer_explanations[:DEFAULT_MAX_EXPLAIN_ROWS]
+    }
+    wafer_results = multi_y.get("wafer_results")
+    wafer_rows = wafer_results if isinstance(wafer_results, list) else []
+    compact_wafers = [
+        row
+        for row in wafer_rows
+        if isinstance(row, dict)
+        and str(row.get("identifier")) in sampled_identifiers
+    ][:DEFAULT_MAX_EXPLAIN_ROWS]
+    compact_multi_y = {
+        key: multi_y.get(key)
+        for key in (
+            "average_direct_y",
+            "average_derived_y",
+            "average_ensemble_y",
+            "ensemble_weight",
+            "ensemble_method",
+            "selected_final_output",
+            "failure_rate_averages",
+            "fail_bit_count_averages",
+        )
+    }
+    compact_multi_y["wafer_results"] = compact_wafers
+    compact_multi_y["returned_wafer_count"] = len(compact_wafers)
+    compact_multi_y["wafer_results_truncated"] = (
+        len(compact_wafers) < len(wafer_rows)
+    )
+    return {
+        **value,
+        "multi_y": compact_multi_y,
+        "lot_analysis": compact_lot_analysis,
+        "lot_summary": (
+            value.get("lot_summary", [])[:5]
+            if isinstance(value.get("lot_summary"), list)
+            else []
+        ),
+    }
 
 
 async def _run_explanation(
@@ -1443,6 +1831,7 @@ async def analyze_feature_relationships(
                 lot_analysis={},
                 analysis_id=None,
                 prediction_id=resolved_prediction_id,
+                artifact_available=False,
                 **analysis,
             )
             response.model_dump_json()
@@ -1474,7 +1863,7 @@ async def analyze_feature_relationships(
             dataframe,
             loaded,
             max_rows=max_rows,
-            top_n=100,
+            top_n=MAX_TOP_N,
             per_wafer_top_n=per_wafer_top_n,
             warning_threshold=warning_threshold,
             danger_threshold=danger_threshold,
@@ -1532,14 +1921,30 @@ async def analyze_feature_relationships(
             "schema_version": common["model"]["schema_version"],
             "report_version": common["report"]["report_version"],
         }
+        compact_lot_analysis = _compact_lot_analysis(lot_analysis)
+        compact_common = _compact_analysis_result(
+            common,
+            explanation,
+            compact_lot_analysis,
+        )
+        compact_report = {
+            **report,
+            "lot_analysis": compact_lot_analysis,
+            "lot_summary": (
+                report.get("lot_summary", [])[:5]
+                if isinstance(report.get("lot_summary"), list)
+                else []
+            ),
+        }
         response = RelationshipAnalysisResponse(
             filename=filename,
             explanation=_explain_response(filename, explanation),
-            analysis_result=common,
-            report_snapshot=report,
-            lot_analysis=lot_analysis,
+            analysis_result=compact_common,
+            report_snapshot=compact_report,
+            lot_analysis=compact_lot_analysis,
             analysis_id=analysis_id,
             prediction_id=resolved_prediction_id,
+            artifact_available=history_started,
             **analysis,
         )
         summary = _prediction_history_summary(prediction)
@@ -1554,7 +1959,11 @@ async def analyze_feature_relationships(
         history_saved = False
         if history_started:
             stored_response = response.model_copy(
-                update={"history_saved": True, "history_warning": None}
+                update={
+                    "history_saved": True,
+                    "history_warning": None,
+                    "artifact_available": True,
+                }
             )
             completed = safe_runtime_call(
                 "complete_analysis", analysis_id=analysis_id,
@@ -1580,9 +1989,11 @@ async def analyze_feature_relationships(
             )
             history_saved = completed is True
             if not history_saved:
+                response.artifact_available = False
                 history_warning = "원인 분석 결과는 생성했지만 이력 저장에 실패했습니다."
                 safe_runtime_call("fail_analysis", analysis_id=analysis_id, message=history_warning)
         else:
+            response.artifact_available = False
             history_warning = "원인 분석 결과는 생성했지만 이력 저장소를 사용할 수 없습니다."
         response.history_saved = history_saved
         response.history_warning = history_warning

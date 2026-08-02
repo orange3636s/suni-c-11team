@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 import logging
 from dataclasses import dataclass, field
@@ -19,7 +20,7 @@ from sklearn.ensemble import (
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OrdinalEncoder
 from threadpoolctl import threadpool_limits
 
 from src.ml.dataset import (
@@ -28,6 +29,7 @@ from src.ml.dataset import (
     PreparedDataset,
 )
 from src.ml.evaluation import RegressionMetrics, evaluate_regression
+from src.ml.memory_usage import log_memory_stage
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,7 @@ class OutlierPolicyTransformer(TransformerMixin, BaseEstimator):
     def fit(self, x: Any, y: Any = None) -> "OutlierPolicyTransformer":
         if self.strategy not in {"flag_only", "iqr", "none"}:
             raise ValueError(f"지원하지 않는 이상치 처리 전략입니다: {self.strategy}")
-        values = np.asarray(x, dtype=float)
+        values = np.asarray(x, dtype=np.float32)
         self.n_features_in_ = values.shape[1]
         self.feature_names_in_ = np.asarray(
             list(getattr(x, "columns", [f"x{index}" for index in range(values.shape[1])])),
@@ -93,21 +95,21 @@ class OutlierPolicyTransformer(TransformerMixin, BaseEstimator):
                 continue
             lower.append(float(q1 - self.lower_multiplier * iqr))
             upper.append(float(q3 + self.upper_multiplier * iqr))
-        self.lower_bounds_ = np.asarray(lower, dtype=float)
-        self.upper_bounds_ = np.asarray(upper, dtype=float)
+        self.lower_bounds_ = np.asarray(lower, dtype=np.float32)
+        self.upper_bounds_ = np.asarray(upper, dtype=np.float32)
         return self
 
     def transform(self, x: Any) -> np.ndarray:
-        values = np.asarray(x, dtype=float)
+        values = np.asarray(x, dtype=np.float32)
         valid_bounds = np.isfinite(self.lower_bounds_) & np.isfinite(self.upper_bounds_)
-        flags = np.zeros_like(values, dtype=float)
+        flags = np.zeros_like(values, dtype=np.float32)
         if valid_bounds.any():
             flags[:, valid_bounds] = (
                 (values[:, valid_bounds] < self.lower_bounds_[valid_bounds])
                 | (values[:, valid_bounds] > self.upper_bounds_[valid_bounds])
-            ).astype(float)
+            ).astype(np.float32)
         if self.strategy == "flag_only":
-            return np.hstack([values, flags])
+            return np.hstack([values, flags]).astype(np.float32, copy=False)
         if self.strategy == "iqr":
             clipped = values.copy()
             clipped[:, valid_bounds] = np.clip(
@@ -115,8 +117,8 @@ class OutlierPolicyTransformer(TransformerMixin, BaseEstimator):
                 self.lower_bounds_[valid_bounds],
                 self.upper_bounds_[valid_bounds],
             )
-            return clipped
-        return values
+            return clipped.astype(np.float32, copy=False)
+        return values.astype(np.float32, copy=False)
 
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
         names = np.asarray(
@@ -191,9 +193,11 @@ def _build_preprocessor(
                         ),
                         (
                             "encoder",
-                            OneHotEncoder(
-                                handle_unknown="ignore",
-                                sparse_output=False,
+                            OrdinalEncoder(
+                                handle_unknown="use_encoded_value",
+                                unknown_value=-1,
+                                encoded_missing_value=-1,
+                                dtype=np.float32,
                             ),
                         ),
                     ]
@@ -201,21 +205,28 @@ def _build_preprocessor(
                 dataset.categorical_columns,
             )
         )
-    return ColumnTransformer(transformers=transformers)
+    return ColumnTransformer(transformers=transformers, sparse_threshold=0.0)
 
 
 def _candidate_estimators(random_state: int) -> dict[str, Any]:
     return {
-        "DummyRegressor": DummyRegressor(strategy="mean"),
+        "HistGradientBoostingRegressor": HistGradientBoostingRegressor(
+            learning_rate=0.05,
+            max_iter=150,
+            max_leaf_nodes=31,
+            min_samples_leaf=20,
+            l2_regularization=1.0,
+            early_stopping=True,
+            n_iter_no_change=12,
+            random_state=random_state,
+        ),
         "Ridge": Ridge(alpha=1.0),
         "RandomForestRegressor": RandomForestRegressor(
             n_estimators=100,
             random_state=random_state,
             n_jobs=1,
         ),
-        "HistGradientBoostingRegressor": HistGradientBoostingRegressor(
-            random_state=random_state,
-        ),
+        "DummyRegressor": DummyRegressor(strategy="mean"),
     }
 
 
@@ -224,9 +235,18 @@ def train_regression_models(
     split: DatasetSplit,
     random_state: int = RANDOM_STATE,
 ) -> TrainingResult:
-    fitted_models: dict[str, Pipeline] = {}
     comparisons: list[ModelComparison] = []
     warnings: list[str] = []
+    best_model: Pipeline | None = None
+    best_model_name: str | None = None
+    best_rank = (float("inf"), float("inf"))
+
+    log_memory_stage(
+        logger,
+        "legacy_training_start",
+        rows=len(dataset.features),
+        features=len(dataset.feature_columns),
+    )
 
     for model_name, estimator in _candidate_estimators(random_state).items():
         logger.info("모델 학습 시작: %s", model_name)
@@ -266,9 +286,35 @@ def train_regression_models(
                     error_message=error_message,
                 )
             )
+            del pipeline
+            gc.collect()
+            log_memory_stage(
+                logger,
+                "legacy_candidate_failed",
+                model=model_name,
+            )
             continue
 
-        fitted_models[model_name] = pipeline
+        rmse = (
+            validation_metrics.rmse
+            if validation_metrics.rmse is not None
+            else float("inf")
+        )
+        r2 = (
+            validation_metrics.r2
+            if validation_metrics.r2 is not None
+            else float("-inf")
+        )
+        candidate_rank = (rmse, -r2)
+        if candidate_rank < best_rank:
+            previous_model = best_model
+            best_model = pipeline
+            best_model_name = model_name
+            best_rank = candidate_rank
+            if previous_model is not None:
+                del previous_model
+        else:
+            del pipeline
         comparisons.append(
             ModelComparison(
                 model_name=model_name,
@@ -277,6 +323,12 @@ def train_regression_models(
             )
         )
         logger.info("모델 학습 완료: %s", model_name)
+        gc.collect()
+        log_memory_stage(
+            logger,
+            "legacy_candidate_complete",
+            model=model_name,
+        )
 
     successful_comparisons = [
         item for item in comparisons if item.status == "success"
@@ -284,20 +336,14 @@ def train_regression_models(
     if not successful_comparisons:
         raise ValueError("학습에 성공한 모델이 없습니다.")
 
-    def ranking_key(item: ModelComparison) -> tuple[float, float]:
-        if item.validation is None:
-            return float("inf"), float("inf")
-        rmse = (
-            item.validation.rmse
-            if item.validation.rmse is not None
-            else float("inf")
-        )
-        r2 = item.validation.r2 if item.validation.r2 is not None else float("-inf")
-        return rmse, -r2
-
-    best_comparison = min(successful_comparisons, key=ranking_key)
+    if best_model is None or best_model_name is None:
+        raise ValueError("학습에 성공한 모델이 없습니다.")
+    best_comparison = next(
+        item
+        for item in successful_comparisons
+        if item.model_name == best_model_name
+    )
     best_comparison.selected = True
-    best_model = fitted_models[best_comparison.model_name]
     if best_comparison.validation is None:
         raise ValueError("선택된 모델의 Validation 지표가 없습니다.")
     with threadpool_limits(limits=1):
@@ -312,7 +358,7 @@ def train_regression_models(
                 best_model.predict(split.x_test),
             ),
         }
-    return TrainingResult(
+    result = TrainingResult(
         best_model_name=best_comparison.model_name,
         best_model=best_model,
         metrics=metrics,
@@ -332,3 +378,9 @@ def train_regression_models(
         },
         fallback_used=False,
     )
+    log_memory_stage(
+        logger,
+        "legacy_training_complete",
+        selected=result.best_model_name,
+    )
+    return result

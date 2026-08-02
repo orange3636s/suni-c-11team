@@ -44,22 +44,51 @@ def _parse_positive_int(name: str, default: int) -> int:
     return value
 
 
+def _storage_default(local_path: str, volume_path: str) -> Path:
+    """Prefer an attached Railway Volume when no explicit path is set."""
+    raw_mount = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if raw_mount:
+        mount_path = Path(raw_mount).expanduser()
+        if mount_path.is_absolute():
+            return mount_path / volume_path
+    return Path(local_path)
+
+
 def _resolve_model_dir(raw_value: str | None) -> Path:
-    configured_path = Path(raw_value or "models").expanduser()
+    configured_path = Path(
+        raw_value or _storage_default("models", "models")
+    ).expanduser()
     if configured_path.is_absolute():
         return configured_path.resolve()
     return (PROJECT_ROOT / configured_path).resolve()
 
 
 def _resolve_runtime_db(raw_value: str | None) -> Path:
-    configured_path = Path(raw_value or "data/runtime/dashboard.db").expanduser()
+    configured_path = Path(
+        raw_value
+        or _storage_default("data/runtime/dashboard.db", "runtime.db")
+    ).expanduser()
     if configured_path.is_absolute():
         return configured_path.resolve()
     return (PROJECT_ROOT / configured_path).resolve()
 
 
 def _resolve_runtime_artifacts(raw_value: str | None) -> Path:
-    configured_path = Path(raw_value or "data/runtime").expanduser()
+    configured_path = Path(
+        raw_value or _storage_default("data/runtime", "artifacts")
+    ).expanduser()
+    if configured_path.is_absolute():
+        return configured_path.resolve()
+    return (PROJECT_ROOT / configured_path).resolve()
+
+
+def _resolve_training_jobs(raw_value: str | None) -> Path:
+    configured_path = Path(
+        raw_value
+        or _storage_default(
+            "data/runtime/training_jobs", "artifacts/training_jobs"
+        )
+    ).expanduser()
     if configured_path.is_absolute():
         return configured_path.resolve()
     return (PROJECT_ROOT / configured_path).resolve()
@@ -89,6 +118,11 @@ class Settings:
     runtime_artifact_dir: Path = field(
         default_factory=lambda: _resolve_runtime_artifacts(
             os.environ.get("RUNTIME_ARTIFACT_DIR")
+        )
+    )
+    training_job_artifact_dir: Path = field(
+        default_factory=lambda: _resolve_training_jobs(
+            os.environ.get("TRAINING_JOB_ARTIFACT_DIR")
         )
     )
     admin_reset_secret: str | None = field(

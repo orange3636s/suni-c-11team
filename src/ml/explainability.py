@@ -21,6 +21,7 @@ from src.ml.inference import (
     prepare_inference_features,
 )
 from src.ml.ensemble import EnsembleRegressor
+from src.ml.memory_usage import log_memory_stage
 from src.ml.model_io import to_json_safe
 from src.preprocessing import preprocess_dataframe
 
@@ -28,8 +29,9 @@ from src.preprocessing import preprocess_dataframe
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_EXPLAIN_ROWS = 500
-MAX_EXPLAIN_ROWS = 1000
+MAX_EXPLAIN_ROWS = 500
 DEFAULT_TOP_N = 20
+MAX_TOP_N = 30
 DEFAULT_WAFER_TOP_N = 5
 FEATURE_PATTERN = re.compile(
     r"^(?P<step>Step\d+)_(?P<type>R|D|EQ|Model|Equipment|Chamber)(?P<name>.*)$",
@@ -119,7 +121,11 @@ def _pipeline_parts(
     features: pd.DataFrame,
 ) -> tuple[Any, np.ndarray, list[str]]:
     if not isinstance(model, Pipeline):
-        return model, features.to_numpy(), list(features.columns)
+        return (
+            model,
+            features.to_numpy(dtype=np.float32, copy=False),
+            list(features.columns),
+        )
     if len(model.steps) < 2:
         raise ModelLoadError("설명할 수 없는 Pipeline 구조입니다.")
 
@@ -133,7 +139,7 @@ def _pipeline_parts(
         ) from exc
     if hasattr(transformed, "toarray"):
         transformed = transformed.toarray()
-    transformed_array = np.asarray(transformed, dtype=float)
+    transformed_array = np.asarray(transformed, dtype=np.float32)
     try:
         names = list(transformer.get_feature_names_out())
     except Exception:
@@ -151,12 +157,12 @@ def _normalize_shap_output(
     row_count: int,
     feature_count: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    values = np.asarray(explanation.values, dtype=float)
+    values = np.asarray(explanation.values, dtype=np.float32)
     if values.ndim == 3 and values.shape[-1] == 1:
         values = values[..., 0]
     if values.shape != (row_count, feature_count):
         raise ValueError("SHAP 값의 행 또는 feature 수가 올바르지 않습니다.")
-    base_values = np.asarray(explanation.base_values, dtype=float)
+    base_values = np.asarray(explanation.base_values, dtype=np.float32)
     if base_values.ndim == 0:
         base_values = np.repeat(base_values.item(), row_count)
     else:
@@ -172,16 +178,18 @@ def _permutation_contributions(
     background = np.where(np.isfinite(background), background, 0.0)
     baseline_predictions = np.asarray(
         estimator.predict(values),
-        dtype=float,
+        dtype=np.float32,
     )
-    contributions = np.zeros_like(values, dtype=float)
+    contributions = np.zeros_like(values, dtype=np.float32)
+    perturbed = values.copy()
     for feature_index in range(values.shape[1]):
-        perturbed = values.copy()
+        original = perturbed[:, feature_index].copy()
         perturbed[:, feature_index] = background[feature_index]
         contributions[:, feature_index] = (
             baseline_predictions
-            - np.asarray(estimator.predict(perturbed), dtype=float)
+            - np.asarray(estimator.predict(perturbed), dtype=np.float32)
         )
+        perturbed[:, feature_index] = original
     base_values = baseline_predictions - contributions.sum(axis=1)
     return contributions, base_values
 
@@ -193,10 +201,14 @@ def compute_shap_values(
     # The automatic Multi-Y bundle exposes the production Y model through
     # ``direct_model``.  Explain that fitted Pipeline instead of treating the
     # bundle itself as a numeric estimator.
-    if not isinstance(model, Pipeline) and isinstance(
-        getattr(model, "direct_model", None), Pipeline
-    ):
-        model = model.direct_model
+    if not isinstance(model, Pipeline):
+        model_for_target = getattr(model, "model_for_target", None)
+        if callable(model_for_target):
+            resolved = model_for_target("Y")
+            if resolved is not None:
+                model = resolved
+        elif isinstance(getattr(model, "direct_model", None), Pipeline):
+            model = model.direct_model
     if isinstance(model, EnsembleRegressor):
         member_results = {
             name: compute_shap_values(member, features)
@@ -207,9 +219,9 @@ def compute_shap_values(
             for result in member_results.values()
             for name in result.feature_names
         ))
-        values = np.zeros((len(features), len(all_names)), dtype=float)
+        values = np.zeros((len(features), len(all_names)), dtype=np.float32)
         feature_values = np.zeros_like(values)
-        base_values = np.zeros(len(features), dtype=float)
+        base_values = np.zeros(len(features), dtype=np.float32)
         if model.method == "stacking" and model.meta_model is not None and hasattr(model.meta_model, "coef_"):
             coefficients = np.asarray(model.meta_model.coef_, dtype=float).reshape(-1)
             member_weights = {
@@ -560,14 +572,21 @@ def explain_dataframe(
         raise InferenceInputError(
             f"max_rows는 1부터 {MAX_EXPLAIN_ROWS} 사이여야 합니다."
         )
-    if not 1 <= top_n <= 100:
-        raise InferenceInputError("top_n은 1부터 100 사이여야 합니다.")
+    if not 1 <= top_n <= MAX_TOP_N:
+        raise InferenceInputError(f"top_n은 1부터 {MAX_TOP_N} 사이여야 합니다.")
     if not 1 <= per_wafer_top_n <= 20:
         raise InferenceInputError(
             "per_wafer_top_n은 1부터 20 사이여야 합니다."
         )
 
     logger.info("설명용 예측 시작: rows=%d", len(dataframe))
+    log_memory_stage(
+        logger,
+        "explanation_start",
+        total_rows=len(dataframe),
+        max_rows=max_rows,
+        top_n=top_n,
+    )
     predictions = prediction_result or predict_dataframe(
         dataframe,
         loaded,
@@ -680,6 +699,12 @@ def explain_dataframe(
             row for row in positive if row["beneficial_contribution"] > 0
         ][:per_wafer_top_n]
         identifier = prediction_row.get(predictions.identifier_column)
+        local_limit = min(max(top_n, per_wafer_top_n * 2), MAX_TOP_N)
+        compact_local_rows = sorted(
+            local_rows,
+            key=lambda item: item["absolute_shap"],
+            reverse=True,
+        )[:local_limit]
         local_contributions.append(
             {
                 "identifier": identifier,
@@ -688,7 +713,7 @@ def explain_dataframe(
                 "wafer_slot": prediction_row.get("Wafer_Slot"),
                 "prediction": prediction_row.get(f"predicted_{target}"),
                 "risk_level": prediction_row.get("risk_level"),
-                "contributions": local_rows,
+                "contributions": compact_local_rows,
             }
         )
         wafer_explanations.append(
@@ -718,7 +743,7 @@ def explain_dataframe(
             ]
         )
     )
-    return ExplainResult(
+    result = ExplainResult(
         model_id=loaded.model_id,
         target=target,
         model_name=str(loaded.metadata["model_name"]),
@@ -738,3 +763,10 @@ def explain_dataframe(
         warnings=warnings,
         local_contributions=to_json_safe(local_contributions),
     )
+    log_memory_stage(
+        logger,
+        "explanation_complete",
+        analyzed_rows=result.analyzed_rows,
+        top_features=len(result.global_importance),
+    )
+    return result

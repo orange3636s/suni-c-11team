@@ -65,7 +65,7 @@ def test_two_model_ensemble_is_selected_from_group_oof_only() -> None:
     assert selection.selected_type == "2-model-ensemble"
     assert set(selection.base_models) == {"ColumnA", "ColumnB"}
     assert sum(selection.weights.values()) == pytest.approx(1.0)
-    assert selection.metrics["rmse"] == pytest.approx(0.0)
+    assert selection.metrics["rmse"] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_three_model_bundle_predicts_and_reports_spread() -> None:
@@ -81,5 +81,5 @@ def test_three_model_bundle_predicts_and_reports_spread() -> None:
 
     prediction = model.predict(features)
     expected = features.to_numpy() @ np.array([0.2, 0.3, 0.5])
-    assert prediction == pytest.approx(expected)
+    assert prediction == pytest.approx(expected, rel=1e-5, abs=1e-6)
     assert np.all(model.prediction_spread(features) >= 0)

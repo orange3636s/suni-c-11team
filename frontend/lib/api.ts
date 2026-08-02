@@ -19,6 +19,8 @@ import type {
   ReportOptions,
   ReportResponse,
   TrainResponse,
+  TrainingJobCreateResponse,
+  TrainingJobStatusResponse,
   ValidationResponse,
   HistoryList,
   HistoryResetResponse,
@@ -232,6 +234,61 @@ export async function trainModel(
   }
 
   return response.json() as Promise<TrainResponse>;
+}
+
+export async function createTrainingJob(
+  file: File,
+): Promise<TrainingJobCreateResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/api/train/jobs`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    rethrowApiConfigurationError(error);
+    throw new Error(
+      "학습 Job을 생성할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new ApiResponseError(response.status, await getErrorMessage(response));
+  }
+  return response.json() as Promise<TrainingJobCreateResponse>;
+}
+
+export async function getTrainingJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<TrainingJobStatusResponse> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiBaseUrl()}/api/train/jobs/${encodeURIComponent(jobId)}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        signal,
+      },
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+    rethrowApiConfigurationError(error);
+    throw new Error(
+      "학습 상태를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new ApiResponseError(response.status, await getErrorMessage(response));
+  }
+  return response.json() as Promise<TrainingJobStatusResponse>;
 }
 
 export async function getModels(): Promise<ModelListResponse> {

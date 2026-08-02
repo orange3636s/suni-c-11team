@@ -47,12 +47,26 @@ const DEFAULT_THRESHOLDS: PredictionThresholds = {
   danger_threshold: 85,
 };
 const DEFAULT_MOVING_AVERAGE_WINDOW = 5;
+const RESULT_PAGE_SIZE = 50;
 const MOVING_AVERAGE_WINDOWS = Array.from({ length: 25 }, (_, index) => index + 1);
 
 function finiteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function restoreArtifactRows(
+  response: PredictionResponse,
+  rows: PredictionRow[] | undefined,
+): PredictionResponse {
+  if (!rows?.length) return response;
+  return {
+    ...response,
+    predictions: rows,
+    truncated: rows.length < response.summary.total_rows,
+    preview_row_count: rows.length,
+  };
 }
 
 export function calculateMovingAverage(
@@ -222,6 +236,7 @@ export default function PredictionPage() {
   const [searchText, setSearchText] = useState("");
   const [resultSort, setResultSort] =
     useState<ResultSort>("prediction-desc");
+  const [resultPage, setResultPage] = useState(0);
   const [movingAverageWindow, setMovingAverageWindow] = useState(
     DEFAULT_MOVING_AVERAGE_WINDOW,
   );
@@ -245,7 +260,7 @@ export default function PredictionPage() {
     if (!predictionId) return;
     void getPredictionHistoryDetail(predictionId).then((detail) => {
       if (!detail.artifact?.response) return;
-      setResult(detail.artifact.response);
+      setResult(restoreArtifactRows(detail.artifact.response, detail.artifact.rows));
       setRestoredHistory(detail.metadata);
       setSelectedModelId(detail.metadata.model_id ?? "");
       sessionStorage.setItem("last_prediction_id", predictionId);
@@ -269,7 +284,8 @@ export default function PredictionPage() {
     try {
       const detail = await getPredictionHistoryDetail(item.prediction_id);
       if (!detail.artifact?.response) throw new Error("저장된 예측 상세 Artifact를 읽을 수 없습니다.");
-      setResult(detail.artifact.response);
+      setResult(restoreArtifactRows(detail.artifact.response, detail.artifact.rows));
+      setResultPage(0);
       setRestoredHistory(detail.metadata);
       setSelectedModelId(detail.metadata.model_id ?? "");
       setActiveView("new");
@@ -296,6 +312,7 @@ export default function PredictionPage() {
 
   function selectFile(selectedFile?: File) {
     setResult(null);
+    setResultPage(0);
     setError("");
     if (!selectedFile) {
       setFile(null);
@@ -318,6 +335,7 @@ export default function PredictionPage() {
     if (!file || !selectedModelId || isPredicting) return;
     setError("");
     setResult(null);
+    setResultPage(0);
     setPredictionRunKey((current) => current + 1);
     setIsPredicting(true);
     try {
@@ -391,7 +409,7 @@ export default function PredictionPage() {
       });
   }, [result, riskFilter, searchText]);
 
-  const displayedRows = useMemo(() => {
+  const sortedRows = useMemo(() => {
     if (!result) return [];
     const predictionColumn = `predicted_${result.model.target}`;
     return [...filteredRows].sort((left, right) => {
@@ -411,6 +429,26 @@ export default function PredictionPage() {
       return resultSort === "prediction-asc" ? difference : -difference;
     });
   }, [filteredRows, result, resultSort]);
+
+  const resultPageCount = Math.max(
+    1,
+    Math.ceil(sortedRows.length / RESULT_PAGE_SIZE),
+  );
+  const activeResultPage = Math.min(resultPage, resultPageCount - 1);
+  const displayedRows = useMemo(
+    () => sortedRows.slice(
+      activeResultPage * RESULT_PAGE_SIZE,
+      (activeResultPage + 1) * RESULT_PAGE_SIZE,
+    ),
+    [activeResultPage, sortedRows],
+  );
+
+  function changeResultPage(direction: -1 | 1) {
+    setResultPage((page) =>
+      Math.max(0, Math.min(resultPageCount - 1, page + direction)),
+    );
+    resultTableRef.current?.scrollTo({ top: 0 });
+  }
 
   const trendData = useMemo(() => {
     if (!result || !filteredRows.length) return [];
@@ -495,6 +533,7 @@ export default function PredictionPage() {
 
   function handleResultSort(nextSort: ResultSort) {
     setResultSort(nextSort);
+    setResultPage(0);
     resultTableRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -997,14 +1036,20 @@ export default function PredictionPage() {
                       placeholder="Lot/Wafer ID 검색"
                       aria-label="Lot_Wafer_ID, Lot_ID 또는 Wafer_ID 검색"
                       value={searchText}
-                      onChange={(event) => setSearchText(event.target.value)}
+                      onChange={(event) => {
+                        setSearchText(event.target.value);
+                        setResultPage(0);
+                        resultTableRef.current?.scrollTo({ top: 0 });
+                      }}
                     />
                     <select
                       aria-label="위험 상태 필터"
                       value={riskFilter}
-                      onChange={(event) =>
-                        setRiskFilter(event.target.value as RiskFilter)
-                      }
+                      onChange={(event) => {
+                        setRiskFilter(event.target.value as RiskFilter);
+                        setResultPage(0);
+                        resultTableRef.current?.scrollTo({ top: 0 });
+                      }}
                     >
                       <option value="all">전체 위험 상태</option>
                       <option value="normal">정상</option>
@@ -1029,6 +1074,12 @@ export default function PredictionPage() {
                     </select>
                   </div>
                 </div>
+                {result.truncated && (
+                  <p className="predictionPreviewNotice" role="status">
+                    응답 미리보기 {result.predictions.length.toLocaleString()}행 / 전체 {result.summary.total_rows.toLocaleString()}행입니다.
+                    전체 결과는 저장된 예측 이력 상세 또는 CSV 다운로드에서 확인할 수 있습니다.
+                  </p>
+                )}
                 <div
                   className="tableWrap predictionResultScroll"
                   ref={resultTableRef}
@@ -1104,6 +1155,29 @@ export default function PredictionPage() {
                     </tbody>
                   </table>
                 </div>
+                {sortedRows.length > RESULT_PAGE_SIZE && (
+                  <nav className="tablePagination" aria-label="Wafer 예측 결과 페이지">
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={activeResultPage === 0}
+                      onClick={() => changeResultPage(-1)}
+                    >
+                      이전
+                    </button>
+                    <span aria-live="polite" aria-atomic="true">
+                      {activeResultPage + 1} / {resultPageCount} · 총 {sortedRows.length.toLocaleString()}행
+                    </span>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={activeResultPage >= resultPageCount - 1}
+                      onClick={() => changeResultPage(1)}
+                    >
+                      다음
+                    </button>
+                  </nav>
+                )}
               </section>
             </>
           )}

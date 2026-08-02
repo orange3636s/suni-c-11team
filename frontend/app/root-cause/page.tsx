@@ -34,6 +34,7 @@ import {
   MODEL_UNAVAILABLE_MESSAGE,
 } from "@/lib/api";
 import type {
+  AnalysisHistoryDetail,
   AnalysisHistorySummary,
   AnalysisResult,
   ExplainOptions,
@@ -54,6 +55,27 @@ const DEFAULT_OPTIONS: ExplainOptions = {
   per_wafer_top_n: 5,
 };
 const DEFAULT_THRESHOLDS = { warning_threshold: 90, danger_threshold: 85 };
+
+function hydrateAnalysisHistory(detail: AnalysisHistoryDetail) {
+  const storedResponse = detail.artifact?.response ?? null;
+  const analysisSnapshot = detail.artifact?.analysis_result
+    ?? storedResponse?.analysis_result
+    ?? null;
+  const reportSnapshot = detail.artifact?.report_snapshot
+    ?? storedResponse?.report_snapshot
+    ?? null;
+  const response = storedResponse
+    ? {
+        ...storedResponse,
+        analysis_result: analysisSnapshot,
+        report_snapshot: reportSnapshot,
+        lot_analysis: analysisSnapshot?.lot_analysis
+          ?? reportSnapshot?.lot_analysis
+          ?? storedResponse.lot_analysis,
+      }
+    : null;
+  return { response, analysisSnapshot, reportSnapshot };
+}
 
 type WaferSort =
   | "risk-desc"
@@ -210,13 +232,11 @@ export default function RootCausePage() {
     void getAnalysisHistoryDetail(analysisId).then((detail) => {
       setRestoredHistory(detail.metadata);
       setModelId(detail.metadata.model_id ?? "");
-      const restoredResponse = detail.artifact?.response ?? null;
-      const analysisSnapshot = restoredResponse?.analysis_result
-        ?? detail.artifact?.analysis_result
-        ?? null;
-      const reportSnapshot = restoredResponse?.report_snapshot
-        ?? detail.artifact?.report_snapshot
-        ?? null;
+      const {
+        response: restoredResponse,
+        analysisSnapshot,
+        reportSnapshot,
+      } = hydrateAnalysisHistory(detail);
       if (!restoredResponse && !analysisSnapshot && !reportSnapshot) {
         setError("저장된 분석 이력의 상세 Snapshot이 없거나 손상되었습니다.");
         return;
@@ -256,13 +276,11 @@ export default function RootCausePage() {
   async function openHistory(item: AnalysisHistorySummary) {
     try {
       const detail = await getAnalysisHistoryDetail(item.analysis_id);
-      const restoredResponse = detail.artifact?.response ?? null;
-      const analysisSnapshot = restoredResponse?.analysis_result
-        ?? detail.artifact?.analysis_result
-        ?? null;
-      const reportSnapshot = restoredResponse?.report_snapshot
-        ?? detail.artifact?.report_snapshot
-        ?? null;
+      const {
+        response: restoredResponse,
+        analysisSnapshot,
+        reportSnapshot,
+      } = hydrateAnalysisHistory(detail);
       if (!restoredResponse && !analysisSnapshot && !reportSnapshot) {
         throw new Error("저장된 분석 Snapshot을 읽을 수 없습니다.");
       }

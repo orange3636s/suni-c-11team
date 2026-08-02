@@ -12,6 +12,7 @@ from src.column_detection import detect_feature_columns
 from src.data_validation import load_data_schema
 from src.preprocessing import _extract_lot_values
 from src.config_parser import parse_config_columns
+from src.ml.memory_usage import log_memory_stage
 
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,16 @@ def prepare_dataset(
             "지원하지 않는 목표 변수입니다. Y부터 Y10까지만 사용할 수 있습니다."
         )
     schema = load_data_schema()
-    working = dataframe.copy(deep=True)
+    log_memory_stage(
+        logger,
+        "dataset_prepare_start",
+        rows=len(dataframe),
+        columns=len(dataframe.columns),
+        target=target,
+    )
+    # The source frame is never mutated in place. A shallow frame avoids a full
+    # CSV-sized duplicate; column assignment below creates only the new blocks.
+    working = dataframe.copy(deep=False)
     config_report: dict = {}
     detected_raw = detect_feature_columns(list(dataframe.columns), schema)
     if detected_raw.get("config_columns"):
@@ -178,7 +188,7 @@ def prepare_dataset(
     numeric_target = pd.to_numeric(
         working[target],
         errors="coerce",
-    ).replace([np.inf, -np.inf], np.nan)
+    ).replace([np.inf, -np.inf], np.nan).astype(np.float32)
     valid_target_mask = numeric_target.notna()
     if not valid_target_mask.any():
         raise ValueError(f"목표 변수 '{target}'의 값이 모두 결측입니다.")
@@ -216,7 +226,7 @@ def prepare_dataset(
     numeric_features = numeric_features.replace(
         [np.inf, -np.inf],
         np.nan,
-    )
+    ).astype(np.float32)
     categorical_features = features.loc[:, categorical_columns].astype(
         "string"
     )
@@ -277,7 +287,7 @@ def prepare_dataset(
             "Target leakage가 탐지되어 학습을 중단했습니다: "
             + ", ".join(leakage_columns)
         )
-    return PreparedDataset(
+    prepared = PreparedDataset(
         features=features.reset_index(drop=True),
         target=numeric_target.loc[valid_target_mask].reset_index(drop=True),
         groups=groups.reset_index(drop=True),
@@ -294,6 +304,15 @@ def prepare_dataset(
         config_report=config_report,
         target_leakage_check=leakage_check,
     )
+    log_memory_stage(
+        logger,
+        "dataset_prepare_complete",
+        rows=len(prepared.features),
+        features=len(prepared.feature_columns),
+        numeric_dtype="float32",
+        target=target,
+    )
+    return prepared
 
 
 def _take_split(

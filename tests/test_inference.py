@@ -326,27 +326,30 @@ def test_missing_xgboost_dependency_is_visible_in_list_and_detail(
     dependency_id = "Y_xgboost_dependency_missing"
     dependency_json = model_dir / f"{dependency_id}.json"
     dependency_model = model_dir / f"{dependency_id}.joblib"
+    dependency_metadata = json.loads(
+        (model_dir / f"{source_id}.json").read_text(encoding="utf-8")
+    )
+    dependency_metadata["model_name"] = "XGBoostRegressor"
+    dependency_metadata["model_type"] = "XGBoostRegressor"
     dependency_json.write_text(
-        (model_dir / f"{source_id}.json").read_text(encoding="utf-8"),
+        json.dumps(dependency_metadata),
         encoding="utf-8",
     )
     dependency_model.write_bytes(
         (model_dir / f"{source_id}.joblib").read_bytes()
     )
-    original_load_model = inference_module.load_model
-
-    def load_model_with_missing_dependency(model_path):
-        if Path(model_path).name == dependency_model.name:
-            raise ModuleNotFoundError(
-                "No module named 'xgboost'",
-                name="xgboost",
-            )
-        return original_load_model(model_path)
-
+    original_find_spec = inference_module.importlib.util.find_spec
+    monkeypatch.setattr(
+        inference_module.importlib.util,
+        "find_spec",
+        lambda name: None if name == "xgboost" else original_find_spec(name),
+    )
     monkeypatch.setattr(
         inference_module,
         "load_model",
-        load_model_with_missing_dependency,
+        lambda path: (_ for _ in ()).throw(
+            AssertionError(f"목록/상세 조회에서 모델을 load했습니다: {path}")
+        ),
     )
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_dir)
     try:

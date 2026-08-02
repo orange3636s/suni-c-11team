@@ -310,8 +310,8 @@ n8n 실행 데이터 보존 정책과 Vercel·Render 또는 별도 배포 환경
 
 ```text
 Vercel Next.js (frontend/)
-  → Render FastAPI (저장소 루트, api.main:app)
-  → models/ 기반 예측·SHAP·보고서
+  → Railway 또는 Render FastAPI (저장소 루트, api.main:app)
+  → Volume/Persistent Disk 기반 모델·이력 Artifact
 
 n8n Cloud 또는 별도 n8n
   → Render POST /api/analyze
@@ -323,13 +323,16 @@ n8n Cloud 또는 별도 n8n
 환경변수 화면에 설정하고 저장소에 넣지 않는다.
 
 - FastAPI: `APP_ENV`, `FRONTEND_ORIGINS`, `MODEL_DIR`,
-  `MAX_UPLOAD_SIZE_MB`, `LOG_LEVEL`
+  `RUNTIME_DB_PATH`, `RUNTIME_ARTIFACT_DIR`,
+  `TRAINING_JOB_ARTIFACT_DIR`, `MAX_UPLOAD_SIZE_MB`, `LOG_LEVEL`
 - Next.js: `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_N8N_WEBHOOK_URL`
 - n8n: `FASTAPI_BASE_URL`, 필요 시 `SLACK_CHANNEL_ID`
 
-Render의 Root Directory는 저장소 루트이고 시작 명령은
-`uvicorn api.main:app --host 0.0.0.0 --port $PORT`이다. Vercel의 Root
-Directory는 `frontend`이다. 자세한 절차는 다음 문서를 따른다.
+Railway와 Render의 Root Directory는 저장소 루트이고 시작 명령은
+`uvicorn api.main:app --host 0.0.0.0 --port $PORT --workers 1`이다.
+Railway 배포·Healthcheck·재시작 정책은 `railway.json`에, Render의 동일한
+단일 worker 설정은 `render.yaml`에 둔다. Vercel의 Root Directory는
+`frontend`이다. 자세한 절차는 다음 문서를 따른다.
 
 - `docs/VERCEL_DEPLOYMENT_GUIDE.md`
 - `docs/RENDER_DEPLOYMENT_GUIDE.md`
@@ -338,6 +341,20 @@ Directory는 `frontend`이다. 자세한 절차는 다음 문서를 따른다.
 - `docs/DEPLOYMENT_CHECKLIST.md`
 
 ## 모델 파일 운영 정책
+
+Railway Volume을 `/data`에 연결하면 별도 경로 환경변수가 없는 경우
+`RAILWAY_VOLUME_MOUNT_PATH`를 기준으로 다음 위치를 자동 사용한다.
+
+- 모델: `/data/models`
+- Runtime SQLite: `/data/runtime.db`
+- 예측·분석 Artifact: `/data/artifacts`
+- 학습 Job 업로드 임시 파일: `/data/artifacts/training_jobs`
+
+Volume은 영구 파일 저장소이며 RAM을 대체하지 않는다. 학습 Job 임시 CSV는
+완료·실패 후 삭제되고, Target 모델은 순차적으로 디스크 shard에 저장된다.
+학습 UI는 `POST /api/train/jobs`의 `202` 응답에서 `job_id`를 받은 뒤
+`GET /api/train/jobs/{job_id}`를 2.5초 간격으로 조회한다. 기존
+`POST /api/train`은 호환성을 위해 유지한다.
 
 현재 초기 모델 `.joblib`은 약 540KB이고 JSON 메타데이터에는 모델 설정과
 feature 목록이 들어 있다. 파일 크기가 작고 현재 확인된 비밀값은 없어
