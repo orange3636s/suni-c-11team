@@ -134,8 +134,8 @@ export default function RootCausePage() {
       <Sidebar activeItem="원인 분석" />
       <div className="mainArea">
         <Header />
-        <main className="pageContent rcPage">
-          <section className="pageHeading compactHeading">
+        <main className="mainContent uploadPage rcPage">
+          <section className="uploadIntro pageHeading">
             <div><span className="eyebrow">ROOT CAUSE WORKSPACE</span><h1>원인 분석</h1><p>최신 Y 모델로 Lot 위험, Wafer 기여도와 공정 관계를 추적합니다.</p></div>
             {result && <StatusBadge label={`${result.target} · ${lots.length} Lots`} tone="success" />}
           </section>
