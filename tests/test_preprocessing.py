@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 
 from src.preprocessing import (
-    INDICATOR_OVERFIT_WARNING,
     _standardize_missing_values,
     preprocess_dataframe,
 )
@@ -83,6 +82,7 @@ def test_numeric_missing_value_is_filled_with_lot_mean(
 
     assert processed.loc[1, "Step1_R1"] == pytest.approx(10.0)
     assert report["imputed_counts"]["Step1_R1"] == 1
+    assert report["processing_summary"]["fallback_used"] is False
 
 
 def test_numeric_missing_value_uses_global_median_fallback(
@@ -102,7 +102,8 @@ def test_numeric_missing_value_uses_global_median_fallback(
     )
 
     assert processed.loc[0, "Step1_D1"] == pytest.approx(15.0)
-    assert any("fallback" in warning for warning in report["warnings"])
+    assert report["warnings"] == []
+    assert report["processing_summary"]["fallback_used"] is True
 
 
 def test_missing_indicator_column_is_added(
@@ -123,7 +124,7 @@ def test_missing_indicator_column_is_added(
 
     assert processed["Step1_R1_missing"].tolist() == [0, 1]
     assert report["added_indicator_columns"] == ["Step1_R1_missing"]
-    assert INDICATOR_OVERFIT_WARNING in report["warnings"]
+    assert report["warnings"] == []
 
 
 def test_iqr_outlier_is_clipped(
@@ -401,3 +402,31 @@ def test_indicator_creation_does_not_emit_fragmentation_warning(
     assert performance_warnings == []
     assert processed.columns.is_unique
     assert len(report["added_indicator_columns"]) == 120
+
+
+def test_default_native_flag_only_policy_preserves_values_without_strategy_warnings(
+    schema_config: dict,
+) -> None:
+    dataframe = pd.DataFrame({
+        "Lot_Wafer_ID": [f"L001_W{index:02d}" for index in range(1, 7)],
+        "Y": [98.0] * 6,
+        "Step1_R1": [1.0, 2.0, None, 3.0, 4.0, 100.0],
+        "Step12_R2": [1.0, 2.0, 3.0, 4.0, 5.0, 100.0],
+    })
+
+    processed, report = preprocess_dataframe(dataframe, schema_config)
+
+    assert pd.isna(processed.loc[2, "Step1_R1"])
+    assert processed.loc[5, "Step1_R1"] == 100.0
+    assert report["clipped_counts"]["Step1_R1"] == 0
+    assert report["outlier_flagged_counts"]["Step1_R1"] == 1
+    assert report["processing_summary"]["missing_strategy"] == "native"
+    assert report["processing_summary"]["outlier_strategy"] == "flag_only"
+    assert report["processing_summary"]["outlier_indicator"] is True
+    assert report["processing_summary"]["fallback_used"] is False
+    assert report["processing_summary"]["step_feature_count"] == 2
+    assert not any(
+        token in warning
+        for warning in report["warnings"]
+        for token in ("native", "flag_only", "Step1_R1", "Step12_R2", "fallback", "지원하지 않는")
+    )

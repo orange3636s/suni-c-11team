@@ -5,6 +5,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from sklearn.compose import ColumnTransformer
@@ -16,7 +19,7 @@ from sklearn.ensemble import (
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import OneHotEncoder
 from threadpoolctl import threadpool_limits
 
 from src.ml.dataset import (
@@ -28,6 +31,101 @@ from src.ml.evaluation import RegressionMetrics, evaluate_regression
 
 
 logger = logging.getLogger(__name__)
+NATIVE_MISSING_MODELS = {
+    "HistGradientBoostingRegressor",
+    "HistGradientBoostingPoisson",
+    "XGBoostRegressor",
+    "CatBoostRegressor",
+}
+FLAG_ONLY_OUTLIER_MODELS = {
+    "HistGradientBoostingRegressor",
+    "HistGradientBoostingPoisson",
+    "XGBoostRegressor",
+    "CatBoostRegressor",
+    "RandomForestRegressor",
+    "ExtraTreesRegressor",
+}
+
+
+def missing_strategy_for_model(model_name: str) -> str:
+    return "native" if model_name in NATIVE_MISSING_MODELS else "median"
+
+
+def outlier_strategy_for_model(model_name: str) -> str:
+    return "flag_only" if model_name in FLAG_ONLY_OUTLIER_MODELS else "iqr"
+
+
+class OutlierPolicyTransformer(TransformerMixin, BaseEstimator):
+    """Learn train-only IQR boundaries and preserve raw values for flag_only."""
+
+    def __init__(
+        self,
+        strategy: str = "flag_only",
+        lower_multiplier: float = 1.5,
+        upper_multiplier: float = 1.5,
+    ) -> None:
+        self.strategy = strategy
+        self.lower_multiplier = lower_multiplier
+        self.upper_multiplier = upper_multiplier
+
+    def fit(self, x: Any, y: Any = None) -> "OutlierPolicyTransformer":
+        if self.strategy not in {"flag_only", "iqr", "none"}:
+            raise ValueError(f"지원하지 않는 이상치 처리 전략입니다: {self.strategy}")
+        values = np.asarray(x, dtype=float)
+        self.n_features_in_ = values.shape[1]
+        self.feature_names_in_ = np.asarray(
+            list(getattr(x, "columns", [f"x{index}" for index in range(values.shape[1])])),
+            dtype=object,
+        )
+        lower: list[float] = []
+        upper: list[float] = []
+        for index in range(values.shape[1]):
+            observed = values[:, index][np.isfinite(values[:, index])]
+            if len(observed) < 4:
+                lower.append(float("nan"))
+                upper.append(float("nan"))
+                continue
+            q1, q3 = np.quantile(observed, [0.25, 0.75])
+            iqr = q3 - q1
+            if not np.isfinite(iqr) or iqr <= 0:
+                lower.append(float("nan"))
+                upper.append(float("nan"))
+                continue
+            lower.append(float(q1 - self.lower_multiplier * iqr))
+            upper.append(float(q3 + self.upper_multiplier * iqr))
+        self.lower_bounds_ = np.asarray(lower, dtype=float)
+        self.upper_bounds_ = np.asarray(upper, dtype=float)
+        return self
+
+    def transform(self, x: Any) -> np.ndarray:
+        values = np.asarray(x, dtype=float)
+        valid_bounds = np.isfinite(self.lower_bounds_) & np.isfinite(self.upper_bounds_)
+        flags = np.zeros_like(values, dtype=float)
+        if valid_bounds.any():
+            flags[:, valid_bounds] = (
+                (values[:, valid_bounds] < self.lower_bounds_[valid_bounds])
+                | (values[:, valid_bounds] > self.upper_bounds_[valid_bounds])
+            ).astype(float)
+        if self.strategy == "flag_only":
+            return np.hstack([values, flags])
+        if self.strategy == "iqr":
+            clipped = values.copy()
+            clipped[:, valid_bounds] = np.clip(
+                clipped[:, valid_bounds],
+                self.lower_bounds_[valid_bounds],
+                self.upper_bounds_[valid_bounds],
+            )
+            return clipped
+        return values
+
+    def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
+        names = np.asarray(
+            input_features if input_features is not None else self.feature_names_in_,
+            dtype=object,
+        )
+        if self.strategy != "flag_only":
+            return names
+        return np.concatenate([names, np.asarray([f"{name}_outlier" for name in names], dtype=object)])
 
 
 @dataclass
@@ -46,22 +144,41 @@ class TrainingResult:
     metrics: dict[str, RegressionMetrics]
     model_comparison: list[ModelComparison]
     warnings: list[str] = field(default_factory=list)
+    missing_strategy: str = "median"
+    outlier_strategy: str = "flag_only"
+    missing_indicator: bool = True
+    outlier_indicator: bool = True
+    model_strategies: dict[str, str] = field(default_factory=dict)
+    model_outlier_strategies: dict[str, str] = field(default_factory=dict)
+    fallback_used: bool = False
 
 
-def _build_preprocessor(dataset: PreparedDataset) -> ColumnTransformer:
-    transformers: list[tuple[str, Pipeline, list[str]]] = []
-    if dataset.numeric_columns:
+def _build_preprocessor(
+    dataset: PreparedDataset,
+    *,
+    missing_strategy: str = "median",
+    outlier_strategy: str = "flag_only",
+) -> ColumnTransformer:
+    if missing_strategy not in {"native", "median"}:
+        raise ValueError(f"지원하지 않는 모델 결측치 전략입니다: {missing_strategy}")
+    transformers: list[tuple[str, Any, list[str]]] = []
+    numeric_columns = [column for column in dataset.numeric_columns if not column.endswith("_missing")]
+    indicator_columns = [column for column in dataset.numeric_columns if column.endswith("_missing")]
+    if numeric_columns:
+        numeric_steps: list[tuple[str, Any]] = [
+            ("outliers", OutlierPolicyTransformer(strategy=outlier_strategy)),
+        ]
+        if missing_strategy == "median":
+            numeric_steps.append(("imputer", SimpleImputer(strategy="median")))
         transformers.append(
             (
                 "numeric",
-                Pipeline(
-                    steps=[
-                        ("imputer", SimpleImputer(strategy="median")),
-                    ]
-                ),
-                dataset.numeric_columns,
+                Pipeline(steps=numeric_steps),
+                numeric_columns,
             )
         )
+    if indicator_columns:
+        transformers.append(("missing_indicators", "passthrough", indicator_columns))
     if dataset.categorical_columns:
         transformers.append(
             (
@@ -74,9 +191,9 @@ def _build_preprocessor(dataset: PreparedDataset) -> ColumnTransformer:
                         ),
                         (
                             "encoder",
-                            OrdinalEncoder(
-                                handle_unknown="use_encoded_value",
-                                unknown_value=-1,
+                            OneHotEncoder(
+                                handle_unknown="ignore",
+                                sparse_output=False,
                             ),
                         ),
                     ]
@@ -115,7 +232,14 @@ def train_regression_models(
         logger.info("모델 학습 시작: %s", model_name)
         pipeline = Pipeline(
             steps=[
-                ("features", _build_preprocessor(dataset)),
+                (
+                    "features",
+                    _build_preprocessor(
+                        dataset,
+                        missing_strategy=missing_strategy_for_model(model_name),
+                        outlier_strategy=outlier_strategy_for_model(model_name),
+                    ),
+                ),
                 ("model", estimator),
             ]
         )
@@ -194,4 +318,17 @@ def train_regression_models(
         metrics=metrics,
         model_comparison=comparisons,
         warnings=warnings,
+        missing_strategy=missing_strategy_for_model(best_comparison.model_name),
+        outlier_strategy=outlier_strategy_for_model(best_comparison.model_name),
+        missing_indicator=any(column.endswith("_missing") for column in dataset.numeric_columns),
+        outlier_indicator=outlier_strategy_for_model(best_comparison.model_name) == "flag_only",
+        model_strategies={
+            item.model_name: missing_strategy_for_model(item.model_name)
+            for item in successful_comparisons
+        },
+        model_outlier_strategies={
+            item.model_name: outlier_strategy_for_model(item.model_name)
+            for item in successful_comparisons
+        },
+        fallback_used=False,
     )

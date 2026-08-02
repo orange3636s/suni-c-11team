@@ -7,13 +7,39 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
+from scipy.stats import f_oneway, kruskal, pearsonr, spearmanr
 
 from src.column_detection import detect_feature_columns
+from src.config_parser import parse_config_columns
 
 
 STEP_PATTERN = re.compile(r"^Step(?P<step>\d+)_", re.IGNORECASE)
+RAW_CONFIG_PATTERN = re.compile(r"^Step(?P<step>\d+)_Config$", re.IGNORECASE)
+LEGACY_CONFIG_PATTERN = re.compile(
+    r"^Step(?P<step>\d+)_EQ(?:$|_.*)",
+    re.IGNORECASE,
+)
 MIN_ASSOCIATION_ROWS = 3
 DETAIL_POINT_LIMIT = 150
+
+
+def _benjamini_hochberg(p_values: list[float | None]) -> list[float | None]:
+    """Return Benjamini-Hochberg adjusted p-values in input order."""
+    valid = sorted(
+        (
+            (index, float(value))
+            for index, value in enumerate(p_values)
+            if value is not None and math.isfinite(float(value))
+        ),
+        key=lambda item: item[1],
+    )
+    adjusted: dict[int, float] = {}
+    running = 1.0
+    for rank in range(len(valid), 0, -1):
+        index, p_value = valid[rank - 1]
+        running = min(running, p_value * len(valid) / rank)
+        adjusted[index] = min(running, 1.0)
+    return [adjusted.get(index) for index in range(len(p_values))]
 
 
 def _finite_float(value: Any) -> float | None:
@@ -69,13 +95,15 @@ def pair_association(
     ):
         pearson = None
         spearman = None
+        pearson_p_value = None
+        spearman_p_value = None
     else:
-        pearson = _finite_float(valid["left"].corr(valid["right"]))
-        spearman = _finite_float(
-            valid["left"].rank(method="average").corr(
-                valid["right"].rank(method="average")
-            )
-        )
+        pearson_result = pearsonr(valid["left"], valid["right"])
+        spearman_result = spearmanr(valid["left"], valid["right"])
+        pearson = _finite_float(pearson_result.statistic)
+        spearman = _finite_float(spearman_result.statistic)
+        pearson_p_value = _finite_float(pearson_result.pvalue)
+        spearman_p_value = _finite_float(spearman_result.pvalue)
     return {
         "pearson": pearson,
         "spearman": spearman,
@@ -83,6 +111,9 @@ def pair_association(
         "excluded_count": excluded_count,
         "direction": _direction(pearson),
         "strength": _strength(pearson),
+        "pearson_p_value": pearson_p_value,
+        "spearman_p_value": spearman_p_value,
+        "effect_size": pearson * pearson if pearson is not None else None,
     }
 
 
@@ -104,6 +135,7 @@ def eta_squared(
             "valid_count": valid_count,
             "excluded_count": excluded_count,
             "category_count": int(frame["category"].nunique()),
+            "p_value": None,
         }
     grand_mean = float(frame["value"].mean())
     total = float(((frame["value"] - grand_mean) ** 2).sum())
@@ -116,11 +148,80 @@ def eta_squared(
                 (group["value"].mean() - grand_mean) ** 2
             )
         effect = min(max(between / total, 0.0), 1.0)
+    samples = [group["value"].to_numpy() for _, group in frame.groupby("category", observed=True) if len(group) >= 2]
+    p_value = _finite_float(f_oneway(*samples).pvalue) if len(samples) >= 2 else None
     return {
         "eta_squared": effect,
         "valid_count": valid_count,
         "excluded_count": excluded_count,
         "category_count": int(frame["category"].nunique()),
+        "p_value": p_value,
+    }
+
+
+def _welch_anova(samples: list[np.ndarray]) -> tuple[float | None, float | None]:
+    """Welch's one-way ANOVA without depending on a specific SciPy version."""
+    usable = [np.asarray(sample, dtype=float) for sample in samples if len(sample) >= 2]
+    if len(usable) < 2:
+        return None, None
+    sizes = np.asarray([len(sample) for sample in usable], dtype=float)
+    means = np.asarray([float(np.mean(sample)) for sample in usable], dtype=float)
+    variances = np.asarray([float(np.var(sample, ddof=1)) for sample in usable], dtype=float)
+    if np.any(variances <= 0):
+        return None, None
+    weights = sizes / variances
+    weight_sum = float(weights.sum())
+    weighted_mean = float(np.sum(weights * means) / weight_sum)
+    group_count = len(usable)
+    correction_term = float(
+        np.sum(((1.0 - (weights / weight_sum)) ** 2) / (sizes - 1.0))
+    )
+    numerator = float(np.sum(weights * ((means - weighted_mean) ** 2)) / (group_count - 1))
+    denominator = 1.0 + (2.0 * (group_count - 2.0) / (group_count**2 - 1.0)) * correction_term
+    statistic = numerator / denominator
+    denominator_df = (group_count**2 - 1.0) / (3.0 * correction_term) if correction_term > 0 else None
+    if denominator_df is None:
+        return _finite_float(statistic), None
+    from scipy.stats import f as f_distribution
+
+    return _finite_float(statistic), _finite_float(
+        f_distribution.sf(statistic, group_count - 1, denominator_df)
+    )
+
+
+def categorical_association(
+    categories: pd.Series,
+    values: pd.Series,
+) -> dict[str, Any]:
+    """Run robust categorical-vs-numeric tests on observed production rows."""
+    frame = pd.DataFrame(
+        {"category": categories.astype("string"), "value": _numeric(values)}
+    ).dropna()
+    grouped = [
+        group["value"].to_numpy(dtype=float)
+        for _, group in frame.groupby("category", observed=True)
+        if len(group) >= 2
+    ]
+    effect = eta_squared(categories, values)
+    anova_statistic = anova_p_value = None
+    kruskal_statistic = kruskal_p_value = None
+    if len(grouped) >= 2:
+        anova = f_oneway(*grouped)
+        anova_statistic = _finite_float(anova.statistic)
+        anova_p_value = _finite_float(anova.pvalue)
+        kruskal_result = kruskal(*grouped)
+        kruskal_statistic = _finite_float(kruskal_result.statistic)
+        kruskal_p_value = _finite_float(kruskal_result.pvalue)
+    welch_statistic, welch_p_value = _welch_anova(grouped)
+    return {
+        "valid_count": int(len(frame)),
+        "excluded_count": int(len(categories) - len(frame)),
+        "coverage": float(len(frame) / len(categories)) if len(categories) else 0.0,
+        "category_count": int(frame["category"].nunique()),
+        "effect_size": effect["eta_squared"],
+        "anova": {"statistic": anova_statistic, "p_value": anova_p_value},
+        "welch_anova": {"statistic": welch_statistic, "p_value": welch_p_value},
+        "kruskal": {"statistic": kruskal_statistic, "p_value": kruskal_p_value},
     }
 
 
@@ -195,6 +296,8 @@ def _readable_name(feature: str, group: str) -> str:
         if group == "R"
         else "Defect"
         if group == "D"
+        else "Config"
+        if group.lower() == "config"
         else "Equipment"
     )
     return f"Step {step} · {suffix}" if step is not None else feature
@@ -212,12 +315,15 @@ def _correlation_ranking(
         ("R", detected["r_columns"]),
         ("D", detected["d_columns"]),
         ("EQ", detected["eq_columns"]),
+        ("Config", detected.get("config_columns", [])),
     ):
         for feature in columns:
             missing_count = int(
                 dataframe[[feature, target]].isna().any(axis=1).sum()
             )
-            if group == "EQ" and _is_categorical_equipment(dataframe[feature]):
+            if group == "Config" or (
+                group == "EQ" and _is_categorical_equipment(dataframe[feature])
+            ):
                 effect = eta_squared(dataframe[feature], target_values)
                 score = effect["eta_squared"]
                 rows.append(
@@ -239,6 +345,8 @@ def _correlation_ranking(
                         ),
                         "category_count": effect["category_count"],
                         "is_categorical": True,
+                        "p_value": effect["p_value"],
+                        "effect_size": effect["eta_squared"],
                     }
                 )
                 continue
@@ -263,8 +371,13 @@ def _correlation_ranking(
                     ),
                     "category_count": None,
                     "is_categorical": False,
+                    "p_value": association[f"{method}_p_value"],
+                    "effect_size": association["effect_size"],
                 }
             )
+    adjusted = _benjamini_hochberg([row.get("p_value") for row in rows])
+    for index, row in enumerate(rows):
+        row["fdr_p_value"] = adjusted[index]
     return sorted(
         rows,
         key=lambda row: row["score"] if row["score"] is not None else -1.0,
@@ -303,15 +416,294 @@ def _shap_rankings(
     )
 
 
+def _config_shap_rankings(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate encoded Config children without inventing unavailable values."""
+    by_step: dict[int, dict[str, list[dict[str, Any]]]] = {}
+    child_groups = {"model", "equipment", "chamber", "eq"}
+    for row in rows:
+        feature = str(row.get("feature") or "")
+        group = str(row.get("group") or "").strip().lower()
+        step = row.get("step")
+        if not isinstance(step, int):
+            step = _step_number(feature.split("__")[-1])
+        if step is None:
+            continue
+        direct = group == "config" or RAW_CONFIG_PATTERN.fullmatch(feature) is not None
+        child = group in child_groups or re.search(
+            r"_(?:Model|Equipment|Chamber|EQ)(?:_|$)",
+            feature,
+            re.IGNORECASE,
+        ) is not None
+        if not direct and not child:
+            continue
+        bucket = by_step.setdefault(step, {"direct": [], "children": []})
+        bucket["direct" if direct else "children"].append(row)
+
+    output: list[dict[str, Any]] = []
+    for step, candidates in by_step.items():
+        # A model that exposes a raw Config SHAP value is already aggregated.
+        # Encoded children are summed only when no direct Config value exists.
+        selected = candidates["direct"] or candidates["children"]
+        source_features: list[str] = []
+        directions: set[str] = set()
+        score = 0.0
+        for row in selected:
+            score += _finite_float(row.get("score")) or 0.0
+            direction = row.get("direction")
+            if isinstance(direction, str) and direction:
+                directions.add(direction)
+            nested_sources = row.get("source_features")
+            sources = (
+                nested_sources
+                if isinstance(nested_sources, list)
+                else [row.get("feature")]
+            )
+            for source in sources:
+                if isinstance(source, str) and source and source not in source_features:
+                    source_features.append(source)
+        output.append(
+            {
+                "feature": f"Step{step}_Config",
+                "display_name": f"Step {step} · Config",
+                "step": step,
+                "group": "Config",
+                "ranking_basis": "Aggregated mean absolute SHAP value",
+                "score": score,
+                "mean_abs_shap": score,
+                "signed_association": None,
+                "direction": (
+                    next(iter(directions)) if len(directions) == 1 else "mixed"
+                ),
+                "valid_count": None,
+                "missing_count": None,
+                "missing_rate": None,
+                "category_count": None,
+                "is_categorical": True,
+                "source_features": source_features,
+                "source_feature_count": len(source_features),
+            }
+        )
+    return sorted(output, key=lambda row: row["score"], reverse=True)
+
+
 def _grouped_rankings(
     rows: list[dict[str, Any]],
     top_n: int,
+    *,
+    config_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
+    def canonical(value: Any) -> str:
+        normalized = str(value or "").strip().lower().replace("_", " ")
+        return {
+            "eq": "equipment",
+            "missing": "measurement",
+            "indicator": "measurement",
+            "observed": "measurement",
+            "measurement pattern": "measurement",
+        }.get(normalized, normalized)
+
+    grouped = {
+        key: [row for row in rows if canonical(row.get("group")) == key][:top_n]
+        for key in ("r", "d", "model", "equipment", "chamber", "measurement")
+    }
+    explicit_config = [
+        row for row in rows if canonical(row.get("group")) == "config"
+    ]
+    legacy_config = [
+        row
+        for row in rows
+        if canonical(row.get("group")) in {"model", "equipment", "chamber"}
+    ]
+    selected_config = (
+        config_rows
+        if config_rows is not None
+        else explicit_config or legacy_config
+    )
+    grouped["config"] = selected_config[:top_n]
+    grouped["all"] = rows[:top_n]
+    grouped.update({
+        "overall": grouped["all"], "R": grouped["r"], "D": grouped["d"],
+        "EQ": grouped["equipment"], "eq": grouped["equipment"],
+        "missing": grouped["measurement"], "indicator": grouped["measurement"],
+        "observed": grouped["measurement"],
+    })
+    return grouped
+
+
+def _category_summaries(
+    categories: pd.Series,
+    values: pd.Series,
+) -> list[dict[str, Any]]:
+    frame = pd.DataFrame(
+        {"category": categories.astype("string"), "value": _numeric(values)}
+    ).dropna()
+    total = len(frame)
+    output: list[dict[str, Any]] = []
+    for name, group in frame.groupby("category", observed=True, sort=True):
+        numeric = group["value"]
+        q1 = float(numeric.quantile(0.25))
+        q3 = float(numeric.quantile(0.75))
+        iqr = q3 - q1
+        lower_fence = q1 - 1.5 * iqr
+        upper_fence = q3 + 1.5 * iqr
+        inliers = numeric[
+            (numeric >= lower_fence) & (numeric <= upper_fence)
+        ]
+        outliers = numeric[
+            (numeric < lower_fence) | (numeric > upper_fence)
+        ]
+        output.append(
+            {
+                "category": str(name),
+                "count": int(len(numeric)),
+                "coverage": float(len(numeric) / total) if total else 0.0,
+                "mean": float(numeric.mean()),
+                "median": float(numeric.median()),
+                "q1": q1,
+                "q3": q3,
+                "minimum": float(numeric.min()),
+                "maximum": float(numeric.max()),
+                "whisker_min": float(inliers.min()),
+                "whisker_max": float(inliers.max()),
+                "outliers": [float(value) for value in outliers.head(30)],
+                "outlier_count": int(len(outliers)),
+                "sample_warning": len(numeric) < 10,
+            }
+        )
+    return output
+
+
+def _statistical_analysis(
+    dataframe: pd.DataFrame,
+    target: str,
+    paths: list[dict[str, Any]],
+) -> dict[str, Any]:
+    numeric_rows: list[dict[str, Any]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    detected = detect_feature_columns(list(dataframe.columns))
+    for group, features in (
+        ("R", detected["r_columns"]),
+        ("D", detected["d_columns"]),
+    ):
+        for feature in features:
+            seen_pairs.add((feature, target))
+            association = pair_association(dataframe[feature], dataframe[target])
+            points = _sample_points(dataframe[feature], dataframe[target])
+            numeric_rows.append(
+                {
+                    "relation": f"{group} vs {target}",
+                    "group": group,
+                    "feature": feature,
+                    "target": target,
+                    **association,
+                    "coverage": (
+                        association["valid_count"] / len(dataframe)
+                        if len(dataframe)
+                        else 0.0
+                    ),
+                    "scatter_data": points,
+                    "scatter_sampled": association["valid_count"] > len(points),
+                }
+            )
+
+    # Preserve the legacy R-vs-D path rows while the complete Target table above
+    # remains the source for the new UI.
+    for path in paths:
+        pairs = [(path.get("response"), path.get("defect"), "R vs D")]
+        for left, right, relation in pairs:
+            if not left or not right or (left, right) in seen_pairs:
+                continue
+            seen_pairs.add((left, right))
+            association = pair_association(dataframe[left], dataframe[right])
+            points = _sample_points(dataframe[left], dataframe[right])
+            numeric_rows.append({
+                "relation": relation,
+                "group": "R_D",
+                "feature": left,
+                "target": right,
+                **association,
+                "coverage": association["valid_count"] / len(dataframe) if len(dataframe) else 0.0,
+                "scatter_data": points,
+                "scatter_sampled": association["valid_count"] > len(points),
+            })
+
+    raw_config_columns = [
+        str(column)
+        for column in dataframe.columns
+        if RAW_CONFIG_PATTERN.fullmatch(str(column))
+    ]
+    legacy_config_columns = [
+        str(column)
+        for column in dataframe.columns
+        if LEGACY_CONFIG_PATTERN.fullmatch(str(column))
+    ]
+    categorical_columns = (
+        [(feature, "raw_config") for feature in raw_config_columns]
+        if raw_config_columns
+        else [(feature, "legacy_eq") for feature in legacy_config_columns]
+    )
+    categorical_rows: list[dict[str, Any]] = []
+    for feature, source_type in categorical_columns:
+        result = categorical_association(dataframe[feature], dataframe[target])
+        category_summary = _category_summaries(
+            dataframe[feature], dataframe[target]
+        )
+        categorical_rows.append({
+            "relation": "Config vs Target",
+            "group": "Config",
+            "source_type": source_type,
+            "feature": feature,
+            "target": target,
+            **result,
+            "category_summary": category_summary,
+            "boxplot_data": category_summary,
+        })
+
+    for test_name in ("anova", "welch_anova", "kruskal"):
+        adjusted = _benjamini_hochberg([row[test_name].get("p_value") for row in categorical_rows])
+        for index, row in enumerate(categorical_rows):
+            row[test_name]["fdr_p_value"] = adjusted[index]
+    for method in ("pearson", "spearman"):
+        target_indices = [
+            index
+            for index, row in enumerate(numeric_rows)
+            if row.get("target") == target
+        ]
+        target_adjusted = _benjamini_hochberg(
+            [numeric_rows[index].get(f"{method}_p_value") for index in target_indices]
+        )
+        for index, adjusted_value in zip(target_indices, target_adjusted, strict=True):
+            numeric_rows[index][f"{method}_fdr_p_value"] = adjusted_value
+        legacy_indices = [
+            index for index in range(len(numeric_rows)) if index not in target_indices
+        ]
+        legacy_adjusted = _benjamini_hochberg(
+            [numeric_rows[index].get(f"{method}_p_value") for index in legacy_indices]
+        )
+        for index, adjusted_value in zip(legacy_indices, legacy_adjusted, strict=True):
+            numeric_rows[index][f"{method}_fdr_p_value"] = adjusted_value
     return {
-        "overall": rows[:top_n],
-        "R": [row for row in rows if row["group"] == "R"][:top_n],
-        "D": [row for row in rows if row["group"] == "D"][:top_n],
-        "EQ": [row for row in rows if row["group"] == "EQ"][:top_n],
+        "methods": [
+            "pearson", "spearman", "anova", "welch_anova", "kruskal",
+            "p_value", "fdr", "effect_size", "sample_count", "coverage",
+        ],
+        "numeric": numeric_rows,
+        "categorical": categorical_rows,
+        "scatter_data": [
+            point
+            for row in numeric_rows
+            for point in row.get("scatter_data", [])
+            if isinstance(point, dict)
+        ],
+        "boxplot_data": [
+            summary
+            for row in categorical_rows
+            for summary in row.get("boxplot_data", [])
+            if isinstance(summary, dict)
+        ],
+        "categorical_relationships": categorical_rows,
     }
 
 
@@ -418,8 +810,21 @@ def _relationship_paths(
             step = _step_number(column)
             if step is not None:
                 by_step.setdefault(
-                    step, {"R": [], "D": [], "EQ": []}
+                    step, {"R": [], "D": [], "EQ": [], "Model": [], "Equipment": [], "Chamber": []}
                 )[group].append(column)
+
+    for column in dataframe.columns:
+        match = re.fullmatch(
+            r"Step(?P<step>\d+)_(?P<kind>Equipment|Model|Chamber)",
+            str(column),
+        )
+        if match:
+            step = int(match.group("step"))
+            kind = match.group("kind")
+            by_step.setdefault(
+                step,
+                {"R": [], "D": [], "EQ": [], "Model": [], "Equipment": [], "Chamber": []},
+            )[kind].append(str(column))
 
     paths: list[dict[str, Any]] = []
     for step, columns in sorted(by_step.items()):
@@ -447,7 +852,13 @@ def _relationship_paths(
             if columns["R"]
             else None
         )
-        equipment = columns["EQ"][0] if columns["EQ"] else None
+        equipment = (
+            columns["Equipment"][0]
+            if columns.get("Equipment")
+            else columns["EQ"][0] if columns["EQ"] else None
+        )
+        model_column = columns["Model"][0] if columns.get("Model") else None
+        chamber_column = columns["Chamber"][0] if columns.get("Chamber") else None
         d_y = pair_association(dataframe[defect], dataframe[target])
         r_d = (
             pair_association(dataframe[response], dataframe[defect])
@@ -509,6 +920,8 @@ def _relationship_paths(
                 "response": response,
                 "defect": defect,
                 "equipment": equipment,
+                "model": model_column,
+                "chamber": chamber_column,
                 "r_d": r_d,
                 "eq_d": eq_d,
                 "d_y": d_y,
@@ -591,6 +1004,7 @@ def analyze_relationships(
     correlation_method: str = "pearson",
     top_n: int = 10,
     shap_importance: list[dict[str, Any]] | None = None,
+    analysis_unit: str = "wafer_observed_only",
 ) -> dict[str, Any]:
     if target not in dataframe.columns:
         raise ValueError(f"목표 컬럼 {target}이 데이터에 없습니다.")
@@ -600,11 +1014,46 @@ def analyze_relationships(
         raise ValueError("top_n은 1부터 20 사이여야 합니다.")
     if len(dataframe) == 0:
         raise ValueError("빈 데이터는 연관 분석할 수 없습니다.")
+    if analysis_unit not in {"wafer_observed_only", "lot_aggregated"}:
+        raise ValueError("analysis_unit은 wafer_observed_only 또는 lot_aggregated여야 합니다.")
+
+    parsed, config_report = parse_config_columns(dataframe)
+    analysis_frame = parsed
+    if analysis_unit == "lot_aggregated":
+        if "Lot_ID" not in parsed.columns:
+            raise ValueError("Lot aggregated 분석에는 Lot_ID 컬럼이 필요합니다.")
+        numeric_columns = parsed.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_columns = [
+            column for column in parsed.columns
+            if column not in numeric_columns and column not in {"Lot_Wafer_ID", "Lot_ID", "Wafer_Slot"}
+        ]
+        numeric_grouped = parsed.groupby("Lot_ID", dropna=False)[numeric_columns].mean()
+        category_grouped = parsed.groupby("Lot_ID", dropna=False)[categorical_columns].agg(
+            lambda values: values.dropna().mode().iloc[0] if not values.dropna().mode().empty else pd.NA
+        )
+        analysis_frame = numeric_grouped.join(category_grouped, how="left").reset_index(drop=True)
+
+    selection_bias_warnings: list[str] = []
+    detected_for_bias = detect_feature_columns(list(parsed.columns))
+    numeric_target = pd.to_numeric(parsed[target], errors="coerce")
+    for feature in [*detected_for_bias["r_columns"], *detected_for_bias["d_columns"]]:
+        numeric_feature = pd.to_numeric(parsed[feature], errors="coerce")
+        observed = numeric_feature.notna() & numeric_target.notna()
+        unobserved = numeric_feature.isna() & numeric_target.notna()
+        if observed.sum() < 10 or unobserved.sum() < 10:
+            continue
+        scale = float(numeric_target.std())
+        difference = abs(float(numeric_target[observed].mean() - numeric_target[unobserved].mean()))
+        if scale > 0 and difference / scale >= 0.5:
+            selection_bias_warnings.append(
+                f"{feature}의 중요도에는 실제 값과 측정 대상 선정 과정의 영향이 함께 포함될 수 있습니다."
+            )
 
     correlation_rows = _correlation_ranking(
-        dataframe, target, correlation_method
+        analysis_frame, target, correlation_method
     )
     shap_rows = _shap_rankings(shap_importance or [])
+    shap_config_rows = _config_shap_rankings(shap_rows)
     pareto_source = shap_rows if shap_rows else correlation_rows
     pareto_basis = (
         "Mean absolute SHAP value"
@@ -622,12 +1071,13 @@ def analyze_relationships(
         else "상관관계 기반 누적 설명 비율이며 실제 수율 개선량을 의미하지 않습니다."
     )
     paths = _relationship_paths(
-        dataframe,
+        analysis_frame,
         target,
         shap_importance or [],
         top_n,
     )
-    detected = detect_feature_columns(list(dataframe.columns))
+    statistics = _statistical_analysis(analysis_frame, target, paths)
+    detected = detect_feature_columns(list(analysis_frame.columns))
     available_steps = sorted(
         {
             step
@@ -642,14 +1092,22 @@ def analyze_relationships(
     return {
         "target": target,
         "correlation_method": correlation_method,
+        "analysis_unit": analysis_unit,
+        "config_summary": config_report,
+        "selection_bias_warnings": selection_bias_warnings,
         "rankings": {
-            "shap": _grouped_rankings(shap_rows, top_n),
+            "shap": _grouped_rankings(
+                shap_rows,
+                top_n,
+                config_rows=shap_config_rows,
+            ),
             "correlation": _grouped_rankings(
                 correlation_rows, top_n
             ),
         },
         "pareto": pareto,
         "relationship_paths": paths,
+        "statistics": statistics,
         "available_steps": available_steps,
         "confidence_criteria": {
             "sufficient": "유효 표본 100개 이상, 결측률 10% 이하",
@@ -661,5 +1119,6 @@ def analyze_relationships(
             "연관 경로는 엔지니어 검토를 위한 우선순위입니다.",
             "공식 공정 Spec이 아닌 데이터 기반 분석 결과입니다.",
             "표본 수가 적은 Equipment 결과는 주의가 필요합니다.",
+            "측정 여부 중요도에는 검사 대상 선정 과정의 영향이 포함될 수 있습니다.",
         ],
     }

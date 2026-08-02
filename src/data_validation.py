@@ -23,6 +23,7 @@ REQUIRED_SCHEMA_KEYS = (
     "equipment_suffix",
     "feature_patterns",
 )
+VALIDATION_MODES = {"training", "inference", "analysis"}
 
 
 def load_data_schema(
@@ -36,6 +37,7 @@ def load_data_schema(
     if not isinstance(schema, dict):
         raise ValueError("데이터 스키마 설정은 YAML 매핑이어야 합니다.")
 
+    # V2 keeps aliases for old integrations, while custom v1 schemas remain valid.
     missing_keys = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
     if missing_keys:
         raise ValueError(
@@ -52,6 +54,7 @@ def validate_dataframe(
     *,
     require_id: bool = True,
     require_yield: bool = True,
+    validation_mode: str | None = None,
 ) -> dict[str, Any]:
     """원본을 변경하지 않고 업로드된 공정 DataFrame의 기본 품질을 검증한다.
 
@@ -65,6 +68,13 @@ def validate_dataframe(
         검증 결과 딕셔너리.
     """
     schema = load_data_schema(schema_path)
+    if validation_mode is not None:
+        if validation_mode not in VALIDATION_MODES:
+            raise ValueError(
+                "validation_mode는 training, inference, analysis 중 하나여야 합니다."
+            )
+        require_id = validation_mode == "training"
+        require_yield = validation_mode == "training"
     id_column = schema["id_column"]
     yield_column = schema["yield_column"]
 
@@ -86,6 +96,7 @@ def validate_dataframe(
     r_columns = detected_columns["r_columns"]
     d_columns = detected_columns["d_columns"]
     eq_columns = detected_columns["eq_columns"]
+    config_columns = detected_columns.get("config_columns", [])
     target_columns = detected_columns["target_columns"]
 
     total_missing_count = int(df.isna().sum().sum())
@@ -98,7 +109,68 @@ def validate_dataframe(
     if id_column in df.columns:
         duplicate_wafer_id_count = int(df[id_column].duplicated().sum())
 
-    warnings: list[str] = []
+    lot_id_column = schema.get("lot_id_column", "Lot_ID")
+    wafer_slot_column = schema.get("wafer_slot_column", "Wafer_Slot")
+    invalid_numeric_count = 0
+    for column in [*r_columns, *d_columns, *target_columns]:
+        if column not in df.columns:
+            continue
+        source = df[column]
+        numeric = pd.to_numeric(source, errors="coerce")
+        invalid_numeric_count += int((source.notna() & numeric.isna()).sum())
+
+    def coverage(columns: list[str]) -> float:
+        if not columns or row_count == 0:
+            return 0.0
+        numeric = df[columns].apply(pd.to_numeric, errors="coerce")
+        return float(numeric.notna().sum().sum() / (row_count * len(columns)))
+
+    config_total = row_count * len(config_columns)
+    config_nonempty = 0
+    config_parse_error_count = 0
+    if config_columns:
+        config_nonempty = int(
+            df[config_columns].apply(
+                lambda series: series.notna() & series.astype("string").str.strip().ne("")
+            ).sum().sum()
+        )
+        try:
+            from src.config_parser import parse_config_columns
+
+            _, config_report = parse_config_columns(df, schema)
+            config_parse_error_count = int(config_report["parse_error_count"])
+        except ValueError as exc:
+            config_parse_error_count = config_total
+            warnings = [str(exc)]
+        else:
+            warnings = []
+    else:
+        warnings = []
+    config_completeness_rate = (
+        config_nonempty / config_total if config_total else 0.0
+    )
+
+    fail_rates = [
+        column for column in schema["fail_rate_columns"] if column in df.columns
+    ]
+    target_consistency_rate: float | None = None
+    if yield_column in df.columns and len(fail_rates) == len(schema["fail_rate_columns"]):
+        targets = df[[yield_column, *fail_rates]].apply(pd.to_numeric, errors="coerce")
+        complete = targets.notna().all(axis=1)
+        if complete.any():
+            tolerance = float(schema.get("target_consistency_tolerance", 0.001))
+            consistent = (targets.loc[complete].sum(axis=1) - 100.0).abs() <= tolerance
+            target_consistency_rate = float(consistent.mean())
+
+    lot_structure_consistency_rate: float | None = None
+    wafers_per_lot: dict[str, int] = {}
+    if lot_id_column in df.columns:
+        counts = df.groupby(lot_id_column, dropna=False).size()
+        wafers_per_lot = {str(key): int(value) for key, value in counts.items()}
+        if len(counts):
+            mode_count = int(counts.mode().iloc[0])
+            lot_structure_consistency_rate = float((counts == mode_count).mean())
+
     errors: list[str] = []
 
     if df.empty:
@@ -118,10 +190,20 @@ def validate_dataframe(
         warnings.append(
             "스키마 패턴과 일치하는 Defect 컬럼이 발견되지 않았습니다."
         )
-    if not eq_columns:
+    if not eq_columns and not config_columns:
         warnings.append(
-            "스키마 패턴과 일치하는 Equipment 컬럼이 발견되지 않았습니다."
+            "스키마 패턴과 일치하는 Config 또는 Equipment 컬럼이 발견되지 않았습니다."
         )
+
+    if validation_mode == "training":
+        if lot_id_column not in df.columns and config_columns:
+            errors.append(f"필수 컬럼이 누락되었습니다: {lot_id_column}")
+        if not r_columns and not config_columns:
+            errors.append("학습에 사용할 R 또는 Config feature가 없습니다.")
+        if config_parse_error_count:
+            errors.append(
+                f"Config parse error가 {config_parse_error_count}개 발견되었습니다."
+            )
 
     if yield_column in df.columns and not is_numeric_dtype(df[yield_column]):
         warnings.append(f"{yield_column} 컬럼이 수치형이 아닙니다.")
@@ -137,7 +219,25 @@ def validate_dataframe(
         "r_columns": r_columns,
         "d_columns": d_columns,
         "eq_columns": eq_columns,
+        "config_columns": config_columns,
         "target_columns": target_columns,
+        "schema_version": schema.get("schema_version", "legacy_v1"),
+        "validation_mode": validation_mode,
+        "config_completeness_rate": config_completeness_rate,
+        "r_measurement_coverage": coverage(r_columns),
+        "d_measurement_coverage": coverage(d_columns),
+        "required_field_error_count": len(missing_required_columns),
+        "config_parse_error_count": config_parse_error_count,
+        "target_consistency_rate": target_consistency_rate,
+        "lot_structure_consistency_rate": lot_structure_consistency_rate,
+        "duplicate_wafer_count": duplicate_wafer_id_count,
+        "invalid_numeric_count": invalid_numeric_count,
+        "lot_count": int(df[lot_id_column].nunique(dropna=True)) if lot_id_column in df.columns else 0,
+        "wafers_per_lot": wafers_per_lot,
+        "structural_unmeasured_count": int(
+            row_count * (len(r_columns) + len(d_columns))
+            - df[[*r_columns, *d_columns]].notna().sum().sum()
+        ) if r_columns or d_columns else 0,
         "warnings": warnings,
         "errors": errors,
     }

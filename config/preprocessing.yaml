@@ -1,12 +1,19 @@
 missing:
-  strategy: lot_mean
+  strategy: native
   fallback: median
   add_indicator: true
 
 outlier:
-  method: iqr
+  method: flag_only
   lower_multiplier: 1.5
   upper_multiplier: 1.5
 
 categorical:
   fill_value: UNKNOWN
+
+schema_v2:
+  numeric_imputation: train_median
+  categorical_encoding: one_hot_ignore_unknown
+  fit_scope: train_only
+  legacy_lot_mean_enabled: false
+  legacy_lot_sigma_enabled: false

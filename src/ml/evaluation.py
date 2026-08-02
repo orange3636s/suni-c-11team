@@ -17,8 +17,10 @@ class RegressionMetrics:
     r2: float | None
     rmse: float | None
     mae: float | None
+    mse: float | None = None
 
     def as_dict(self) -> dict[str, float | None]:
+        # Keep the legacy serialized shape; schema-v2 callers may extend it.
         return {"r2": self.r2, "rmse": self.rmse, "mae": self.mae}
 
 
@@ -38,12 +40,12 @@ def evaluate_regression(
         if len(expected_values) >= 2
         else float("nan")
     )
-    rmse = math.sqrt(
-        mean_squared_error(expected_values, predicted_values)
-    )
+    mse = mean_squared_error(expected_values, predicted_values)
+    rmse = math.sqrt(mse)
     mae = mean_absolute_error(expected_values, predicted_values)
     return RegressionMetrics(
         r2=_finite_float(r2),
         rmse=_finite_float(rmse),
         mae=_finite_float(mae),
+        mse=_finite_float(mse),
     )

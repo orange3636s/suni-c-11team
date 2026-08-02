@@ -5,6 +5,7 @@ from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes.data import router as data_router
+from api.routes.runtime import router as runtime_router
 from api.settings import settings
 
 
@@ -39,6 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(data_router)
+app.include_router(runtime_router)
 
 
 @app.get("/")

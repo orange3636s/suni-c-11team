@@ -51,6 +51,20 @@ def _resolve_model_dir(raw_value: str | None) -> Path:
     return (PROJECT_ROOT / configured_path).resolve()
 
 
+def _resolve_runtime_db(raw_value: str | None) -> Path:
+    configured_path = Path(raw_value or "data/runtime/dashboard.db").expanduser()
+    if configured_path.is_absolute():
+        return configured_path.resolve()
+    return (PROJECT_ROOT / configured_path).resolve()
+
+
+def _resolve_runtime_artifacts(raw_value: str | None) -> Path:
+    configured_path = Path(raw_value or "data/runtime").expanduser()
+    if configured_path.is_absolute():
+        return configured_path.resolve()
+    return (PROJECT_ROOT / configured_path).resolve()
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = field(
@@ -68,6 +82,23 @@ class Settings:
         default_factory=lambda: _resolve_model_dir(
             os.environ.get("MODEL_DIR")
         )
+    )
+    runtime_db_path: Path = field(
+        default_factory=lambda: _resolve_runtime_db(os.environ.get("RUNTIME_DB_PATH"))
+    )
+    runtime_artifact_dir: Path = field(
+        default_factory=lambda: _resolve_runtime_artifacts(
+            os.environ.get("RUNTIME_ARTIFACT_DIR")
+        )
+    )
+    max_prediction_history: int = field(
+        default_factory=lambda: _parse_positive_int("MAX_PREDICTION_HISTORY", 100)
+    )
+    max_analysis_history: int = field(
+        default_factory=lambda: _parse_positive_int("MAX_ANALYSIS_HISTORY", 50)
+    )
+    max_runtime_artifact_mb: int = field(
+        default_factory=lambda: _parse_positive_int("MAX_RUNTIME_ARTIFACT_MB", 1000)
     )
     max_upload_size_mb: int = field(
         default_factory=lambda: _parse_positive_int(

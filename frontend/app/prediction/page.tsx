@@ -20,14 +20,20 @@ import type { LabelProps, LegendPayload } from "recharts";
 
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
+import ModelSelector from "@/components/models/ModelSelector";
+import SelectedModelSummary from "@/components/models/SelectedModelSummary";
+import PreprocessingSummary from "@/components/PreprocessingSummary";
 import Sidebar from "@/components/Sidebar";
 import {
+  deletePredictionHistory,
   downloadPredictions,
-  getModels,
+  getPredictionHistory,
+  getPredictionHistoryDetail,
   predictCsv,
 } from "@/lib/api";
 import type {
   ModelSummary,
+  PredictionHistorySummary,
   PredictionResponse,
   PredictionRow,
   PredictionThresholds,
@@ -35,11 +41,11 @@ import type {
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const DEFAULT_THRESHOLDS: PredictionThresholds = {
-  warning_threshold: 95,
-  danger_threshold: 90,
+  warning_threshold: 90,
+  danger_threshold: 85,
 };
 const DEFAULT_MOVING_AVERAGE_WINDOW = 5;
-const MOVING_AVERAGE_WINDOWS = [3, 5, 10] as const;
+const MOVING_AVERAGE_WINDOWS = Array.from({ length: 25 }, (_, index) => index + 1);
 
 function finiteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -109,7 +115,11 @@ type ResultSort =
   | "prediction-desc"
   | "prediction-asc"
   | "id-asc"
-  | "id-desc";
+  | "id-desc"
+  | "lot-asc"
+  | "lot-desc"
+  | "wafer-asc"
+  | "wafer-desc";
 
 function formatMetric(value: number | null | undefined): string {
   return value === null || value === undefined ? "-" : value.toFixed(4);
@@ -137,24 +147,72 @@ function naturalCompare(left: unknown, right: unknown): number {
   });
 }
 
-function identifierParts(value: unknown): { lot: string; wafer: string } {
-  const identifier = String(value ?? "");
-  const match = identifier.match(/^(.*?)[_-](?:WF|WAFER)[_-]?(\d+)$/i);
-  return match
-    ? { lot: match[1], wafer: match[2] }
-    : { lot: "-", wafer: "-" };
+function identifierText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function waferSlot(value: unknown): number | null {
+  const text = identifierText(value);
+  if (!text) return null;
+  if (/^\d+$/.test(text)) return Number(text);
+  const match = text.match(/(?:WAFER|WF|W)?[_-]?(\d+)$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function parseCombinedIdentifier(value: unknown) {
+  const combined = identifierText(value);
+  const match = combined?.match(
+    /^(.*?)[_-]?(?:WAFER|WF|W)[_-]?(\d+)$/i,
+  );
+  if (!match) return { lot: null, wafer: null, slot: null };
+  const lot = match[1].replace(/[_-]+$/, "") || null;
+  const slot = Number(match[2]);
+  return { lot, wafer: `W${String(slot).padStart(2, "0")}`, slot };
+}
+
+export function canonicalPredictionIdentifiers(
+  row: PredictionRow,
+  identifierColumn: string,
+) {
+  let combined =
+    identifierText(row.Lot_Wafer_ID) ??
+    identifierText(row.lot_wafer_id) ??
+    (identifierColumn === "row_id" ? null : identifierText(row[identifierColumn]));
+  const parsed = parseCombinedIdentifier(combined);
+  const lot =
+    identifierText(row.Lot_ID) ?? identifierText(row.lot_id) ?? parsed.lot;
+  const sourceWafer =
+    identifierText(row.Wafer_ID) ?? identifierText(row.wafer_id);
+  const slot =
+    waferSlot(row.Wafer_Slot) ??
+    waferSlot(row.wafer_slot) ??
+    waferSlot(sourceWafer) ??
+    parsed.slot;
+  const wafer =
+    sourceWafer ??
+    (slot === null ? null : `W${String(slot).padStart(2, "0")}`) ??
+    parsed.wafer;
+  if (!combined && lot && wafer) combined = `${lot}_${wafer}`;
+  return {
+    combined: combined ?? "-",
+    lot: lot ?? "-",
+    wafer: wafer ?? "-",
+    slot,
+  };
 }
 
 export default function PredictionPage() {
-  const [models, setModels] = useState<ModelSummary[]>([]);
   const [modelWarnings, setModelWarnings] = useState<string[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [models, setModels] = useState<ModelSummary[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [thresholds, setThresholds] =
     useState<PredictionThresholds>(DEFAULT_THRESHOLDS);
   const [result, setResult] = useState<PredictionResponse | null>(null);
   const [error, setError] = useState("");
-  const [isLoadingModels, setIsLoadingModels] = useState(true);
+  const selectedModel = models.find((model) => model.model_id === selectedModelId);
   const [isPredicting, setIsPredicting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("all");
@@ -168,48 +226,66 @@ export default function PredictionPage() {
     Set<TrendSeries>
   >(new Set());
   const resultTableRef = useRef<HTMLDivElement>(null);
+  const [activeView, setActiveView] = useState<"new" | "history">("new");
+  const [historyItems, setHistoryItems] = useState<PredictionHistorySummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [restoredHistory, setRestoredHistory] = useState<PredictionHistorySummary | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-    async function loadModels() {
-      try {
-        const response = await getModels();
-        if (!mounted) return;
-        setModels(response.models);
-        setModelWarnings(response.warnings);
-        const defaultModel =
-          response.models.find((model) => model.target === "Y") ??
-          response.models[0];
-        const requestedModelId = new URLSearchParams(
-          window.location.search,
-        ).get("model_id");
-        const requestedModel = response.models.find(
-          (model) => model.model_id === requestedModelId,
-        );
-        setSelectedModelId(
-          requestedModel?.model_id ?? defaultModel?.model_id ?? "",
-        );
-      } catch (requestError) {
-        if (mounted) {
-          setError(
-            requestError instanceof Error
-              ? requestError.message
-              : "모델 목록을 불러오지 못했습니다.",
-          );
-        }
-      } finally {
-        if (mounted) setIsLoadingModels(false);
-      }
-    }
-    void loadModels();
-    return () => {
-      mounted = false;
-    };
+    const params = new URLSearchParams(window.location.search);
+    const predictionId = params.get("prediction_id") ?? sessionStorage.getItem("last_prediction_id");
+    if (!predictionId) return;
+    void getPredictionHistoryDetail(predictionId).then((detail) => {
+      if (!detail.artifact?.response) return;
+      setResult(detail.artifact.response);
+      setRestoredHistory(detail.metadata);
+      setSelectedModelId(detail.metadata.model_id ?? "");
+      sessionStorage.setItem("last_prediction_id", predictionId);
+    }).catch(() => sessionStorage.removeItem("last_prediction_id"));
   }, []);
 
-  const selectedModel = models.find(
-    (model) => model.model_id === selectedModelId,
-  );
+  async function loadHistory() {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      setHistoryItems((await getPredictionHistory()).items);
+    } catch (requestError) {
+      setHistoryError(requestError instanceof Error ? requestError.message : "예측 이력을 불러오지 못했습니다.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function openHistory(item: PredictionHistorySummary) {
+    setHistoryError("");
+    try {
+      const detail = await getPredictionHistoryDetail(item.prediction_id);
+      if (!detail.artifact?.response) throw new Error("저장된 예측 상세 Artifact를 읽을 수 없습니다.");
+      setResult(detail.artifact.response);
+      setRestoredHistory(detail.metadata);
+      setSelectedModelId(detail.metadata.model_id ?? "");
+      setActiveView("new");
+      const url = new URL(window.location.href);
+      url.searchParams.set("prediction_id", item.prediction_id);
+      window.history.replaceState({}, "", url);
+      sessionStorage.setItem("last_prediction_id", item.prediction_id);
+    } catch (requestError) {
+      setHistoryError(requestError instanceof Error ? requestError.message : "예측 이력을 열지 못했습니다.");
+    }
+  }
+
+  async function removeHistory(item: PredictionHistorySummary) {
+    if (!window.confirm("저장된 Wafer별 예측 결과가 삭제됩니다. 연결된 원인 분석은 유지됩니다.")) return;
+    await deletePredictionHistory(item.prediction_id);
+    if (restoredHistory?.prediction_id === item.prediction_id) {
+      setResult(null);
+      setRestoredHistory(null);
+      sessionStorage.removeItem("last_prediction_id");
+    }
+    await loadHistory();
+  }
+
 
   function selectFile(selectedFile?: File) {
     setResult(null);
@@ -237,9 +313,15 @@ export default function PredictionPage() {
     setResult(null);
     setIsPredicting(true);
     try {
-      setResult(
-        await predictCsv(file, selectedModelId, thresholds),
-      );
+      const response = await predictCsv(file, selectedModelId, thresholds);
+      setResult(response);
+      setRestoredHistory(null);
+      if (response.prediction_id) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("prediction_id", response.prediction_id);
+        window.history.replaceState({}, "", url);
+        sessionStorage.setItem("last_prediction_id", response.prediction_id);
+      }
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -285,12 +367,18 @@ export default function PredictionPage() {
       .filter((row) => {
         const matchesRisk =
           riskFilter === "all" || row.risk_level === riskFilter;
-        const identifier = String(
-          row[result.identifier_column] ?? "",
-        ).toLowerCase();
+        const identifiers = canonicalPredictionIdentifiers(
+          row,
+          result.identifier_column,
+        );
+        const searchTarget = [
+          identifiers.combined,
+          identifiers.lot,
+          identifiers.wafer,
+        ].join(" ").toLowerCase();
         return (
           matchesRisk &&
-          (!normalizedSearch || identifier.includes(normalizedSearch))
+          (!normalizedSearch || searchTarget.includes(normalizedSearch))
         );
       });
   }, [result, riskFilter, searchText]);
@@ -299,12 +387,16 @@ export default function PredictionPage() {
     if (!result) return [];
     const predictionColumn = `predicted_${result.model.target}`;
     return [...filteredRows].sort((left, right) => {
-      if (resultSort === "id-asc" || resultSort === "id-desc") {
-        const comparison = naturalCompare(
-          left[result.identifier_column],
-          right[result.identifier_column],
-        );
-        return resultSort === "id-desc" ? -comparison : comparison;
+      if (!resultSort.startsWith("prediction")) {
+        const leftIds = canonicalPredictionIdentifiers(left, result.identifier_column);
+        const rightIds = canonicalPredictionIdentifiers(right, result.identifier_column);
+        const field = resultSort.startsWith("lot")
+          ? "lot"
+          : resultSort.startsWith("wafer")
+            ? "wafer"
+            : "combined";
+        const comparison = naturalCompare(leftIds[field], rightIds[field]);
+        return resultSort.endsWith("desc") ? -comparison : comparison;
       }
       const difference =
         Number(left[predictionColumn]) - Number(right[predictionColumn]);
@@ -331,9 +423,13 @@ export default function PredictionPage() {
     );
     const completeTrend = filteredRows.map((row, index) => {
       const predicted = finiteNumber(row[predictedKey]);
+      const identifiers = canonicalPredictionIdentifiers(
+        row,
+        result.identifier_column,
+      );
       return {
         index: index + 1,
-        identifier: String(row[result.identifier_column] ?? index + 1),
+        identifier: identifiers.combined === "-" ? String(index + 1) : identifiers.combined,
         predicted,
         predictedYieldMean,
         predictedYieldMovingAverage: predictedYieldMovingAverage[index],
@@ -387,12 +483,7 @@ export default function PredictionPage() {
     critical: "7 3 2 3",
   };
 
-  const resultSortLabel = {
-    "prediction-desc": "예측 수율 높은 순",
-    "prediction-asc": "예측 수율 낮은 순",
-    "id-asc": "LOT_WAFER_ID 오름차순",
-    "id-desc": "LOT_WAFER_ID 내림차순",
-  }[resultSort];
+  const visibleWarnings = [...modelWarnings, ...(result?.warnings ?? [])];
 
   function handleResultSort(nextSort: ResultSort) {
     setResultSort(nextSort);
@@ -430,27 +521,12 @@ export default function PredictionPage() {
     return { points, histogram };
   }, [result]);
 
-  if (!isLoadingModels && models.length === 0) {
-    return (
-      <div className="appShell">
-        <Sidebar activeItem="수율 예측" />
-        <div className="contentShell">
-          <Header />
-          <main className="mainContent uploadPage">
-            <section className="emptyModelState">
-              <span className="eyebrow">수율 예측</span>
-              <h1>사용 가능한 학습 모델이 없습니다.</h1>
-              <p>먼저 모델 학습 페이지에서 모델을 생성하세요.</p>
-              {error && <div className="messageBox error">{error}</div>}
-              <a className="button primary linkButton" href="/training">
-                모델 학습 페이지로 이동
-              </a>
-            </section>
-          </main>
-        </div>
-      </div>
-    );
-  }
+  const ensembleInfo = result?.predictions[0] as (PredictionRow & {
+    final_strategy?: string;
+    ensemble_used?: boolean;
+    base_model_count?: number;
+    model_agreement?: { available?: boolean; prediction_spread?: number | null };
+  }) | undefined;
 
   const predictionColumn = result
     ? `predicted_${result.model.target}`
@@ -473,11 +549,18 @@ export default function PredictionPage() {
             </p>
           </section>
 
+          <div className="trainingViewTabs" role="tablist" aria-label="수율 예측 보기">
+            <button className={activeView === "new" ? "active" : ""} type="button" role="tab" aria-selected={activeView === "new"} onClick={() => setActiveView("new")}>새 예측</button>
+            <button className={activeView === "history" ? "active" : ""} type="button" role="tab" aria-selected={activeView === "history"} onClick={() => { setActiveView("history"); void loadHistory(); }}>예측 이력</button>
+          </div>
+
+          {activeView === "new" ? (
+            <>
           <section className="uploadCard" aria-labelledby="prediction-form-title">
             <div className="sectionHeading compact">
               <div>
                 <span className="sectionLabel">예측 설정</span>
-                <h2 id="prediction-form-title">모델과 신규 CSV</h2>
+                <h2 id="prediction-form-title">수율 예측</h2>
               </div>
               <p>학습 당시 feature 순서와 전처리 규칙을 적용합니다.</p>
             </div>
@@ -485,28 +568,19 @@ export default function PredictionPage() {
             <div className="predictionControls">
               <div className="fieldGroup modelField">
                 <label htmlFor="prediction-model">학습 모델</label>
-                <select
-                  id="prediction-model"
+                <ModelSelector
                   value={selectedModelId}
-                  onChange={(event) => {
-                    setSelectedModelId(event.target.value);
+                  disabled={isPredicting}
+                  onValueChange={(nextModelId) => {
+                    setSelectedModelId(nextModelId);
                     setResult(null);
                   }}
-                >
-                  {models.map((model) => (
-                    <option key={model.model_id} value={model.model_id}>
-                      {model.target} · {model.model_name} ·{" "}
-                      {new Date(model.created_at).toLocaleString("ko-KR")}
-                    </option>
-                  ))}
-                </select>
-                {selectedModel && (
-                  <span className="fieldHint">
-                    Test R² {formatMetric(selectedModel.test_metrics.r2)} ·
-                    RMSE {formatMetric(selectedModel.test_metrics.rmse)} ·
-                    Feature {selectedModel.feature_count}개
-                  </span>
-                )}
+                  onModelsChange={(nextModels, warnings) => {
+                    setModels(nextModels);
+                    setModelWarnings(warnings);
+                  }}
+                  ariaLabel="수율 예측 모델 선택"
+                />
               </div>
               <div className="fieldGroup">
                 <label htmlFor="warning-threshold">정상 기준</label>
@@ -539,6 +613,7 @@ export default function PredictionPage() {
                 />
               </div>
             </div>
+            <SelectedModelSummary model={selectedModel} />
 
             <CsvUploadPanel
               id="prediction-file"
@@ -550,11 +625,11 @@ export default function PredictionPage() {
             />
 
             {error && <div className="messageBox error" role="alert">{error}</div>}
-            {[...modelWarnings, ...(result?.warnings ?? [])].length > 0 && (
-              <div className="trainingWarnings">
-                <strong>주의사항</strong>
+            {visibleWarnings.length > 0 && (
+              <div className="trainingWarnings predictionWarnings">
+                <strong>주의사항 {visibleWarnings.length}건</strong>
                 <ul>
-                  {[...modelWarnings, ...(result?.warnings ?? [])].map(
+                  {visibleWarnings.map(
                     (warning) => <li key={warning}>{warning}</li>,
                   )}
                 </ul>
@@ -578,6 +653,15 @@ export default function PredictionPage() {
           {result && (
             <>
               <section className="resultCard" aria-labelledby="prediction-summary-title">
+                {restoredHistory && (
+                  <div className="historyRestoreBanner">
+                    <div><strong>저장된 예측 결과</strong><span>{new Date(restoredHistory.created_at).toLocaleString("ko-KR")} · {restoredHistory.source_filename}</span></div>
+                    <div className="historyRowActions">
+                      <button className="button secondary" type="button" onClick={() => { setResult(null); setRestoredHistory(null); const url = new URL(window.location.href); url.searchParams.delete("prediction_id"); window.history.replaceState({}, "", url); }}>새 예측</button>
+                      <a className="button secondary" href={`/root-cause?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}&model_id=${encodeURIComponent(restoredHistory.model_id ?? "")}`}>원인 분석 열기</a>
+                    </div>
+                  </div>
+                )}
                 <div className="resultHeader">
                   <div>
                     <span className="sectionLabel">예측 요약</span>
@@ -602,6 +686,9 @@ export default function PredictionPage() {
                   <div className="normalKpi"><span>정상 Wafer</span><strong>{result.summary.normal_count}</strong></div>
                   <div className="warningKpi"><span>주의 Wafer</span><strong>{result.summary.warning_count}</strong></div>
                   <div className="dangerKpi"><span>위험 Wafer</span><strong>{result.summary.danger_count}</strong></div>
+                  {ensembleInfo?.final_strategy && <div><span>Final Strategy</span><strong>{ensembleInfo.final_strategy}</strong></div>}
+                  {ensembleInfo?.ensemble_used !== undefined && <div><span>모델 구성</span><strong>{ensembleInfo.ensemble_used ? `${ensembleInfo.base_model_count ?? "-"}-Model Ensemble` : "Single Model"}</strong></div>}
+                  {ensembleInfo?.model_agreement?.available && <div title="Model Agreement는 앙상블 구성 모델 간 예측 차이를 나타내는 참고 지표입니다."><span>Ensemble Agreement · spread</span><strong>{formatMetric(ensembleInfo.model_agreement.prediction_spread)}</strong></div>}
                   {result.summary.evaluation && (
                     <>
                       <div><span>R²</span><strong>{formatMetric(result.summary.evaluation.r2)}</strong></div>
@@ -610,6 +697,7 @@ export default function PredictionPage() {
                     </>
                   )}
                 </div>
+                <PreprocessingSummary summary={result.preprocessing} />
               </section>
 
               <section
@@ -638,11 +726,6 @@ export default function PredictionPage() {
                     </select>
                   </div>
                 </div>
-                <p className="chartDescription">
-                  예측 수율 평균은 현재 예측 데이터 전체의 평균값입니다.
-                  예측 수율 이동 평균은 최근 {movingAverageWindow}개 Wafer의
-                  예측 수율 평균으로 단기 변동을 완화해 추세를 보여줍니다.
-                </p>
                 <div
                   className="predictionTrendCanvas"
                   role="img"
@@ -841,9 +924,6 @@ export default function PredictionPage() {
                     </LineChart>
                   </ResponsiveContainer>
                   </div>
-                  <p className="trendOrderNote">
-                    분석 순서: 원본 Wafer 순서 · 이동평균 구간: 최근 {movingAverageWindow}개 Wafer · 표 정렬: {resultSortLabel}
-                  </p>
               </section>
 
               {diagnostics.points.length > 0 && (
@@ -898,8 +978,8 @@ export default function PredictionPage() {
                   <div className="tableTools">
                     <input
                       type="search"
-                      placeholder="Lot_Wafer_ID 검색"
-                      aria-label="Wafer 또는 LOT 식별자 검색"
+                      placeholder="Lot/Wafer ID 검색"
+                      aria-label="Lot_Wafer_ID, Lot_ID 또는 Wafer_ID 검색"
                       value={searchText}
                       onChange={(event) => setSearchText(event.target.value)}
                     />
@@ -926,6 +1006,10 @@ export default function PredictionPage() {
                       <option value="prediction-asc">예측 수율 낮은 순</option>
                       <option value="id-asc">ID 오름차순</option>
                       <option value="id-desc">ID 내림차순</option>
+                      <option value="lot-asc">Lot_ID 오름차순</option>
+                      <option value="lot-desc">Lot_ID 내림차순</option>
+                      <option value="wafer-asc">Wafer_ID 오름차순</option>
+                      <option value="wafer-desc">Wafer_ID 내림차순</option>
                     </select>
                   </div>
                 </div>
@@ -936,11 +1020,13 @@ export default function PredictionPage() {
                   <table>
                     <thead>
                       <tr>
-                        <th scope="col">{result.identifier_column}</th>
-                        <th className="secondaryColumn" scope="col">Lot ID</th>
-                        <th className="secondaryColumn" scope="col">Wafer ID</th>
+                        <th scope="col">Lot_Wafer_ID</th>
+                        <th className="secondaryColumn" scope="col">Lot_ID</th>
+                        <th className="secondaryColumn" scope="col">Wafer_ID</th>
+                        <th className="secondaryColumn" scope="col">Wafer_Slot</th>
                         <th scope="col">예측값</th>
                         <th scope="col">위험 상태</th>
+                        <th scope="col">Confidence</th>
                         {result.predictions.some((row) => actualColumn in row) && (
                           <>
                             <th scope="col">실제값</th>
@@ -953,19 +1039,23 @@ export default function PredictionPage() {
                     </thead>
                     <tbody>
                       {displayedRows.map((row: PredictionRow, index) => {
-                        const identifier = row[result.identifier_column];
-                        const parts = identifierParts(identifier);
+                        const identifiers = canonicalPredictionIdentifiers(
+                          row,
+                          result.identifier_column,
+                        );
                         return (
-                        <tr key={`${String(identifier)}-${index}`}>
-                          <td>{String(identifier ?? "-")}</td>
-                          <td className="secondaryColumn">{parts.lot}</td>
-                          <td className="secondaryColumn">{parts.wafer}</td>
+                        <tr key={`${identifiers.combined}-${index}`}>
+                          <td className="identifierCell" title={identifiers.combined}>{identifiers.combined}</td>
+                          <td className="secondaryColumn identifierCell" title={identifiers.lot}>{identifiers.lot}</td>
+                          <td className="secondaryColumn identifierCell" title={identifiers.wafer}>{identifiers.wafer}</td>
+                          <td className="secondaryColumn">{identifiers.slot ?? "-"}</td>
                           <td>{formatPrediction(row[predictionColumn])}</td>
                           <td>
                             <span className={`riskBadge ${String(row.risk_level ?? "")}`}>
                               {riskLabel(row.risk_level)}
                             </span>
                           </td>
+                          <td>{identifierText(row.confidence) ?? "-"}</td>
                           {result.predictions.some((item) => actualColumn in item) && (
                             <>
                               <td>{formatPrediction(row[actualColumn])}</td>
@@ -987,8 +1077,8 @@ export default function PredictionPage() {
                               result.predictions.some(
                                 (item) => actualColumn in item,
                               )
-                                ? 9
-                                : 7
+                                ? 11
+                                : 9
                             }
                           >
                             예측 결과가 없습니다. 필터 조건을 확인하세요.
@@ -1000,6 +1090,15 @@ export default function PredictionPage() {
                 </div>
               </section>
             </>
+          )}
+            </>
+          ) : (
+            <section className="resultCard historyCard" aria-labelledby="prediction-history-title">
+              <div className="sectionHeading compact"><div><span className="sectionLabel">Prediction History</span><h2 id="prediction-history-title">예측 이력</h2></div><button className="button secondary" type="button" onClick={() => void loadHistory()}>새로고침</button></div>
+              {historyLoading ? <p className="emptyMessage">예측 이력을 불러오는 중입니다.</p> : historyError ? <div className="retryMessage"><p className="errorMessage">{historyError}</p><button className="button secondary" type="button" onClick={() => void loadHistory()}>다시 시도</button></div> : !historyItems.length ? <p className="emptyMessage">저장된 수율 예측 이력이 없습니다.</p> : (
+                <div className="tableWrap historyTableScroll"><table><thead><tr><th>생성 시각</th><th>파일명</th><th>모델</th><th>Wafer</th><th>Lot</th><th>평균 수율</th><th>Critical</th><th>Warning</th><th>상태</th><th>작업</th></tr></thead><tbody>{historyItems.map((item) => { const summary = item.summary ?? {}; return <tr key={item.prediction_id}><td>{new Date(item.created_at).toLocaleString("ko-KR")}</td><td>{item.source_filename ?? "데이터 없음"}</td><td>{item.model_name_snapshot ?? item.model_id ?? "삭제된 모델"}</td><td>{item.row_count ?? "데이터 없음"}</td><td>{item.lot_count ?? "데이터 없음"}</td><td>{typeof summary.average_predicted_yield === "number" ? summary.average_predicted_yield.toFixed(2) : "데이터 없음"}</td><td>{String(summary.critical_count ?? "데이터 없음")}</td><td>{String(summary.warning_count ?? "데이터 없음")}</td><td>{item.status}</td><td><div className="historyRowActions"><button type="button" className="button secondary" onClick={() => void openHistory(item)}>상세 보기</button><a className="button secondary" href={`/root-cause?prediction_id=${encodeURIComponent(item.prediction_id)}&model_id=${encodeURIComponent(item.model_id ?? "")}`}>원인 분석</a><button type="button" className="button danger" onClick={() => void removeHistory(item)}>삭제</button></div></td></tr>; })}</tbody></table></div>
+              )}
+            </section>
           )}
         </main>
       </div>

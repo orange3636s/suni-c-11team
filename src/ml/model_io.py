@@ -10,6 +10,9 @@ from typing import Any
 import joblib
 import numpy as np
 import sklearn
+import pandas as pd
+import platform
+from importlib.metadata import PackageNotFoundError, version
 
 from api.settings import settings
 
@@ -54,6 +57,7 @@ def save_model_bundle(
     training_time_seconds: float | None = None,
     source_filename: str | None = None,
     preprocessing_config: dict[str, Any] | None = None,
+    metadata_extensions: dict[str, Any] | None = None,
     model_dir: str | Path = DEFAULT_MODEL_DIR,
     created_at: datetime | None = None,
 ) -> tuple[Path, Path, dict[str, Any]]:
@@ -95,6 +99,19 @@ def save_model_bundle(
             if value is not None
         }
     )
+    metadata_values.update(
+        {
+            "python_version": platform.python_version(),
+            "pandas_version": pd.__version__,
+        }
+    )
+    for package in ("xgboost", "catboost"):
+        try:
+            metadata_values[f"{package}_version"] = version(package)
+        except PackageNotFoundError:
+            metadata_values[f"{package}_version"] = None
+    if metadata_extensions:
+        metadata_values.update(metadata_extensions)
     metadata = to_json_safe(metadata_values)
     joblib.dump(model, model_path)
     metadata_path.write_text(

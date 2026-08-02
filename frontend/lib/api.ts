@@ -1,17 +1,33 @@
 import type {
+  AlertListResponse,
+  AlertStatus,
+  AlertSummary,
+  AnalysisHistoryDetail,
+  AnalysisHistorySummary,
+  DeleteModelResponse,
   ExplainOptions,
   ExplainResponse,
   ModelDetail,
   ModelListResponse,
+  OverviewDashboardResponse,
   PreprocessResponse,
   PredictionResponse,
+  PredictionHistoryDetail,
+  PredictionHistorySummary,
   PredictionThresholds,
   RelationshipAnalysisResponse,
   ReportOptions,
   ReportResponse,
   TrainResponse,
   ValidationResponse,
+  HistoryList,
 } from "@/types/data";
+import { normalizeOverviewAnalysis } from "@/lib/overview";
+import {
+  normalizeAnalysisHistoryDetail,
+  normalizeExplainResponse,
+  normalizeRelationshipResponse,
+} from "@/lib/root-cause";
 
 export type ApiHealth = {
   status: string;
@@ -66,6 +82,26 @@ async function getErrorMessage(response: Response): Promise<string> {
   return fallback;
 }
 
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    cache: "no-store",
+    ...init,
+    headers: { Accept: "application/json", ...(init?.headers ?? {}) },
+  });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+  return response.json() as Promise<T>;
+}
+
+async function requestUnknown(path: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    cache: "no-store",
+    ...init,
+    headers: { Accept: "application/json", ...(init?.headers ?? {}) },
+  });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+  return response.json();
+}
+
 async function postCsv<T>(path: string, file: File): Promise<T> {
   const formData = new FormData();
   formData.append("file", file);
@@ -108,15 +144,9 @@ export function preprocessCsv(file: File): Promise<PreprocessResponse> {
 
 export async function trainModel(
   file: File,
-  target: string,
-  split: { train: number; validation: number; test: number },
 ): Promise<TrainResponse> {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("target", target);
-  formData.append("train_ratio", String(split.train));
-  formData.append("validation_ratio", String(split.validation));
-  formData.append("test_ratio", String(split.test));
 
   let response: Response;
   try {
@@ -157,7 +187,7 @@ export async function getModels(): Promise<ModelListResponse> {
   return response.json() as Promise<ModelListResponse>;
 }
 
-export async function getModelDetail(modelId: string): Promise<ModelDetail> {
+export async function getModelDetail(modelId: string, signal?: AbortSignal): Promise<ModelDetail> {
   let response: Response;
   try {
     response = await fetch(
@@ -165,6 +195,7 @@ export async function getModelDetail(modelId: string): Promise<ModelDetail> {
       {
         method: "GET",
         cache: "no-store",
+        signal,
       },
     );
   } catch (error) {
@@ -178,6 +209,42 @@ export async function getModelDetail(modelId: string): Promise<ModelDetail> {
     throw new Error(await getErrorMessage(response));
   }
   return response.json() as Promise<ModelDetail>;
+}
+
+export async function deleteModel(modelId: string): Promise<DeleteModelResponse> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${getApiBaseUrl()}/api/models/${encodeURIComponent(modelId)}`,
+      {
+        method: "DELETE",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      },
+    );
+  } catch (error) {
+    rethrowApiConfigurationError(error);
+    throw new Error(
+      "모델 삭제 서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  const result = await response.json() as DeleteModelResponse;
+  if (
+    !result.deleted ||
+    result.model_id !== modelId ||
+    result.prediction_history_kept !== true ||
+    result.analysis_history_kept !== true
+  ) {
+    throw new Error(
+      "모델 삭제 응답의 model_id 또는 History 보존 상태가 API 계약과 일치하지 않습니다.",
+    );
+  }
+  return result;
 }
 
 function predictionFormData(
@@ -279,7 +346,8 @@ export async function explainCsv(
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));
   }
-  return response.json() as Promise<ExplainResponse>;
+  const payload: unknown = await response.json();
+  return normalizeExplainResponse(payload);
 }
 
 export async function analyzeRelationships(
@@ -287,9 +355,18 @@ export async function analyzeRelationships(
   modelId: string,
   options: ExplainOptions,
   correlationMethod: "pearson" | "spearman",
+  analysisUnit: "wafer_observed_only" | "lot_aggregated" = "wafer_observed_only",
+  thresholds: PredictionThresholds = { warning_threshold: 90, danger_threshold: 85 },
+  analysisTarget = "Y",
+  predictionId?: string | null,
 ): Promise<RelationshipAnalysisResponse> {
   const formData = explanationFormData(file, modelId, options);
   formData.append("correlation_method", correlationMethod);
+  formData.append("analysis_unit", analysisUnit);
+  formData.append("warning_threshold", String(thresholds.warning_threshold));
+  formData.append("danger_threshold", String(thresholds.danger_threshold));
+  formData.append("analysis_target", analysisTarget);
+  if (predictionId) formData.append("prediction_id", predictionId);
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/api/relationships`, {
@@ -303,7 +380,66 @@ export async function analyzeRelationships(
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));
   }
-  return response.json() as Promise<RelationshipAnalysisResponse>;
+  const payload: unknown = await response.json();
+  return normalizeRelationshipResponse(payload);
+}
+
+type HistoryQuery = {
+  limit?: number;
+  offset?: number;
+  model_id?: string;
+  prediction_id?: string;
+  filename?: string;
+  search?: string;
+  target?: string;
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  sort?: "newest" | "oldest";
+};
+
+function historyPath(path: string, query: HistoryQuery = {}): string {
+  const params = new URLSearchParams();
+  Object.entries({ limit: 100, ...query }).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  });
+  return `${path}?${params.toString()}`;
+}
+
+export function getPredictionHistory(query: HistoryQuery = {}): Promise<HistoryList<PredictionHistorySummary>> {
+  return requestJson(historyPath("/api/predictions/history", query));
+}
+
+export function getPredictionHistoryDetail(predictionId: string): Promise<PredictionHistoryDetail> {
+  return requestJson(`/api/predictions/history/${encodeURIComponent(predictionId)}`);
+}
+
+export function deletePredictionHistory(predictionId: string): Promise<{ success: boolean }> {
+  return requestJson(`/api/predictions/history/${encodeURIComponent(predictionId)}`, { method: "DELETE" });
+}
+
+export function getAnalysisHistory(query: HistoryQuery = {}): Promise<HistoryList<AnalysisHistorySummary>> {
+  return requestJson(historyPath("/api/analyses/history", query));
+}
+
+export async function getAnalysisHistoryDetail(analysisId: string): Promise<AnalysisHistoryDetail> {
+  const payload = await requestUnknown(`/api/analyses/history/${encodeURIComponent(analysisId)}`);
+  return normalizeAnalysisHistoryDetail(payload, analysisId);
+}
+
+export function deleteAnalysisHistory(analysisId: string): Promise<{ success: boolean }> {
+  return requestJson(`/api/analyses/history/${encodeURIComponent(analysisId)}`, { method: "DELETE" });
+}
+
+export async function getDashboardOverview(
+  analysisId?: string,
+  signal?: AbortSignal,
+): Promise<OverviewDashboardResponse> {
+  const params = new URLSearchParams();
+  if (analysisId) params.set("analysis_id", analysisId);
+  const query = params.size ? `?${params.toString()}` : "";
+  const payload = await requestUnknown(`/api/dashboard/overview${query}`, { signal });
+  return normalizeOverviewAnalysis(payload);
 }
 
 export async function downloadExplanation(
@@ -390,4 +526,33 @@ export async function downloadReport(
     throw new Error(await getErrorMessage(response));
   }
   return response.blob();
+}
+
+async function runtimeGet<T>(path: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}${path}`, { cache: "no-store" });
+  } catch (error) {
+    rethrowApiConfigurationError(error);
+    throw new Error("Dashboard API에 연결할 수 없습니다.");
+  }
+  if (!response.ok) throw new Error(await getErrorMessage(response));
+  return response.json() as Promise<T>;
+}
+
+export function getAlerts(query = ""): Promise<AlertListResponse> {
+  return runtimeGet(`/api/alerts${query ? `?${query}` : ""}`);
+}
+
+export function getAlertSummary(): Promise<AlertSummary> {
+  return runtimeGet("/api/alerts/summary");
+}
+
+export async function updateAlertStatus(alertId: string, status: AlertStatus): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/api/alerts/${encodeURIComponent(alertId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!response.ok) throw new Error(await getErrorMessage(response));
 }

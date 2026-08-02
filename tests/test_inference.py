@@ -80,6 +80,7 @@ def test_valid_model_is_listed(inference_environment) -> None:
     assert models[0]["feature_count"] == len(
         inference_environment["feature_columns"]
     )
+    assert models[0]["available_targets"] == ["Y"]
 
 
 def test_models_api_returns_valid_models(
@@ -96,6 +97,7 @@ def test_models_api_returns_valid_models(
 
     assert response.success is True
     assert response.models[0].model_id == inference_environment["model_id"]
+    assert response.models[0].available_targets == ["Y"]
 
 
 def test_model_list_is_sorted_by_created_at_descending(
@@ -136,8 +138,8 @@ def test_model_detail_handles_legacy_missing_optional_metadata(
     )
 
     assert detail["model_id"] == inference_environment["model_id"]
-    assert detail["dataset_split"] is None
-    assert detail["dataset_rows"] is None
+    assert detail["dataset_split"] == {}
+    assert detail["dataset_rows"] == {}
     assert detail["training_time_seconds"] is None
     assert detail["metrics"]["test"]["mse"] is None
     assert detail["storage_status"] == "available"
@@ -176,6 +178,67 @@ def test_model_detail_api_rejects_missing_model(
         data_routes.get_model_detail("missing-model")
 
     assert error.value.status_code == 404
+
+
+def test_model_detail_normalizes_nullable_fields_and_legacy_aliases(
+    inference_environment,
+) -> None:
+    model_dir = inference_environment["model_dir"]
+    model_id = inference_environment["model_id"]
+    metadata_path = model_dir / f"{model_id}.json"
+    original = metadata_path.read_text(encoding="utf-8")
+    metadata = json.loads(original)
+    metadata.update({
+        "metrics": None,
+        "validation_metrics": {"r2": 0.7, "rmse": 1.2, "mae": 0.8},
+        "dataset_rows": None,
+        "dataset_split": None,
+        "train_size": 80,
+        "validation_size": 10,
+        "test_size": 10,
+        "target_ensemble_configs": None,
+        "ensemble_config": {
+            "Y": {"selected_type": "weighted", "weights": {"ridge": 1.0}}
+        },
+        "target_metrics": None,
+        "outer_fold_metrics": None,
+        "available_targets": None,
+        "risk_metrics": [],
+    })
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    try:
+        detail = get_prediction_model_detail(model_id, model_dir)
+    finally:
+        metadata_path.write_text(original, encoding="utf-8")
+
+    assert detail["metrics"]["validation"]["r2"] == 0.7
+    assert detail["dataset_rows"] == {"train": 80, "validation": 10, "test": 10}
+    assert detail["dataset_split"] == {}
+    assert detail["target_ensemble_configs"]["Y"]["selected_type"] == "weighted"
+    assert detail["target_metrics"] == {}
+    assert detail["outer_fold_metrics"] == []
+    assert detail["available_targets"] == ["Y"]
+    assert detail["risk_metrics"] == {}
+
+
+def test_model_detail_rejects_corrupt_metadata_with_clear_status(
+    inference_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_dir = inference_environment["model_dir"]
+    model_id = inference_environment["model_id"]
+    metadata_path = model_dir / f"{model_id}.json"
+    original = metadata_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(data_routes, "MODEL_DIR", model_dir)
+    metadata_path.write_text("{not-json", encoding="utf-8")
+    try:
+        with pytest.raises(HTTPException) as error:
+            data_routes.get_model_detail(model_id)
+    finally:
+        metadata_path.write_text(original, encoding="utf-8")
+
+    assert error.value.status_code == 422
+    assert "유효하지 않은 모델 메타데이터" in str(error.value.detail)
 
 
 def test_empty_model_directory_returns_empty_list() -> None:
@@ -333,6 +396,99 @@ def test_prediction_with_target_has_evaluation(
     assert result.evaluation.rmse is not None
     assert all("actual_Y" in row for row in result.predictions)
     assert all("absolute_error" in row for row in result.predictions)
+
+
+@pytest.mark.parametrize(
+    ("combined", "expected_lot", "expected_wafer", "expected_slot"),
+    [
+        ("LOT001_W01", "LOT001", "W01", 1),
+        ("LOT001W02", "LOT001", "W02", 2),
+        ("LOT001-W03", "LOT001", "W03", 3),
+        ("LOT001_WAFER04", "LOT001", "W04", 4),
+        ("LOT001_WF05", "LOT001", "W05", 5),
+    ],
+)
+def test_prediction_rows_include_canonical_identifiers(
+    inference_environment,
+    combined: str,
+    expected_lot: str,
+    expected_wafer: str,
+    expected_slot: int,
+) -> None:
+    dataframe = inference_environment["dataframe"].copy()
+    dataframe.loc[dataframe.index[0], "Lot_Wafer_ID"] = combined
+    loaded = load_prediction_model(
+        inference_environment["model_id"],
+        inference_environment["model_dir"],
+    )
+
+    row = predict_dataframe(dataframe, loaded).predictions[0]
+
+    assert row["Lot_Wafer_ID"] == combined
+    assert row["Lot_ID"] == expected_lot
+    assert row["Wafer_ID"] == expected_wafer
+    assert row["Wafer_Slot"] == expected_slot
+
+
+def test_prediction_identifier_source_fields_take_priority(
+    inference_environment,
+) -> None:
+    dataframe = inference_environment["dataframe"].copy()
+    dataframe["Lot_ID"] = "SOURCE_LOT"
+    dataframe["Wafer_ID"] = "RAW_WAFER"
+    dataframe["Wafer_Slot"] = 7
+    loaded = load_prediction_model(
+        inference_environment["model_id"],
+        inference_environment["model_dir"],
+    )
+
+    row = predict_dataframe(dataframe, loaded).predictions[0]
+
+    assert row["Lot_ID"] == "SOURCE_LOT"
+    assert row["Wafer_ID"] == "RAW_WAFER"
+    assert row["Wafer_Slot"] == 7
+
+
+def test_prediction_identifier_legacy_lowercase_fields_are_restored(
+    inference_environment,
+) -> None:
+    dataframe = inference_environment["dataframe"].copy().drop(
+        columns=["Lot_Wafer_ID"]
+    )
+    dataframe["lot_id"] = "LEGACY_LOT"
+    dataframe["wafer_id"] = "W09"
+    dataframe["wafer_slot"] = 9
+    loaded = load_prediction_model(
+        inference_environment["model_id"],
+        inference_environment["model_dir"],
+    )
+
+    result = predict_dataframe(dataframe, loaded)
+    row = result.predictions[0]
+
+    assert result.identifier_column == "row_id"
+    assert row["Lot_Wafer_ID"] == "LEGACY_LOT_W09"
+    assert row["Lot_ID"] == "LEGACY_LOT"
+    assert row["Wafer_ID"] == "W09"
+    assert row["Wafer_Slot"] == 9
+
+
+def test_prediction_identifier_parse_failure_is_safe(
+    inference_environment,
+) -> None:
+    dataframe = inference_environment["dataframe"].copy()
+    dataframe.loc[dataframe.index[0], "Lot_Wafer_ID"] = "UNPARSEABLE"
+    loaded = load_prediction_model(
+        inference_environment["model_id"],
+        inference_environment["model_dir"],
+    )
+
+    row = predict_dataframe(dataframe, loaded).predictions[0]
+
+    assert row["Lot_Wafer_ID"] == "UNPARSEABLE"
+    assert row["Lot_ID"] is None
+    assert row["Wafer_ID"] is None
+    assert row["Wafer_Slot"] is None
 
 
 def test_y_risk_counts_match_predictions(inference_environment) -> None:

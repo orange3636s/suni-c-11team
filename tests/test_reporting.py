@@ -20,6 +20,11 @@ from src.ml.training import _build_preprocessor
 from src.preprocessing import preprocess_dataframe
 from src.reporting.export import render_report_html
 from src.reporting.report_builder import build_report
+from src.analytics.analysis_result import (
+    build_analysis_result,
+    compose_multi_y_predictions,
+)
+from src.analytics.relationships import analyze_relationships
 
 
 @pytest.fixture(scope="module")
@@ -89,6 +94,136 @@ def test_report_json_combines_prediction_and_shap(
     assert report["top_features"]
     assert report["top_risk_wafers"]
     assert report["explanation_method"] == "shap_linear"
+
+
+def test_common_analysis_result_reuses_report_numbers(reporting_environment) -> None:
+    relationships = analyze_relationships(
+        reporting_environment["dataframe"],
+        shap_importance=reporting_environment["explanation"].global_importance,
+    )
+    result = build_analysis_result(
+        filename="reporting_sample.csv",
+        dataframe=reporting_environment["dataframe"],
+        loaded=reporting_environment["loaded"],
+        prediction=reporting_environment["prediction"],
+        explanation=reporting_environment["explanation"],
+        relationships=relationships,
+        report=reporting_environment["report"],
+        warning_threshold=96,
+        danger_threshold=93,
+        analysis_unit="wafer_observed_only",
+    )
+    assert result["risk"]["critical_count"] == reporting_environment["report"]["executive_summary"]["danger_count"]
+    assert result["risk_wafers"] == reporting_environment["report"]["top_risk_wafers"]
+    assert result["lot_summary"] == reporting_environment["report"]["lot_summary"]
+    assert result["dataset"]["fingerprint"]
+
+
+def test_relationship_api_returns_one_shared_analysis_snapshot(
+    reporting_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataframe = reporting_environment["dataframe"]
+    loaded = reporting_environment["loaded"]
+    monkeypatch.setattr(
+        data_routes,
+        "load_prediction_model",
+        lambda model_id, model_dir: loaded,
+    )
+    monkeypatch.setattr(
+        data_routes,
+        "list_prediction_models",
+        lambda model_dir: ([], []),
+    )
+    stored_artifacts: list[dict[str, object]] = []
+
+    def collect_before_lot(dataframe, selected_model, selected_prediction):
+        for row in selected_prediction.predictions:
+            row.update(
+                {
+                    "critical_probability": 0.2,
+                    "warning_probability": 0.7,
+                    "failure_rates": {"Y1": 1.0},
+                    "fail_bit_counts": {"Y6": 10.0},
+                }
+            )
+        return compose_multi_y_predictions({}, None), []
+
+    def runtime_call(method: str, **values):
+        if method == "start_analysis":
+            return "started"
+        if method == "complete_analysis":
+            stored_artifacts.append(values["artifact"])
+            return True
+        return None
+
+    monkeypatch.setattr(
+        data_routes,
+        "_collect_multi_y_predictions",
+        collect_before_lot,
+    )
+    monkeypatch.setattr(data_routes, "safe_runtime_call", runtime_call)
+    upload = UploadFile(
+        file=BytesIO(dataframe.to_csv(index=False).encode("utf-8")),
+        filename="shared-snapshot.csv",
+    )
+
+    response = asyncio.run(
+        data_routes.analyze_feature_relationships(
+            upload,
+            model_id=loaded.model_id,
+            max_rows=10,
+            top_n=10,
+            per_wafer_top_n=5,
+            correlation_method="pearson",
+            analysis_unit="wafer_observed_only",
+            warning_threshold=96,
+            danger_threshold=93,
+        )
+    )
+    serialized = json.loads(response.model_dump_json())
+    analysis = serialized["analysis_result"]
+    report = serialized["report_snapshot"]
+
+    assert analysis["analysis_id"] == report["analysis_id"]
+    assert report["snapshot_metadata"]["analysis_id"] == analysis["analysis_id"]
+    assert analysis["risk"]["critical_count"] == report["executive_summary"]["danger_count"]
+    assert analysis["risk_wafers"] == report["top_risk_wafers"]
+    assert analysis["lot_summary"] == report["lot_summary"]
+    assert analysis["dataset"]["fingerprint"] == report["snapshot_metadata"]["dataset_fingerprint"]
+    assert serialized["history_saved"] is True
+    assert serialized["lot_analysis"]["lots"]
+    assert all(
+        lot["average_confidence"] == pytest.approx(0.5)
+        and lot["top_failure_target"] == "Y1"
+        for lot in serialized["lot_analysis"]["lots"]
+    )
+    assert stored_artifacts
+    assert stored_artifacts[0]["response"]["history_saved"] is True
+
+
+def test_multi_y_direct_derived_ensemble_and_count_separation() -> None:
+    predictions = {
+        "Y": [90.0, 80.0],
+        "Y1": [1.0, 2.0],
+        "Y2": [2.0, 3.0],
+        "Y3": [3.0, 4.0],
+        "Y4": [4.0, 5.0],
+        "Y5": [5.0, 6.0],
+        "Y6": [100.0, 200.0],
+    }
+    result = compose_multi_y_predictions(predictions, 0.25)
+    assert result["derived_y"] == pytest.approx([85.0, 80.0])
+    assert result["ensemble_y"] == pytest.approx([86.25, 80.0])
+    assert result["failure_rates"] == {key: predictions[key] for key in ["Y1", "Y2", "Y3", "Y4", "Y5"]}
+    assert result["fail_bit_counts"] == {"Y6": [100.0, 200.0]}
+
+
+def test_multi_y_does_not_invent_alpha_or_missing_models() -> None:
+    result = compose_multi_y_predictions({"Y": [90.0]}, None)
+    assert result["derived_y"] is None
+    assert result["ensemble_y"] is None
+    assert result["ensemble_weight"] is None
 
 
 def test_executive_summary_is_calculated_from_prediction(

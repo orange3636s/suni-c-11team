@@ -1,18 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import ModelHistoryPanel from "@/components/ModelHistoryPanel";
+import PreprocessingSummary from "@/components/PreprocessingSummary";
 import Sidebar from "@/components/Sidebar";
 import { trainModel } from "@/lib/api";
-import type { ModelMetrics, TrainResponse } from "@/types/data";
+import { normalizeMetricSummary } from "@/lib/training";
+import type { MetricSummary, ModelMetrics, TrainResponse } from "@/types/data";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
-const TARGETS = ["Y", ...Array.from({ length: 10 }, (_, index) => `Y${index + 1}`)];
-const DEFAULT_SPLIT = { train: 64, validation: 16, test: 20 };
-type SplitKey = keyof typeof DEFAULT_SPLIT;
 
 function formatMetric(value: number | null): string {
   return value === null ? "-" : value.toFixed(4);
@@ -35,14 +43,44 @@ function MetricRow({
   );
 }
 
+function MetricSummaryChart({ summary }: { summary: MetricSummary }) {
+  const data = (["r2", "rmse", "mae"] as const).flatMap((metric) => {
+    const aggregate = summary[metric];
+    return aggregate ? [{ metric: metric.toUpperCase(), mean: aggregate.mean, std: aggregate.std }] : [];
+  });
+  if (!data.length) return null;
+  return <div className="chartCanvas" role="img" aria-label="교차 검증 Metric Summary"><ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{ top: 16, right: 20, bottom: 8, left: 8 }}><CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="metric" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} /><Tooltip formatter={(value, name, item) => [`${formatMetric(Number(value))} ± ${formatMetric(item.payload.std)}`, String(name)]} /><Bar dataKey="mean" name="평균 ± 표준편차" fill="var(--chart-primary)" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer></div>;
+}
+
 export default function TrainingPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [target, setTarget] = useState("Y");
-  const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [result, setResult] = useState<TrainResponse | null>(null);
   const [error, setError] = useState("");
   const [isTraining, setIsTraining] = useState(false);
   const [activeView, setActiveView] = useState<"new" | "history">("new");
+  const cvMetricSummary = normalizeMetricSummary(result);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("view") === "history" || params.has("model_id")) {
+        setActiveView("history");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function selectView(view: "new" | "history") {
+    setActiveView(view);
+    const url = new URL(window.location.href);
+    if (view === "history") {
+      url.searchParams.set("view", "history");
+    } else {
+      url.searchParams.delete("view");
+      url.searchParams.delete("model_id");
+    }
+    window.history.replaceState({}, "", url);
+  }
 
   function selectFile(selectedFile?: File) {
     setResult(null);
@@ -70,7 +108,7 @@ export default function TrainingPage() {
     setResult(null);
     setIsTraining(true);
     try {
-      setResult(await trainModel(file, target, split));
+      setResult(await trainModel(file));
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -82,35 +120,6 @@ export default function TrainingPage() {
     }
   }
 
-  function updateSplit(key: SplitKey, rawValue: number) {
-    const nextValue = Math.min(90, Math.max(5, Math.round(rawValue)));
-    const otherKeys = (
-      ["train", "validation", "test"] as SplitKey[]
-    ).filter((item) => item !== key);
-
-    setSplit((current) => {
-      const remaining = 100 - nextValue;
-      const adjustableTotal =
-        current[otherKeys[0]] + current[otherKeys[1]] - 10;
-      const firstWeight =
-        adjustableTotal > 0
-          ? (current[otherKeys[0]] - 5) / adjustableTotal
-          : 0.5;
-      const firstValue = Math.min(
-        remaining - 5,
-        Math.max(5, 5 + Math.round((remaining - 10) * firstWeight)),
-      );
-
-      return {
-        ...current,
-        [key]: nextValue,
-        [otherKeys[0]]: firstValue,
-        [otherKeys[1]]: remaining - firstValue,
-      };
-    });
-    setResult(null);
-  }
-
   return (
     <div className="appShell">
       <Sidebar activeItem="모델 학습" />
@@ -119,9 +128,9 @@ export default function TrainingPage() {
         <main className="mainContent uploadPage">
           <section className="uploadIntro">
             <span className="eyebrow">머신러닝</span>
-            <h1>회귀 모델 학습</h1>
+            <h1>모델 학습</h1>
             <p>
-              검증과 전처리를 거친 공정 데이터로 여러 모델을 비교합니다.
+              Hybrid Multi-Y와 Lot 기반 Nested Group K-Fold로 안정적인 모델을 선택합니다.
             </p>
           </section>
 
@@ -131,7 +140,7 @@ export default function TrainingPage() {
               type="button"
               role="tab"
               aria-selected={activeView === "new"}
-              onClick={() => setActiveView("new")}
+              onClick={() => selectView("new")}
             >
               새 모델 학습
             </button>
@@ -140,7 +149,7 @@ export default function TrainingPage() {
               type="button"
               role="tab"
               aria-selected={activeView === "history"}
-              onClick={() => setActiveView("history")}
+              onClick={() => selectView("history")}
             >
               학습 이력
             </button>
@@ -152,88 +161,34 @@ export default function TrainingPage() {
             <div className="sectionHeading compact">
               <div>
                 <span className="sectionLabel">학습 설정</span>
-                <h2 id="training-form-title">데이터와 목표 변수</h2>
+                <h2 id="training-form-title">학습 데이터</h2>
               </div>
-              <p>
-                Train {split.train}% · Validation {split.validation}% · Test{" "}
-                {split.test}%
-              </p>
+              <p>Lot_ID 기준 · 재현 시드 42</p>
             </div>
 
-            <fieldset className="splitControls">
-              <legend>Dataset Split</legend>
-              <p>한 비율을 변경하면 나머지 두 비율이 자동 보정됩니다.</p>
-              <div className="splitControlGrid">
-                {(
-                  [
-                    ["train", "Train"],
-                    ["validation", "Validation"],
-                    ["test", "Test"],
-                  ] as [SplitKey, string][]
-                ).map(([key, label]) => (
-                  <label className="splitControl" key={key}>
-                    <span>
-                      {label}
-                      <strong>{split[key]}%</strong>
-                    </span>
-                    <input
-                      type="range"
-                      min="5"
-                      max="90"
-                      value={split[key]}
-                      disabled={isTraining}
-                      onChange={(event) =>
-                        updateSplit(key, Number(event.target.value))
-                      }
-                    />
-                    <input
-                      type="number"
-                      min="5"
-                      max="90"
-                      value={split[key]}
-                      disabled={isTraining}
-                      aria-label={`${label} 비율`}
-                      onChange={(event) =>
-                        updateSplit(key, Number(event.target.value))
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="splitTotal" aria-live="polite">
-                합계 <strong>{split.train + split.validation + split.test}%</strong>
-              </div>
-            </fieldset>
+            <div className="fieldGroup trainingFileField">
+              <label htmlFor="training-file">학습 CSV</label>
+              <CsvUploadPanel
+                id="training-file"
+                file={file}
+                onFileSelect={selectFile}
+                disabled={isTraining}
+                compact
+              />
+            </div>
 
             <div className="trainingControls">
-              <div className="fieldGroup">
-                <label htmlFor="training-target">목표 변수</label>
-                <select
-                  id="training-target"
-                  value={target}
-                  onChange={(event) => {
-                    setTarget(event.target.value);
-                    setResult(null);
-                  }}
-                  disabled={isTraining}
-                >
-                  {TARGETS.map((targetName) => (
-                    <option key={targetName} value={targetName}>
-                      {targetName}
-                    </option>
-                  ))}
-                </select>
+              <div className="hybridTrainingCard structureCard cvProtocolCard" aria-label="Nested Group K-Fold 검증">
+                <span>교차 검증</span>
+                <strong>Nested Group K-Fold</strong>
+                <p>Outer 5-Fold에서 일반화 성능을 평가하고 Inner 3-Fold에서 모델과 앙상블을 선택합니다.</p>
+                <small>그룹: Lot_ID · 동일 Lot 교차 혼입 방지 · seed 42</small>
               </div>
-
-              <div className="fieldGroup fileField">
-                <label htmlFor="training-file">학습 CSV</label>
-                <CsvUploadPanel
-                  id="training-file"
-                  file={file}
-                  onFileSelect={selectFile}
-                  disabled={isTraining}
-                  compact
-                />
+              <div className="hybridTrainingCard structureCard" aria-label="학습 구조 Hybrid Multi-Y">
+                <span>학습 구조</span>
+                <strong>Hybrid Multi-Y</strong>
+                <p>Y1~Y5 불량률과 Y6~Y10 Fail Bit Count를 각각 예측하고 Direct Y와 결합해 최종 수율을 산출합니다.</p>
+                <small>학습 대상: Final Y · Y1~Y5 · Y6~Y10 · Risk Classification</small>
               </div>
             </div>
 
@@ -250,7 +205,7 @@ export default function TrainingPage() {
                 aria-busy={isTraining}
                 onClick={handleTrain}
               >
-                {isTraining ? "모델을 학습하고 있습니다..." : "모델 학습"}
+                {isTraining ? "모델을 학습하고 있습니다..." : "모델 학습 시작"}
               </button>
             </div>
           </section>
@@ -272,45 +227,65 @@ export default function TrainingPage() {
                     <strong>{result.best_model}</strong>
                   </div>
                   <div>
-                    <span>Test R²</span>
-                    <strong>{formatMetric(result.metrics.test.r2)}</strong>
+                    <span>{cvMetricSummary ? "CV R²" : "Test R²"}</span>
+                    <strong>{cvMetricSummary ? `${formatMetric(cvMetricSummary.r2?.mean ?? null)} ± ${formatMetric(cvMetricSummary.r2?.std ?? null)}` : formatMetric(result.metrics.test.r2)}</strong>
                   </div>
                   <div>
-                    <span>Test RMSE</span>
-                    <strong>{formatMetric(result.metrics.test.rmse)}</strong>
+                    <span>{cvMetricSummary ? "CV RMSE" : "Test RMSE"}</span>
+                    <strong>{cvMetricSummary ? `${formatMetric(cvMetricSummary.rmse?.mean ?? null)} ± ${formatMetric(cvMetricSummary.rmse?.std ?? null)}` : formatMetric(result.metrics.test.rmse)}</strong>
                   </div>
                   <div>
-                    <span>Test MAE</span>
-                    <strong>{formatMetric(result.metrics.test.mae)}</strong>
+                    <span>{cvMetricSummary ? "CV MAE" : "Test MAE"}</span>
+                    <strong>{cvMetricSummary ? `${formatMetric(cvMetricSummary.mae?.mean ?? null)} ± ${formatMetric(cvMetricSummary.mae?.std ?? null)}` : formatMetric(result.metrics.test.mae)}</strong>
                   </div>
                   <div>
                     <span>사용 Feature 수</span>
                     <strong>{result.feature_count}</strong>
                   </div>
                 </div>
+                <PreprocessingSummary summary={result.preprocessing} />
+
+                {result.ensemble && (
+                  <div className="trainingWarnings">
+                    <strong>앙상블 선택 결과 · {result.ensemble.selected ? result.ensemble.selected_type : "Single Model"}</strong>
+                    <p>{result.ensemble.base_models.join(" / ")} · RMSE 개선률 {(100 * (result.ensemble.improvement_over_single.rmse_relative ?? 0)).toFixed(2)}% · Ensemble Agreement 상관 {formatMetric(result.ensemble.agreement.mean_pairwise_correlation)}</p>
+                    <div className="tableWrap">
+                      <table><thead><tr><th>Target</th><th>선택 유형</th><th>Base Models</th><th>Weight</th><th>개선률</th><th>Fold 안정성</th></tr></thead>
+                      <tbody>{Object.entries(result.ensemble.target_configs).map(([targetName, config]) => (
+                        <tr key={targetName}><th>{targetName}</th><td>{config.selected_type}</td><td>{config.base_models.join(" / ")}</td><td>{Object.entries(config.weights).map(([name, weight]) => `${name} ${weight.toFixed(2)}`).join(" · ")}</td><td>{(100 * (config.improvement_over_single.rmse_relative ?? 0)).toFixed(2)}%</td><td>{config.fold_rmse_std.toFixed(4)}</td></tr>
+                      ))}</tbody></table>
+                    </div>
+                  </div>
+                )}
 
                 <p className="metricNotice">
                   R²가 0 이하이면 기준선보다 예측력이 낮을 수 있습니다.
                 </p>
 
                 <div className="splitSummary">
-                  <span>Train {result.split.train_rows}행</span>
-                  <span>Validation {result.split.validation_rows}행</span>
-                  <span>Test {result.split.test_rows}행</span>
-                  <span>
-                    {result.split.group_split_used
-                      ? "Lot 그룹 분리"
-                      : "Random 분리"}
-                  </span>
+                  <span>Outer 5-Fold</span>
+                  <span>Inner 3-Fold</span>
+                  <span>Group Lot_ID</span>
+                  <span>Seed 42</span>
                 </div>
 
                 <div className="previewHeader">
                   <div>
                     <span className="sectionLabel">선정 모델 평가</span>
-                    <h3>데이터셋별 성능</h3>
+                    <h3>교차 검증 성능 요약</h3>
                   </div>
                 </div>
-                <div className="tableWrap">
+                {cvMetricSummary ? <><MetricSummaryChart summary={cvMetricSummary} /><div className="tableWrap">
+                  <table>
+                    <thead><tr><th scope="col">Metric</th><th scope="col">평균</th><th scope="col">표준편차</th></tr></thead>
+                    <tbody>{(["r2", "rmse", "mae", "mse"] as const).map((metric) => {
+                      const aggregate = cvMetricSummary[metric];
+                      if (!aggregate) return null;
+                      return <tr key={metric}><th scope="row">{metric.toUpperCase()}</th><td>{formatMetric(aggregate.mean)}</td><td>{formatMetric(aggregate.std)}</td></tr>;
+                    })}</tbody>
+                  </table>
+                </div></> : <p className="emptyMessage">평가 결과가 없습니다.</p>}
+                {!cvMetricSummary && <><div className="previewHeader"><div><span className="sectionLabel">Legacy Holdout</span><h3>Train·Validation·Test 성능</h3></div></div><div className="tableWrap">
                   <table>
                     <thead>
                       <tr>
@@ -329,7 +304,7 @@ export default function TrainingPage() {
                       <MetricRow label="Test" metrics={result.metrics.test} />
                     </tbody>
                   </table>
-                </div>
+                </div></>}
               </section>
 
               <section className="resultCard" aria-labelledby="comparison-title">

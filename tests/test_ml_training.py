@@ -17,7 +17,13 @@ import src.ml.training as training_module
 from src.ml.dataset import prepare_dataset, split_dataset
 from src.ml.evaluation import evaluate_regression
 from src.ml.model_io import load_model, save_model_bundle
-from src.ml.training import train_regression_models
+from src.ml.training import (
+    OutlierPolicyTransformer,
+    _build_preprocessor,
+    missing_strategy_for_model,
+    outlier_strategy_for_model,
+    train_regression_models,
+)
 from src.preprocessing import preprocess_dataframe
 
 
@@ -84,6 +90,63 @@ def test_y_target_training_succeeds(prepared_training_data) -> None:
     assert result.best_model_name
     assert len(result.model_comparison) == 4
     assert sum(item.selected for item in result.model_comparison) == 1
+    assert result.outlier_strategy == outlier_strategy_for_model(result.best_model_name)
+    assert result.outlier_indicator is (result.outlier_strategy == "flag_only")
+    assert set(result.model_strategies.values()) <= {"native", "median"}
+    assert result.model_outlier_strategies["Ridge"] == "iqr"
+    assert result.model_outlier_strategies["HistGradientBoostingRegressor"] == "flag_only"
+    assert result.fallback_used is False
+
+
+def test_model_specific_missing_and_outlier_policies() -> None:
+    assert missing_strategy_for_model("HistGradientBoostingRegressor") == "native"
+    assert outlier_strategy_for_model("HistGradientBoostingRegressor") == "flag_only"
+    assert missing_strategy_for_model("XGBoostRegressor") == "native"
+    assert outlier_strategy_for_model("XGBoostRegressor") == "flag_only"
+    assert missing_strategy_for_model("CatBoostRegressor") == "native"
+    assert outlier_strategy_for_model("CatBoostRegressor") == "flag_only"
+    assert missing_strategy_for_model("RandomForestRegressor") == "median"
+    assert outlier_strategy_for_model("RandomForestRegressor") == "flag_only"
+    assert missing_strategy_for_model("Ridge") == "median"
+    assert outlier_strategy_for_model("Ridge") == "iqr"
+
+
+def test_outlier_flag_only_preserves_raw_values_and_adds_indicators() -> None:
+    values = np.asarray([[1.0], [2.0], [3.0], [4.0], [100.0], [np.nan]])
+    transformer = OutlierPolicyTransformer(strategy="flag_only").fit(values[:5])
+
+    transformed = transformer.transform(values)
+
+    assert transformed.shape == (6, 2)
+    assert transformed[4, 0] == 100.0
+    assert transformed[4, 1] == 1.0
+    assert np.isnan(transformed[5, 0])
+
+
+def test_linear_iqr_policy_clips_without_adding_indicator() -> None:
+    values = np.asarray([[1.0], [2.0], [3.0], [4.0], [100.0]])
+    transformer = OutlierPolicyTransformer(strategy="iqr").fit(values[:4])
+
+    transformed = transformer.transform(values)
+
+    assert transformed.shape == (5, 1)
+    assert transformed[4, 0] < 100.0
+    assert transformer.get_feature_names_out(["Step1_R1"]).tolist() == ["Step1_R1"]
+
+
+def test_model_preprocessor_uses_native_only_when_requested(training_dataframe: pd.DataFrame) -> None:
+    training_dataframe.loc[0, "Step1_R1"] = np.nan
+    dataset = prepare_dataset(training_dataframe)
+    native = _build_preprocessor(dataset, missing_strategy="native", outlier_strategy="flag_only")
+    median = _build_preprocessor(dataset, missing_strategy="median", outlier_strategy="flag_only")
+
+    native.fit(dataset.features, dataset.target)
+    median.fit(dataset.features, dataset.target)
+
+    assert "imputer" not in native.named_transformers_["numeric"].named_steps
+    assert "imputer" in median.named_transformers_["numeric"].named_steps
+    assert np.isnan(native.transform(dataset.features)).any()
+    assert not np.isnan(median.transform(dataset.features)).any()
 
 
 def test_unknown_target_is_rejected(training_dataframe: pd.DataFrame) -> None:

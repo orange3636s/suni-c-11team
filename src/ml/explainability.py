@@ -20,6 +20,7 @@ from src.ml.inference import (
     predict_dataframe,
     prepare_inference_features,
 )
+from src.ml.ensemble import EnsembleRegressor
 from src.ml.model_io import to_json_safe
 from src.preprocessing import preprocess_dataframe
 
@@ -31,7 +32,7 @@ MAX_EXPLAIN_ROWS = 1000
 DEFAULT_TOP_N = 20
 DEFAULT_WAFER_TOP_N = 5
 FEATURE_PATTERN = re.compile(
-    r"^(?P<step>Step\d+)_(?P<type>R|D|EQ)(?P<name>.*)$",
+    r"^(?P<step>Step\d+)_(?P<type>R|D|EQ|Model|Equipment|Chamber)(?P<name>.*)$",
     re.IGNORECASE,
 )
 
@@ -66,10 +67,27 @@ class ExplainResult:
     wafer_explanations: list[dict[str, Any]]
     model_quality_warnings: list[str]
     warnings: list[str]
+    # 전체 local SHAP는 Lot 집계에만 사용한다. API에는 상위 기여값만 노출한다.
+    local_contributions: list[dict[str, Any]] = field(default_factory=list)
 
 
 def parse_feature_name(feature: str) -> dict[str, str | None]:
     cleaned = feature.split("__", 1)[-1]
+    indicator_match = re.search(
+        r"_(missing|observed|indicator|outlier|outlier_flag)$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if indicator_match:
+        base = cleaned[: indicator_match.start()]
+        step_match = re.match(r"^(Step\d+)_", base, re.IGNORECASE)
+        return {
+            "step": step_match.group(1) if step_match else "unknown",
+            "parameter_type": "Measurement Pattern",
+            "parameter_name": indicator_match.group(1).lower(),
+            "equipment": None,
+            "original_feature_name": cleaned,
+        }
     match = FEATURE_PATTERN.match(cleaned)
     if not match:
         return {
@@ -79,14 +97,20 @@ def parse_feature_name(feature: str) -> dict[str, str | None]:
             "equipment": None,
             "original_feature_name": feature,
         }
-    parameter_type = match.group("type").upper()
+    raw_type = match.group("type")
+    parameter_type = raw_type.upper() if raw_type.upper() in {"R", "D", "EQ"} else raw_type.title()
     suffix = match.group("name").lstrip("_")
+    canonical = cleaned
+    if parameter_type in {"Model", "Equipment", "Chamber"}:
+        canonical = f"{match.group('step')}_{parameter_type}"
+    elif parameter_type == "EQ" and suffix:
+        canonical = f"{match.group('step')}_EQ"
     return {
         "step": match.group("step"),
         "parameter_type": parameter_type,
         "parameter_name": suffix or parameter_type,
-        "equipment": cleaned if parameter_type == "EQ" else None,
-        "original_feature_name": feature,
+        "equipment": canonical if parameter_type in {"EQ", "Equipment"} else None,
+        "original_feature_name": canonical,
     }
 
 
@@ -166,6 +190,48 @@ def compute_shap_values(
     model: Any,
     features: pd.DataFrame,
 ) -> ShapComputation:
+    if isinstance(model, EnsembleRegressor):
+        member_results = {
+            name: compute_shap_values(member, features)
+            for name, member in model.models.items()
+        }
+        all_names = list(dict.fromkeys(
+            name
+            for result in member_results.values()
+            for name in result.feature_names
+        ))
+        values = np.zeros((len(features), len(all_names)), dtype=float)
+        feature_values = np.zeros_like(values)
+        base_values = np.zeros(len(features), dtype=float)
+        if model.method == "stacking" and model.meta_model is not None and hasattr(model.meta_model, "coef_"):
+            coefficients = np.asarray(model.meta_model.coef_, dtype=float).reshape(-1)
+            member_weights = {
+                name: float(coefficients[index])
+                for index, name in enumerate(model.models)
+            }
+            method = "ensemble_stacking_base_contribution"
+        else:
+            member_weights = model.weights
+            method = "ensemble_weighted_shap"
+        for member_name, result in member_results.items():
+            weight = member_weights.get(member_name, 0.0)
+            indices = [all_names.index(name) for name in result.feature_names]
+            values[:, indices] += weight * result.values
+            feature_values[:, indices] = result.feature_values
+            base_values += weight * result.base_values
+        return ShapComputation(
+            values=values,
+            base_values=base_values,
+            feature_values=feature_values,
+            feature_names=all_names,
+            explanation_method=method,
+            is_fallback=any(result.is_fallback for result in member_results.values()),
+            warnings=list(dict.fromkeys(
+                warning
+                for result in member_results.values()
+                for warning in result.warnings
+            )),
+        )
     estimator, transformed, feature_names = _pipeline_parts(
         model,
         features,
@@ -268,6 +334,12 @@ def beneficial_values(
     return np.maximum(-shap_values, 0.0)
 
 
+def _contribution_direction(signed_value: float, target: str) -> str:
+    if target == "Y":
+        return "yield_down" if signed_value < 0 else "yield_up"
+    return "defect_up" if signed_value > 0 else "defect_down"
+
+
 def _global_summaries(
     computation: ShapComputation,
     target: str,
@@ -289,28 +361,30 @@ def _global_summaries(
     warnings: list[str] = []
     for index, feature in enumerate(computation.feature_names):
         parsed = parse_feature_name(feature)
-        if parsed["step"] == "unknown":
-            warnings.append(f"feature 이름을 파싱하지 못했습니다: {feature}")
-        direction = (
-            "yield_down"
-            if target == "Y" and mean_signed[index] < 0
-            else "yield_up"
-            if target == "Y"
-            else "defect_up"
-            if mean_signed[index] > 0
-            else "defect_down"
-        )
         rows.append(
             {
-                "feature": feature,
+                "feature": parsed["original_feature_name"],
                 "step": parsed["step"],
                 "parameter_type": parsed["parameter_type"],
                 "parameter_name": parsed["parameter_name"],
                 "mean_abs_shap": float(mean_abs[index]),
                 "mean_harmful_contribution": float(mean_harmful[index]),
-                "direction": direction,
+                "_mean_signed_shap": float(mean_signed[index]),
             }
         )
+    collapsed: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = str(row["feature"])
+        if key not in collapsed:
+            collapsed[key] = dict(row)
+        else:
+            collapsed[key]["mean_abs_shap"] += row["mean_abs_shap"]
+            collapsed[key]["mean_harmful_contribution"] += row["mean_harmful_contribution"]
+            collapsed[key]["_mean_signed_shap"] += row["_mean_signed_shap"]
+    rows = list(collapsed.values())
+    for row in rows:
+        signed_value = float(row.pop("_mean_signed_shap"))
+        row["direction"] = _contribution_direction(signed_value, target)
     rows.sort(
         key=lambda item: (
             item["mean_harmful_contribution"],
@@ -350,6 +424,18 @@ def _global_summaries(
 
     step_summary = aggregate("step")
     parameter_summary = aggregate("parameter_type")
+    config_children = [
+        item for item in parameter_summary
+        if item["parameter_type"] in {"Model", "Equipment", "Chamber", "EQ"}
+    ]
+    if config_children:
+        parameter_summary.append({
+            "parameter_type": "Config",
+            "mean_abs_shap": sum(item["mean_abs_shap"] for item in config_children),
+            "harmful_contribution": sum(item["harmful_contribution"] for item in config_children),
+            "feature_count": sum(item["feature_count"] for item in config_children),
+            "rank": len(parameter_summary) + 1,
+        })
     equipment_summary = [
         {
             "equipment": row["feature"],
@@ -359,7 +445,7 @@ def _global_summaries(
             ],
         }
         for row in rows
-        if row["parameter_type"] == "EQ"
+        if row["parameter_type"] in {"EQ", "Equipment"}
     ]
     for rank, item in enumerate(equipment_summary, 1):
         item["rank"] = rank
@@ -420,6 +506,36 @@ def _sampling_indices(
         else "row_order"
     )
     return ordered[:max_rows], strategy
+
+
+def _collapse_local_contributions(
+    rows: list[dict[str, Any]],
+    target: str,
+) -> list[dict[str, Any]]:
+    collapsed: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row["feature"]),
+            str(row["step"]),
+            str(row["parameter_type"]),
+        )
+        existing = collapsed.get(key)
+        if existing is None:
+            collapsed[key] = dict(row)
+            continue
+        existing["shap_value"] += row["shap_value"]
+        existing["absolute_shap"] += row["absolute_shap"]
+        existing["harmful_contribution"] += row["harmful_contribution"]
+        existing["beneficial_contribution"] += row["beneficial_contribution"]
+        existing["value"] = None
+
+    result = list(collapsed.values())
+    for row in result:
+        row["direction"] = _contribution_direction(
+            float(row["shap_value"]),
+            target,
+        )
+    return result
 
 
 def explain_dataframe(
@@ -496,11 +612,18 @@ def explain_dataframe(
     harmful = harmful_values(computation.values, target)
     beneficial = beneficial_values(computation.values, target)
     wafer_explanations: list[dict[str, Any]] = []
+    local_contributions: list[dict[str, Any]] = []
     for sampled_position, source_index in enumerate(indices):
         prediction_row = predictions.predictions[source_index]
         local_rows: list[dict[str, Any]] = []
         for feature_index, feature in enumerate(computation.feature_names):
             parsed = parse_feature_name(feature)
+            signed_value = float(
+                computation.values[
+                    sampled_position,
+                    feature_index,
+                ]
+            )
             original_value: Any
             if feature in sampled_features.columns:
                 original_value = sampled_features.iloc[
@@ -513,14 +636,10 @@ def explain_dataframe(
                 ]
             local_rows.append(
                 {
-                    "feature": feature,
+                    "feature": parsed["original_feature_name"] or feature,
                     "value": to_json_safe(original_value),
-                    "shap_value": float(
-                        computation.values[
-                            sampled_position,
-                            feature_index,
-                        ]
-                    ),
+                    "shap_value": signed_value,
+                    "absolute_shap": abs(signed_value),
                     "harmful_contribution": float(
                         harmful[sampled_position, feature_index]
                     ),
@@ -529,8 +648,10 @@ def explain_dataframe(
                     ),
                     "step": parsed["step"],
                     "parameter_type": parsed["parameter_type"],
+                    "direction": _contribution_direction(signed_value, target),
                 }
             )
+        local_rows = _collapse_local_contributions(local_rows, target)
         negative = sorted(
             local_rows,
             key=lambda item: item["harmful_contribution"],
@@ -548,9 +669,23 @@ def explain_dataframe(
             row for row in positive if row["beneficial_contribution"] > 0
         ][:per_wafer_top_n]
         identifier = prediction_row.get(predictions.identifier_column)
+        local_contributions.append(
+            {
+                "identifier": identifier,
+                "lot_id": prediction_row.get("Lot_ID"),
+                "wafer_id": prediction_row.get("Wafer_ID"),
+                "wafer_slot": prediction_row.get("Wafer_Slot"),
+                "prediction": prediction_row.get(f"predicted_{target}"),
+                "risk_level": prediction_row.get("risk_level"),
+                "contributions": local_rows,
+            }
+        )
         wafer_explanations.append(
             {
                 "identifier": identifier,
+                "lot_id": prediction_row.get("Lot_ID"),
+                "wafer_id": prediction_row.get("Wafer_ID"),
+                "wafer_slot": prediction_row.get("Wafer_Slot"),
                 "prediction": prediction_row.get(f"predicted_{target}"),
                 "risk_level": prediction_row.get("risk_level"),
                 "base_value": float(
@@ -590,4 +725,5 @@ def explain_dataframe(
         wafer_explanations=to_json_safe(wafer_explanations),
         model_quality_warnings=_quality_warnings(loaded.metadata),
         warnings=warnings,
+        local_contributions=to_json_safe(local_contributions),
     )

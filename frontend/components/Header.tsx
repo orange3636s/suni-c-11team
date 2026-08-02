@@ -11,7 +11,6 @@ export default function Header() {
   const [apiState, setApiState] = useState<ApiState>("확인 중");
   const [modelReady, setModelReady] = useState<boolean | null>(null);
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -26,10 +25,6 @@ export default function Header() {
       } catch {
         if (isMounted) {
           setApiState("연결 실패");
-        }
-      } finally {
-        if (isMounted) {
-          setLastUpdated(new Date());
         }
       }
     }
@@ -70,21 +65,6 @@ export default function Header() {
         String(currentTime.getSeconds()).padStart(2, "0"),
       ].join(":")
     : "--:--:--";
-  const lastUpdatedDate = lastUpdated
-    ? [
-        lastUpdated.getFullYear(),
-        String(lastUpdated.getMonth() + 1).padStart(2, "0"),
-        String(lastUpdated.getDate()).padStart(2, "0"),
-      ].join("-")
-    : "---- -- --";
-  const lastUpdatedClock = lastUpdated
-    ? [
-        String(lastUpdated.getHours()).padStart(2, "0"),
-        String(lastUpdated.getMinutes()).padStart(2, "0"),
-        String(lastUpdated.getSeconds()).padStart(2, "0"),
-      ].join(":")
-    : "--:--:--";
-
   return (
     <header className="topHeader">
       <div className="headerContext">
@@ -128,13 +108,6 @@ export default function Header() {
           <time dateTime={currentTime?.toISOString()}>
             <span>{currentDate}</span>
             <strong>{currentClock}</strong>
-          </time>
-        </div>
-        <div className="headerStatusGroup lastUpdatedGroup">
-          <span className="headerStatusLabel">Last Updated</span>
-          <time dateTime={lastUpdated?.toISOString()}>
-            <span>{lastUpdatedDate}</span>
-            <strong>{lastUpdatedClock}</strong>
           </time>
         </div>
       </div>

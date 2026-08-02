@@ -50,6 +50,21 @@ def build_report(
         model_warnings.append(
             "SHAP 분석은 전체 행이 아닌 위험도 우선 표본에 대해 수행했습니다."
         )
+    metadata = loaded.metadata
+    coverage = metadata.get("measurement_coverage", {})
+    methodology_notes = [
+        *METHODOLOGY_NOTES,
+        f"Schema Version: {metadata.get('schema_version', 'Legacy/Unknown')}",
+        f"Split: {metadata.get('split_strategy', metadata.get('split_method', 'Unknown'))} / Group: {metadata.get('group_column', 'Unknown')}",
+        f"R measurement coverage: {coverage.get('r', 'Unknown')}; D measurement coverage: {coverage.get('d', 'Unknown')}",
+        f"Config parser: {metadata.get('config_parser_version', 'Unknown')}",
+        f"Missing indicator used: {metadata.get('missing_indicator_used', 'Unknown')}",
+        f"Outlier policy: {metadata.get('outlier_policy', 'Unknown')}",
+        f"Risk threshold source: {metadata.get('threshold_policy', {}).get('source', '사용자 입력 참고 기준')}",
+        f"Explanation method: {explanation.explanation_method}",
+        "R/D 관계 분석은 실제 관측값이 있는 표본을 우선하며 표본 부족 경고를 함께 확인해야 합니다.",
+        "측정 대상 선정 과정이 중요도와 연관 분석에 영향을 줄 수 있습니다.",
+    ]
     report = {
         "success": True,
         "report_id": (
@@ -90,7 +105,7 @@ def build_report(
             loaded.metadata,
         ),
         "model_quality_warnings": list(dict.fromkeys(model_warnings)),
-        "methodology_notes": METHODOLOGY_NOTES,
+        "methodology_notes": methodology_notes,
         "explanation_method": explanation.explanation_method,
         "is_fallback": explanation.is_fallback,
         "warnings": list(

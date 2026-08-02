@@ -8,28 +8,31 @@ import {
   type ThemePreference,
   useTheme,
 } from "@/components/ThemeProvider";
-import { getApiHealth, getModels } from "@/lib/api";
+import {
+  getAlertSummary,
+  getAnalysisHistory,
+  getApiHealth,
+  getDashboardOverview,
+  getModels,
+  getPredictionHistory,
+} from "@/lib/api";
 
 const navigationItems = [
   { label: "개요", href: "/", icon: "overview" },
-  { label: "데이터 전처리", href: "/upload", icon: "upload" },
   { label: "모델 학습", href: "/training", icon: "model" },
   { label: "수율 예측", href: "/prediction", icon: "trend" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
-  { label: "분석 보고서", href: "/report", icon: "report" },
+  { label: "사전 알람 로그", href: "/alerts", icon: "alert" },
   { label: "자동화 상태", href: "/automation", icon: "automation" },
-  { label: "사전 알람 로그", href: "/#alerts", icon: "alert" },
-  { label: "모델 모니터링", href: "/#monitoring", icon: "monitor" },
 ];
 
 type SidebarProps = {
   activeItem?:
     | "개요"
-    | "데이터 전처리"
     | "모델 학습"
     | "수율 예측"
     | "원인 분석"
-    | "분석 보고서"
+    | "사전 알람 로그"
     | "자동화 상태";
 };
 
@@ -44,14 +47,21 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
   const [systemStatus, setSystemStatus] = useState<{
     api: "loading" | "ready" | "error";
     models: "loading" | "ready" | "empty" | "error";
-  }>({ api: "loading", models: "loading" });
+    alerts: "loading" | "ready" | "empty" | "error";
+    predictions: "loading" | "ready" | "empty" | "error";
+    analyses: "loading" | "ready" | "empty" | "error";
+    overview: "loading" | "analysis" | "prediction" | "model" | "empty" | "error";
+  }>({ api: "loading", models: "loading", alerts: "loading", predictions: "loading", analyses: "loading", overview: "loading" });
   const themeMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let mounted = true;
 
-    void Promise.allSettled([getApiHealth(), getModels()]).then(
-      ([healthResult, modelsResult]) => {
+    void Promise.allSettled([
+      getApiHealth(), getModels(), getAlertSummary(),
+      getPredictionHistory({ limit: 1 }), getAnalysisHistory({ limit: 1 }), getDashboardOverview(),
+    ]).then(
+      ([healthResult, modelsResult, alertsResult, predictionsResult, analysesResult, overviewResult]) => {
         if (!mounted) return;
         setSystemStatus({
           api:
@@ -65,6 +75,10 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
               : modelsResult.value.models.length
                 ? "ready"
                 : "empty",
+          alerts: alertsResult.status === "rejected" ? "error" : alertsResult.value.total ? "ready" : "empty",
+          predictions: predictionsResult.status === "rejected" ? "error" : predictionsResult.value.total ? "ready" : "empty",
+          analyses: analysesResult.status === "rejected" ? "error" : analysesResult.value.total ? "ready" : "empty",
+          overview: overviewResult.status === "rejected" ? "error" : overviewResult.value.source_type,
         });
       },
     );
@@ -102,9 +116,6 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
     if (systemStatus.api === "error") {
       return { tone: "red", label: "API Error" };
     }
-    if (label === "분석 보고서") {
-      return { tone: "gray", label: "아직 실행 안함" };
-    }
     if (label === "모델 학습") {
       if (systemStatus.models === "loading") {
         return { tone: "yellow", label: "모델 확인 중" };
@@ -117,10 +128,29 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
       }
       return { tone: "green", label: "Model Ready" };
     }
-    if (["수율 예측", "원인 분석"].includes(label)) {
-      return systemStatus.models === "ready"
-        ? { tone: "green", label: "Ready" }
-        : { tone: "yellow", label: "Model 필요" };
+    if (label === "수율 예측") {
+      if (systemStatus.predictions === "error") return { tone: "red", label: "이력 조회 실패" };
+      if (systemStatus.predictions === "ready") return { tone: "green", label: "예측 이력 정상" };
+      return systemStatus.models === "ready" ? { tone: "yellow", label: "모델 준비 · 예측 필요" } : { tone: "yellow", label: "Model 필요" };
+    }
+    if (label === "원인 분석") {
+      if (systemStatus.analyses === "error") return { tone: "red", label: "이력 조회 실패" };
+      if (systemStatus.analyses === "ready") return { tone: "green", label: "원인 분석 Ready" };
+      return systemStatus.predictions === "ready" ? { tone: "yellow", label: "예측 완료 · 분석 필요" } : { tone: "yellow", label: "예측 필요" };
+    }
+    if (label === "개요") {
+      if (systemStatus.overview === "error") return { tone: "red", label: "요약 조회 실패" };
+      if (systemStatus.overview === "analysis") return { tone: "green", label: "최근 분석 기준" };
+      if (systemStatus.overview === "prediction") return { tone: "yellow", label: "최근 예측 기준" };
+      return { tone: "gray", label: systemStatus.overview === "model" ? "모델 준비" : "이력 없음" };
+    }
+    if (label === "사전 알람 로그") {
+      if (systemStatus.alerts === "error") return { tone: "red", label: "조회 실패" };
+      if (systemStatus.alerts === "loading") return { tone: "gray", label: "조회 중" };
+      return systemStatus.alerts === "empty" ? { tone: "gray", label: "알람 없음" } : { tone: "green", label: "로그 정상" };
+    }
+    if (label === "자동화 상태") {
+      return { tone: "yellow", label: "외부 자동화 설정 확인 필요" };
     }
     return { tone: "green", label: "Ready" };
   }
@@ -299,12 +329,6 @@ function NavIcon({ name }: { name: string }) {
         <path d="M8 12h6M11 9v6" />
       </>
     ),
-    report: (
-      <>
-        <path d="M6 3h9l4 4v14H6z" />
-        <path d="M15 3v5h4M9 12h6M9 16h6" />
-      </>
-    ),
     automation: (
       <>
         <path d="M6 8a7 7 0 0 1 12-2l2 2" />
@@ -316,12 +340,6 @@ function NavIcon({ name }: { name: string }) {
       <>
         <path d="M12 3 2.8 20h18.4z" />
         <path d="M12 9v4M12 17h.01" />
-      </>
-    ),
-    monitor: (
-      <>
-        <rect x="3" y="4" width="18" height="13" rx="3" />
-        <path d="M8 21h8M12 17v4M7 11h3l2-3 2 5 2-2h2" />
       </>
     ),
   };

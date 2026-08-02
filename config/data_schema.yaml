@@ -1,25 +1,32 @@
+schema_version: semicon_yield_v2
+config_parser_version: "2.0"
+
+id_columns:
+  wafer_id: Lot_Wafer_ID
+  lot_id: Lot_ID
+  wafer_slot: Wafer_Slot
+
+feature_patterns:
+  config_column: '^Step(?P<step>\d+)_Config$'
+  config_value: '^Step(?P<step>\d+)_Model(?P<model>\d+)_(?P<equipment>EQ[A-Z]+)_(?P<chamber>CH\d+)$'
+  response: '^Step(?P<step>\d+)_R(?P<parameter>\d+)$'
+  defect: '^Step(?P<step>\d+)_D(?P<parameter>\d+)$'
+  equipment: '^Step\d+_EQ.*$'
+
+targets:
+  final_yield: Y
+  fail_rates: [Y1, Y2, Y3, Y4, Y5]
+  fail_bit_counts: [Y6, Y7, Y8, Y9, Y10]
+
+target_consistency_tolerance: 0.001
+
+# v1 compatibility aliases. Existing callers may continue to read these keys.
 id_column: Lot_Wafer_ID
+lot_id_column: Lot_ID
+wafer_slot_column: Wafer_Slot
 yield_column: Y
-
-fail_rate_columns:
-  - Y1
-  - Y2
-  - Y3
-  - Y4
-  - Y5
-
-fail_bit_columns:
-  - Y6
-  - Y7
-  - Y8
-  - Y9
-  - Y10
-
+fail_rate_columns: [Y1, Y2, Y3, Y4, Y5]
+fail_bit_columns: [Y6, Y7, Y8, Y9, Y10]
 response_suffix: _R
 defect_suffix: _D
 equipment_suffix: _EQ
-
-feature_patterns:
-  response: '^Step\d+_R\d+$'
-  defect: '^Step\d+_D.*$'
-  equipment: '^Step\d+_EQ.*$'

@@ -11,6 +11,7 @@ from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from src.column_detection import detect_feature_columns
 from src.data_validation import load_data_schema
 from src.preprocessing import _extract_lot_values
+from src.config_parser import parse_config_columns
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ class PreparedDataset:
     numeric_columns: list[str]
     categorical_columns: list[str]
     warnings: list[str] = field(default_factory=list)
+    raw_feature_columns: list[str] = field(default_factory=list)
+    config_report: dict = field(default_factory=dict)
+    target_leakage_check: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -62,12 +66,20 @@ class DatasetSplit:
 def prepare_dataset(
     dataframe: pd.DataFrame,
     target: str = "Y",
+    *,
+    add_missing_indicators: bool = True,
 ) -> PreparedDataset:
     if target not in ALLOWED_TARGETS:
         raise ValueError(
             "지원하지 않는 목표 변수입니다. Y부터 Y10까지만 사용할 수 있습니다."
         )
-    column_names = list(dataframe.columns)
+    schema = load_data_schema()
+    working = dataframe.copy(deep=True)
+    config_report: dict = {}
+    detected_raw = detect_feature_columns(list(dataframe.columns), schema)
+    if detected_raw.get("config_columns"):
+        working, config_report = parse_config_columns(dataframe, schema)
+    column_names = list(working.columns)
     duplicate_columns = _duplicates(column_names)
     logger.info(
         "학습 DataFrame 컬럼 확인: total=%d, unique=%d, duplicates=%s",
@@ -82,12 +94,11 @@ def prepare_dataset(
             "학습 데이터에 중복된 컬럼명이 있습니다: "
             + ", ".join(str(column) for column in duplicate_columns)
         )
-    if target not in dataframe.columns:
+    if target not in working.columns:
         raise ValueError(f"목표 변수 '{target}' 컬럼이 없습니다.")
 
-    schema = load_data_schema()
     id_column = schema["id_column"]
-    if id_column not in dataframe.columns:
+    if id_column not in working.columns:
         raise ValueError(f"식별자 컬럼 '{id_column}'이 없습니다.")
 
     detected = detect_feature_columns(column_names, schema)
@@ -116,21 +127,37 @@ def prepare_dataset(
     indicator_columns = [
         f"{column}_missing"
         for column in base_numeric_columns
-        if f"{column}_missing" in dataframe.columns
+        if f"{column}_missing" in working.columns
     ]
-    excluded_columns = {*ALLOWED_TARGETS, id_column}
+    if add_missing_indicators:
+        for column in base_numeric_columns:
+            indicator = f"{column}_missing"
+            if indicator not in working.columns:
+                numeric = pd.to_numeric(working[column], errors="coerce")
+                working[indicator] = numeric.isna().astype("int8")
+                indicator_columns.append(indicator)
+    lot_id_column = schema.get("lot_id_column", "Lot_ID")
+    wafer_slot_column = schema.get("wafer_slot_column", "Wafer_Slot")
+    excluded_columns = {
+        *ALLOWED_TARGETS,
+        id_column,
+        lot_id_column,
+        wafer_slot_column,
+    }
     numeric_columns = list(
         dict.fromkeys(
             column
             for column in [*base_numeric_columns, *indicator_columns]
-            if column not in excluded_columns and column in dataframe.columns
+            if column not in excluded_columns and column in working.columns
         )
     )
     categorical_columns = list(
         dict.fromkeys(
-            column
-            for column in detected["eq_columns"]
-            if column not in excluded_columns and column in dataframe.columns
+            column for column in [
+                *detected["eq_columns"],
+                *[name for name in config_report.get("derived_columns", [])],
+            ]
+            if column not in excluded_columns and column in working.columns
         )
     )
     feature_columns = list(
@@ -149,7 +176,7 @@ def prepare_dataset(
         )
 
     numeric_target = pd.to_numeric(
-        dataframe[target],
+        working[target],
         errors="coerce",
     ).replace([np.inf, -np.inf], np.nan)
     valid_target_mask = numeric_target.notna()
@@ -170,7 +197,7 @@ def prepare_dataset(
             "학습 데이터에서 제외했습니다."
         )
 
-    features = dataframe.loc[valid_target_mask, feature_columns].copy()
+    features = working.loc[valid_target_mask, feature_columns].copy()
     for column in feature_columns:
         selected = features.loc[:, column]
         if not isinstance(selected, pd.Series):
@@ -227,9 +254,29 @@ def prepare_dataset(
             "전부 결측이거나 상수인지 확인해 주세요."
         )
 
-    groups = _extract_lot_values(
-        dataframe.loc[valid_target_mask, id_column]
-    )
+    if lot_id_column in working.columns:
+        groups = working.loc[valid_target_mask, lot_id_column].astype("string")
+    else:
+        groups = _extract_lot_values(
+            working.loc[valid_target_mask, id_column]
+        )
+        logger.info(
+            "%s 컬럼이 없어 Legacy 방식으로 %s에서 Lot을 추출했습니다.",
+            lot_id_column,
+            id_column,
+        )
+    leakage_columns = sorted(set(feature_columns) & set(ALLOWED_TARGETS))
+    leakage_check = {
+        "passed": not leakage_columns,
+        "excluded_targets": list(ALLOWED_TARGETS),
+        "leakage_columns": leakage_columns,
+        "excluded_identifiers": [id_column, lot_id_column, wafer_slot_column],
+    }
+    if leakage_columns:
+        raise ValueError(
+            "Target leakage가 탐지되어 학습을 중단했습니다: "
+            + ", ".join(leakage_columns)
+        )
     return PreparedDataset(
         features=features.reset_index(drop=True),
         target=numeric_target.loc[valid_target_mask].reset_index(drop=True),
@@ -238,6 +285,14 @@ def prepare_dataset(
         numeric_columns=numeric_columns,
         categorical_columns=categorical_columns,
         warnings=warnings,
+        raw_feature_columns=list(dict.fromkeys([
+            *detected_raw["r_columns"],
+            *detected_raw["d_columns"],
+            *detected_raw["eq_columns"],
+            *detected_raw.get("config_columns", []),
+        ])),
+        config_report=config_report,
+        target_leakage_check=leakage_check,
     )
 
 

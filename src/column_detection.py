@@ -16,7 +16,8 @@ def detect_feature_columns(
     patterns = schema_config["feature_patterns"]
     response_pattern = re.compile(patterns["response"], re.IGNORECASE)
     defect_pattern = re.compile(patterns["defect"], re.IGNORECASE)
-    equipment_pattern = re.compile(patterns["equipment"], re.IGNORECASE)
+    equipment_pattern = re.compile(patterns.get("equipment", r"a^"), re.IGNORECASE)
+    config_pattern = re.compile(patterns.get("config_column", r"a^"), re.IGNORECASE)
     target_names = {
         schema_config["yield_column"],
         *schema_config["fail_rate_columns"],
@@ -44,6 +45,9 @@ def detect_feature_columns(
             column
             for column in string_columns
             if equipment_pattern.fullmatch(column)
+        ],
+        "config_columns": [
+            column for column in string_columns if config_pattern.fullmatch(column)
         ],
         "target_columns": [
             column for column in string_columns if column in target_names

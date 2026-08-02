@@ -57,10 +57,13 @@ def test_valid_csv_preprocessing_succeeds() -> None:
     response = asyncio.run(preprocess_csv(_upload("sample.csv", _valid_csv())))
 
     assert response.success is True
-    assert response.changes.filled_missing_values == 2
+    assert response.changes.filled_missing_values == 1
     assert len(response.preview) == 2
     assert response.preview[1]["Step1_R1"] is not None
     assert response.preview[1]["Step1_EQ"] == "UNKNOWN"
+    assert response.processing_summary["missing_strategy"] == "native"
+    assert response.processing_summary["outlier_strategy"] == "flag_only"
+    assert response.warnings == []
 
 
 def test_file_field_is_required() -> None:
