@@ -8,20 +8,50 @@ import { getModels } from "@/lib/api";
 import type { ModelSummary } from "@/types/data";
 
 const LAST_MODEL_KEY = "semiconductor-ai:last-model-id";
+const UNAVAILABLE_COMPATIBILITY_STATUSES = new Set([
+  "dependency_missing",
+  "model_file_missing",
+  "invalid_metadata",
+  "invalid_model",
+  "load_error",
+  "schema_incompatible",
+  "incompatible",
+]);
+
+export type ModelSelectionReason = "user" | "reconcile";
 
 type ModelSelectorProps = {
   value: string;
-  onValueChange: (modelId: string) => void;
+  onValueChange: (modelId: string, reason?: ModelSelectionReason) => void;
   onModelsChange?: (models: ModelSummary[], warnings: string[]) => void;
+  unavailableModelIds?: string[];
   disabled?: boolean;
   ariaLabel?: string;
 };
 
+export function isModelUsable(model: ModelSummary | null | undefined): model is ModelSummary {
+  return Boolean(
+    model &&
+    model.available !== false &&
+    model.loadable !== false &&
+    model.compatibility !== "incompatible" &&
+    !UNAVAILABLE_COMPATIBILITY_STATUSES.has(model.compatibility_status),
+  );
+}
+
 function statusLabel(model: ModelSummary): string {
-  if (model.compatibility === "incompatible") return "호환되지 않음";
+  if (!isModelUsable(model)) return "사용 불가";
   if (model.compatibility === "legacy") return "이전 모델";
   if (model.compatibility === "unknown_schema") return "스키마 확인 필요";
   return model.model_type === "hybrid_multi_y" ? "Hybrid Multi-Y" : "호환 가능";
+}
+
+function statusClass(model: ModelSummary): string {
+  return isModelUsable(model) ? model.compatibility : "unavailable";
+}
+
+function isSelectable(model: ModelSummary | null | undefined, unavailableIds: Set<string>): boolean {
+  return isModelUsable(model) && !unavailableIds.has(model.model_id);
 }
 
 function metric(value: unknown): string {
@@ -33,21 +63,54 @@ function createdAtLabel(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("ko-KR");
 }
 
-function chooseInitialModel(models: ModelSummary[]): string {
-  const queryModel = new URLSearchParams(window.location.search).get("model_id");
-  const storedModel = window.sessionStorage.getItem(LAST_MODEL_KEY) ?? window.localStorage.getItem(LAST_MODEL_KEY);
-  for (const candidate of [queryModel, storedModel]) {
-    if (candidate && models.some((model) => model.model_id === candidate && model.compatibility !== "incompatible")) return candidate;
+function removeStalePersistedSelections(models: ModelSummary[], unavailableIds: Set<string>): void {
+  const usableIds = new Set(models.filter((model) => isSelectable(model, unavailableIds)).map((model) => model.model_id));
+  const url = new URL(window.location.href);
+  const queryModel = url.searchParams.get("model_id");
+  if (queryModel && !usableIds.has(queryModel)) {
+    url.searchParams.delete("model_id");
+    window.history.replaceState({}, "", url);
   }
-  return models.find((model) => model.model_type === "hybrid_multi_y" && model.compatibility === "compatible")?.model_id
-    ?? models.find((model) => model.target === "Y" && model.compatibility === "compatible")?.model_id
-    ?? "";
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    const storedModel = storage.getItem(LAST_MODEL_KEY);
+    if (storedModel && !usableIds.has(storedModel)) storage.removeItem(LAST_MODEL_KEY);
+  }
 }
 
-export default function ModelSelector({ value, onValueChange, onModelsChange, disabled = false, ariaLabel = "저장 모델 선택" }: ModelSelectorProps) {
+function persistedCandidate(models: ModelSummary[], unavailableIds: Set<string>): string {
+  const candidates = [
+    new URLSearchParams(window.location.search).get("model_id"),
+    window.sessionStorage.getItem(LAST_MODEL_KEY),
+    window.localStorage.getItem(LAST_MODEL_KEY),
+  ];
+  return candidates.find((candidate) =>
+    Boolean(candidate && isSelectable(models.find((model) => model.model_id === candidate), unavailableIds))) ?? "";
+}
+
+function persistSelection(modelId: string): void {
+  const url = new URL(window.location.href);
+  if (modelId) {
+    window.sessionStorage.setItem(LAST_MODEL_KEY, modelId);
+    window.localStorage.setItem(LAST_MODEL_KEY, modelId);
+    if (url.searchParams.get("model_id") !== modelId) {
+      url.searchParams.set("model_id", modelId);
+      window.history.replaceState({}, "", url);
+    }
+    return;
+  }
+  window.sessionStorage.removeItem(LAST_MODEL_KEY);
+  window.localStorage.removeItem(LAST_MODEL_KEY);
+  if (url.searchParams.has("model_id")) {
+    url.searchParams.delete("model_id");
+    window.history.replaceState({}, "", url);
+  }
+}
+
+export default function ModelSelector({ value, onValueChange, onModelsChange, unavailableModelIds = [], disabled = false, ariaLabel = "저장 모델 선택" }: ModelSelectorProps) {
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -55,37 +118,52 @@ export default function ModelSelector({ value, onValueChange, onModelsChange, di
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const onValueChangeRef = useRef(onValueChange);
+  const onModelsChangeRef = useRef(onModelsChange);
+  const unavailableIds = useMemo(() => new Set(unavailableModelIds), [unavailableModelIds]);
+
+  useEffect(() => { onValueChangeRef.current = onValueChange; }, [onValueChange]);
+  useEffect(() => { onModelsChangeRef.current = onModelsChange; }, [onModelsChange]);
 
   const loadModels = useCallback(async () => {
     setLoading(true);
+    setLoaded(false);
     setError("");
     try {
       const response = await getModels();
-      const sorted = [...response.models].sort((left, right) => right.created_at.localeCompare(left.created_at));
-      setModels(sorted);
-      onModelsChange?.(sorted, response.warnings);
-      if (!value) {
-        const initialModel = chooseInitialModel(sorted);
-        if (initialModel) onValueChange(initialModel);
-      }
+      const currentModels = [...response.models];
+      setModels(currentModels);
+      setLoaded(true);
+      onModelsChangeRef.current?.(currentModels, response.warnings);
     } catch (requestError) {
+      setModels([]);
       setError(requestError instanceof Error ? requestError.message : "모델 목록을 불러오지 못했습니다.");
-      onModelsChange?.([], []);
+      onModelsChangeRef.current?.([], []);
     } finally {
       setLoading(false);
     }
-  }, [onModelsChange, onValueChange, value]);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadModels(), 0);
     return () => window.clearTimeout(timer);
-    // Initial model discovery must not rerun when a parent callback identity changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadModels]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const current = models.find((model) => model.model_id === value);
+    const usableModels = models.filter((model) => isSelectable(model, unavailableIds));
+    removeStalePersistedSelections(models, unavailableIds);
+    const nextValue = current && isSelectable(current, unavailableIds)
+      ? current.model_id
+      : persistedCandidate(models, unavailableIds) || usableModels[0]?.model_id || "";
+    persistSelection(nextValue);
+    if (nextValue !== value) onValueChangeRef.current(nextValue, "reconcile");
+  }, [loaded, models, unavailableIds, value]);
 
   const filtered = useMemo(() => {
     const keyword = search.trim().toLocaleLowerCase("ko");
-    return models.filter((model) => !keyword || `${model.model_name} ${model.model_id} ${model.model_type ?? ""} ${model.created_at} ${statusLabel(model)}`.toLocaleLowerCase("ko").includes(keyword));
+    return models.filter((model) => !keyword || `${model.model_name} ${model.model_id} ${model.model_type ?? ""} ${model.created_at} ${statusLabel(model)} ${model.incompatibility_reason ?? ""}`.toLocaleLowerCase("ko").includes(keyword));
   }, [models, search]);
   const selected = models.find((model) => model.model_id === value);
   const missingSelectedModel = Boolean(value && !selected && !loading);
@@ -113,11 +191,9 @@ export default function ModelSelector({ value, onValueChange, onModelsChange, di
 
   function selectModel(modelId: string) {
     const model = models.find((item) => item.model_id === modelId);
-    if (!model || model.compatibility === "incompatible") return;
-    onValueChange(modelId);
-    window.sessionStorage.setItem(LAST_MODEL_KEY, modelId);
-    window.localStorage.setItem(LAST_MODEL_KEY, modelId);
-    const url = new URL(window.location.href); url.searchParams.set("model_id", modelId); window.history.replaceState({}, "", url);
+    if (!model || !isSelectable(model, unavailableIds)) return;
+    persistSelection(modelId);
+    onValueChange(modelId, "user");
     setOpen(false); setSearch(""); triggerRef.current?.focus();
   }
 
@@ -142,14 +218,15 @@ export default function ModelSelector({ value, onValueChange, onModelsChange, di
       ) : (
         <div className="modelSelectorList" role="listbox">
           {filtered.map((model, index) => {
-            const unavailable = model.compatibility === "incompatible";
-            return <button type="button" role="option" aria-selected={model.model_id === value} className={`modelSelectorOption ${model.model_id === value || index === activeIndex ? "active" : ""}`} key={model.model_id} disabled={unavailable} onMouseEnter={() => setActiveIndex(index)} onClick={() => selectModel(model.model_id)}>
+            const unavailable = !isSelectable(model, unavailableIds);
+            return <button type="button" role="option" aria-selected={model.model_id === value} aria-disabled={unavailable} className={`modelSelectorOption ${model.model_id === value || index === activeIndex ? "active" : ""}`} key={model.model_id} disabled={unavailable} title={model.incompatibility_reason ?? undefined} onMouseEnter={() => setActiveIndex(index)} onClick={() => selectModel(model.model_id)}>
               <span className="modelSelectorOptionTop">
                 <strong title={model.model_name}>{model.model_name}</strong>
-                <span className={`modelCompatibility ${model.compatibility}`}>{statusLabel(model)}</span>
+                <span className={`modelCompatibility ${unavailable ? "unavailable" : statusClass(model)}`}>{unavailable ? "사용 불가" : statusLabel(model)}</span>
               </span>
               <code title={model.model_id}>{model.model_id}</code>
               <small>{model.model_type ?? "Single Model"} · R² {metric(model.test_metrics.r2)} · RMSE {metric(model.test_metrics.rmse)} · {createdAtLabel(model.created_at)}</small>
+              {unavailable && <small className="modelUnavailableReason">{model.incompatibility_reason ?? (unavailableIds.has(model.model_id) ? "현재 서버의 상세 검증에서 사용할 수 없는 모델로 확인되었습니다." : "현재 서버에서 이 모델을 사용할 수 없습니다.")}</small>}
             </button>;
           })}
         </div>

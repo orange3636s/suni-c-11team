@@ -46,8 +46,96 @@ class RuntimeStore:
         try:
             yield connection
             connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
+
+    @contextmanager
+    def history_reset_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Open the one transaction allowed to clear resettable history rows."""
+        with _lock:
+            connection = sqlite3.connect(
+                self.path,
+                timeout=10,
+                check_same_thread=False,
+            )
+            connection.row_factory = sqlite3.Row
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                yield connection
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+    def history_reset_counts(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, int]:
+        def read(active_connection: sqlite3.Connection) -> dict[str, int]:
+            prediction_count = int(
+                active_connection.execute(
+                    "SELECT COUNT(*) FROM prediction_runs"
+                ).fetchone()[0]
+            )
+            analysis_row = active_connection.execute(
+                "SELECT COUNT(*), "
+                "COALESCE(SUM(CASE WHEN report_snapshot_available != 0 "
+                "THEN 1 ELSE 0 END), 0) FROM analysis_runs"
+            ).fetchone()
+            return {
+                "prediction_history_count": prediction_count,
+                "analysis_history_count": int(analysis_row[0]),
+                "report_snapshot_count": int(analysis_row[1]),
+            }
+
+        if connection is not None:
+            return read(connection)
+        with _lock, self._connect() as active_connection:
+            return read(active_connection)
+
+    def running_history_counts(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, int]:
+        def read(active_connection: sqlite3.Connection) -> dict[str, int]:
+            return {
+                "prediction": int(
+                    active_connection.execute(
+                        "SELECT COUNT(*) FROM prediction_runs "
+                        "WHERE status='running'"
+                    ).fetchone()[0]
+                ),
+                "analysis": int(
+                    active_connection.execute(
+                        "SELECT COUNT(*) FROM analysis_runs "
+                        "WHERE status='running'"
+                    ).fetchone()[0]
+                ),
+            }
+
+        if connection is not None:
+            return read(connection)
+        with _lock, self._connect() as active_connection:
+            return read(active_connection)
+
+    def delete_reset_history_rows(
+        self,
+        connection: sqlite3.Connection,
+    ) -> dict[str, int]:
+        """Delete only prediction/analysis history inside the caller transaction."""
+        counts = self.history_reset_counts(connection)
+        analysis_cursor = connection.execute("DELETE FROM analysis_runs")
+        prediction_cursor = connection.execute("DELETE FROM prediction_runs")
+        return {
+            "prediction_history_count": int(prediction_cursor.rowcount),
+            "analysis_history_count": int(analysis_cursor.rowcount),
+            "report_snapshot_count": counts["report_snapshot_count"],
+        }
 
     def _initialize(self) -> None:
         with _lock, self._connect() as connection:

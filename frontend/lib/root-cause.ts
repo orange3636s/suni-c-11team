@@ -1106,17 +1106,19 @@ function normalizeLotAnalysis(value: unknown): LotCauseAnalysis | null {
 function parseRelationshipResponse(value: unknown): RelationshipAnalysisResponse | null {
   if (!isRecord(value)) return null;
   const explanation = parseExplainResponse(value.explanation);
-  if (!explanation) return null;
+  const filename = text(value.filename) ?? explanation?.filename ?? null;
+  const target = text(value.target) ?? explanation?.model.target ?? null;
+  if (filename === null || target === null) return null;
   const correlation = text(value.correlation_method);
   const unit = text(value.analysis_unit);
   const relationshipPaths = records(value.relationship_paths)
     .map(normalizeRelationshipPath)
     .filter((item): item is RelationshipPath => item !== null);
   return {
-    success: boolean(value.success) ?? explanation.success,
-    filename: text(value.filename) ?? explanation.filename,
+    success: boolean(value.success) ?? explanation?.success ?? true,
+    filename,
     explanation,
-    target: text(value.target) ?? explanation.model.target,
+    target,
     correlation_method: correlation === "pearson" || correlation === "spearman" ? correlation : null,
     rankings: normalizeRankings(value.rankings),
     pareto: normalizePareto(value.pareto),
@@ -1146,7 +1148,7 @@ function parseRelationshipResponse(value: unknown): RelationshipAnalysisResponse
 export function normalizeRelationshipResponse(value: unknown): RelationshipAnalysisResponse {
   const response = parseRelationshipResponse(value);
   if (!response) {
-    throw new Error("관계 분석 응답에 필수 explanation 데이터가 없습니다.");
+    throw new Error("관계 분석 응답에 필수 데이터가 없습니다.");
   }
   return response;
 }

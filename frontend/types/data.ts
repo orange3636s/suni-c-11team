@@ -222,11 +222,16 @@ export type ModelSummary = {
   selected_final_output?: string | null;
   available_targets?: string[] | null;
   cv_summary?: CVSummary | null;
+  available: boolean;
+  loadable: boolean;
+  compatibility_status: string;
+  incompatibility_reason: string | null;
 };
 
 export type ModelListResponse = {
   success: boolean;
   models: ModelSummary[];
+  total: number;
   warnings: string[];
 };
 
@@ -308,6 +313,10 @@ export type ModelDetail = {
   training_config?: Record<string, unknown> | null;
   model_agreement_summary?: Record<string, unknown> | null;
   production_ensemble_retrained: boolean | null;
+  available: boolean;
+  loadable: boolean;
+  compatibility_status: string;
+  incompatibility_reason: string | null;
 };
 
 export type PredictionThresholds = {
@@ -383,6 +392,35 @@ export type AnalysisHistorySummary = {
 };
 
 export type HistoryList<T> = { items: T[]; total: number; limit: number; offset: number };
+
+export type HistoryResetSummary = {
+  model_count: number;
+  prediction_history_count: number;
+  analysis_history_count: number;
+  model_artifact_count?: number;
+  prediction_artifact_count?: number;
+  analysis_artifact_count?: number;
+  report_snapshot_count?: number;
+};
+
+export type HistoryResetResponse = {
+  success: boolean;
+  deleted: {
+    models: number;
+    model_files: number;
+    prediction_histories: number;
+    prediction_artifacts: number;
+    analysis_histories: number;
+    analysis_artifacts: number;
+    report_snapshots: number;
+  };
+  preserved: {
+    alert_logs: boolean;
+    automation_runs: boolean;
+    source_csv: boolean;
+  };
+};
+
 export type AnalysisHistoryListResponse = HistoryList<AnalysisHistorySummary>;
 export type PredictionHistoryDetail = {
   metadata: PredictionHistorySummary & Record<string, unknown>;
@@ -722,7 +760,7 @@ export type LotCauseAnalysis = {
 export type RelationshipAnalysisResponse = {
   success: boolean;
   filename: string;
-  explanation: ExplainResponse;
+  explanation: ExplainResponse | null;
   target: string;
   correlation_method: "pearson" | "spearman" | null;
   rankings: Record<

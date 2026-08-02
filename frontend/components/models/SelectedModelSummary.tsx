@@ -16,6 +16,7 @@ function aggregateMetric(label: string, value: MetricAggregate | undefined): str
 }
 
 function compatibilityLabel(model: ModelSummary): string {
+  if (!model.available || !model.loadable) return "사용 불가";
   if (model.compatibility === "incompatible") return "호환되지 않음";
   if (model.compatibility === "legacy") return "이전 모델";
   if (model.compatibility === "unknown_schema") return "스키마 확인 필요";
@@ -70,13 +71,18 @@ export default function SelectedModelSummary({ model }: SelectedModelSummaryProp
       <span className="selectedModelCopy">
         <span className="selectedModelTitleRow">
           <strong title={model.model_name}>{model.model_name}</strong>
-          <span className={`modelCompatibility ${model.compatibility}`}>
+          <span className={`modelCompatibility ${model.available && model.loadable ? model.compatibility : "unavailable"}`}>
             {compatibilityLabel(model)}
           </span>
         </span>
         <small title={model.model_id}>Model ID · {model.model_id}</small>
         <small>{protocol}</small>
         <small>{metrics} · {createdAtLabel(model.created_at)}</small>
+        {(!model.available || !model.loadable) && (
+          <small className="modelUnavailableReason">
+            {model.incompatibility_reason ?? "현재 서버에서 이 모델을 사용할 수 없습니다."}
+          </small>
+        )}
       </span>
     </div>
   );

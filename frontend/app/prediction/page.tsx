@@ -20,7 +20,7 @@ import type { LabelProps, LegendPayload } from "recharts";
 
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
-import ModelSelector from "@/components/models/ModelSelector";
+import ModelSelector, { isModelUsable } from "@/components/models/ModelSelector";
 import SelectedModelSummary from "@/components/models/SelectedModelSummary";
 import OperationProgress from "@/components/OperationProgress";
 import PreprocessingSummary from "@/components/PreprocessingSummary";
@@ -214,7 +214,7 @@ export default function PredictionPage() {
     useState<PredictionThresholds>(DEFAULT_THRESHOLDS);
   const [result, setResult] = useState<PredictionResponse | null>(null);
   const [error, setError] = useState("");
-  const selectedModel = models.find((model) => model.model_id === selectedModelId);
+  const selectedModel = models.find((model) => model.model_id === selectedModelId && isModelUsable(model));
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionRunKey, setPredictionRunKey] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -579,9 +579,9 @@ export default function PredictionPage() {
                 <ModelSelector
                   value={selectedModelId}
                   disabled={isPredicting}
-                  onValueChange={(nextModelId) => {
+                  onValueChange={(nextModelId, reason) => {
                     setSelectedModelId(nextModelId);
-                    setResult(null);
+                    if (reason !== "reconcile") setResult(null);
                   }}
                   onModelsChange={(nextModels, warnings) => {
                     setModels(nextModels);

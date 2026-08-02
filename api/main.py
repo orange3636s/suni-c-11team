@@ -1,12 +1,20 @@
 import logging
 import os
 
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from api.routes.admin import router as admin_router
 from api.routes.data import router as data_router
 from api.routes.runtime import router as runtime_router
 from api.settings import settings
+from src.runtime.operation_coordinator import (
+    ACTIVE_JOB_MESSAGE,
+    ActiveOperationError,
+    OperationKind,
+    operation_coordinator,
+)
 
 
 APP_VERSION = "1.0.0"
@@ -39,6 +47,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+_PROTECTED_OPERATION_PATHS: dict[str, OperationKind] = {
+    "/api/train": "training",
+    "/api/predict": "prediction",
+    "/api/predict/download": "prediction",
+    "/api/relationships": "analysis",
+    "/api/explain": "analysis",
+    "/api/explain/download": "analysis",
+    "/api/report": "analysis",
+    "/api/report/download": "analysis",
+    "/api/analyze": "analysis",
+}
+
+
+@app.middleware("http")
+async def protect_active_operations(request: Request, call_next):
+    kind = (
+        _PROTECTED_OPERATION_PATHS.get(request.url.path)
+        if request.method == "POST"
+        else None
+    )
+    if kind is None:
+        return await call_next(request)
+    try:
+        with operation_coordinator.job(kind):
+            return await call_next(request)
+    except ActiveOperationError:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": ACTIVE_JOB_MESSAGE},
+        )
+
+
+app.include_router(admin_router)
 app.include_router(data_router)
 app.include_router(runtime_router)
 

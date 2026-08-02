@@ -91,6 +91,11 @@ class Settings:
             os.environ.get("RUNTIME_ARTIFACT_DIR")
         )
     )
+    admin_reset_secret: str | None = field(
+        default_factory=lambda: (
+            os.environ.get("ADMIN_RESET_SECRET", "").strip() or None
+        )
+    )
     max_prediction_history: int = field(
         default_factory=lambda: _parse_positive_int("MAX_PREDICTION_HISTORY", 100)
     )

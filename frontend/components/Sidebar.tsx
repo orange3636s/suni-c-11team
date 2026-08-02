@@ -27,6 +27,7 @@ const navigationItems = [
 ];
 
 type SidebarProps = {
+  statusRefreshKey?: number;
   activeItem?:
     | "개요"
     | "모델 학습"
@@ -41,7 +42,10 @@ type MenuStatus = {
   label: string;
 };
 
-export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
+export default function Sidebar({
+  activeItem = "개요",
+  statusRefreshKey = 0,
+}: SidebarProps) {
   const { theme, setTheme } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [systemStatus, setSystemStatus] = useState<{
@@ -86,7 +90,7 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [statusRefreshKey]);
 
   useEffect(() => {
     if (!themeMenuOpen) return;

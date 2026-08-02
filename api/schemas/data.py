@@ -198,11 +198,16 @@ class ModelSummary(BaseModel):
     selected_final_output: str | None = None
     cv_summary: dict[str, Any] | None = None
     available_targets: list[str] = Field(default_factory=list)
+    available: bool = True
+    loadable: bool = True
+    compatibility_status: str = "unknown_schema"
+    incompatibility_reason: str | None = None
 
 
 class ModelListResponse(BaseModel):
     success: bool = True
     models: list[ModelSummary] = Field(default_factory=list)
+    total: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -277,6 +282,10 @@ class ModelDetailResponse(BaseModel):
     training_config: dict[str, Any] = Field(default_factory=dict)
     model_agreement_summary: dict[str, Any] = Field(default_factory=dict)
     production_ensemble_retrained: bool | None = None
+    available: bool = True
+    loadable: bool = True
+    compatibility_status: str = "unknown_schema"
+    incompatibility_reason: str | None = None
 
 
 class PredictionModelInfo(BaseModel):
@@ -399,7 +408,7 @@ class ExplainResponse(BaseModel):
 class RelationshipAnalysisResponse(BaseModel):
     success: bool = True
     filename: str
-    explanation: ExplainResponse
+    explanation: ExplainResponse | None = None
     target: str
     correlation_method: str
     rankings: dict[str, dict[str, list[dict[str, Any]]]]

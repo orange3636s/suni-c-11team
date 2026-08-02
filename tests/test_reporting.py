@@ -202,6 +202,77 @@ def test_relationship_api_returns_one_shared_analysis_snapshot(
     assert stored_artifacts[0]["response"]["history_saved"] is True
 
 
+def test_relationship_api_without_model_returns_statistics_only(
+    reporting_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_model_call(*args, **kwargs):
+        raise AssertionError("모델 없는 통계 분석에서 모델 또는 SHAP을 호출했습니다.")
+
+    monkeypatch.setattr(
+        data_routes,
+        "load_prediction_model",
+        unexpected_model_call,
+    )
+    monkeypatch.setattr(
+        data_routes,
+        "load_prediction_model_target",
+        unexpected_model_call,
+    )
+    monkeypatch.setattr(
+        data_routes,
+        "predict_dataframe",
+        unexpected_model_call,
+    )
+    monkeypatch.setattr(
+        data_routes,
+        "explain_dataframe",
+        unexpected_model_call,
+    )
+    monkeypatch.setattr(
+        data_routes,
+        "safe_runtime_call",
+        unexpected_model_call,
+    )
+    dataframe = reporting_environment["dataframe"]
+    upload = UploadFile(
+        file=BytesIO(dataframe.to_csv(index=False).encode("utf-8")),
+        filename="statistics-only.csv",
+    )
+
+    response = asyncio.run(
+        data_routes.analyze_feature_relationships(
+            upload,
+            model_id=None,
+            max_rows=10,
+            top_n=10,
+            per_wafer_top_n=5,
+            correlation_method="pearson",
+            analysis_unit="wafer_observed_only",
+            warning_threshold=96,
+            danger_threshold=93,
+            analysis_target=None,
+            prediction_id=None,
+        )
+    )
+    serialized = json.loads(response.model_dump_json())
+    statistics = serialized["statistics"]
+
+    assert serialized["success"] is True
+    assert serialized["target"] == "Y"
+    assert serialized["explanation"] is None
+    assert serialized["analysis_result"] is None
+    assert serialized["report_snapshot"] is None
+    assert serialized["lot_analysis"] == {}
+    assert {"pearson", "spearman", "anova", "kruskal"}.issubset(
+        statistics["methods"]
+    )
+    assert statistics["numeric"]
+    assert {"pearson", "spearman"}.issubset(statistics["numeric"][0])
+    assert statistics["categorical"]
+    assert {"anova", "kruskal"}.issubset(statistics["categorical"][0])
+
+
 def test_multi_y_direct_derived_ensemble_and_count_separation() -> None:
     predictions = {
         "Y": [90.0, 80.0],

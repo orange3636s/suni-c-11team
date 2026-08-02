@@ -849,6 +849,7 @@ def get_models() -> ModelListResponse:
         models, warnings = list_prediction_models(MODEL_DIR)
         return ModelListResponse(
             models=[ModelSummary(**model) for model in models],
+            total=len(models),
             warnings=warnings,
         )
     except ModelLoadError as exc:
@@ -1407,7 +1408,7 @@ async def explain_csv(
 )
 async def analyze_feature_relationships(
     file: UploadFile = File(...),
-    model_id: str = Form(...),
+    model_id: str | None = Form(None),
     max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
     top_n: int = Form(10),
     per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
@@ -1420,18 +1421,42 @@ async def analyze_feature_relationships(
 ) -> RelationshipAnalysisResponse:
     analysis_id = f"analysis_{uuid4().hex}"
     resolved_prediction_id = prediction_id if isinstance(prediction_id, str) else None
+    resolved_model_id = model_id.strip() if isinstance(model_id, str) else ""
     started_clock = time.perf_counter()
-    history_started = safe_runtime_call(
-        "start_analysis", analysis_id=analysis_id, prediction_id=resolved_prediction_id,
-        source_filename=file.filename, model_id=model_id,
-    ) is not None
+    history_started = False
     filename, dataframe = await _read_csv_upload(file)
     try:
         resolved_analysis_target = analysis_target if isinstance(analysis_target, str) else None
+        if not resolved_model_id:
+            analysis = analyze_relationships(
+                dataframe,
+                target=resolved_analysis_target or "Y",
+                correlation_method=correlation_method,
+                top_n=top_n,
+                analysis_unit=analysis_unit,
+            )
+            response = RelationshipAnalysisResponse(
+                filename=filename,
+                explanation=None,
+                analysis_result=None,
+                report_snapshot=None,
+                lot_analysis={},
+                analysis_id=None,
+                prediction_id=resolved_prediction_id,
+                **analysis,
+            )
+            response.model_dump_json()
+            return response
+
+        history_started = safe_runtime_call(
+            "start_analysis", analysis_id=analysis_id,
+            prediction_id=resolved_prediction_id,
+            source_filename=file.filename, model_id=resolved_model_id,
+        ) is not None
         loaded = (
-            load_prediction_model_target(model_id, resolved_analysis_target, MODEL_DIR)
+            load_prediction_model_target(resolved_model_id, resolved_analysis_target, MODEL_DIR)
             if resolved_analysis_target
-            else load_prediction_model(model_id, MODEL_DIR)
+            else load_prediction_model(resolved_model_id, MODEL_DIR)
         )
         prediction = predict_dataframe(
             dataframe,
@@ -1495,7 +1520,7 @@ async def analyze_feature_relationships(
         report["analysis_id"] = common["analysis_id"]
         report["snapshot_metadata"] = {
             "analysis_id": common["analysis_id"],
-            "model_id": model_id,
+            "model_id": resolved_model_id,
             "dataset_fingerprint": common["dataset"]["fingerprint"],
             "target": explanation.target,
             "threshold": {

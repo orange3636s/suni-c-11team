@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AnalysisHistorySelector from "@/components/AnalysisHistorySelector";
 import DashboardSectionState from "@/components/DashboardSectionState";
 import Header from "@/components/Header";
+import HistoryResetCard from "@/components/HistoryResetCard";
 import Sidebar from "@/components/Sidebar";
 import StatusBadge from "@/components/StatusBadge";
 import StatusCard from "@/components/StatusCard";
@@ -25,6 +26,8 @@ import type {
 
 
 type BarDatum = { label: string; value: number | null; unit?: string };
+
+const HISTORY_EMPTY_MESSAGE = "저장된 불량 원인 분석 이력이 없습니다.";
 
 function formatNumber(value: number | null, digits = 2): string {
   return value === null
@@ -146,6 +149,8 @@ export default function Home() {
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState("");
   const [overviewRequestVersion, setOverviewRequestVersion] = useState(0);
+  const [sidebarStatusRefreshKey, setSidebarStatusRefreshKey] = useState(0);
+  const historyRequestIdRef = useRef(0);
 
   const persistSelection = useCallback((analysisId: string | null, selectedByUser: boolean) => {
     selectedAnalysisIdRef.current = analysisId;
@@ -171,6 +176,7 @@ export default function Home() {
   }, []);
 
   const loadHistory = useCallback(async () => {
+    const requestId = ++historyRequestIdRef.current;
     setHistoryLoading(true);
     setHistoryError("");
     try {
@@ -182,6 +188,7 @@ export default function Home() {
         const exact = targeted.items.find((item) => item.analysis_id === urlAnalysisId);
         if (exact) resolvedItems = [exact, ...resolvedItems];
       }
+      if (requestId !== historyRequestIdRef.current) return;
       setHistoryItems(resolvedItems);
       let sessionAnalysisId: string | null = null;
       try {
@@ -208,15 +215,60 @@ export default function Home() {
       );
       persistSelection(decision.analysisId, selectedByUser);
     } catch (requestError) {
+      if (requestId !== historyRequestIdRef.current) return;
       setHistoryError(
         requestError instanceof Error
           ? requestError.message
           : "불량 원인 분석 이력 목록을 불러오지 못했습니다.",
       );
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequestIdRef.current) setHistoryLoading(false);
     }
   }, [persistSelection]);
+
+  const handleHistoryResetComplete = useCallback(() => {
+    historyRequestIdRef.current += 1;
+    persistSelection(null, false);
+    setSelectionNotice("");
+    setHistoryItems([]);
+    setHistoryError("");
+    setOverview(createEmptyOverview());
+    setOverviewError("");
+    setOverviewLoading(false);
+
+    try {
+      window.sessionStorage.removeItem("last_overview_analysis_id");
+      window.sessionStorage.removeItem("last_analysis_id");
+      window.sessionStorage.removeItem("last_prediction_id");
+      window.sessionStorage.removeItem("semiconductor-ai:last-model-id");
+    } catch {
+      // Browser storage availability must not block a completed server reset.
+    }
+    try {
+      window.localStorage.removeItem("semiconductor-ai:last-model-id");
+      window.localStorage.removeItem("root-cause-recent-wafer");
+    } catch {
+      // Theme and other user settings remain untouched when storage is unavailable.
+    }
+
+    const url = new URL(window.location.href);
+    ["model_id", "prediction_id", "analysis_id", "wafer_id", "lot_id"].forEach((key) => {
+      url.searchParams.delete(key);
+    });
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+
+    setSidebarStatusRefreshKey((value) => value + 1);
+    void loadHistory();
+    void getDashboardOverview()
+      .then((response) => setOverview(response))
+      .catch((requestError: unknown) => {
+        setOverviewError(
+          requestError instanceof Error
+            ? requestError.message
+            : "초기화된 개요 데이터를 다시 불러오지 못했습니다.",
+        );
+      });
+  }, [loadHistory, persistSelection]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadHistory(); }, 0);
@@ -287,6 +339,9 @@ export default function Home() {
   else if (source.artifact_status === "missing") dashboardState = "artifact-missing";
   else if (source.artifact_status === "corrupted") dashboardState = "artifact-corrupted";
   else dashboardState = "ready";
+  const dashboardEmptyMessage = dashboardState === "history-empty"
+    ? HISTORY_EMPTY_MESSAGE
+    : null;
 
   const kpis: OverviewKpi[] = [
     {
@@ -360,7 +415,7 @@ export default function Home() {
 
   return (
     <div className="appShell">
-      <Sidebar />
+      <Sidebar statusRefreshKey={sidebarStatusRefreshKey} />
       <div className="contentShell">
         <Header />
         <main id="overview" className="mainContent overviewDashboard" data-dashboard-state={dashboardState}>
@@ -442,7 +497,7 @@ export default function Home() {
                     : kpiError
                       ? "분석 결과를 불러오지 못함"
                       : kpi.value === null
-                        ? "현재 분석 이력에서 제공되지 않음"
+                        ? dashboardEmptyMessage ?? "현재 분석 이력에서 제공되지 않음"
                         : kpi.detail}
                   tone={kpi.tone}
                 />
@@ -460,7 +515,7 @@ export default function Home() {
                   ? "수율 시각화를 준비하는 중입니다."
                   : summaryState === "error"
                     ? detailError
-                    : "현재 분석 이력에는 수율 분포·시계열 데이터가 없습니다."}
+                    : dashboardEmptyMessage ?? "현재 분석 이력에는 수율 분포·시계열 데이터가 없습니다."}
                 onRetry={summaryState === "error" ? retryOverview : undefined}
               />
             </article>
@@ -471,7 +526,7 @@ export default function Home() {
               <MetricBars
                 data={failureRateData}
                 state={failureRateData.length ? multiYState : multiYState === "ready" ? "empty" : multiYState}
-                message={sectionMessage(multiYState, "현재 분석 이력에는 Y1~Y5 Failure Rate가 없습니다.", detailError, source.artifact_status)}
+                message={sectionMessage(multiYState, dashboardEmptyMessage ?? "현재 분석 이력에는 Y1~Y5 Failure Rate가 없습니다.", detailError, source.artifact_status)}
                 onRetry={retryOverview}
               />
             </article>
@@ -482,7 +537,7 @@ export default function Home() {
               <MetricBars
                 data={failBitData}
                 state={failBitData.length ? multiYState : multiYState === "ready" ? "empty" : multiYState}
-                message={sectionMessage(multiYState, "현재 분석 이력에는 Y6~Y10 Fail Bit Count가 없습니다.", detailError, source.artifact_status)}
+                message={sectionMessage(multiYState, dashboardEmptyMessage ?? "현재 분석 이력에는 Y6~Y10 Fail Bit Count가 없습니다.", detailError, source.artifact_status)}
                 onRetry={retryOverview}
               />
             </article>
@@ -493,7 +548,7 @@ export default function Home() {
               <MetricBars
                 data={causeData}
                 state={causeData.length ? causesState : causesState === "ready" ? "empty" : causesState}
-                message={sectionMessage(causesState, "현재 분석 이력에는 주요 원인 데이터가 없습니다.", detailError, source.artifact_status)}
+                message={sectionMessage(causesState, dashboardEmptyMessage ?? "현재 분석 이력에는 주요 원인 데이터가 없습니다.", detailError, source.artifact_status)}
                 onRetry={retryOverview}
               />
             </article>
@@ -504,7 +559,7 @@ export default function Home() {
               <MetricBars
                 data={paretoData}
                 state={paretoData.length ? paretoState : paretoState === "ready" ? "empty" : paretoState}
-                message={sectionMessage(paretoState, "이 분석 이력에는 Pareto 데이터가 없습니다.", detailError, source.artifact_status)}
+                message={sectionMessage(paretoState, dashboardEmptyMessage ?? "이 분석 이력에는 Pareto 데이터가 없습니다.", detailError, source.artifact_status)}
                 onRetry={retryOverview}
               />
             </article>
@@ -515,7 +570,7 @@ export default function Home() {
               <MetricBars
                 data={riskData}
                 state={riskState}
-                message={sectionMessage(riskState, "현재 분석 이력에는 위험도 분포가 없습니다.", detailError, source.artifact_status)}
+                message={sectionMessage(riskState, dashboardEmptyMessage ?? "현재 분석 이력에는 위험도 분포가 없습니다.", detailError, source.artifact_status)}
                 onRetry={retryOverview}
               />
             </article>
@@ -523,10 +578,10 @@ export default function Home() {
 
           <section className="surfaceCard overviewSectionCard" aria-labelledby="cause-summary-title">
             <div className="sectionHeading compact"><div><span className="sectionLabel">Cause summary</span><h2 id="cause-summary-title">주요 원인 결과</h2></div></div>
-            {causesState === "loading" || causesState === "error" || causesState === "unavailable" ? (
+            {causesState !== "ready" ? (
               <DashboardSectionState
                 state={causesState}
-                message={sectionMessage(causesState, "주요 원인 결과가 없습니다.", detailError, source.artifact_status)}
+                message={sectionMessage(causesState, dashboardEmptyMessage ?? "주요 원인 결과가 없습니다.", detailError, source.artifact_status)}
                 onRetry={causesState === "error" ? retryOverview : undefined}
               />
             ) : (
@@ -552,7 +607,7 @@ export default function Home() {
                     <td>{formatNumber(item.danger_count, 0)}</td>
                     <td>{formatNumber(item.warning_count, 0)}</td>
                   </tr>
-                )) : <tr><td colSpan={5}><DashboardSectionState compact state={riskLotState} message={sectionMessage(riskLotState, "현재 분석 이력에 위험 Lot 데이터가 없습니다.", detailError, source.artifact_status)} onRetry={riskLotState === "error" ? retryOverview : undefined} /></td></tr>}
+                )) : <tr><td colSpan={5}><DashboardSectionState compact state={riskLotState} message={sectionMessage(riskLotState, dashboardEmptyMessage ?? "현재 분석 이력에 위험 Lot 데이터가 없습니다.", detailError, source.artifact_status)} onRetry={riskLotState === "error" ? retryOverview : undefined} /></td></tr>}
               </tbody></table></div>
             </article>
 
@@ -569,7 +624,7 @@ export default function Home() {
                       <td>{item.top_harmful_features.slice(0, 2).join(", ") || item.top_step || "-"}</td>
                     </tr>
                   );
-                }) : <tr><td colSpan={4}><DashboardSectionState compact state={riskWaferState} message={sectionMessage(riskWaferState, "현재 분석 이력에 위험 Wafer 데이터가 없습니다.", detailError, source.artifact_status)} onRetry={riskWaferState === "error" ? retryOverview : undefined} /></td></tr>}
+                }) : <tr><td colSpan={4}><DashboardSectionState compact state={riskWaferState} message={sectionMessage(riskWaferState, dashboardEmptyMessage ?? "현재 분석 이력에 위험 Wafer 데이터가 없습니다.", detailError, source.artifact_status)} onRetry={riskWaferState === "error" ? retryOverview : undefined} /></td></tr>}
               </tbody></table></div>
             </article>
           </section>
@@ -599,7 +654,7 @@ export default function Home() {
                     <td>{item.direction ?? item.interpretation ?? "-"}</td>
                   </tr>
                 );
-              }) : <tr><td colSpan={8}><DashboardSectionState compact state={relationshipState} message={sectionMessage(relationshipState, "현재 분석 이력에는 관계·통계 결과가 없습니다.", detailError, source.artifact_status)} onRetry={relationshipState === "error" ? retryOverview : undefined} /></td></tr>}
+              }) : <tr><td colSpan={8}><DashboardSectionState compact state={relationshipState} message={sectionMessage(relationshipState, dashboardEmptyMessage ?? "현재 분석 이력에는 관계·통계 결과가 없습니다.", detailError, source.artifact_status)} onRetry={relationshipState === "error" ? retryOverview : undefined} /></td></tr>}
             </tbody></table></div>
           </section>
 
@@ -612,9 +667,11 @@ export default function Home() {
             ) : display.warnings.length ? (
               <div className="warningScrollList">{display.warnings.map((warning) => <p className="warningMessage" key={warning}>{warning}</p>)}</div>
             ) : (
-              <DashboardSectionState state="empty" message="현재 분석 이력에 추가 경고가 없습니다." />
+              <DashboardSectionState state="empty" message={dashboardEmptyMessage ?? "현재 분석 이력에 추가 경고가 없습니다."} />
             )}
           </section>
+
+          <HistoryResetCard onResetComplete={handleHistoryResetComplete} />
         </main>
       </div>
     </div>

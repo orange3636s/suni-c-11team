@@ -19,16 +19,19 @@ import {
 
 import Header from "@/components/Header";
 import CsvUploadPanel from "@/components/CsvUploadPanel";
-import ModelSelector from "@/components/models/ModelSelector";
+import ModelSelector, { isModelUsable } from "@/components/models/ModelSelector";
 import SelectedModelSummary from "@/components/models/SelectedModelSummary";
 import OperationProgress from "@/components/OperationProgress";
 import Sidebar from "@/components/Sidebar";
 import useElapsedTime from "@/hooks/useElapsedTime";
 import {
+  ApiResponseError,
   analyzeRelationships,
   deleteAnalysisHistory,
   getAnalysisHistory,
   getAnalysisHistoryDetail,
+  getModelDetail,
+  MODEL_UNAVAILABLE_MESSAGE,
 } from "@/lib/api";
 import type {
   AnalysisHistorySummary,
@@ -164,6 +167,8 @@ function paretoImpactLabel(target: string): string {
 
 export default function RootCausePage() {
   const [models, setModels] = useState<ModelSummary[]>([]);
+  const [modelListResolved, setModelListResolved] = useState(false);
+  const [rejectedModelIds, setRejectedModelIds] = useState<string[]>([]);
   const [modelId, setModelId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<ExplainResponse | null>(null);
@@ -228,7 +233,7 @@ export default function RootCausePage() {
           ?? "Y",
       );
       const waferId = params.get("wafer_id");
-      if (waferId && restoredResponse) {
+      if (waferId && restoredResponse?.explanation) {
         const waferIndex = restoredResponse.explanation.wafer_explanations.findIndex(
           (wafer) => String(wafer.identifier) === waferId,
         );
@@ -305,7 +310,12 @@ export default function RootCausePage() {
     window.history.replaceState({}, "", url);
   }
 
-  const selectedModel = models.find((model) => model.model_id === modelId);
+  const rejectedModelIdSet = useMemo(() => new Set(rejectedModelIds), [rejectedModelIds]);
+  const usableModels = useMemo(
+    () => models.filter((model) => isModelUsable(model) && !rejectedModelIdSet.has(model.model_id)),
+    [models, rejectedModelIdSet],
+  );
+  const selectedModel = usableModels.find((model) => model.model_id === modelId);
   const responseTarget = relationships?.target
     ?? restoredAnalysis?.target.name
     ?? restoredReport?.model.target;
@@ -543,15 +553,41 @@ export default function RootCausePage() {
   }
 
   async function runAnalysis() {
-    if (!file || !modelId || loading) return;
+    if (!file || loading) return;
     setAnalysisRunKey((current) => current + 1);
     setLoading(true);
     setError("");
+    let verifiedModelId: string | null = null;
     try {
+      if (selectedModel) {
+        try {
+          const detail = await getModelDetail(selectedModel.model_id);
+          if (
+            detail.model_id !== selectedModel.model_id ||
+            !detail.available ||
+            !detail.loadable ||
+            detail.compatibility === "incompatible"
+          ) {
+            throw new ApiResponseError(400, MODEL_UNAVAILABLE_MESSAGE);
+          }
+          verifiedModelId = selectedModel.model_id;
+        } catch (requestError) {
+          const isUnavailable =
+            requestError instanceof ApiResponseError &&
+            [400, 404, 422].includes(requestError.status);
+          if (!isUnavailable) throw requestError;
+          setRejectedModelIds((current) => current.includes(selectedModel.model_id)
+            ? current
+            : [...current, selectedModel.model_id]);
+          setModelId("");
+          setError(MODEL_UNAVAILABLE_MESSAGE);
+          return;
+        }
+      }
       const linkedPredictionId = new URLSearchParams(window.location.search).get("prediction_id");
       const response = await analyzeRelationships(
         file,
-        modelId,
+        verifiedModelId,
         DEFAULT_OPTIONS,
         "pearson",
         "wafer_observed_only",
@@ -563,21 +599,39 @@ export default function RootCausePage() {
       setResult(response.explanation);
       setRestoredAnalysis(null);
       setRestoredReport(null);
-      setSelectedTarget(response.target ?? response.explanation.model.target);
-      const recentWafer = localStorage.getItem("root-cause-recent-wafer");
-      const recentIndex = response.explanation.wafer_explanations.findIndex(
-        (wafer) => String(wafer.identifier) === recentWafer,
-      );
-      setSelectedWafer(recentIndex >= 0 ? recentIndex : 0);
+      setSelectedTarget(response.target ?? response.explanation?.model.target ?? activeTarget);
+      if (response.explanation) {
+        const recentWafer = localStorage.getItem("root-cause-recent-wafer");
+        const recentIndex = response.explanation.wafer_explanations.findIndex(
+          (wafer) => String(wafer.identifier) === recentWafer,
+        );
+        setSelectedWafer(recentIndex >= 0 ? recentIndex : 0);
+      } else {
+        setSelectedWafer(0);
+        selectWorkspaceTab("relationships");
+      }
       setSelectedPath(0);
       setWaferSearch("");
       setWaferSort("risk-desc");
       setRestoredHistory(null);
+      const analysisUrl = new URL(window.location.href);
       if (response.analysis_id) {
-        const url = new URL(window.location.href); url.searchParams.set("analysis_id", response.analysis_id); window.history.replaceState({}, "", url);
+        analysisUrl.searchParams.set("analysis_id", response.analysis_id);
+        window.history.replaceState({}, "", analysisUrl);
         sessionStorage.setItem("last_analysis_id", response.analysis_id);
+      } else {
+        analysisUrl.searchParams.delete("analysis_id");
+        window.history.replaceState({}, "", analysisUrl);
+        sessionStorage.removeItem("last_analysis_id");
       }
     } catch (requestError) {
+      if (requestError instanceof Error && requestError.message === MODEL_UNAVAILABLE_MESSAGE && verifiedModelId) {
+        const unavailableModelId = verifiedModelId;
+        setRejectedModelIds((current) => current.includes(unavailableModelId)
+          ? current
+          : [...current, unavailableModelId]);
+        setModelId("");
+      }
       setError(
         requestError instanceof Error
           ? requestError.message
@@ -627,8 +681,10 @@ export default function RootCausePage() {
               <ModelSelector
                 value={modelId}
                 disabled={loading}
-                onValueChange={(nextModelId) => {
+                unavailableModelIds={rejectedModelIds}
+                onValueChange={(nextModelId, reason) => {
                   setModelId(nextModelId);
+                  if (reason === "reconcile") return;
                   setResult(null);
                   setRelationships(null);
                   setRestoredAnalysis(null);
@@ -647,7 +703,14 @@ export default function RootCausePage() {
                   setSelectedTarget(nextTargets.includes("Y") ? "Y" : nextTargets[0]);
                   setError("");
                 }}
-                onModelsChange={(nextModels) => setModels(nextModels)}
+                onModelsChange={(nextModels) => {
+                  setModels(nextModels);
+                  setModelListResolved(true);
+                  setRejectedModelIds((current) => current.filter((modelId) => {
+                    const refreshed = nextModels.find((model) => model.model_id === modelId);
+                    return refreshed ? !isModelUsable(refreshed) : true;
+                  }));
+                }}
                 ariaLabel="불량 원인 분석 모델 선택"
               />
             </div>
@@ -656,7 +719,7 @@ export default function RootCausePage() {
               <select
                 id="analysis-target"
                 value={activeTarget}
-                disabled={loading || !modelId}
+                disabled={loading || !modelListResolved}
                 onChange={(event) => setSelectedTarget(event.target.value)}
               >
                 {targetOptions.map((target) => (
@@ -669,7 +732,7 @@ export default function RootCausePage() {
               <button
                 className="button primary"
                 type="button"
-                disabled={!file || !modelId || !selectedModel || loading}
+                disabled={!file || !modelListResolved || loading || (usableModels.length > 0 && !selectedModel)}
                 data-loading={loading}
                 aria-busy={loading}
                 onClick={() => void runAnalysis()}
@@ -680,16 +743,13 @@ export default function RootCausePage() {
                     timeLabel="추론 시간"
                     formattedElapsed={formattedAnalysisElapsed}
                   />
-                ) : "불량 원인 분석"}
+                ) : usableModels.length > 0 ? "불량 원인 분석" : "관계·통계 계산"}
               </button>
             </div>
-            {!models.length && (
+            {modelListResolved && usableModels.length === 0 && (
               <p className="emptyMessage">
-                호환 가능한 학습 모델이 없습니다. 먼저 <a href="/training">모델 학습</a>을 진행해 주세요.
+                사용 가능한 학습 모델이 없습니다. 새 모델을 학습해 주세요.
               </p>
-            )}
-            {modelId && !selectedModel && !loading && (
-              <p className="emptyMessage">이 이력의 모델은 현재 모델 목록에 없습니다. 저장된 분석은 조회할 수 있지만 새 분석은 실행할 수 없습니다.</p>
             )}
             {error && <p className="errorMessage">{error}</p>}
           </section>
@@ -710,7 +770,7 @@ export default function RootCausePage() {
             ))}
           </nav>
 
-          {!result && !commonAnalysis && !reportSnapshot && (
+          {!result && !relationships && !commonAnalysis && !reportSnapshot && (
             <section className="resultCard">
               <p className="emptyMessage">
                 {workspaceTab === "report"
@@ -718,6 +778,41 @@ export default function RootCausePage() {
                   : "예측 결과 또는 분석할 데이터를 먼저 선택해 주세요."}
               </p>
             </section>
+          )}
+
+          {relationships && !result && !commonAnalysis && !reportSnapshot && (
+            <>
+              {workspaceTab === "target" && <>
+                <div className="relationshipToolbar targetFeatureToolbar">
+                  <div><span className="sectionLabel">Feature Group</span><strong>분석 범위</strong></div>
+                  <SegmentedControl
+                    options={[["all", "전체"], ["r", "R"], ["d", "D"], ["config", "Config"]]}
+                    value={rankingGroup}
+                    onChange={(value) => setRankingGroup(value as RankingGroup)}
+                  />
+                </div>
+                <section className="resultCard relationshipSection">
+                  <div className="sectionHeading compact"><div><span className="sectionLabel">Observed Relationship</span><h2>{relationships.target} 데이터 관계 강도</h2></div><p>Pearson · Spearman · p-value · FDR</p></div>
+                  {correlationRankingData.length ? <><RankingChart data={correlationRankingData} /><StatisticalEvidenceTable data={correlationRankingData} /></> : <p className="emptyMessage">선택 Group에서 계산 가능한 관계 데이터가 없습니다.</p>}
+                  <p className="analysisDisclaimer">관계 강도와 통계 검정은 관측 데이터의 연관성을 나타내며 인과관계를 확정하지 않습니다.</p>
+                </section>
+                <TargetRelationshipStatistics statistics={relationships.statistics} target={relationships.target} group={rankingGroup} />
+              </>}
+              {workspaceTab === "relationships" && <>
+                <PathSection
+                  paths={relationships.relationship_paths}
+                  selectedIndex={selectedPath}
+                  onSelect={setSelectedPath}
+                  confidenceCriteria={relationships.confidence_criteria}
+                />
+                <StatisticsSection statistics={relationships.statistics} />
+              </>}
+              {workspaceTab !== "target" && workspaceTab !== "relationships" && (
+                <section className="resultCard">
+                  <p className="emptyMessage">이 화면은 모델 기여도 분석이 필요합니다. 모델 없이 계산한 결과는 관계·통계 탭에서 확인해 주세요.</p>
+                </section>
+              )}
+            </>
           )}
 
           {!result && (commonAnalysis || reportSnapshot) && (

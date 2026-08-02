@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException, UploadFile
 
 import api.routes.data as data_routes
+import src.ml.inference as inference_module
 from src.ml.dataset import prepare_dataset, split_dataset
 from src.ml.inference import (
     get_prediction_model_detail,
@@ -81,6 +82,10 @@ def test_valid_model_is_listed(inference_environment) -> None:
         inference_environment["feature_columns"]
     )
     assert models[0]["available_targets"] == ["Y"]
+    assert models[0]["available"] is True
+    assert models[0]["loadable"] is True
+    assert models[0]["compatibility_status"] == "legacy"
+    assert models[0]["incompatibility_reason"] is None
 
 
 def test_models_api_returns_valid_models(
@@ -98,6 +103,10 @@ def test_models_api_returns_valid_models(
     assert response.success is True
     assert response.models[0].model_id == inference_environment["model_id"]
     assert response.models[0].available_targets == ["Y"]
+    assert response.models[0].available is True
+    assert response.models[0].loadable is True
+    assert response.models[0].compatibility_status == "legacy"
+    assert response.models[0].incompatibility_reason is None
 
 
 def test_model_list_is_sorted_by_created_at_descending(
@@ -143,6 +152,10 @@ def test_model_detail_handles_legacy_missing_optional_metadata(
     assert detail["training_time_seconds"] is None
     assert detail["metrics"]["test"]["mse"] is None
     assert detail["storage_status"] == "available"
+    assert detail["available"] is True
+    assert detail["loadable"] is True
+    assert detail["compatibility_status"] == "legacy"
+    assert detail["incompatibility_reason"] is None
 
 
 def test_model_detail_api_returns_optional_fields(
@@ -162,6 +175,10 @@ def test_model_detail_api_returns_optional_fields(
     assert response.success is True
     assert response.model_id == inference_environment["model_id"]
     assert response.metrics["test"].mse is None
+    assert response.available is True
+    assert response.loadable is True
+    assert response.compatibility_status == "legacy"
+    assert response.incompatibility_reason is None
 
 
 def test_model_detail_api_rejects_missing_model(
@@ -273,7 +290,7 @@ def test_broken_model_metadata_is_skipped(inference_environment) -> None:
     assert any("broken" in warning for warning in warnings)
 
 
-def test_broken_joblib_is_skipped(inference_environment) -> None:
+def test_broken_joblib_is_listed_as_unavailable(inference_environment) -> None:
     model_dir = inference_environment["model_dir"]
     source_metadata = model_dir / (
         f"{inference_environment['model_id']}.json"
@@ -291,8 +308,71 @@ def test_broken_joblib_is_skipped(inference_environment) -> None:
         broken_json.unlink()
         broken_model.unlink()
 
-    assert len(models) == 1
+    assert len(models) == 2
+    broken = next(model for model in models if model["model_id"] == "broken_model")
+    assert broken["available"] is False
+    assert broken["loadable"] is False
+    assert broken["compatibility_status"] == "load_error"
+    assert broken["incompatibility_reason"] == "모델 파일을 불러올 수 없습니다."
     assert any("broken_model" in warning for warning in warnings)
+
+
+def test_missing_xgboost_dependency_is_visible_in_list_and_detail(
+    inference_environment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_dir = inference_environment["model_dir"]
+    source_id = inference_environment["model_id"]
+    dependency_id = "Y_xgboost_dependency_missing"
+    dependency_json = model_dir / f"{dependency_id}.json"
+    dependency_model = model_dir / f"{dependency_id}.joblib"
+    dependency_json.write_text(
+        (model_dir / f"{source_id}.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    dependency_model.write_bytes(
+        (model_dir / f"{source_id}.joblib").read_bytes()
+    )
+    original_load_model = inference_module.load_model
+
+    def load_model_with_missing_dependency(model_path):
+        if Path(model_path).name == dependency_model.name:
+            raise ModuleNotFoundError(
+                "No module named 'xgboost'",
+                name="xgboost",
+            )
+        return original_load_model(model_path)
+
+    monkeypatch.setattr(
+        inference_module,
+        "load_model",
+        load_model_with_missing_dependency,
+    )
+    monkeypatch.setattr(data_routes, "MODEL_DIR", model_dir)
+    try:
+        models, warnings = list_prediction_models(model_dir)
+        detail = data_routes.get_model_detail(dependency_id)
+    finally:
+        dependency_json.unlink()
+        dependency_model.unlink()
+
+    unavailable = next(
+        model for model in models if model["model_id"] == dependency_id
+    )
+    expected_reason = "xgboost가 설치되어 있지 않습니다."
+    assert unavailable["available"] is False
+    assert unavailable["loadable"] is False
+    assert unavailable["compatibility_status"] == "dependency_missing"
+    assert unavailable["incompatibility_reason"] == expected_reason
+    assert any(
+        dependency_id in warning and expected_reason in warning
+        for warning in warnings
+    )
+    assert detail.model_id == dependency_id
+    assert detail.available is False
+    assert detail.loadable is False
+    assert detail.compatibility_status == "dependency_missing"
+    assert detail.incompatibility_reason == expected_reason
 
 
 def test_unknown_model_id_is_rejected(inference_environment) -> None:

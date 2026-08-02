@@ -21,6 +21,8 @@ import type {
   TrainResponse,
   ValidationResponse,
   HistoryList,
+  HistoryResetResponse,
+  HistoryResetSummary,
 } from "@/types/data";
 import { normalizeOverviewAnalysis } from "@/lib/overview";
 import {
@@ -28,6 +30,70 @@ import {
   normalizeExplainResponse,
   normalizeRelationshipResponse,
 } from "@/lib/root-cause";
+
+export const MODEL_UNAVAILABLE_MESSAGE =
+  "선택한 모델을 현재 서버에서 사용할 수 없습니다.\n새 모델을 선택하거나 다시 학습해 주세요.";
+
+export class ApiResponseError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiResponseError";
+    this.status = status;
+  }
+}
+
+function historyResetErrorMessage(status: number): string {
+  if (status === 400) return "초기화 확인값이 올바르지 않습니다.";
+  if (status === 403) return "초기화 권한이 없습니다.";
+  if (status === 409) return "현재 실행 중인 작업이 있어 초기화할 수 없습니다.";
+  if (status === 502 || status === 503) return "초기화 서버에 연결할 수 없습니다.";
+  return "이력 초기화 중 서버 오류가 발생했습니다.";
+}
+
+async function requestHistoryResetApi<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      cache: "no-store",
+      ...init,
+      headers: { Accept: "application/json", ...(init?.headers ?? {}) },
+    });
+  } catch {
+    throw new Error("초기화 서버에 연결할 수 없습니다.");
+  }
+  if (!response.ok) {
+    throw new ApiResponseError(
+      response.status,
+      historyResetErrorMessage(response.status),
+    );
+  }
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new Error("이력 초기화 중 서버 오류가 발생했습니다.");
+  }
+}
+
+export function getHistoryResetSummary(): Promise<HistoryResetSummary> {
+  return requestHistoryResetApi("/api/admin/history/summary");
+}
+
+export function resetAllHistory(): Promise<HistoryResetResponse> {
+  return requestHistoryResetApi("/api/admin/history", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation: "RESET_ALL_HISTORY" }),
+  });
+}
+
+function isModelUnavailableDetail(detail: string): boolean {
+  return /모델|model(?:_id)?|호환|dependency|xgboost/i.test(detail);
+}
 
 export type ApiHealth = {
   status: string;
@@ -112,7 +178,7 @@ async function postCsv<T>(path: string, file: File): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
+    throw new ApiResponseError(response.status, await getErrorMessage(response));
   }
 
   return response.json() as Promise<T>;
@@ -206,7 +272,7 @@ export async function getModelDetail(modelId: string, signal?: AbortSignal): Pro
   }
 
   if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
+    throw new ApiResponseError(response.status, await getErrorMessage(response));
   }
   return response.json() as Promise<ModelDetail>;
 }
@@ -314,12 +380,12 @@ export async function downloadPredictions(
 
 function explanationFormData(
   file: File,
-  modelId: string,
+  modelId: string | null | undefined,
   options: ExplainOptions,
 ): FormData {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("model_id", modelId);
+  if (modelId?.trim()) formData.append("model_id", modelId);
   formData.append("max_rows", String(options.max_rows));
   formData.append("top_n", String(options.top_n));
   formData.append("per_wafer_top_n", String(options.per_wafer_top_n));
@@ -352,7 +418,7 @@ export async function explainCsv(
 
 export async function analyzeRelationships(
   file: File,
-  modelId: string,
+  modelId: string | null,
   options: ExplainOptions,
   correlationMethod: "pearson" | "spearman",
   analysisUnit: "wafer_observed_only" | "lot_aggregated" = "wafer_observed_only",
@@ -378,7 +444,14 @@ export async function analyzeRelationships(
     throw new Error("연관 분석 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
+    const detail = await getErrorMessage(response);
+    if (
+      (response.status === 400 || response.status === 404 || response.status === 422) &&
+      isModelUnavailableDetail(detail)
+    ) {
+      throw new ApiResponseError(response.status, MODEL_UNAVAILABLE_MESSAGE);
+    }
+    throw new ApiResponseError(response.status, detail);
   }
   const payload: unknown = await response.json();
   return normalizeRelationshipResponse(payload);

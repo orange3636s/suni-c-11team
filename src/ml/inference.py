@@ -204,6 +204,79 @@ def load_prediction_model(
     )
 
 
+def _missing_dependency_name(error: BaseException) -> str | None:
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, ModuleNotFoundError):
+            name = getattr(current, "name", None)
+            if isinstance(name, str) and name.strip():
+                return name.strip().split(".", 1)[0]
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _model_availability(
+    model_path: Path,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        _validate_metadata(metadata)
+    except InferenceInputError as exc:
+        return {
+            "available": False,
+            "loadable": False,
+            "compatibility_status": "invalid_metadata",
+            "incompatibility_reason": str(exc),
+        }
+    schema_status = model_schema_status(metadata)
+    if not model_path.is_file():
+        return {
+            "available": False,
+            "loadable": False,
+            "compatibility_status": "model_file_missing",
+            "incompatibility_reason": "모델 파일이 존재하지 않습니다.",
+        }
+    try:
+        model = load_model(model_path)
+    except Exception as exc:
+        dependency = _missing_dependency_name(exc)
+        if dependency:
+            return {
+                "available": False,
+                "loadable": False,
+                "compatibility_status": "dependency_missing",
+                "incompatibility_reason": f"{dependency}가 설치되어 있지 않습니다.",
+            }
+        return {
+            "available": False,
+            "loadable": False,
+            "compatibility_status": "load_error",
+            "incompatibility_reason": "모델 파일을 불러올 수 없습니다.",
+        }
+    if not callable(getattr(model, "predict", None)):
+        return {
+            "available": False,
+            "loadable": False,
+            "compatibility_status": "invalid_model",
+            "incompatibility_reason": "예측 가능한 모델 형식이 아닙니다.",
+        }
+    if schema_status == "incompatible":
+        return {
+            "available": False,
+            "loadable": True,
+            "compatibility_status": "schema_incompatible",
+            "incompatibility_reason": "현재 데이터 스키마와 호환되지 않는 모델입니다.",
+        }
+    return {
+        "available": True,
+        "loadable": True,
+        "compatibility_status": schema_status,
+        "incompatibility_reason": None,
+    }
+
+
 def _delete_staging_paths(root: Path, model_id: str) -> tuple[Path, Path]:
     staging_root = root / MODEL_DELETE_STAGING_DIR
     staging_root.mkdir(exist_ok=True)
@@ -610,17 +683,10 @@ def list_prediction_models(
         is_bundle = metadata_path.name == "metadata.json" and metadata_path.parent != root
         model_id = metadata_path.parent.name if is_bundle else metadata_path.stem
         model_path = metadata_path.parent / "bundle.joblib" if is_bundle else root / f"{model_id}.joblib"
-        if not model_path.is_file():
-            warnings.append(
-                f"{model_id}: 대응하는 joblib 모델 파일이 없습니다."
-            )
-            continue
         try:
             metadata = load_metadata(metadata_path)
             _validate_metadata(metadata)
-            model = load_model(model_path)
-            if not callable(getattr(model, "predict", None)):
-                raise ValueError("예측 가능한 모델이 아닙니다.")
+            availability = _model_availability(model_path, metadata)
             test_metrics = metadata.get("metrics", {}).get("test", {})
             models.append(
                 {
@@ -641,8 +707,13 @@ def list_prediction_models(
                     "selected_final_output": metadata.get("selected_final_output"),
                     "cv_summary": metadata.get("cv_protocol"),
                     "available_targets": _metadata_available_targets(metadata),
+                    **availability,
                 }
             )
+            if not availability["available"]:
+                warnings.append(
+                    f"{model_id}: {availability['incompatibility_reason']}"
+                )
         except Exception as exc:
             logger.warning(
                 "모델 메타데이터 제외: %s",
@@ -720,6 +791,7 @@ def get_prediction_model_detail(
         target_ensemble_configs = normalized_dict(metadata.get("ensemble_config"))
     target_metrics = normalized_dict(metadata.get("target_metrics"))
     available_targets = _metadata_available_targets(metadata)
+    availability = _model_availability(model_path, metadata)
     return {
         "model_id": model_id,
         "model_name": metadata.get("model_name"),
@@ -775,6 +847,7 @@ def get_prediction_model_detail(
         "training_config": normalized_dict(metadata.get("training_config")),
         "model_agreement_summary": normalized_dict(metadata.get("model_agreement_summary")),
         "production_ensemble_retrained": metadata.get("production_ensemble_retrained"),
+        **availability,
     }
 
 
