@@ -425,97 +425,11 @@ class RelationshipAnalysisResponse(BaseModel):
     selection_bias_warnings: list[str] = Field(default_factory=list)
     lot_analysis: dict[str, Any] = Field(default_factory=dict)
     analysis_result: dict[str, Any] | None = None
-    report_snapshot: dict[str, Any] | None = None
     analysis_id: str | None = None
     prediction_id: str | None = None
     history_saved: bool = False
     history_warning: str | None = None
     artifact_available: bool | None = None
-
-
-class ReportExecutiveSummary(BaseModel):
-    total_wafers: int
-    average_predicted_yield: float
-    normal_count: int
-    warning_count: int
-    danger_count: int
-    risk_ratio: float
-    analyzed_rows: int
-    shap_sampling_used: bool
-    sampling_strategy: str
-
-
-class ReportModelInfo(BaseModel):
-    model_id: str
-    target: str
-    model_name: str
-    test_metrics: ModelMetrics
-
-
-class ReportFinding(BaseModel):
-    severity: str
-    title: str
-    description: str
-    evidence: str
-
-
-class ReportRiskWafer(BaseModel):
-    identifier: Any
-    predicted_value: float
-    risk_level: str | None
-    actual_value: float | None = None
-    absolute_error: float | None = None
-    top_harmful_features: list[str]
-    top_step: str | None = None
-    top_parameter_type: str | None = None
-
-
-class ReportLotSummary(BaseModel):
-    lot_id: str
-    wafer_count: int
-    average_predicted_yield: float
-    danger_count: int
-    warning_count: int
-    normal_count: int
-    danger_ratio: float
-    top_harmful_feature: str | None = None
-    top_harmful_step: str | None = None
-
-
-class ReportRecommendation(BaseModel):
-    priority: str
-    title: str
-    description: str
-
-
-class ReportParameterTypeSummary(ParameterTypeSummaryItem):
-    ratio: float | None
-
-
-class ReportResponse(BaseModel):
-    success: bool = True
-    report_id: str
-    created_at: str
-    filename: str
-    model: ReportModelInfo
-    executive_summary: ReportExecutiveSummary
-    key_findings: list[ReportFinding]
-    top_risk_wafers: list[ReportRiskWafer]
-    lot_summary: list[ReportLotSummary]
-    top_features: list[GlobalImportanceItem]
-    top_steps: list[StepSummaryItem]
-    parameter_type_summary: list[ReportParameterTypeSummary]
-    recommendations: list[ReportRecommendation]
-    model_quality_warnings: list[str] = Field(default_factory=list)
-    methodology_notes: list[str] = Field(default_factory=list)
-    explanation_method: str
-    is_fallback: bool
-    warnings: list[str] = Field(default_factory=list)
-    analysis_id: str | None = None
-    snapshot_metadata: dict[str, Any] | None = None
-    lot_analysis: dict[str, Any] = Field(default_factory=dict)
-    target_analysis: dict[str, Any] = Field(default_factory=dict)
-    relationship_analysis: dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalyzeModelInfo(BaseModel):
@@ -552,12 +466,6 @@ class AutomationMessage(BaseModel):
     top_cause: str
 
 
-class AnalyzeReportReference(BaseModel):
-    included: bool
-    report_id: str | None
-    download_endpoint: str | None
-
-
 class AnalyzeResponse(BaseModel):
     success: bool = True
     analysis_id: str
@@ -567,11 +475,10 @@ class AnalyzeResponse(BaseModel):
     summary: AnalyzeSummary
     alert: AnalyzeAlert
     automation_message: AutomationMessage
-    top_findings: list[ReportFinding]
-    top_risk_wafers: list[ReportRiskWafer]
+    top_findings: list[dict[str, Any]]
+    top_risk_wafers: list[dict[str, Any]]
     top_features: list[GlobalImportanceItem]
     top_steps: list[StepSummaryItem]
-    parameter_type_summary: list[ReportParameterTypeSummary]
+    parameter_type_summary: list[dict[str, Any]]
     model_quality_warnings: list[str] = Field(default_factory=list)
-    report: AnalyzeReportReference
     warnings: list[str] = Field(default_factory=list)

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import shutil
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -71,7 +72,10 @@ def model_output_dir():
     output_dir.mkdir()
     yield output_dir
     for generated_file in output_dir.iterdir():
-        generated_file.unlink()
+        if generated_file.is_dir():
+            shutil.rmtree(generated_file)
+        else:
+            generated_file.unlink()
     output_dir.rmdir()
     if not any(temporary_root.iterdir()):
         temporary_root.rmdir()
@@ -80,6 +84,17 @@ def model_output_dir():
 def _as_upload(dataframe: pd.DataFrame, filename: str = "training.csv") -> UploadFile:
     content = dataframe.to_csv(index=False).encode("utf-8")
     return UploadFile(file=BytesIO(content), filename=filename)
+
+
+def _automatic_targets(dataframe: pd.DataFrame) -> pd.DataFrame:
+    frame = dataframe.copy()
+    frame["Lot_ID"] = frame["Lot_Wafer_ID"].str.extract(r"^(LOT\d+)", expand=False)
+    total_failure = np.clip(100.0 - pd.to_numeric(frame["Y"], errors="coerce"), 0.0, None)
+    weights = np.asarray([0.10, 0.15, 0.20, 0.25, 0.30])
+    for index, weight in enumerate(weights, 1):
+        frame[f"Y{index}"] = total_failure * weight
+    frame["Step1_Config"] = frame.pop("Step1_EQ")
+    return frame
 
 
 def test_y_target_training_succeeds(prepared_training_data) -> None:
@@ -455,14 +470,14 @@ def test_train_api_response_is_json_serializable(
 
     response = asyncio.run(
         data_routes.train_model(
-            _as_upload(training_dataframe),
+            _as_upload(_automatic_targets(training_dataframe)),
             target="Y",
         )
     )
     serialized = response.model_dump_json()
 
     assert response.success is True
-    assert response.target == "Y"
+    assert response.target == "Y1~Y5"
     assert response.split.group_split_used is True
     assert json.loads(serialized)["metrics"]["test"]["rmse"] is not None
     assert (model_output_dir / response.artifacts.model_file).exists()
@@ -470,9 +485,9 @@ def test_train_api_response_is_json_serializable(
     assert metadata_path.exists()
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["dataset_split"] == {
-        "train": 0.64,
-        "validation": 0.16,
-        "test": 0.2,
+        "train": 0.7,
+        "validation": 0.15,
+        "test": 0.15,
     }
     assert metadata["dataset_rows"] == {
         "train": response.split.train_rows,
@@ -489,15 +504,13 @@ def test_train_api_succeeds_with_fixture_csv(
 ) -> None:
     fixture_path = Path(__file__).parent / "fixtures" / "training_sample.csv"
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_output_dir)
-    upload = UploadFile(
-        file=fixture_path.open("rb"),
-        filename=fixture_path.name,
-    )
+    fixture_frame = _automatic_targets(pd.read_csv(fixture_path))
+    upload = _as_upload(fixture_frame, fixture_path.name)
 
     response = asyncio.run(data_routes.train_model(upload, target="Y"))
 
     assert response.success is True
-    assert response.target == "Y"
+    assert response.target == "Y1~Y5"
     assert response.split.train_rows > 0
     assert response.split.validation_rows > 0
     assert response.split.test_rows > 0
@@ -523,17 +536,17 @@ def test_unexpected_training_error_returns_json_detail(
 
     monkeypatch.setattr(
         data_routes,
-        "train_regression_models",
+        "train_hybrid_multi_y",
         raise_unexpected_error,
     )
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(
             data_routes.train_model(
-                _as_upload(training_dataframe),
+                _as_upload(_automatic_targets(training_dataframe)),
                 target="Y",
             )
         )
 
     assert error.value.status_code == 500
-    assert error.value.detail == "모델 학습 중 서버 내부 오류가 발생했습니다."
+    assert "Hybrid Multi-Y" in error.value.detail

@@ -136,7 +136,7 @@ export default function HistoryResetCard({ onResetComplete }: HistoryResetCardPr
 
     onResetComplete();
     setNotice(
-      `모델 학습, 수율 예측, 불량 원인 분석 이력이 모두 초기화되었습니다. ${deletedMessage(response)}를 삭제했습니다.`,
+      `모델 학습, 수율 예측, 원인 분석 이력이 모두 초기화되었습니다. ${deletedMessage(response)}를 삭제했습니다.`,
     );
     setSummary(null);
     setConfirmation("");
@@ -155,7 +155,7 @@ export default function HistoryResetCard({ onResetComplete }: HistoryResetCardPr
           <span className="sectionLabel">Data management</span>
           <h2 id="history-reset-card-title">데이터 및 이력 초기화</h2>
           <p>
-            서버에 저장된 모델 학습·수율 예측·불량 원인 분석 이력을 모두 삭제합니다.
+            서버에 저장된 모델 학습·수율 예측·원인 분석 이력을 모두 삭제합니다.
             이 작업은 되돌릴 수 없습니다.
           </p>
         </div>
@@ -208,8 +208,8 @@ export default function HistoryResetCard({ onResetComplete }: HistoryResetCardPr
             <ul className="historyResetSummary">
               <li>저장 모델 및 학습 이력 {summary.model_count.toLocaleString("ko-KR")}개</li>
               <li>수율 예측 이력 {summary.prediction_history_count.toLocaleString("ko-KR")}개</li>
-              <li>불량 원인 분석 이력 {summary.analysis_history_count.toLocaleString("ko-KR")}개</li>
-              <li>연결된 상세 결과와 분석 보고서</li>
+              <li>원인 분석 이력 {summary.analysis_history_count.toLocaleString("ko-KR")}개</li>
+              <li>연결된 상세 분석 결과</li>
             </ul>
             <p id="history-reset-warning" className="historyResetWarning">
               이 작업은 되돌릴 수 없습니다.

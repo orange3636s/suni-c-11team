@@ -107,7 +107,7 @@ export default function AnalysisHistorySelector({
         ) : filtered.length === 0 ? (
           <div className="selectorState">검색 조건에 맞는 분석 이력이 없습니다.</div>
         ) : (
-          <div className="analysisHistoryOptions" role="listbox" aria-label="불량 원인 분석 이력">
+          <div className="analysisHistoryOptions" role="listbox" aria-label="원인 분석 이력">
             {filtered.map((item) => {
               const presentation = statusPresentation(item.status);
               const isSelected = item.analysis_id === selectedAnalysisId;

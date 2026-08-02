@@ -18,7 +18,6 @@ import type {
   ModelDetail,
   ModelDetailMetrics,
   ModelSummary,
-  TargetEnsembleConfig,
 } from "@/types/data";
 
 type ModelSort =
@@ -61,15 +60,6 @@ function normalizedMetrics(value: unknown): Record<string, ModelDetailMetrics> {
   const source = recordValue(value);
   return Object.fromEntries(
     Object.entries(source).filter((entry): entry is [string, ModelDetailMetrics] =>
-      Boolean(entry[1]) && typeof entry[1] === "object" && !Array.isArray(entry[1]),
-    ),
-  );
-}
-
-function normalizedTargetConfigs(value: unknown): Record<string, TargetEnsembleConfig> {
-  const source = recordValue(value);
-  return Object.fromEntries(
-    Object.entries(source).filter((entry): entry is [string, TargetEnsembleConfig] =>
       Boolean(entry[1]) && typeof entry[1] === "object" && !Array.isArray(entry[1]),
     ),
   );
@@ -359,10 +349,6 @@ export default function ModelHistoryPanel() {
   }, [models, search, sort]);
 
   const safeMetrics = useMemo(() => normalizedMetrics(detail?.metrics), [detail]);
-  const targetEnsembleConfigs = useMemo(
-    () => normalizedTargetConfigs(detail?.target_ensemble_configs),
-    [detail],
-  );
   const selectedMetrics = useMemo(
     () =>
       (["train", "validation", "test"] as const).map((name) => ({
@@ -530,20 +516,7 @@ export default function ModelHistoryPanel() {
                     <DetailItem label="Model File" value={displayValue(detail.model_file)} />
                     <DetailItem label="저장 상태" value={detail.storage_status === "available" ? "저장됨" : "모델 파일 없음"} />
                     <DetailItem label="Champion" value={detail.champion === null ? "미기록" : detail.champion ? "Yes" : "No"} />
-                    <DetailItem label="Ensemble" value={detail.ensemble_enabled === null ? "Single Model" : detail.ensemble_enabled ? "사용" : "미사용"} />
-                    <DetailItem label="Ensemble Size" value={displayValue(detail.ensemble_mode)} />
-                    <DetailItem label="Ensemble Method" value={displayValue(detail.ensemble_method)} />
-                    <DetailItem label="Production Retrained" value={detail.production_ensemble_retrained === null ? "미기록" : detail.production_ensemble_retrained ? "완료" : "미완료"} />
                   </div>
-
-                  {Object.keys(targetEnsembleConfigs).length > 0 && (
-                    <div className="tableWrap modelMetricsTable">
-                      <table><thead><tr><th>Target</th><th>유형</th><th>Method</th><th>Base Models</th><th>Weight</th><th>Single 대비 개선</th></tr></thead>
-                      <tbody>{Object.entries(targetEnsembleConfigs).map(([target, config]) => (
-                        <tr key={target}><th>{target}</th><td>{config.selected_type ?? "-"}</td><td>{config.method ?? "-"}</td><td>{Array.isArray(config.base_models) ? config.base_models.join(" / ") : "-"}</td><td>{Object.entries(recordValue(config.weights)).map(([name, weight]) => `${name} ${metricValue(weight)}`).join(" · ") || "-"}</td><td>{typeof config.improvement_over_single?.rmse_relative === "number" && Number.isFinite(config.improvement_over_single.rmse_relative) ? `${(config.improvement_over_single.rmse_relative * 100).toFixed(2)}%` : "-"}</td></tr>
-                      ))}</tbody></table>
-                    </div>
-                  )}
 
                   <div className="tableWrap modelMetricsTable">
                     <table>

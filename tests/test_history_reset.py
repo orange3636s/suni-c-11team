@@ -6,7 +6,6 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -26,7 +25,6 @@ from src.runtime.store import RuntimeStore
 from src.ml.model_io import save_model_bundle
 
 
-ADMIN_SECRET = "test-admin-reset-secret-with-enough-entropy"
 RESET_BODY = {"confirmation": "RESET_ALL_HISTORY"}
 ACTIVE_JOB_MESSAGE = (
     "현재 실행 중인 작업이 있습니다. 작업 완료 후 다시 시도해 주세요."
@@ -88,14 +86,8 @@ def reset_environment(tmp_path: Path) -> ResetEnvironment:
 def _configure_api(
     monkeypatch: pytest.MonkeyPatch,
     environment: ResetEnvironment,
-    *,
-    configured_secret: str | None = ADMIN_SECRET,
 ) -> None:
-    monkeypatch.setattr(
-        admin_routes,
-        "settings",
-        SimpleNamespace(admin_reset_secret=configured_secret),
-    )
+    monkeypatch.setattr(admin_routes, "_RESET_LIMITER", admin_routes.ResetRateLimiter())
     monkeypatch.setattr(
         admin_routes,
         "get_history_reset_service",
@@ -114,7 +106,7 @@ def _asgi_request(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
-    secret: str | None = ADMIN_SECRET,
+    secret: str | None = None,
 ) -> tuple[int, Any]:
     body = (
         json.dumps(json_body, ensure_ascii=False).encode("utf-8")
@@ -276,23 +268,19 @@ def _add_analysis(
                 "schema_version": "v2",
                 "row_count": 1,
                 "lot_count": 1,
-                "available_targets_json": '["Y"]',
-                "default_target": "Y",
-                "report_snapshot_available": 1,
+                "available_targets_json": '["Y1", "Y2", "Y3", "Y4", "Y5"]',
+                "default_target": "Y1",
             },
             summary={"critical_count": 1},
             methodology={"analysis_unit": "wafer"},
-            artifact={
-                "analysis_result": {"risk": {"critical_count": 1}},
-                "report_snapshot": {"report_version": "v1"},
-            },
+            artifact={"analysis_result": {"risk": {"critical_count": 1}}},
             warnings=[],
         )
     return artifact
 
 
 def _delete_history() -> tuple[int, Any]:
-    return _asgi_request("DELETE", "/api/admin/history", json_body=RESET_BODY)
+    return _asgi_request("POST", "/api/admin/history/reset", json_body=RESET_BODY)
 
 
 def test_full_reset_deletes_all_scoped_data_and_empty_apis(
@@ -309,7 +297,7 @@ def test_full_reset_deletes_all_scoped_data_and_empty_apis(
     source_csv.write_text("Y\n95\n", encoding="utf-8")
 
     summary_status, summary = _asgi_request(
-        "GET", "/api/admin/history/summary"
+        "GET", "/api/admin/history/reset/summary"
     )
     assert summary_status == 200
     assert summary == {
@@ -319,7 +307,6 @@ def test_full_reset_deletes_all_scoped_data_and_empty_apis(
         "model_artifact_count": 6,
         "prediction_artifact_count": 1,
         "analysis_artifact_count": 1,
-        "report_snapshot_count": 1,
     }
 
     status_code, payload = _delete_history()
@@ -334,7 +321,6 @@ def test_full_reset_deletes_all_scoped_data_and_empty_apis(
             "prediction_artifacts": 1,
             "analysis_histories": 1,
             "analysis_artifacts": 1,
-            "report_snapshots": 1,
         },
         "preserved": {
             "alert_logs": True,
@@ -422,7 +408,6 @@ def test_real_model_and_histories_are_visible_then_empty_after_reset(
         "prediction_artifacts": 1,
         "analysis_histories": 1,
         "analysis_artifacts": 1,
-        "report_snapshots": 1,
     }
 
     after_models_status, after_models = _asgi_request(
@@ -460,7 +445,7 @@ def test_missing_confirmation_returns_400_without_mutation(
     bundle, metadata = _write_flat_model(reset_environment)
     _configure_api(monkeypatch, reset_environment)
 
-    status_code, payload = _asgi_request("DELETE", "/api/admin/history")
+    status_code, payload = _asgi_request("POST", "/api/admin/history/reset")
 
     assert status_code == 400
     assert payload["detail"] == "초기화 확인값이 올바르지 않습니다."
@@ -475,8 +460,8 @@ def test_wrong_confirmation_returns_400_without_mutation(
     _configure_api(monkeypatch, reset_environment)
 
     status_code, payload = _asgi_request(
-        "DELETE",
-        "/api/admin/history",
+        "POST",
+        "/api/admin/history/reset",
         json_body={"confirmation": "WRONG"},
     )
 
@@ -485,7 +470,7 @@ def test_wrong_confirmation_returns_400_without_mutation(
     assert bundle.is_file() and metadata.is_file()
 
 
-def test_missing_secret_header_returns_403_without_mutation(
+def test_reset_requires_no_secret_header(
     reset_environment: ResetEnvironment,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -493,45 +478,34 @@ def test_missing_secret_header_returns_403_without_mutation(
     _configure_api(monkeypatch, reset_environment)
 
     status_code, payload = _asgi_request(
-        "DELETE", "/api/admin/history", json_body=RESET_BODY, secret=None
+        "POST", "/api/admin/history/reset", json_body=RESET_BODY, secret=None
     )
 
-    assert status_code == 403
-    assert payload["detail"] == "초기화 권한이 없습니다."
-    assert bundle.is_file()
+    assert status_code == 200
+    assert payload["success"] is True
+    assert not bundle.exists()
 
 
-def test_unconfigured_server_secret_returns_403_without_mutation(
+def test_same_ip_rate_limit_returns_429(
     reset_environment: ResetEnvironment,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle, _ = _write_flat_model(reset_environment)
-    _configure_api(monkeypatch, reset_environment, configured_secret=None)
-
-    status_code, payload = _delete_history()
-
-    assert status_code == 403
-    assert payload["detail"] == "초기화 권한이 없습니다."
-    assert bundle.is_file()
-
-
-def test_mismatched_secret_returns_403_without_mutation(
-    reset_environment: ResetEnvironment,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bundle, _ = _write_flat_model(reset_environment)
     _configure_api(monkeypatch, reset_environment)
+    for _ in range(3):
+        status_code, _ = _asgi_request(
+            "POST",
+            "/api/admin/history/reset",
+            json_body={"confirmation": "WRONG"},
+        )
+        assert status_code == 400
 
     status_code, payload = _asgi_request(
-        "DELETE",
-        "/api/admin/history",
+        "POST",
+        "/api/admin/history/reset",
         json_body=RESET_BODY,
-        secret="wrong-secret",
     )
-
-    assert status_code == 403
-    assert payload["detail"] == "초기화 권한이 없습니다."
-    assert bundle.is_file()
+    assert status_code == 429
+    assert "너무 많" in payload["detail"]
 
 
 def test_active_training_returns_409_without_mutation(
@@ -619,7 +593,7 @@ def test_prediction_only_reset(
     assert not artifact.exists()
 
 
-def test_analysis_only_reset_includes_report_snapshot(
+def test_analysis_only_reset(
     reset_environment: ResetEnvironment,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -632,7 +606,6 @@ def test_analysis_only_reset_includes_report_snapshot(
     assert payload["deleted"]["models"] == 0
     assert payload["deleted"]["analysis_histories"] == 1
     assert payload["deleted"]["analysis_artifacts"] == 1
-    assert payload["deleted"]["report_snapshots"] == 1
     assert reset_environment.store.list_analyses({})["total"] == 0
     assert not artifact.exists()
 
@@ -848,7 +821,6 @@ def test_database_failure_returns_500_and_restores_files_and_rows(
     assert reset_environment.store.history_reset_counts() == {
         "prediction_history_count": 1,
         "analysis_history_count": 1,
-        "report_snapshot_count": 1,
     }
     assert not (reset_environment.model_dir / ".history-reset").exists()
     assert not (reset_environment.runtime_dir / ".history-reset").exists()

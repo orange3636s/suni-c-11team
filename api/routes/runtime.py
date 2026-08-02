@@ -67,7 +67,8 @@ def patch_alert(alert_id: str, patch: AlertPatch) -> dict[str, Any]:
     return alert
 
 
-@router.get("/predictions/history")
+# Legacy history helpers intentionally remain private for migration support;
+# they are not registered as user-facing HTTP endpoints.
 def get_prediction_history(
     model_id: str | None = None,
     filename: str | None = None,
@@ -85,7 +86,6 @@ def get_prediction_history(
     ))
 
 
-@router.get("/predictions/history/{prediction_id}")
 def get_prediction_history_detail(prediction_id: str) -> dict[str, Any]:
     detail = get_runtime_store().get_prediction(prediction_id)
     if detail is None:
@@ -93,14 +93,12 @@ def get_prediction_history_detail(prediction_id: str) -> dict[str, Any]:
     return detail
 
 
-@router.delete("/predictions/history/{prediction_id}")
 def delete_prediction_history(prediction_id: str) -> dict[str, Any]:
     if not get_runtime_store().delete_prediction(prediction_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="예측 이력을 찾을 수 없습니다.")
     return {"success": True, "prediction_id": prediction_id, "linked_analyses_preserved": True}
 
 
-@router.get("/analyses/history", response_model=AnalysisHistoryListResponse)
 def get_analysis_history(
     model_id: str | None = None,
     prediction_id: str | None = None,
@@ -121,7 +119,6 @@ def get_analysis_history(
     ))
 
 
-@router.get("/analyses/history/{analysis_id}")
 def get_analysis_history_detail(analysis_id: str) -> dict[str, Any]:
     detail = get_runtime_store().get_analysis(analysis_id)
     if detail is None:
@@ -129,7 +126,6 @@ def get_analysis_history_detail(analysis_id: str) -> dict[str, Any]:
     return _normalize_analysis_history_detail(detail)
 
 
-@router.delete("/analyses/history/{analysis_id}")
 def delete_analysis_history(analysis_id: str) -> dict[str, Any]:
     if not get_runtime_store().delete_analysis(analysis_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="분석 이력을 찾을 수 없습니다.")
@@ -156,21 +152,19 @@ def _number(value: Any) -> float | None:
 
 
 def _normalize_analysis_history_detail(detail: dict[str, Any]) -> dict[str, Any]:
-    """Return modern nullable-safe aliases without rewriting stored snapshots."""
-    artifact = _record(detail.get("artifact"))
+    """Return analysis data without exposing removed Report snapshots."""
+    artifact = dict(_record(detail.get("artifact")))
+    artifact.pop("report_snapshot", None)
     if not artifact:
         return detail
-    response = _record(artifact.get("response"))
-    analysis = _record(artifact.get("analysis_result")) or _record(
+    response = dict(_record(artifact.get("response")))
+    response.pop("report_snapshot", None)
+    analysis = dict(_record(artifact.get("analysis_result")) or _record(
         response.get("analysis_result")
-    )
-    report = _record(artifact.get("report_snapshot")) or _record(
-        response.get("report_snapshot")
-    )
-    if response or analysis or report:
-        response = dict(response)
+    ))
+    analysis.pop("report", None)
+    if response or analysis:
         response["analysis_result"] = analysis or None
-        response["report_snapshot"] = report or None
         lot_analysis = (
             _record(response.get("lot_analysis"))
             or _record(artifact.get("lot_analysis"))
@@ -255,8 +249,6 @@ def _normalize_analysis_history_detail(detail: dict[str, Any]) -> dict[str, Any]
         artifact = {**artifact, "response": response}
         if analysis:
             artifact["analysis_result"] = analysis
-        if report:
-            artifact["report_snapshot"] = report
         if lot_analysis:
             artifact["lot_analysis"] = lot_analysis
     return {**detail, "artifact": artifact}
@@ -319,7 +311,7 @@ def _empty_overview() -> dict[str, Any]:
     }
     model_metrics = {"r2": None, "rmse": None, "mae": None}
     multi_y = {
-        "direct_y_mean": None, "derived_y_mean": None, "hybrid_y_mean": None,
+        "predicted_y_mean": None,
         "failure_rates": {}, "fail_bit_counts": {},
     }
     causes = {
@@ -342,7 +334,7 @@ def _empty_overview() -> dict[str, Any]:
         "causes": causes, "risk_lots": [], "risk_wafers": [], "pareto": [],
         "relationships": [], "warnings": [], "availability": availability,
         "source_type": "empty", "source_id": None, "created_at": None,
-        "source_label": "저장된 불량 원인 분석 결과 없음", "filename": None,
+        "source_label": "저장된 원인 분석 결과 없음", "filename": None,
         "model": None, "data_quality": {},
     }
 
@@ -363,8 +355,6 @@ def _overview_analysis(
         analysis = artifact
 
     explanation = _record(response.get("explanation"))
-    report = _record(artifact.get("report_snapshot")) or _record(response.get("report_snapshot"))
-    report_summary = _record(report.get("executive_summary"))
     stored_summary = _record(metadata.get("summary"))
     model = _record(analysis.get("model")) or _record(explanation.get("model"))
     metrics = _record(analysis.get("metrics"))
@@ -373,17 +363,15 @@ def _overview_analysis(
     multi_y_source = _record(analysis.get("multi_y"))
     importance = _record(analysis.get("feature_importance"))
 
-    risk_lots = _records(analysis.get("lot_summary")) or _records(report.get("lot_summary"))
-    risk_wafers = _records(analysis.get("risk_wafers")) or _records(report.get("top_risk_wafers"))
+    risk_lots = _records(analysis.get("lot_summary"))
+    risk_wafers = _records(analysis.get("risk_wafers"))
     top_features = (
         _records(importance.get("global"))
-        or _records(report.get("top_features"))
         or _records(explanation.get("global_importance"))
     )
     top_steps = (
         _records(importance.get("steps"))
         or _records(importance.get("top_steps"))
-        or _records(report.get("top_steps"))
         or _records(explanation.get("step_summary"))
     )
     top_equipment = (
@@ -440,28 +428,22 @@ def _overview_analysis(
     summary = {
         "wafer_count": _first_integer(
             metadata.get("row_count"), _record(analysis.get("dataset")).get("row_count"),
-            report_summary.get("total_wafers"),
         ),
         "lot_count": _first_integer(metadata.get("lot_count")),
         "average_predicted_yield": _first_number(
             stored_summary.get("average_predicted_yield"),
-            report_summary.get("average_predicted_yield"),
         ),
         "minimum_predicted_yield": _first_number(
             stored_summary.get("minimum_predicted_yield"),
-            report_summary.get("minimum_predicted_yield"),
         ),
         "critical_count": _first_integer(
             risk.get("critical_count"), stored_summary.get("critical_count"),
-            report_summary.get("danger_count"),
         ),
         "warning_count": _first_integer(
             risk.get("warning_count"), stored_summary.get("warning_count"),
-            report_summary.get("warning_count"),
         ),
         "normal_count": _first_integer(
             risk.get("normal_count"), stored_summary.get("normal_count"),
-            report_summary.get("normal_count"),
         ),
         "low_confidence_count": _first_integer(
             confidence.get("low_confidence_count"), stored_summary.get("low_confidence_count"),
@@ -474,14 +456,10 @@ def _overview_analysis(
         "mae": _metric_value(metrics, "mae"),
     }
     multi_y = {
-        "direct_y_mean": _first_number(
-            multi_y_source.get("average_direct_y"), stored_summary.get("direct_y_mean"),
-        ),
-        "derived_y_mean": _first_number(
-            multi_y_source.get("average_derived_y"), stored_summary.get("derived_y_mean"),
-        ),
-        "hybrid_y_mean": _first_number(
-            multi_y_source.get("average_ensemble_y"), stored_summary.get("hybrid_y_mean"),
+        "predicted_y_mean": _first_number(
+            multi_y_source.get("average_predicted_y"),
+            stored_summary.get("predicted_y_mean"),
+            stored_summary.get("average_predicted_yield"),
         ),
         "failure_rates": failure_rates or _number_map(stored_summary.get("failure_rates")),
         "fail_bit_counts": fail_bit_counts or _number_map(stored_summary.get("fail_bit_counts")),
@@ -547,15 +525,14 @@ def _overview_analysis(
 
 
 @router.get("/dashboard/overview", response_model=AnalysisOverviewResponse)
-def get_dashboard_overview(analysis_id: str | None = None) -> dict[str, Any]:
+def get_dashboard_overview() -> dict[str, Any]:
     store = get_runtime_store()
-    if analysis_id:
-        analysis = store.get_analysis(analysis_id)
-        if analysis is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="선택한 분석 이력을 찾을 수 없습니다.",
-            )
-        return _overview_analysis(analysis, explicitly_selected=True)
-    analysis = store.latest_analysis_for_overview()
-    return _overview_analysis(analysis) if analysis else _empty_overview()
+    snapshot = store.latest_analysis_snapshot()
+    if snapshot is not None:
+        # Snapshot is complete overview material and never needs a model/artifact load.
+        overview = _empty_overview()
+        overview["has_analysis"] = True
+        overview["source"] = {**overview["source"], "generated_at": snapshot.get("analyzed_at"), "model_id": snapshot.get("active_model_id"), "dataset_version": snapshot.get("dataset_version"), "stale": bool(snapshot.get("stale")), "stale_reason": snapshot.get("stale_reason")}
+        overview["analysis"] = snapshot
+        return overview
+    return _empty_overview()

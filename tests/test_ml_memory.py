@@ -8,7 +8,6 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 from sklearn.dummy import DummyRegressor
-from sklearn.preprocessing import OrdinalEncoder
 
 import src.ml.inference as inference_module
 from src.ml.dataset import prepare_dataset
@@ -17,12 +16,12 @@ from src.ml.hybrid import (
     ModelArtifactRef,
     ModelStagingDirectory,
     TRAINING_TARGET_ORDER,
+    AutoFeaturePreprocessor,
     _splitter,
 )
 from src.ml.inference import get_prediction_model_detail, list_prediction_models
 from src.ml.memory_usage import memory_snapshot
 from src.ml.model_io import save_model_bundle
-from src.ml.training import _build_preprocessor
 
 
 @pytest.fixture
@@ -65,43 +64,40 @@ def test_prepared_numeric_features_and_target_use_float32() -> None:
     assert prepared.features["Step1_D1"].dtype == np.float32
 
 
-def test_categorical_preprocessor_is_bounded_ordinal_float32() -> None:
-    prepared = prepare_dataset(_legacy_frame())
-    preprocessor = _build_preprocessor(
-        prepared,
-        missing_strategy="median",
-        outlier_strategy="iqr",
-    )
-    preprocessor.fit(prepared.features, prepared.target)
-    encoder = preprocessor.named_transformers_["categorical"].named_steps["encoder"]
-    unknown = prepared.features.iloc[:2].copy()
-    unknown["Step1_EQ"] = "NEVER_SEEN"
+def test_categorical_preprocessor_is_frequency_encoded_float32() -> None:
+    features = pd.DataFrame({
+        "Step1_R1": np.arange(10, dtype=float),
+        "Step1_Config": ["A"] * 7 + ["B"] * 3,
+    })
+    preprocessor = AutoFeaturePreprocessor(
+        response_columns=["Step1_R1"],
+        defect_columns=[],
+        categorical_columns=["Step1_Config"],
+    ).fit(features)
+    unknown = features.iloc[:2].copy()
+    unknown["Step1_Config"] = "NEVER_SEEN"
     transformed = preprocessor.transform(unknown)
 
-    assert isinstance(encoder, OrdinalEncoder)
-    assert encoder.handle_unknown == "use_encoded_value"
-    assert encoder.unknown_value == -1
+    assert preprocessor.frequency_mappings_["Step1_Config"] == {"A": 0.7, "B": 0.3}
+    assert transformed[:, 1].tolist() == [0.0, 0.0]
     assert transformed.dtype == np.float32
-    assert transformed.shape[1] <= len(prepared.feature_columns)
+    assert transformed.shape[1] == 2
 
 
-def test_hybrid_splitter_never_exceeds_three_folds() -> None:
+def test_hybrid_splitter_is_fixed_holdout_not_kfold() -> None:
     features = pd.DataFrame({"Step1_R1": np.arange(30, dtype=np.float32)})
     groups = pd.Series([f"LOT{index // 3:02d}" for index in range(30)])
 
     splits, method = _splitter(features, groups)
 
-    assert method == "group_3_fold"
-    assert len(splits) == 3
-    assert TRAINING_TARGET_ORDER == [
-        *[f"Y{index}" for index in range(1, 11)],
-        "Y",
-    ]
+    assert method in {"stratified_group_holdout", "group_shuffle_fallback"}
+    assert len(splits) == 2
+    assert TRAINING_TARGET_ORDER == [f"Y{index}" for index in range(1, 6)]
 
 
 def test_disk_backed_target_model_releases_staging() -> None:
     staging = ModelStagingDirectory()
-    artifact = staging.path / "target_Y.joblib"
+    artifact = staging.path / "target_Y1.joblib"
     estimator = DummyRegressor(strategy="mean").fit(
         np.asarray([[0.0], [1.0]], dtype=np.float32),
         np.asarray([2.0, 4.0], dtype=np.float32),
@@ -126,7 +122,7 @@ def test_next_training_cleans_only_allowlisted_stale_staging(
     root = memory_tmp_path / ".ml-training-staging"
     stale = root / ("a" * 32)
     stale.mkdir(parents=True)
-    (stale / "target_Y.joblib").write_bytes(b"interrupted")
+    (stale / "target_Y1.joblib").write_bytes(b"interrupted")
     unsafe = root / ("b" * 32)
     unsafe.mkdir()
     (unsafe / "keep.csv").write_text("preserve", encoding="utf-8")

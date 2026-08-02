@@ -1,4 +1,4 @@
-"""Shared source-of-truth for interactive analysis and operational reports."""
+"""Shared source-of-truth for interactive cause analysis."""
 
 from __future__ import annotations
 
@@ -16,8 +16,7 @@ from src.ml.inference import LoadedPredictionModel, PredictionResult
 from src.ml.model_io import to_json_safe
 
 
-ANALYSIS_RESULT_VERSION = "hybrid_multi_y_v1"
-REPORT_VERSION = "operational_report_v2"
+ANALYSIS_RESULT_VERSION = "y1_y5_cause_analysis_v2"
 
 
 def dataset_fingerprint(dataframe: pd.DataFrame) -> str:
@@ -40,8 +39,7 @@ def compose_multi_y_predictions(
     predictions: dict[str, list[float]],
     ensemble_weight: float | None,
 ) -> dict[str, Any]:
-    """Compose only from actual model outputs; never invent missing targets or alpha."""
-    direct = predictions.get("Y")
+    """Compose final Y only from actual Y1~Y5 model outputs."""
     failure_rates = {key: predictions[key] for key in [f"Y{i}" for i in range(1, 6)] if key in predictions}
     fail_bit_counts = {key: predictions[key] for key in [f"Y{i}" for i in range(6, 11)] if key in predictions}
     row_count = len(next(iter(predictions.values()))) if predictions else 0
@@ -53,29 +51,13 @@ def compose_multi_y_predictions(
             100.0
             - np.sum(np.asarray([failure_rates[f"Y{i}"] for i in range(1, 6)]), axis=0)
         ).astype(float).tolist()
-    alpha = None
-    if ensemble_weight is not None:
-        numeric_alpha = float(ensemble_weight)
-        if not 0.0 <= numeric_alpha <= 1.0:
-            raise ValueError("저장된 Ensemble weight α는 0과 1 사이여야 합니다.")
-        alpha = numeric_alpha
-    ensemble = None
-    if direct is not None and derived is not None and alpha is not None:
-        ensemble = (
-            alpha * np.asarray(direct, dtype=float)
-            + (1.0 - alpha) * np.asarray(derived, dtype=float)
-        ).tolist()
+    del ensemble_weight  # Backward-compatible call signature; no ensemble is used.
+    if derived is not None:
+        derived = np.clip(np.asarray(derived, dtype=float), 0.0, 100.0).tolist()
     return to_json_safe({
-        "direct_y": direct,
-        "derived_y": derived,
-        "ensemble_y": ensemble,
-        "ensemble_weight": alpha,
+        "predicted_y": derived,
         "failure_rates": failure_rates,
         "fail_bit_counts": fail_bit_counts,
-        "direct_derived_gap": (
-            (np.asarray(direct) - np.asarray(derived)).tolist()
-            if direct is not None and derived is not None else None
-        ),
     })
 
 
@@ -91,7 +73,6 @@ def build_analysis_result(
     prediction: PredictionResult,
     explanation: ExplainResult,
     relationships: dict[str, Any],
-    report: dict[str, Any],
     multi_y: dict[str, Any] | None = None,
     warning_threshold: float,
     danger_threshold: float,
@@ -116,9 +97,7 @@ def build_analysis_result(
     )
     multi_y_summary = {
         **multi_y_values,
-        "average_direct_y": _average(multi_y_values.get("direct_y")),
-        "average_derived_y": _average(multi_y_values.get("derived_y")),
-        "average_ensemble_y": _average(multi_y_values.get("ensemble_y")),
+        "average_predicted_y": _average(multi_y_values.get("predicted_y")),
         "failure_rate_averages": {
             key: _average(value) for key, value in multi_y_values.get("failure_rates", {}).items()
         },
@@ -132,21 +111,9 @@ def build_analysis_result(
     multi_y_summary["wafer_results"] = [
         {
             "identifier": identifier,
-            "direct_y": (
-                multi_y_values["direct_y"][index]
-                if multi_y_values.get("direct_y") is not None else None
-            ),
-            "derived_y": (
-                multi_y_values["derived_y"][index]
-                if multi_y_values.get("derived_y") is not None else None
-            ),
-            "ensemble_y": (
-                multi_y_values["ensemble_y"][index]
-                if multi_y_values.get("ensemble_y") is not None else None
-            ),
-            "direct_derived_gap": (
-                multi_y_values["direct_derived_gap"][index]
-                if multi_y_values.get("direct_derived_gap") is not None else None
+            "predicted_y": (
+                multi_y_values["predicted_y"][index]
+                if multi_y_values.get("predicted_y") is not None else None
             ),
             "failure_rates": {
                 key: values[index]
@@ -160,10 +127,8 @@ def build_analysis_result(
         for index, identifier in enumerate(identifiers)
     ]
     warnings = [*explanation.warnings, *relationships.get("caveats", [])]
-    if multi_y_summary.get("derived_y") is None:
-        warnings.append("Y1~Y5 모델이 모두 준비되지 않아 Derived Y를 계산할 수 없습니다.")
-    if multi_y_summary.get("derived_y") is not None and multi_y_summary.get("ensemble_y") is None:
-        warnings.append("저장된 Ensemble weight α가 없어 Ensemble Y를 계산하지 않았습니다.")
+    if multi_y_summary.get("predicted_y") is None:
+        warnings.append("Y1~Y5 모델이 모두 준비되지 않아 최종 Y를 계산할 수 없습니다.")
     result = {
         "analysis_id": resolved_id,
         "analysis_version": ANALYSIS_RESULT_VERSION,
@@ -174,7 +139,7 @@ def build_analysis_result(
             "model_version": metadata.get("model_version"),
             "schema_version": metadata.get("schema_version"),
             "compatibility": "compatible",
-            "structure": metadata.get("model_structure", "Direct Y" if prediction.target == "Y" else "Single Target"),
+            "structure": metadata.get("model_structure", "Y1~Y5 기반 최종 Y"),
         },
         "dataset": {
             "filename": filename,
@@ -224,8 +189,12 @@ def build_analysis_result(
         "statistics": relationships.get(
             "statistics", relationships.get("rankings", {}).get("correlation", {})
         ),
-        "risk_wafers": report.get("top_risk_wafers", []),
-        "lot_summary": report.get("lot_summary", []),
+        "risk_wafers": [
+            row
+            for row in prediction.predictions
+            if row.get("risk_level") in {"danger", "warning"}
+        ][:5],
+        "lot_summary": (lot_analysis or {}).get("lots", []),
         "lot_analysis": lot_analysis or {},
         "data_quality": {
             "r_measurement_coverage": quality.get("r_measurement_coverage"),
@@ -244,11 +213,7 @@ def build_analysis_result(
             "tuning_method": metadata.get("tuning_method"),
             "best_parameters": metadata.get("best_parameters"),
             "model_selection_metric": metadata.get("model_selection_metric"),
-            "notes": report.get("methodology_notes", []),
-        },
-        "report": {
-            "report_id": report.get("report_id"),
-            "report_version": REPORT_VERSION,
+            "notes": [],
         },
         "warnings": list(dict.fromkeys(warnings)),
     }

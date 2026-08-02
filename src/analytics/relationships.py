@@ -197,12 +197,14 @@ def categorical_association(
     frame = pd.DataFrame(
         {"category": categories.astype("string"), "value": _numeric(values)}
     ).dropna()
+    category_counts = frame["category"].value_counts()
+    eligible_categories = category_counts[category_counts >= 5].index
+    analysis_frame = frame[frame["category"].isin(eligible_categories)]
     grouped = [
         group["value"].to_numpy(dtype=float)
-        for _, group in frame.groupby("category", observed=True)
-        if len(group) >= 2
+        for _, group in analysis_frame.groupby("category", observed=True)
     ]
-    effect = eta_squared(categories, values)
+    effect = eta_squared(analysis_frame["category"], analysis_frame["value"])
     anova_statistic = anova_p_value = None
     kruskal_statistic = kruskal_p_value = None
     if len(grouped) >= 2:
@@ -214,10 +216,16 @@ def categorical_association(
         kruskal_p_value = _finite_float(kruskal_result.pvalue)
     welch_statistic, welch_p_value = _welch_anova(grouped)
     return {
-        "valid_count": int(len(frame)),
+        "valid_count": int(len(analysis_frame)),
         "excluded_count": int(len(categories) - len(frame)),
         "coverage": float(len(frame) / len(categories)) if len(categories) else 0.0,
         "category_count": int(frame["category"].nunique()),
+        "eligible_category_count": int(len(eligible_categories)),
+        "insufficient_category_count": int((category_counts < 5).sum()),
+        "excluded_low_sample_count": int(
+            category_counts[category_counts < 5].sum()
+        ),
+        "minimum_category_sample": 5,
         "effect_size": effect["eta_squared"],
         "anova": {"statistic": anova_statistic, "p_value": anova_p_value},
         "welch_anova": {"statistic": welch_statistic, "p_value": welch_p_value},
@@ -261,7 +269,7 @@ def calculate_pareto(
         if required_count
         else 0.0
     )
-    group_counts = {"R": 0, "D": 0, "EQ": 0}
+    group_counts = {"R": 0, "D": 0, "Config": 0}
     for row in output[:required_count]:
         group = str(row.get("group", ""))
         if group in group_counts:
@@ -525,7 +533,7 @@ def _grouped_rankings(
     grouped["all"] = rows[:top_n]
     grouped.update({
         "overall": grouped["all"], "R": grouped["r"], "D": grouped["d"],
-        "EQ": grouped["equipment"], "eq": grouped["equipment"],
+        "Config": grouped["config"],
         "missing": grouped["measurement"], "indicator": grouped["measurement"],
         "observed": grouped["measurement"],
     })
@@ -569,7 +577,12 @@ def _category_summaries(
                 "whisker_max": float(inliers.max()),
                 "outliers": [float(value) for value in outliers.head(30)],
                 "outlier_count": int(len(outliers)),
-                "sample_warning": len(numeric) < 10,
+                "sample_warning": len(numeric) < 5,
+                "eligible_for_inference": len(numeric) >= 5,
+                "difference_from_overall": (
+                    float(numeric.mean() - frame["value"].mean())
+                    if total else None
+                ),
             }
         )
     return output

@@ -163,7 +163,7 @@ def preprocess_dataframe(
     }
     if detected_columns.get("config_columns"):
         processed_df, config_report = parse_config_columns(processed_df, schema)
-        categorical_feature_columns.extend(config_report["derived_columns"])
+        categorical_feature_columns.extend(config_report["config_columns"])
     numeric_feature_columns = list(
         dict.fromkeys([*r_columns, *d_columns])
     )

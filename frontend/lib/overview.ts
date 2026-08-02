@@ -158,9 +158,7 @@ function emptyMetrics(): OverviewModelMetrics {
 
 function emptyMultiY(): OverviewMultiY {
   return {
-    direct_y_mean: null,
-    derived_y_mean: null,
-    hybrid_y_mean: null,
+    predicted_y_mean: null,
     failure_rates: {},
     fail_bit_counts: {},
   };
@@ -217,7 +215,7 @@ export function createEmptyOverview(): AnalysisOverviewResponse {
     source_type: "empty",
     source_id: null,
     created_at: null,
-    source_label: "저장된 불량 원인 분석 결과 없음",
+    source_label: "저장된 원인 분석 결과 없음",
     filename: null,
     model: null,
     data_quality: {},
@@ -240,7 +238,7 @@ export function normalizeOverviewAnalysis(payload: unknown): AnalysisOverviewRes
   const inferredType = text(nestedSource.type) ?? legacyType;
   if (inferredType === "empty") return createEmptyOverview();
   if (inferredType !== "analysis") {
-    throw new Error("Dashboard API가 불량 원인 분석 이력이 아닌 Source를 반환했습니다.");
+    throw new Error("Dashboard API가 원인 분석 이력이 아닌 Source를 반환했습니다.");
   }
 
   const summarySource = record(payload.summary);
@@ -287,9 +285,7 @@ export function normalizeOverviewAnalysis(payload: unknown): AnalysisOverviewRes
     mae: firstNumber(metricSource.mae, modelSource.mae),
   };
   const multiY: OverviewMultiY = {
-    direct_y_mean: firstNumber(multiYSource.direct_y_mean),
-    derived_y_mean: firstNumber(multiYSource.derived_y_mean),
-    hybrid_y_mean: firstNumber(multiYSource.hybrid_y_mean),
+    predicted_y_mean: firstNumber(multiYSource.predicted_y_mean),
     failure_rates: numberMap(multiYSource.failure_rates),
     fail_bit_counts: numberMap(multiYSource.fail_bit_counts),
   };
@@ -308,7 +304,7 @@ export function normalizeOverviewAnalysis(payload: unknown): AnalysisOverviewRes
   const derivedAvailability: OverviewAvailability = {
     summary: Object.values(summary).some((value) => value !== null),
     model_metrics: Object.values(modelMetrics).some((value) => value !== null),
-    multi_y: [multiY.direct_y_mean, multiY.derived_y_mean, multiY.hybrid_y_mean].some((value) => value !== null)
+    multi_y: multiY.predicted_y_mean !== null
       || Object.keys(multiY.failure_rates).length > 0
       || Object.keys(multiY.fail_bit_counts).length > 0,
     causes: Boolean(
@@ -349,7 +345,7 @@ export function normalizeOverviewAnalysis(payload: unknown): AnalysisOverviewRes
     source_type: "analysis",
     source_id: source.analysis_id,
     created_at: source.created_at,
-    source_label: text(payload.source_label) ?? "불량 원인 분석 이력",
+    source_label: text(payload.source_label) ?? "원인 분석 이력",
     filename: source.source_filename,
     model: Object.keys(modelSource).length ? modelSource : null,
     data_quality: record(payload.data_quality),
@@ -400,7 +396,7 @@ export function overviewFromHistory(item: AnalysisHistorySummary): AnalysisOverv
     source_type: "analysis",
     source_id: item.analysis_id,
     created_at: item.created_at,
-    source_label: "선택한 불량 원인 분석",
+    source_label: "선택한 원인 분석",
     filename: item.source_filename,
     model: {
       model_id: item.model_id,

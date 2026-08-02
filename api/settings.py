@@ -94,6 +94,15 @@ def _resolve_training_jobs(raw_value: str | None) -> Path:
     return (PROJECT_ROOT / configured_path).resolve()
 
 
+def _resolve_process_data_dir(raw_value: str | None) -> Path:
+    configured_path = Path(
+        raw_value or _storage_default("data/process-data", "process-data")
+    ).expanduser()
+    if configured_path.is_absolute():
+        return configured_path.resolve()
+    return (PROJECT_ROOT / configured_path).resolve()
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = field(
@@ -125,9 +134,9 @@ class Settings:
             os.environ.get("TRAINING_JOB_ARTIFACT_DIR")
         )
     )
-    admin_reset_secret: str | None = field(
-        default_factory=lambda: (
-            os.environ.get("ADMIN_RESET_SECRET", "").strip() or None
+    process_data_dir: Path = field(
+        default_factory=lambda: _resolve_process_data_dir(
+            os.environ.get("PROCESS_DATA_DIR")
         )
     )
     max_prediction_history: int = field(

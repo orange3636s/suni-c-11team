@@ -694,10 +694,12 @@ def load_prediction_model_target(
             raise InferenceInputError("선택한 Legacy 모델에는 요청한 Target 서브모델이 없습니다.")
         return loaded
     model_for_target = getattr(loaded.model, "model_for_target", None)
+    if target == "Y":
+        raise InferenceInputError(
+            "신규 Bundle은 Direct Y 모델을 저장하지 않습니다. Y1~Y5 중 하나를 선택해 주세요."
+        )
     if callable(model_for_target):
         selected_model = model_for_target(target)
-    elif target == "Y":
-        selected_model = loaded.model.direct_model
     else:
         selected_model = loaded.model.target_models.get(target)
     if selected_model is None:
@@ -1154,7 +1156,7 @@ def predict_dataframe(
             "예측 데이터 검증에 실패했습니다: "
             + " ".join(validation["errors"])
         )
-    is_auto_pipeline = loaded.metadata.get("pipeline_version") == "auto_multi_y_hgbr_v1"
+    is_auto_pipeline = str(loaded.metadata.get("pipeline_version") or "").startswith("auto_")
     if is_auto_pipeline:
         processed = dataframe
         preprocessing_report = {"warnings": []}
@@ -1271,8 +1273,13 @@ def predict_dataframe(
                 for target_name in ("Y1", "Y2", "Y3", "Y4", "Y5")
             }
             fail_bit_counts = {
-                target_name: float(hybrid_components["targets"][target_name][position])
+                target_name: value
                 for target_name in ("Y6", "Y7", "Y8", "Y9", "Y10")
+                if (
+                    value := _finite_float(dataframe.loc[index, target_name])
+                    if target_name in dataframe.columns
+                    else None
+                ) is not None
             }
             critical_probability = float(hybrid_components["critical_probability"][position])
             warning_probability = float(hybrid_components["warning_probability"][position])
@@ -1280,22 +1287,7 @@ def predict_dataframe(
                 critical_probability,
                 warning_probability,
             )
-            agreement_data = hybrid_components.get("model_agreement", {})
-            target_spreads = agreement_data.get("target_spread", {})
-            row_spreads = [
-                float(values[position])
-                for values in target_spreads.values()
-                if position < len(values)
-            ]
-            target_configs = loaded.metadata.get("target_ensemble_configs", {})
-            direct_config = target_configs.get("Y", {})
             row.update({
-                "direct_y": float(hybrid_components["direct"][position]),
-                "derived_y": float(hybrid_components["derived"][position]),
-                "hybrid_y": float(hybrid_components["hybrid"][position]),
-                "direct_Y": float(hybrid_components["direct"][position]),
-                "derived_Y": float(hybrid_components["derived"][position]),
-                "selected_final_output": loaded.metadata.get("selected_final_output"),
                 "failure_rates": failure_rates,
                 "fail_bit_counts": fail_bit_counts,
                 "critical_probability": critical_probability,
@@ -1305,19 +1297,6 @@ def predict_dataframe(
                     else "medium" if confidence_probability >= 0.6
                     else "low"
                 ),
-                "final_strategy": loaded.metadata.get("selected_final_output"),
-                "ensemble_used": bool(loaded.metadata.get("ensemble_enabled")),
-                "base_model_count": len(direct_config.get("base_models", [])) or 1,
-                "direct_y_ensemble": direct_config.get("selected_type", "single"),
-                "derived_y_ensemble": any(
-                    target_configs.get(name, {}).get("selected_type") != "single"
-                    for name in ("Y1", "Y2", "Y3", "Y4", "Y5")
-                ),
-                "model_agreement": {
-                    "available": bool(row_spreads),
-                    "prediction_spread": float(np.mean(row_spreads)) if row_spreads else None,
-                    "label": "Ensemble Agreement",
-                },
                 "warnings": [],
             })
             row.update(failure_rates)
@@ -1359,6 +1338,17 @@ def predict_dataframe(
         )
         prediction_rows = prediction_rows[:max_rows]
 
+    preprocessing_audit: dict[str, Any] = {}
+    if is_auto_pipeline:
+        audit_model = loaded.model
+        model_for_target = getattr(audit_model, "model_for_target", None)
+        if callable(model_for_target):
+            audit_model = model_for_target("Y1")
+        feature_step = getattr(audit_model, "named_steps", {}).get("features")
+        audit = getattr(feature_step, "audit", None)
+        if callable(audit):
+            preprocessing_audit = audit(dataframe)
+
     return PredictionResult(
         model_id=loaded.model_id,
         target=target,
@@ -1374,6 +1364,7 @@ def predict_dataframe(
         warnings=warnings,
         truncated=truncated,
         preprocessing_summary={
+            "pipeline_version": loaded.metadata.get("pipeline_version"),
             "config_parser_version": loaded.metadata.get("config_parser_version"),
             "schema_version": loaded.metadata.get("schema_version"),
             "measurement_coverage": {
@@ -1391,5 +1382,6 @@ def predict_dataframe(
             "ignored_extra_features": [
                 column for column in raw_features if column not in feature_columns
             ] if is_auto_pipeline else [],
+            **preprocessing_audit,
         },
     )

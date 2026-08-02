@@ -568,13 +568,6 @@ export default function PredictionPage() {
     return { points, histogram };
   }, [result]);
 
-  const ensembleInfo = result?.predictions[0] as (PredictionRow & {
-    final_strategy?: string;
-    ensemble_used?: boolean;
-    base_model_count?: number;
-    model_agreement?: { available?: boolean; prediction_spread?: number | null };
-  }) | undefined;
-
   const predictionColumn = result
     ? `predicted_${result.model.target}`
     : "predicted_Y";
@@ -713,7 +706,7 @@ export default function PredictionPage() {
                     <div><strong>저장된 예측 결과</strong><span>{new Date(restoredHistory.created_at).toLocaleString("ko-KR")} · {restoredHistory.source_filename}</span></div>
                     <div className="historyRowActions">
                       <button className="button secondary" type="button" onClick={() => { setResult(null); setRestoredHistory(null); const url = new URL(window.location.href); url.searchParams.delete("prediction_id"); window.history.replaceState({}, "", url); }}>새 예측</button>
-                      <a className="button secondary" href={`/root-cause?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}&model_id=${encodeURIComponent(restoredHistory.model_id ?? "")}`}>불량 원인 분석 열기</a>
+                      <a className="button secondary" href={`/root-cause?prediction_id=${encodeURIComponent(restoredHistory.prediction_id)}&model_id=${encodeURIComponent(restoredHistory.model_id ?? "")}`}>원인 분석 열기</a>
                     </div>
                   </div>
                 )}
@@ -741,9 +734,6 @@ export default function PredictionPage() {
                   <div className="normalKpi"><span>정상 Wafer</span><strong>{result.summary.normal_count}</strong></div>
                   <div className="warningKpi"><span>주의 Wafer</span><strong>{result.summary.warning_count}</strong></div>
                   <div className="dangerKpi"><span>위험 Wafer</span><strong>{result.summary.danger_count}</strong></div>
-                  {ensembleInfo?.final_strategy && <div><span>Final Strategy</span><strong>{ensembleInfo.final_strategy}</strong></div>}
-                  {ensembleInfo?.ensemble_used !== undefined && <div><span>모델 구성</span><strong>{ensembleInfo.ensemble_used ? `${ensembleInfo.base_model_count ?? "-"}-Model Ensemble` : "Single Model"}</strong></div>}
-                  {ensembleInfo?.model_agreement?.available && <div title="Model Agreement는 앙상블 구성 모델 간 예측 차이를 나타내는 참고 지표입니다."><span>Ensemble Agreement · spread</span><strong>{formatMetric(ensembleInfo.model_agreement.prediction_spread)}</strong></div>}
                   {result.summary.evaluation && (
                     <>
                       <div><span>R²</span><strong>{formatMetric(result.summary.evaluation.r2)}</strong></div>

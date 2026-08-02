@@ -43,7 +43,7 @@ function statusLabel(model: ModelSummary): string {
   if (!isModelUsable(model)) return "사용 불가";
   if (model.compatibility === "legacy") return "이전 모델";
   if (model.compatibility === "unknown_schema") return "스키마 확인 필요";
-  return model.model_type === "hybrid_multi_y" ? "Hybrid Multi-Y" : "호환 가능";
+  return model.model_type === "hybrid_multi_y" ? "Y1~Y5 자동 모델" : "호환 가능";
 }
 
 function statusClass(model: ModelSummary): string {

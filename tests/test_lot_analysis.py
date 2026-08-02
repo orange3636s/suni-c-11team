@@ -185,7 +185,7 @@ def test_lot_rankings_are_scoped_and_report_signed_absolute_and_coverage() -> No
     assert b_feature != a_feature
 
 
-def test_config_children_are_collapsed_to_original_step_config() -> None:
+def test_config_category_is_visible_but_low_sample_is_not_official() -> None:
     rows = [
         {"Lot_Wafer_ID": "CFG_W01", "Lot_ID": "CFG", "predicted_Y": 91.0, "risk_level": "normal"},
     ]
@@ -198,11 +198,15 @@ def test_config_children_are_collapsed_to_original_step_config() -> None:
     explanation = _explanation([_local("CFG_W01", children, lot_id="CFG")])
 
     result = build_lot_cause_analysis(_prediction(rows), explanation)
-    config_rows = _lots(result)["CFG"]["feature_importance"]["config"]
+    lot = _lots(result)["CFG"]
+    config_rows = lot["config_categories"]
 
     assert len(config_rows) == 1
+    assert lot["feature_importance"]["config"] == []
+    assert lot["pareto"]["config"] == []
+    assert lot["low_sample_config"] == config_rows
     config = config_rows[0]
-    assert config["feature"] == "Step2_Config"
+    assert config["feature"] == "Step2_Config::1.0"
     assert config["group"] == "Config"
     assert config["mean_signed_shap"] == pytest.approx(2.0)
     assert config["mean_abs_shap"] == pytest.approx(10.0)
@@ -310,7 +314,7 @@ def test_collapsed_config_keeps_child_absolute_shap_sum() -> None:
         _prediction(rows),
         _explanation([_local("CFG_W01", [collapsed], lot_id="CFG")]),
     )
-    config = _lots(result)["CFG"]["feature_importance"]["config"][0]
+    config = _lots(result)["CFG"]["config_categories"][0]
 
     assert config["mean_signed_shap"] == pytest.approx(2.0)
     assert config["mean_abs_shap"] == pytest.approx(10.0)
@@ -350,7 +354,8 @@ def test_top_causes_use_adverse_contribution_not_absolute_importance() -> None:
 
     assert lot["feature_importance"]["all"][0]["feature"] == "Step1_R1"
     assert lot["top_causes"]["feature"] == "Step1_D1"
-    assert lot["top_causes"]["config"] == "Step1_Config"
+    assert lot["top_causes"]["config"] is None
+    assert lot["low_sample_config"][0]["sample_count"] == 1
     assert lot["wafer_list"][0]["top_feature"] == "Step1_D1"
 
 

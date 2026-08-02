@@ -40,7 +40,7 @@ export default function SelectedModelSummary({ model }: SelectedModelSummaryProp
   if (!model) return null;
   const cv = model.cv_summary;
   const modelType = model.model_type === "hybrid_multi_y"
-    ? "Hybrid Multi-Y"
+    ? "Y1~Y5 자동 모델"
     : model.model_type ?? "Single Model";
   const foldParts: string[] = [];
   if (typeof cv?.outer_folds === "number" && Number.isFinite(cv.outer_folds)) foldParts.push(`Outer ${cv.outer_folds}`);

@@ -68,9 +68,7 @@ class OverviewModelMetrics(BaseModel):
 
 
 class OverviewMultiY(BaseModel):
-    direct_y_mean: float | None = None
-    derived_y_mean: float | None = None
-    hybrid_y_mean: float | None = None
+    predicted_y_mean: float | None = None
     failure_rates: dict[str, float | None] = Field(default_factory=dict)
     fail_bit_counts: dict[str, float | None] = Field(default_factory=dict)
 

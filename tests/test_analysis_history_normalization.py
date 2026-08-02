@@ -28,7 +28,7 @@ def test_history_detail_builds_nullable_safe_response_from_outer_snapshots() -> 
     response = normalized["artifact"]["response"]
 
     assert response["analysis_result"] == analysis_result
-    assert response["report_snapshot"] == report_snapshot
+    assert "report_snapshot" not in response
     assert response["lot_analysis"] == analysis_result["lot_analysis"]
     assert response["relationship_paths"] == analysis_result["relationships"]
     assert response["selection_bias_warnings"] == []
@@ -84,7 +84,7 @@ def test_history_detail_filters_null_and_invalid_optional_collections() -> None:
     response = normalized["artifact"]["response"]
 
     assert response["analysis_result"] is None
-    assert response["report_snapshot"] is None
+    assert "report_snapshot" not in response
     assert response["lot_analysis"] == {}
     assert response["selection_bias_warnings"] == ["keep"]
     assert response["statistics"] == {
@@ -161,10 +161,10 @@ def test_history_detail_restores_outer_aliases_from_response_only_snapshot() -> 
 
     assert "explanation" not in artifact["response"]
     assert artifact["response"]["analysis_result"] == analysis_result
-    assert artifact["response"]["report_snapshot"] == report_snapshot
+    assert "report_snapshot" not in artifact["response"]
     assert artifact["response"]["lot_analysis"] == analysis_result["lot_analysis"]
     assert artifact["analysis_result"] == analysis_result
-    assert artifact["report_snapshot"] == report_snapshot
+    assert "report_snapshot" not in artifact
     assert artifact["lot_analysis"] == analysis_result["lot_analysis"]
     assert artifact["response"]["statistics"]["scatter_data"] == [
         {"x": 1.0, "y": 90.0},

@@ -52,7 +52,6 @@ from api.schemas.data import (
     PreprocessChanges,
     PreprocessResponse,
     RelationshipAnalysisResponse,
-    ReportResponse,
     TrainResponse,
     ValidationResponse,
     ValidationResult,
@@ -67,7 +66,6 @@ from src.analytics.analysis_result import (
     dataset_fingerprint,
 )
 from src.data_validation import load_data_schema, validate_dataframe
-from src.automation.analyzer import build_automation_response
 from src.ml.dataset import (
     ALLOWED_TARGETS,
     RANDOM_STATE,
@@ -106,9 +104,9 @@ from src.ml.explainability import (
 from src.ml.training import train_regression_models
 from src.ml.evaluation import evaluate_regression
 from src.preprocessing import preprocess_dataframe
-from src.reporting.export import render_report_html
-from src.reporting.report_builder import build_report
 from src.runtime.store import RuntimeStore, safe_runtime_call
+from src.runtime.cumulative_data import CumulativeDataStore
+from src.runtime.model_updates import ModelUpdateManager
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
     ActiveOperationError,
@@ -136,6 +134,33 @@ _TRAINING_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar(
 )
 _TRAINING_JOB_MANAGER: TrainingJobManager | None = None
 _TRAINING_JOB_MANAGER_LOCK = threading.Lock()
+_MODEL_UPDATE_MANAGER: ModelUpdateManager | None = None
+_MODEL_UPDATE_MANAGER_LOCK = threading.Lock()
+
+
+def get_cumulative_store() -> CumulativeDataStore:
+    return CumulativeDataStore(settings.runtime_db_path)
+
+
+def get_model_update_manager() -> ModelUpdateManager:
+    global _MODEL_UPDATE_MANAGER
+    with _MODEL_UPDATE_MANAGER_LOCK:
+        if _MODEL_UPDATE_MANAGER is None:
+            _MODEL_UPDATE_MANAGER = ModelUpdateManager(
+                store=RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir),
+                data=get_cumulative_store(), model_dir=MODEL_DIR,
+            )
+        return _MODEL_UPDATE_MANAGER
+
+
+def _active_model_id() -> str:
+    active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
+    if not active or not active.get("active_model_id"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="현재 사용할 수 있는 활성 모델이 없습니다. 먼저 누적 데이터를 등록하고 모델 갱신을 실행해 주세요.",
+        )
+    return str(active["active_model_id"])
 
 
 def get_training_job_manager() -> TrainingJobManager:
@@ -433,6 +458,68 @@ def _preview_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
+@router.post("/data/ingest", status_code=status.HTTP_200_OK)
+async def ingest_process_data(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Upsert a process batch; this endpoint never replaces cumulative data."""
+    filename, dataframe = await _read_csv_upload(file)
+    try:
+        runtime = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+        active = runtime.active_model()
+        result = get_cumulative_store().ingest(dataframe, source_batch_id=f"upload_{uuid4().hex}")
+        current = get_cumulative_store().status(
+            active_dataset_version=active.get("dataset_version") if active else None,
+            active_promoted_at=active.get("promoted_at") if active else None,
+        )
+        runtime.mark_analysis_snapshot_stale("dataset_updated")
+        result.update(current)
+        result["filename"] = filename
+        result["retraining_required"] = bool(
+            current["new_labeled_rows_since_active_model"] >= 2000
+            or current["new_lots_since_active_model"] >= 50
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/data/status")
+def get_cumulative_data_status() -> dict[str, Any]:
+    active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
+    result = get_cumulative_store().status(
+        active_dataset_version=active.get("dataset_version") if active else None,
+        active_promoted_at=active.get("promoted_at") if active else None,
+    )
+    result["retraining_required"] = bool(result["new_labeled_rows_since_active_model"] >= 2000 or result["new_lots_since_active_model"] >= 50)
+    return result
+
+
+@router.post("/model/update", status_code=status.HTTP_202_ACCEPTED)
+def create_model_update() -> dict[str, Any]:
+    try:
+        return get_model_update_manager().submit()
+    except ActiveOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc) or HEAVY_JOB_MESSAGE) from exc
+
+
+@router.get("/model/update/{job_id}")
+def get_model_update(job_id: str) -> dict[str, Any]:
+    row = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).get_training_job(job_id)
+    if row is None or not job_id.startswith("model_update_"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="모델 갱신 Job을 찾을 수 없습니다.")
+    raw_start, raw_end = row.get("started_at") or row.get("created_at"), row.get("completed_at")
+    try:
+        started = datetime.fromisoformat(raw_start); ended = datetime.fromisoformat(raw_end) if raw_end else datetime.now(started.tzinfo)
+        elapsed = max((ended - started).total_seconds(), 0.0)
+    except (TypeError, ValueError): elapsed = 0.0
+    return {"job_id": job_id, "status": row["status"], "stage": row["stage"], "progress": row["progress"], "elapsed_seconds": elapsed, "result": row.get("result"), "promotion_result": (row.get("result") or {}).get("promotion_result"), "error": row.get("error_message")}
+
+
+@router.get("/model/active")
+def get_active_model() -> dict[str, Any]:
+    active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
+    return {"active_model": active}
+
+
 @router.post("/validate", response_model=ValidationResponse)
 async def validate_csv(
     file: UploadFile = File(...),
@@ -508,14 +595,13 @@ async def preprocess_csv(
     )
 
 
-@router.post("/train", response_model=TrainResponse)
 async def train_model(
     file: UploadFile = File(...),
     target: str | None = Form(None),
-    train_ratio: Annotated[int, Form()] = 64,
-    validation_ratio: Annotated[int, Form()] = 16,
-    test_ratio: Annotated[int, Form()] = 20,
-    missing_indicator: Annotated[bool, Form()] = True,
+    train_ratio: Annotated[int, Form()] = 70,
+    validation_ratio: Annotated[int, Form()] = 15,
+    test_ratio: Annotated[int, Form()] = 15,
+    missing_indicator: Annotated[bool, Form()] = False,
     compare_missingness: Annotated[bool, Form()] = False,
     ensemble_enabled: Annotated[bool, Form()] = True,
     ensemble_size: Annotated[str, Form()] = "auto",
@@ -532,6 +618,19 @@ async def train_model(
         dataframe.shape[1],
     )
     _report_training_progress("학습 CSV 확인", 10)
+
+    # The v2 automatic pipeline has no user-selectable target, split,
+    # preprocessing, search, or ensemble controls. Keep legacy form fields as
+    # ignored compatibility inputs while every request follows the same fixed
+    # production policy.
+    if target is not None:
+        logger.info("Legacy target 입력을 무시하고 Y1~Y5 자동 학습을 실행합니다: %s", target)
+    target = None
+    train_ratio, validation_ratio, test_ratio = 70, 15, 15
+    missing_indicator = False
+    compare_missingness = False
+    ensemble_enabled = False
+    del ensemble_size, ensemble_method, ensemble_min_improvement, diversity_check, max_base_models
 
     if target is not None and target not in TRAINABLE_TARGETS:
         raise HTTPException(
@@ -611,13 +710,20 @@ async def train_model(
             try:
                 _report_training_progress("Multi-Y 모델 학습", 40)
                 hybrid = await run_in_threadpool(
-                    partial(train_hybrid_multi_y, dataframe)
+                    partial(
+                        train_hybrid_multi_y,
+                        dataframe,
+                        train_ratio=0.70,
+                        validation_ratio=0.15,
+                        test_ratio=0.15,
+                        progress_callback=_report_training_progress,
+                    )
                 )
             finally:
                 _TRAINING_LOCK.release()
             _report_training_progress("Multi-Y 모델 저장", 90)
             created_at = datetime.now().astimezone()
-            model_id = f"AUTO_MULTI_Y_HGBR_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
+            model_id = f"AUTO_Y1_Y5_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
             raw_features = list(hybrid.metadata["raw_feature_columns"])
             hybrid_processing_summary = {
                 **preprocessing_report.get("processing_summary", {}),
@@ -635,7 +741,7 @@ async def train_model(
                     "outlier_strategy": hybrid.metadata.get("outlier_strategy"),
                     "missing_indicator": False,
                     "outlier_indicator": False,
-                    "statistics_scope": "each_cv_training_fold_and_full_refit",
+                    "statistics_scope": "train_for_selection_and_train_validation_for_final_refit",
                     "fallback_used": hybrid.metadata.get("fallback_used", False),
                 },
                 "preprocessing_summary": hybrid_processing_summary,
@@ -652,8 +758,8 @@ async def train_model(
             selected_metrics = hybrid.metadata["final_y_metrics"][selected]
             rows = hybrid.metadata["dataset_rows"]
             response = TrainResponse(
-                target="Y",
-                best_model="Auto Multi-Y HGBR",
+                target="Y1~Y5",
+                best_model="Y1~Y5 자동 모델",
                 split=DatasetSplit(
                     train_rows=rows["train"],
                     validation_rows=rows["validation"],
@@ -1032,19 +1138,13 @@ async def train_model(
     return response
 
 
-@router.post(
-    "/train/jobs",
-    response_model=TrainJobAccepted,
-    status_code=status.HTTP_202_ACCEPTED,
-    responses={409: {"description": "Another heavy operation is running"}},
-)
 async def create_training_job(
     file: UploadFile = File(...),
     target: str | None = Form(None),
-    train_ratio: Annotated[int, Form()] = 64,
-    validation_ratio: Annotated[int, Form()] = 16,
-    test_ratio: Annotated[int, Form()] = 20,
-    missing_indicator: Annotated[bool, Form()] = True,
+    train_ratio: Annotated[int, Form()] = 70,
+    validation_ratio: Annotated[int, Form()] = 15,
+    test_ratio: Annotated[int, Form()] = 15,
+    missing_indicator: Annotated[bool, Form()] = False,
     compare_missingness: Annotated[bool, Form()] = False,
     ensemble_enabled: Annotated[bool, Form()] = True,
     ensemble_size: Annotated[str, Form()] = "auto",
@@ -1110,11 +1210,6 @@ async def create_training_job(
     return TrainJobAccepted(job_id=job_id)
 
 
-@router.get(
-    "/train/jobs/{job_id}",
-    response_model=TrainJobStatus,
-    responses={404: {"description": "Training job not found"}},
-)
 def get_training_job(job_id: str) -> TrainJobStatus:
     row = get_training_job_manager().get(job_id)
     if row is None:
@@ -1133,7 +1228,6 @@ def get_training_job(job_id: str) -> TrainJobStatus:
     )
 
 
-@router.get("/models", response_model=ModelListResponse)
 def get_models() -> ModelListResponse:
     try:
         models, warnings = list_prediction_models(MODEL_DIR)
@@ -1150,7 +1244,6 @@ def get_models() -> ModelListResponse:
         ) from exc
 
 
-@router.get("/models/{model_id}", response_model=ModelDetailResponse)
 def get_model_detail(model_id: str) -> ModelDetailResponse:
     try:
         detail = get_prediction_model_detail(model_id, MODEL_DIR)
@@ -1179,7 +1272,6 @@ def get_model_detail(model_id: str) -> ModelDetailResponse:
         ) from exc
 
 
-@router.get("/models/{model_id}/references")
 def get_model_references(model_id: str) -> dict[str, Any]:
     try:
         detail = get_prediction_model_detail(model_id, MODEL_DIR)
@@ -1189,15 +1281,6 @@ def get_model_references(model_id: str) -> dict[str, Any]:
     return {"model_id": model_id, "model_name": detail.get("model_name"), "model_type": detail.get("model_type"), "created_at": detail.get("created_at"), **counts}
 
 
-@router.delete(
-    "/models/{model_id}",
-    response_model=ModelDeleteResponse,
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"description": "잘못된 model_id"},
-        status.HTTP_404_NOT_FOUND: {"description": "존재하지 않거나 이미 삭제된 모델"},
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "모델 파일 삭제 실패"},
-    },
-)
 def delete_model(model_id: str) -> ModelDeleteResponse:
     try:
         store = RuntimeStore(
@@ -1314,9 +1397,6 @@ def _prediction_history_summary(result: PredictionResult) -> dict[str, Any]:
             failure_rates.setdefault(target, []).append(float(value))
         for target, value in (row.get("fail_bit_counts") or {}).items():
             fail_counts.setdefault(target, []).append(float(value))
-    def mean_field(name: str) -> float | None:
-        selected = [float(row[name]) for row in result.predictions if row.get(name) is not None]
-        return float(np.mean(selected)) if selected else None
     combined_targets = {**failure_rates, **fail_counts}
     target_totals = {key: float(np.mean(entries)) for key, entries in combined_targets.items() if entries}
     evaluation = result.evaluation.as_dict() if result.evaluation is not None else {}
@@ -1330,9 +1410,7 @@ def _prediction_history_summary(result: PredictionResult) -> dict[str, Any]:
         "minimum_predicted_yield": min(values) if values else None,
         "maximum_predicted_yield": max(values) if values else None,
         "median_predicted_yield": float(np.median(values)) if values else None,
-        "direct_y_mean": mean_field("direct_y"),
-        "derived_y_mean": mean_field("derived_y"),
-        "hybrid_y_mean": mean_field("hybrid_y"),
+        "predicted_y_mean": float(np.mean(values)) if values else None,
         "critical_count": result.danger_count, "warning_count": result.warning_count,
         "normal_count": result.normal_count,
         "low_confidence_count": sum(row.get("confidence") == "low" for row in result.predictions),
@@ -1360,21 +1438,11 @@ def _collect_multi_y_predictions(
                     "Hybrid Multi-Y Bundle과 선택 Target의 예측 행 수가 일치하지 않습니다."
                 )
             auxiliary_fields = (
-                "direct_y",
-                "derived_y",
-                "hybrid_y",
-                "selected_final_output",
                 "failure_rates",
                 "fail_bit_counts",
                 "critical_probability",
                 "warning_probability",
                 "confidence",
-                "final_strategy",
-                "ensemble_used",
-                "base_model_count",
-                "direct_y_ensemble",
-                "derived_y_ensemble",
-                "model_agreement",
             )
             for selected_row, bundle_row in zip(
                 selected_prediction.predictions,
@@ -1398,20 +1466,33 @@ def _collect_multi_y_predictions(
                 for field in auxiliary_fields:
                     if field in bundle_row:
                         selected_row[field] = bundle_row[field]
-            values_by_target: dict[str, list[float]] = {
-                "Y": [float(row["direct_y"]) for row in bundle_prediction.predictions]
-            }
-            for target_name in [f"Y{index}" for index in range(1, 11)]:
-                group = "failure_rates" if target_name in {"Y1", "Y2", "Y3", "Y4", "Y5"} else "fail_bit_counts"
-                values_by_target[target_name] = [
-                    float(row[group][target_name]) for row in bundle_prediction.predictions
+            failure_rates = {
+                target_name: [
+                    float(row["failure_rates"][target_name])
+                    for row in bundle_prediction.predictions
                 ]
-            result = compose_multi_y_predictions(values_by_target, None)
-            result["ensemble_y"] = [
-                float(row["hybrid_y"]) for row in bundle_prediction.predictions
-            ]
-            result["ensemble_method"] = "oof_stacking_meta_model"
-            result["selected_final_output"] = bundle_model.metadata.get("selected_final_output")
+                for target_name in [f"Y{index}" for index in range(1, 6)]
+            }
+            fail_bit_counts = {
+                target_name: [
+                    float(row["fail_bit_counts"][target_name])
+                    for row in bundle_prediction.predictions
+                    if target_name in row.get("fail_bit_counts", {})
+                ]
+                for target_name in [f"Y{index}" for index in range(6, 11)]
+            }
+            fail_bit_counts = {
+                key: values
+                for key, values in fail_bit_counts.items()
+                if len(values) == len(bundle_prediction.predictions)
+            }
+            result = {
+                "predicted_y": [
+                    float(row["predicted_Y"]) for row in bundle_prediction.predictions
+                ],
+                "failure_rates": failure_rates,
+                "fail_bit_counts": fail_bit_counts,
+            }
             return result, []
         except (InferenceInputError, ModelLoadError, KeyError, TypeError, ValueError) as exc:
             return compose_multi_y_predictions({}, None), [
@@ -1511,74 +1592,21 @@ async def _run_prediction(
 @router.post("/predict", response_model=PredictionResponse)
 async def predict_csv(
     file: UploadFile = File(...),
-    model_id: str = Form(...),
+    model_id: str | None = Form(None),
     warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
     danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
 ) -> PredictionResponse:
-    prediction_id = f"prediction_{uuid4().hex}"
-    started_clock = time.perf_counter()
-    history_started = safe_runtime_call(
-        "start_prediction", prediction_id=prediction_id,
-        source_filename=file.filename, model_id=model_id,
-        warning_threshold=warning_threshold, critical_threshold=danger_threshold,
-    ) is not None
+    # Client supplied model IDs are intentionally ignored: operations always
+    # use the single Champion pointer.
+    model_id = _active_model_id()
     try:
         filename, dataframe, loaded, result = await _run_prediction(
             file, model_id, warning_threshold, danger_threshold,
-            max_rows=None, runtime_id=prediction_id,
+            max_rows=None,
         )
-        response = _prediction_response(
-            filename,
-            result,
-            prediction_id=prediction_id,
-            artifact_available=history_started,
-        )
-        history_warning = None
-        history_saved = False
-        if history_started:
-            summary = _prediction_history_summary(result)
-            metadata = loaded.metadata
-            completed = safe_runtime_call(
-                "complete_prediction", prediction_id=prediction_id,
-                metadata={
-                    "duration_ms": (time.perf_counter() - started_clock) * 1000,
-                    "dataset_fingerprint": dataset_fingerprint(dataframe),
-                    "model_name_snapshot": result.model_name,
-                    "model_version_snapshot": metadata.get("model_version"),
-                    "model_type_snapshot": metadata.get("model_type"),
-                    "schema_version": metadata.get("schema_version"),
-                    "row_count": result.total_rows, "lot_count": summary["lot_count"],
-                    "final_strategy": metadata.get("selected_final_output"),
-                },
-                summary=summary, preprocessing=result.preprocessing_summary,
-                artifact={
-                    "metadata": {"prediction_id": prediction_id, "created_at": datetime.now().astimezone().isoformat()},
-                    "summary": summary, "rows": result.predictions,
-                    "warnings": result.warnings, "response": response.model_dump(mode="json"),
-                },
-                warnings=result.warnings,
-            )
-            history_saved = completed is True
-            if not history_saved:
-                response.artifact_available = False
-                history_warning = "예측 결과는 생성했지만 이력 저장에 실패했습니다."
-                safe_runtime_call("fail_prediction", prediction_id=prediction_id, message=history_warning)
-        else:
-            response.artifact_available = False
-            history_warning = "예측 결과는 생성했지만 이력 저장소를 사용할 수 없습니다."
-        response.history_saved = history_saved
-        response.history_warning = history_warning
-        if history_warning:
-            response.warnings = list(dict.fromkeys([*response.warnings, history_warning]))
-        return response
-    except HTTPException as exc:
-        if history_started:
-            safe_runtime_call("fail_prediction", prediction_id=prediction_id, message=str(exc.detail))
-        raise
+        return _prediction_response(filename, result, artifact_available=False)
     except Exception as exc:
         logger.exception("예측 응답 직렬화 실패")
-        if history_started:
-            safe_runtime_call("fail_prediction", prediction_id=prediction_id, message=str(exc))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="예측 결과 응답을 생성하지 못했습니다.",
@@ -1588,10 +1616,11 @@ async def predict_csv(
 @router.post("/predict/download")
 async def download_predictions(
     file: UploadFile = File(...),
-    model_id: str = Form(...),
+    model_id: str | None = Form(None),
     warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
     danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
 ) -> Response:
+    model_id = _active_model_id()
     _, _, _, result = await _run_prediction(
         file,
         model_id,
@@ -1648,29 +1677,34 @@ def _explain_response(
 def _compact_lot_analysis(
     value: dict[str, Any] | None,
     *,
-    lot_limit: int = 5,
-    wafer_limit: int = 50,
+    lot_limit: int | None = None,
+    wafer_limit: int | None = None,
 ) -> dict[str, Any]:
     source = value or {}
     lots = source.get("lots")
     if not isinstance(lots, list):
         lots = []
     compact_lots: list[dict[str, Any]] = []
-    for raw_lot in lots[:lot_limit]:
+    selected_lots = lots if lot_limit is None else lots[:lot_limit]
+    for raw_lot in selected_lots:
         if not isinstance(raw_lot, dict):
             continue
         lot = dict(raw_lot)
         wafers = raw_lot.get("wafer_list")
         wafer_rows = wafers if isinstance(wafers, list) else []
-        lot["wafer_list"] = wafer_rows[:wafer_limit]
+        lot["wafer_list"] = (
+            wafer_rows if wafer_limit is None else wafer_rows[:wafer_limit]
+        )
         lot["returned_wafer_count"] = len(lot["wafer_list"])
-        lot["wafer_list_truncated"] = len(wafer_rows) > wafer_limit
+        lot["wafer_list_truncated"] = (
+            wafer_limit is not None and len(wafer_rows) > wafer_limit
+        )
         compact_lots.append(lot)
     return {
         **source,
         "lots": compact_lots,
         "returned_lot_count": len(compact_lots),
-        "lot_list_truncated": len(lots) > lot_limit,
+        "lot_list_truncated": lot_limit is not None and len(lots) > lot_limit,
     }
 
 
@@ -1700,12 +1734,7 @@ def _compact_analysis_result(
     compact_multi_y = {
         key: multi_y.get(key)
         for key in (
-            "average_direct_y",
-            "average_derived_y",
-            "average_ensemble_y",
-            "ensemble_weight",
-            "ensemble_method",
-            "selected_final_output",
+            "average_predicted_y",
             "failure_rate_averages",
             "fail_bit_count_averages",
         )
@@ -1736,7 +1765,12 @@ async def _run_explanation(
 ) -> tuple[str, ExplainResult]:
     filename, dataframe = await _read_csv_upload(file)
     try:
-        loaded = load_prediction_model(model_id, MODEL_DIR)
+        bundle = load_prediction_model(model_id, MODEL_DIR)
+        loaded = (
+            load_prediction_model_target(model_id, "Y1", MODEL_DIR)
+            if bundle.metadata.get("model_type") == "hybrid_multi_y"
+            else bundle
+        )
         result = explain_dataframe(
             dataframe,
             loaded,
@@ -1809,47 +1843,27 @@ async def analyze_feature_relationships(
 ) -> RelationshipAnalysisResponse:
     analysis_id = f"analysis_{uuid4().hex}"
     resolved_prediction_id = prediction_id if isinstance(prediction_id, str) else None
-    resolved_model_id = model_id.strip() if isinstance(model_id, str) else ""
+    # Analysis is pinned to the Champion at its start; model selection is not
+    # exposed to callers.
+    resolved_model_id = _active_model_id()
     started_clock = time.perf_counter()
     history_started = False
     filename, dataframe = await _read_csv_upload(file)
     try:
         resolved_analysis_target = analysis_target if isinstance(analysis_target, str) else None
-        if not resolved_model_id:
-            analysis = analyze_relationships(
-                dataframe,
-                target=resolved_analysis_target or "Y",
-                correlation_method=correlation_method,
-                top_n=top_n,
-                analysis_unit=analysis_unit,
-            )
-            response = RelationshipAnalysisResponse(
-                filename=filename,
-                explanation=None,
-                analysis_result=None,
-                report_snapshot=None,
-                lot_analysis={},
-                analysis_id=None,
-                prediction_id=resolved_prediction_id,
-                artifact_available=False,
-                **analysis,
-            )
-            response.model_dump_json()
-            return response
-
-        history_started = safe_runtime_call(
-            "start_analysis", analysis_id=analysis_id,
-            prediction_id=resolved_prediction_id,
-            source_filename=file.filename, model_id=resolved_model_id,
-        ) is not None
+        history_started = False
+        bundle_loaded = load_prediction_model(resolved_model_id, MODEL_DIR)
+        effective_target = resolved_analysis_target or (
+            "Y1" if bundle_loaded.metadata.get("model_type") == "hybrid_multi_y" else None
+        )
         loaded = (
-            load_prediction_model_target(resolved_model_id, resolved_analysis_target, MODEL_DIR)
-            if resolved_analysis_target
-            else load_prediction_model(resolved_model_id, MODEL_DIR)
+            load_prediction_model_target(resolved_model_id, effective_target, MODEL_DIR)
+            if effective_target
+            else bundle_loaded
         )
         prediction = predict_dataframe(
             dataframe,
-            loaded,
+            bundle_loaded,
             warning_threshold=warning_threshold,
             danger_threshold=danger_threshold,
             max_rows=None,
@@ -1877,19 +1891,7 @@ async def analyze_feature_relationships(
             shap_importance=explanation.global_importance,
             analysis_unit=analysis_unit,
         )
-        report = build_report(filename, loaded, prediction, explanation)
         lot_analysis = build_lot_cause_analysis(prediction, explanation)
-        report["lot_analysis"] = lot_analysis
-        report["target_analysis"] = {
-            "target": analysis["target"],
-            "rankings": analysis["rankings"],
-            "pareto": analysis["pareto"],
-            "statistics": analysis["statistics"],
-        }
-        report["relationship_analysis"] = {
-            "relationship_paths": analysis["relationship_paths"],
-            "statistics": analysis["statistics"],
-        }
         common = build_analysis_result(
             filename=filename,
             dataframe=dataframe,
@@ -1897,7 +1899,6 @@ async def analyze_feature_relationships(
             prediction=prediction,
             explanation=explanation,
             relationships=analysis,
-            report=report,
             multi_y=multi_y,
             warning_threshold=warning_threshold,
             danger_threshold=danger_threshold,
@@ -1906,41 +1907,16 @@ async def analyze_feature_relationships(
             lot_analysis=lot_analysis,
         )
         common["warnings"] = list(dict.fromkeys([*common["warnings"], *multi_y_warnings]))
-        report["analysis_id"] = common["analysis_id"]
-        report["snapshot_metadata"] = {
-            "analysis_id": common["analysis_id"],
-            "model_id": resolved_model_id,
-            "dataset_fingerprint": common["dataset"]["fingerprint"],
-            "target": explanation.target,
-            "threshold": {
-                "warning": warning_threshold,
-                "critical": danger_threshold,
-            },
-            "analysis_unit": analysis_unit,
-            "created_at": common["created_at"],
-            "schema_version": common["model"]["schema_version"],
-            "report_version": common["report"]["report_version"],
-        }
         compact_lot_analysis = _compact_lot_analysis(lot_analysis)
         compact_common = _compact_analysis_result(
             common,
             explanation,
             compact_lot_analysis,
         )
-        compact_report = {
-            **report,
-            "lot_analysis": compact_lot_analysis,
-            "lot_summary": (
-                report.get("lot_summary", [])[:5]
-                if isinstance(report.get("lot_summary"), list)
-                else []
-            ),
-        }
         response = RelationshipAnalysisResponse(
             filename=filename,
             explanation=_explain_response(filename, explanation),
             analysis_result=compact_common,
-            report_snapshot=compact_report,
             lot_analysis=compact_lot_analysis,
             analysis_id=analysis_id,
             prediction_id=resolved_prediction_id,
@@ -1975,14 +1951,13 @@ async def analyze_feature_relationships(
                     "model_type_snapshot": loaded.metadata.get("model_type"),
                     "schema_version": loaded.metadata.get("schema_version"),
                     "row_count": len(dataframe), "lot_count": len(lots),
-                    "available_targets_json": RuntimeStore._json(["Y", *[f"Y{i}" for i in range(1, 11)]]),
+                    "available_targets_json": RuntimeStore._json([f"Y{i}" for i in range(1, 6)]),
                     "default_target": explanation.target,
-                    "report_snapshot_available": 1,
                 },
                 summary=summary, methodology=common.get("methodology") or {},
                 artifact={
                     "metadata": {"analysis_id": analysis_id, "prediction_id": resolved_prediction_id},
-                    "analysis_result": common, "report_snapshot": report,
+                    "analysis_result": common,
                     "response": stored_response.model_dump(mode="json"),
                 },
                 warnings=common["warnings"],
@@ -1994,7 +1969,23 @@ async def analyze_feature_relationships(
                 safe_runtime_call("fail_analysis", analysis_id=analysis_id, message=history_warning)
         else:
             response.artifact_available = False
-            history_warning = "원인 분석 결과는 생성했지만 이력 저장소를 사용할 수 없습니다."
+            active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model() or {}
+            snapshot = {
+                "snapshot_version": "v1", "analyzed_at": datetime.now().astimezone().isoformat(),
+                "active_model_id": resolved_model_id, "model_promoted_at": active.get("promoted_at"),
+                "dataset_version": active.get("dataset_version"), "source_batch_id": None,
+                "row_count": len(dataframe), "lot_count": len(lots), "wafer_count": len(dataframe),
+                "mean_actual_yield": common.get("dataset", {}).get("mean_actual_yield"),
+                "mean_predicted_yield": summary.get("average_predicted_yield"),
+                "critical_wafer_count": prediction.danger_count, "warning_wafer_count": prediction.warning_count,
+                "critical_lot_count": summary.get("risk_lot_count"),
+                "top_r_causes": common.get("top_r_causes", []), "top_d_causes": common.get("top_d_causes", []),
+                "top_config_causes": common.get("top_config_causes", []), "lot_ranking": common.get("lot_summary", [])[:20],
+                "risky_wafers": compact_common.get("multi_y", {}).get("wafer_results", []),
+                "target_summaries": common.get("multi_y", {}).get("failure_rate_averages", {}),
+                "relationship_summaries": analysis, "chart_summaries": {}, "stale": False, "stale_reason": None,
+            }
+            RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).save_latest_analysis_snapshot(snapshot)
         response.history_saved = history_saved
         response.history_warning = history_warning
         if history_warning:
@@ -2054,124 +2045,6 @@ async def download_explanation(
     )
 
 
-async def _run_report(
-    file: UploadFile,
-    model_id: str,
-    warning_threshold: float,
-    danger_threshold: float,
-    max_rows: int,
-    top_n: int,
-    per_wafer_top_n: int = DEFAULT_WAFER_TOP_N,
-) -> dict[str, Any]:
-    filename, dataframe = await _read_csv_upload(file)
-    try:
-        logger.info("보고서 모델 로드 시작: %s", model_id)
-        loaded = load_prediction_model(model_id, MODEL_DIR)
-        logger.info("보고서 예측 및 위험 분류 시작")
-        prediction = predict_dataframe(
-            dataframe,
-            loaded,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            max_rows=None,
-        )
-        logger.info("보고서 SHAP 분석 시작")
-        explanation = explain_dataframe(
-            dataframe,
-            loaded,
-            max_rows=max_rows,
-            top_n=top_n,
-            per_wafer_top_n=per_wafer_top_n,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            prediction_result=prediction,
-        )
-        logger.info("규칙 기반 보고서 구성 시작")
-        return build_report(
-            filename,
-            loaded,
-            prediction,
-            explanation,
-        )
-    except InferenceInputError as exc:
-        logger.warning("보고서 입력 오류: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except ModelLoadError as exc:
-        logger.exception("보고서 모델 또는 SHAP 처리 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("자동 분석 보고서 생성 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="자동 분석 보고서를 생성하는 중 서버 오류가 발생했습니다.",
-        ) from exc
-
-
-@router.post("/report", response_model=ReportResponse)
-async def generate_report(
-    file: UploadFile = File(...),
-    model_id: str = Form(...),
-    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
-    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
-    top_n: int = Form(DEFAULT_TOP_N),
-) -> ReportResponse:
-    report = await _run_report(
-        file,
-        model_id,
-        warning_threshold,
-        danger_threshold,
-        max_rows,
-        top_n,
-    )
-    try:
-        response = ReportResponse(**report)
-        response.model_dump_json()
-        return response
-    except Exception as exc:
-        logger.exception("보고서 JSON 응답 직렬화 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="보고서 JSON 응답을 생성하지 못했습니다.",
-        ) from exc
-
-
-@router.post("/report/download")
-async def download_report(
-    file: UploadFile = File(...),
-    model_id: str = Form(...),
-    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
-    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
-    top_n: int = Form(DEFAULT_TOP_N),
-) -> Response:
-    report = await _run_report(
-        file,
-        model_id,
-        warning_threshold,
-        danger_threshold,
-        max_rows,
-        top_n,
-    )
-    html = render_report_html(report)
-    timestamp = report["created_at"].replace("-", "").replace(":", "")
-    timestamp = timestamp[:15].replace("T", "_")
-    filename = f"manufacturing_ai_report_{timestamp}.html"
-    return Response(
-        content=html.encode("utf-8"),
-        media_type="text/html; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
-    )
-
-
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_csv(
     file: UploadFile = File(...),
@@ -2181,26 +2054,106 @@ async def analyze_csv(
     max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
     top_n: int = Form(DEFAULT_TOP_N),
     per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
-    include_report: bool = Form(True),
 ) -> AnalyzeResponse:
-    report = await _run_report(
-        file,
-        model_id,
-        warning_threshold,
-        danger_threshold,
-        max_rows,
-        top_n,
-        per_wafer_top_n,
-    )
     try:
+        filename, dataframe = await _read_csv_upload(file)
+        loaded = load_prediction_model(model_id, MODEL_DIR)
+        prediction = predict_dataframe(
+            dataframe,
+            loaded,
+            warning_threshold=warning_threshold,
+            danger_threshold=danger_threshold,
+            max_rows=None,
+        )
+        explanation_model = (
+            load_prediction_model_target(model_id, "Y1", MODEL_DIR)
+            if loaded.metadata.get("model_type") == "hybrid_multi_y"
+            else loaded
+        )
+        explanation = explain_dataframe(
+            dataframe,
+            explanation_model,
+            max_rows=max_rows,
+            top_n=top_n,
+            per_wafer_top_n=per_wafer_top_n,
+            warning_threshold=warning_threshold,
+            danger_threshold=danger_threshold,
+        )
+        risk_rows = sorted(
+            (
+                row
+                for row in prediction.predictions
+                if row.get("risk_level") in {"danger", "warning"}
+            ),
+            key=lambda row: float(row.get("predicted_Y", 100.0)),
+        )[:10]
+        risk_count = prediction.danger_count + prediction.warning_count
+        risk_ratio = risk_count / prediction.total_rows if prediction.total_rows else 0.0
+        top_feature = (
+            explanation.global_importance[0].get("feature")
+            if explanation.global_importance
+            else None
+        )
+        severity = "danger" if prediction.danger_count else "warning" if prediction.warning_count else "normal"
         response = AnalyzeResponse(
-            **build_automation_response(
-                report,
-                include_report=include_report,
-            )
+            analysis_id=f"analysis_{uuid4().hex}",
+            created_at=datetime.now().astimezone().isoformat(),
+            filename=filename,
+            model={
+                "model_id": model_id,
+                "target": "Y",
+                "model_name": loaded.metadata.get("model_name") or "Y1~Y5 자동 수율 모델",
+                "test_r2": (loaded.metadata.get("metrics", {}).get("test", {}) or {}).get("r2"),
+                "test_rmse": (loaded.metadata.get("metrics", {}).get("test", {}) or {}).get("rmse"),
+            },
+            summary={
+                "total_wafers": prediction.total_rows,
+                "average_predicted_yield": prediction.average_prediction,
+                "normal_count": prediction.normal_count,
+                "warning_count": prediction.warning_count,
+                "danger_count": prediction.danger_count,
+                "risk_count": risk_count,
+                "risk_ratio": risk_ratio,
+                "minimum_predicted_yield": min(
+                    (float(row["predicted_Y"]) for row in prediction.predictions),
+                    default=None,
+                ),
+            },
+            alert={
+                "required": risk_count > 0,
+                "severity": severity,
+                "reason": "위험/주의 Wafer가 탐지되었습니다." if risk_count else "위험 기준 Wafer가 없습니다.",
+                "danger_count": prediction.danger_count,
+                "warning_count": prediction.warning_count,
+            },
+            automation_message={
+                "title": "제조 공정 수율 분석",
+                "summary": f"위험 {prediction.danger_count}개 · 주의 {prediction.warning_count}개",
+                "detail": f"평균 예측 수율 {prediction.average_prediction:.2f}%",
+                "top_cause": top_feature or "확인 가능한 원인 후보 없음",
+            },
+            top_findings=(
+                [{
+                    "severity": severity,
+                    "title": "수율 위험 요약",
+                    "description": f"전체 {prediction.total_rows}개 중 위험/주의 {risk_count}개입니다.",
+                    "evidence": f"위험 비율 {risk_ratio:.1%}",
+                }]
+            ),
+            top_risk_wafers=risk_rows,
+            top_features=explanation.global_importance,
+            top_steps=explanation.step_summary,
+            parameter_type_summary=explanation.parameter_type_summary,
+            model_quality_warnings=explanation.model_quality_warnings,
+            warnings=list(dict.fromkeys([*prediction.warnings, *explanation.warnings])),
         )
         response.model_dump_json()
         return response
+    except (InferenceInputError, ModelLoadError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         logger.exception("통합 분석 응답 생성 실패")
         raise HTTPException(

@@ -14,7 +14,6 @@ class HistoryResetSummary(BaseModel):
     model_artifact_count: int
     prediction_artifact_count: int
     analysis_artifact_count: int
-    report_snapshot_count: int
 
 
 class HistoryResetDeleted(BaseModel):
@@ -24,7 +23,6 @@ class HistoryResetDeleted(BaseModel):
     prediction_artifacts: int
     analysis_histories: int
     analysis_artifacts: int
-    report_snapshots: int
 
 
 class HistoryResetPreserved(BaseModel):

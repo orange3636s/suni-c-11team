@@ -52,7 +52,13 @@ def _canonical_feature(item: dict[str, Any]) -> tuple[str, str, str]:
         feature,
         re.IGNORECASE,
     ):
-        canonical = f"{step}_Config" if step != "unknown" else feature
+        raw_category = item.get("value")
+        category = (
+            str(raw_category).strip()
+            if raw_category is not None and str(raw_category).strip()
+            else "결측"
+        )
+        canonical = f"{step}_Config::{category}"
         return canonical, "Config", step
     if normalized_type == "r":
         return feature, "R", step
@@ -73,7 +79,11 @@ def _per_wafer_features(
             key,
             {
                 "feature": feature,
-                "display_name": feature,
+                "display_name": (
+                    feature.split("::", 1)[1]
+                    if group == "Config" and "::" in feature
+                    else feature
+                ),
                 "group": group,
                 "step": step,
                 "signed_shap": 0.0,
@@ -81,6 +91,7 @@ def _per_wafer_features(
                 "adverse": 0.0,
                 "improvement": 0.0,
                 "source_features": [],
+                "observed_value": None,
             },
         )
         signed = _finite(item.get("shap_value")) or 0.0
@@ -101,12 +112,17 @@ def _per_wafer_features(
         source = str(item.get("feature") or "")
         if source and source not in row["source_features"]:
             row["source_features"].append(source)
+        observed = _finite(item.get("value"))
+        if observed is not None:
+            row["observed_value"] = observed
     return list(grouped.values())
 
 
 def _feature_rankings(
     wafer_rows: list[dict[str, Any]],
     total_wafer_count: int,
+    overall_value_means: dict[tuple[str, str], float] | None = None,
+    overall_yield: float | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     aggregates: dict[tuple[str, str], dict[str, Any]] = {}
     for wafer in wafer_rows:
@@ -124,6 +140,8 @@ def _feature_rankings(
                     "adverse_sum": 0.0,
                     "improvement_sum": 0.0,
                     "sample_count": 0,
+                    "value_sum": 0.0,
+                    "value_count": 0,
                     "source_features": set(),
                 },
             )
@@ -132,11 +150,27 @@ def _feature_rankings(
             row["adverse_sum"] += item["adverse"]
             row["improvement_sum"] += item["improvement"]
             row["sample_count"] += 1
+            comparison_value = (
+                wafer.get("ranking_yield")
+                if item["group"] == "Config"
+                else item.get("observed_value")
+            )
+            if comparison_value is not None:
+                row["value_sum"] += comparison_value
+                row["value_count"] += 1
             row["source_features"].update(item["source_features"])
 
     rankings: list[dict[str, Any]] = []
     for row in aggregates.values():
         sample_count = row["sample_count"]
+        lot_mean_value = (
+            row["value_sum"] / row["value_count"]
+            if row["value_count"]
+            else None
+        )
+        overall_mean_value = (overall_value_means or {}).get(
+            (row["feature"], row["group"])
+        )
         rankings.append(
             {
                 "feature": row["feature"],
@@ -147,19 +181,41 @@ def _feature_rankings(
                 "mean_abs_shap": row["absolute_sum"] / sample_count,
                 "adverse_contribution": row["adverse_sum"] / sample_count,
                 "improvement_contribution": row["improvement_sum"] / sample_count,
+                "total_signed_contribution": row["signed_sum"],
+                "total_absolute_contribution": row["absolute_sum"],
+                "total_adverse_contribution": row["adverse_sum"],
+                "total_improvement_contribution": row["improvement_sum"],
                 "sample_count": sample_count,
                 "coverage": sample_count / total_wafer_count if total_wafer_count else 0.0,
+                "lot_mean_value": lot_mean_value,
+                "overall_mean_value": overall_mean_value,
+                "mean_difference": (
+                    lot_mean_value - overall_mean_value
+                    if lot_mean_value is not None and overall_mean_value is not None
+                    else None
+                ),
+                "overall_yield": overall_yield,
                 "source_features": sorted(row["source_features"]),
             }
         )
     rankings.sort(key=lambda item: item["mean_abs_shap"], reverse=True)
-    for rank, row in enumerate(rankings, 1):
+    low_sample_config = [
+        row for row in rankings
+        if row["group"] == "Config" and row["sample_count"] < 5
+    ]
+    official = [
+        row for row in rankings
+        if not (row["group"] == "Config" and row["sample_count"] < 5)
+    ]
+    for rank, row in enumerate(official, 1):
         row["rank"] = rank
     return {
-        "all": rankings,
-        "r": [row for row in rankings if row["group"] == "R"],
-        "d": [row for row in rankings if row["group"] == "D"],
-        "config": [row for row in rankings if row["group"] == "Config"],
+        "all": official,
+        "r": [row for row in official if row["group"] == "R"],
+        "d": [row for row in official if row["group"] == "D"],
+        "config": [row for row in official if row["group"] == "Config"],
+        "config_categories": [row for row in rankings if row["group"] == "Config"],
+        "low_sample_config": low_sample_config,
     }
 
 
@@ -284,6 +340,12 @@ def build_lot_cause_analysis(
             continue
         predictions_by_lot[lot].append(row)
 
+    prediction_by_identifier = {
+        str(row.get(prediction.identifier_column)): row
+        for rows in predictions_by_lot.values()
+        for row in rows
+    }
+
     locals_by_lot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     locals_by_identifier: dict[str, dict[str, Any]] = {}
     for local in explanation.local_contributions:
@@ -295,18 +357,73 @@ def build_lot_cause_analysis(
             **local,
             "features": _per_wafer_features(local.get("contributions") or []),
         }
+        prediction_row = prediction_by_identifier.get(str(identifier), {})
+        enriched["ranking_yield"] = (
+            _finite(prediction_row.get("actual_Y"))
+            if _finite(prediction_row.get("actual_Y")) is not None
+            else _finite(prediction_row.get("predicted_Y"))
+        )
         locals_by_lot[lot].append(enriched)
         locals_by_identifier[str(identifier)] = enriched
 
     lots: list[dict[str, Any]] = []
     prediction_column = f"predicted_{prediction.target}"
+    global_value_samples: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for local_rows in locals_by_lot.values():
+        for local in local_rows:
+            for feature in local["features"]:
+                observed = (
+                    local.get("ranking_yield")
+                    if feature["group"] == "Config"
+                    else feature.get("observed_value")
+                )
+                if observed is not None:
+                    global_value_samples[(feature["feature"], feature["group"])].append(observed)
+    global_value_means = {
+        key: sum(values) / len(values)
+        for key, values in global_value_samples.items()
+        if values
+    }
+    all_actual_yields = [
+        value for rows in predictions_by_lot.values() for row in rows
+        if (value := _finite(row.get("actual_Y"))) is not None
+    ]
+    all_predicted_yields = [
+        value for rows in predictions_by_lot.values() for row in rows
+        if (value := _finite(row.get("predicted_Y"))) is not None
+    ]
+    overall_actual_yield = (
+        sum(all_actual_yields) / len(all_actual_yields)
+        if all_actual_yields else None
+    )
+    overall_predicted_yield = (
+        sum(all_predicted_yields) / len(all_predicted_yields)
+        if all_predicted_yields else None
+    )
+    overall_ranking_yield = (
+        overall_actual_yield
+        if overall_actual_yield is not None
+        else overall_predicted_yield
+    )
     for lot_id, rows in predictions_by_lot.items():
         local_rows = locals_by_lot.get(lot_id, [])
-        rankings = _feature_rankings(local_rows, len(rows))
-        pareto = {group: _pareto(group_rows) for group, group_rows in rankings.items()}
+        rankings = _feature_rankings(
+            local_rows,
+            len(rows),
+            global_value_means,
+            overall_ranking_yield,
+        )
+        pareto = {
+            group: _pareto(rankings[group])
+            for group in ("all", "r", "d", "config")
+        }
         predictions = [
             value for row in rows
             if (value := _finite(row.get(prediction_column))) is not None
+        ]
+        actual_yields = [
+            value for row in rows
+            if (value := _finite(row.get("actual_Y"))) is not None
         ]
         confidences = [
             value for row in rows
@@ -315,14 +432,44 @@ def build_lot_cause_analysis(
         average_prediction = (
             sum(predictions) / len(predictions) if predictions else None
         )
+        average_actual_yield = (
+            sum(actual_yields) / len(actual_yields) if actual_yields else None
+        )
+        ranking_values = actual_yields if actual_yields else predictions
+        ranking_basis = "actual_y" if actual_yields else "predicted_y"
+        ranking_yield = (
+            sum(ranking_values) / len(ranking_values)
+            if ranking_values else None
+        )
         minimum_prediction = min(predictions) if predictions else None
         maximum_prediction = max(predictions) if predictions else None
+        minimum_yield = min(ranking_values) if ranking_values else None
+        maximum_yield = max(ranking_values) if ranking_values else None
+        yield_std = (
+            math.sqrt(
+                sum((value - ranking_yield) ** 2 for value in ranking_values)
+                / len(ranking_values)
+            )
+            if ranking_values and ranking_yield is not None
+            else None
+        )
         risk_extreme_prediction = (
             minimum_prediction
             if prediction.target == "Y"
             else maximum_prediction
         )
         failure_summary = _failure_summary(rows, prediction.target)
+        for group_rows in rankings.values():
+            for feature_row in group_rows:
+                feature_row["related_failure_target"] = failure_summary[
+                    "top_failure_target"
+                ]
+                feature_row["related_fail_bit_count_target"] = failure_summary[
+                    "top_fail_bit_count_target"
+                ]
+                feature_row["related_fail_bit_count_average"] = failure_summary[
+                    "top_fail_bit_count_average"
+                ]
         risk_counts = {
             risk: sum(row.get("risk_level") == risk for row in rows)
             for risk in ("danger", "warning", "normal")
@@ -331,6 +478,7 @@ def build_lot_cause_analysis(
         for row in rows:
             identifier = row.get(prediction.identifier_column)
             prediction_value = _finite(row.get(prediction_column))
+            actual_yield = _finite(row.get("actual_Y"))
             local = locals_by_identifier.get(str(identifier))
             features = sorted(
                 (local or {}).get("features") or [],
@@ -359,6 +507,10 @@ def build_lot_cause_analysis(
                     "predicted_yield": (
                         prediction_value if prediction.target == "Y" else None
                     ),
+                    "actual_yield": actual_yield,
+                    "ranking_yield": (
+                        actual_yield if actual_yield is not None else prediction_value
+                    ),
                     "risk_level": row.get("risk_level"),
                     "confidence": _prediction_confidence(row),
                     "top_feature": top["feature"] if top else None,
@@ -379,6 +531,31 @@ def build_lot_cause_analysis(
                 "average_predicted_yield": (
                     average_prediction if prediction.target == "Y" else None
                 ),
+                "average_actual_yield": average_actual_yield,
+                "ranking_yield": ranking_yield,
+                "ranking_basis": ranking_basis,
+                "overall_average_yield": (
+                    overall_actual_yield
+                    if ranking_basis == "actual_y"
+                    else overall_predicted_yield
+                ),
+                "difference_from_overall": (
+                    ranking_yield - (
+                        overall_actual_yield
+                        if ranking_basis == "actual_y"
+                        else overall_predicted_yield
+                    )
+                    if ranking_yield is not None and (
+                        overall_actual_yield
+                        if ranking_basis == "actual_y"
+                        else overall_predicted_yield
+                    ) is not None
+                    else None
+                ),
+                "yield_loss": 100.0 - ranking_yield if ranking_yield is not None else None,
+                "minimum_yield": minimum_yield,
+                "maximum_yield": maximum_yield,
+                "yield_standard_deviation": yield_std,
                 "minimum_predicted_value": minimum_prediction,
                 "maximum_predicted_value": maximum_prediction,
                 "risk_extreme_predicted_value": risk_extreme_prediction,
@@ -392,7 +569,12 @@ def build_lot_cause_analysis(
                     sum(confidences) / len(confidences) if confidences else None
                 ),
                 **failure_summary,
-                "feature_importance": rankings,
+                "feature_importance": {
+                    group: rankings[group]
+                    for group in ("all", "r", "d", "config")
+                },
+                "config_categories": rankings["config_categories"],
+                "low_sample_config": rankings["low_sample_config"],
                 "pareto": pareto,
                 "wafer_list": wafer_list,
                 "top_causes": {
@@ -411,18 +593,10 @@ def build_lot_cause_analysis(
         )
 
     def sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
-        prediction_value = item["average_predicted_value"]
-        if prediction_value is None:
+        target_risk = item["ranking_yield"]
+        if target_risk is None:
             target_risk = math.inf
-        else:
-            target_risk = (
-                prediction_value
-                if prediction.target == "Y"
-                else -prediction_value
-            )
         return (
-            -item["critical_wafer_count"],
-            -item["warning_wafer_count"],
             target_risk,
             item["lot_id"],
         )
@@ -432,6 +606,9 @@ def build_lot_cause_analysis(
         {
             "target": prediction.target,
             "aggregation": "selected_lot_sampled_per_wafer_shap",
+            "ranking_policy": "actual_y_if_available_else_predicted_y",
+            "overall_actual_yield": overall_actual_yield,
+            "overall_predicted_yield": overall_predicted_yield,
             "sampling_used": explanation.sampling_used,
             "total_lot_count": len(lots),
             "excluded_row_count": excluded_rows,

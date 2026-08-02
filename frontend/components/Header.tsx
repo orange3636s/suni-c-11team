@@ -2,38 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-import { getApiHealth } from "@/lib/api";
-import StatusBadge from "@/components/StatusBadge";
-
-type ApiState = "확인 중" | "연결됨" | "연결 실패";
-
 export default function Header() {
-  const [apiState, setApiState] = useState<ApiState>("확인 중");
-  const [modelReady, setModelReady] = useState<boolean | null>(null);
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function checkApi() {
-      try {
-        const result = await getApiHealth();
-        if (isMounted) {
-          setApiState(result.status === "ok" ? "연결됨" : "연결 실패");
-          setModelReady(result.model_directory_ready ?? null);
-        }
-      } catch {
-        if (isMounted) {
-          setApiState("연결 실패");
-        }
-      }
-    }
-
-    void checkApi();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
 
   useEffect(() => {
     function updateCurrentTime() {
@@ -45,12 +15,6 @@ export default function Header() {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const apiStatusClass =
-    apiState === "연결됨"
-      ? "normal"
-      : apiState === "연결 실패"
-        ? "danger"
-        : "warning";
   const currentDate = currentTime
     ? [
         currentTime.getFullYear(),
@@ -65,44 +29,13 @@ export default function Header() {
         String(currentTime.getSeconds()).padStart(2, "0"),
       ].join(":")
     : "--:--:--";
+
   return (
     <header className="topHeader">
       <div className="headerContext">
-        <h1>제조 공정 불량 예측 &amp; 불량 원인 분석 AI</h1>
+        <h1>제조 공정 불량 예측 &amp; 원인 분석 AI</h1>
       </div>
-      <div className="headerMeta" aria-label="시스템 연결 상태">
-        <div className="headerStatusGroup">
-          <span className="headerStatusLabel">API Status</span>
-          <StatusBadge
-            label={apiState}
-            tone={
-              apiStatusClass === "normal"
-                ? "success"
-                : apiStatusClass === "danger"
-                  ? "danger"
-                  : "warning"
-            }
-          />
-        </div>
-        <div className="headerStatusGroup">
-          <span className="headerStatusLabel">Model Status</span>
-          <StatusBadge
-            label={
-              modelReady === true
-                ? "Ready"
-                : modelReady === false
-                  ? "Not Ready"
-                  : "확인 중"
-            }
-            tone={
-              modelReady === true
-                ? "success"
-                : modelReady === false
-                  ? "danger"
-                  : "neutral"
-            }
-          />
-        </div>
+      <div className="headerMeta" aria-label="현재 시각">
         <div className="headerStatusGroup currentTimeGroup">
           <span className="headerStatusLabel">Current Time</span>
           <time dateTime={currentTime?.toISOString()}>

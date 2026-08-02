@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
-import pytest
 import asyncio
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
+
+import numpy as np
+import pandas as pd
+import pytest
 from fastapi import UploadFile
 
 import api.routes.data as data_routes
-
 from src.analytics.lot_analysis import build_lot_cause_analysis
 from src.ml.explainability import explain_dataframe
 from src.ml.hybrid import (
@@ -18,41 +18,43 @@ from src.ml.hybrid import (
     FAIL_RATE_TARGETS,
     PIPELINE_VERSION,
     TARGET_MODEL_ARTIFACTS,
+    _selection_reason,
+    _should_run_random_forest,
     detect_auto_schema,
     normalized_failure_rates,
     save_hybrid_bundle,
     train_hybrid_multi_y,
-    validate_y_formula,
 )
 from src.ml.inference import (
+    InferenceInputError,
     list_prediction_models,
     load_prediction_model,
     load_prediction_model_target,
     predict_dataframe,
 )
-from src.schema_compatibility import schema_fingerprint
 
 
 @pytest.fixture(scope="module")
 def hybrid_dataframe() -> pd.DataFrame:
     random = np.random.default_rng(2026)
-    rows = 80
+    rows = 100
     response = random.normal(size=rows)
     rates = np.column_stack([
         np.clip(1.2 + (index + 1) * 0.25 * response + random.normal(0, 0.08, rows), 0, None)
         for index in range(5)
     ])
     frame = pd.DataFrame({
-        "Lot_Wafer_ID": [f"LOT{index // 4:02d}_WF{index % 4 + 1:02d}" for index in range(rows)],
-        "Y": 100.0 - rates.sum(axis=1),
+        "Lot_Wafer_ID": [f"LOT{index // 5:02d}_WF{index % 5 + 1:02d}" for index in range(rows)],
+        "Lot_ID": [f"LOT{index // 5:02d}" for index in range(rows)],
+        "Y": np.clip(100.0 - rates.sum(axis=1), 0, 100),
         "Step1_R1": response,
-        "Step1_D1": random.normal(size=rows),
-        "Step1_EQ": ["EQ_A" if index % 2 else "EQ_B" for index in range(rows)],
+        "Step1_D1": np.where(np.arange(rows) % 7 == 0, np.abs(response), 0.0),
+        "Step1_Config": [f"Step1_Model{index % 3}_EQ{index % 4}_CH{index % 2}" for index in range(rows)],
     })
     for index, target in enumerate(FAIL_RATE_TARGETS):
         frame[target] = rates[:, index]
     for index, target in enumerate(COUNT_TARGETS, 1):
-        frame[target] = np.clip(30 + index * 5 + response * index * 3 + random.normal(0, 2, rows), 0, None)
+        frame[target] = np.clip(30 + index * 5 + response * index * 3, 0, None)
     return frame
 
 
@@ -72,200 +74,150 @@ def hybrid_model_dir():
         root.rmdir()
 
 
-def test_derived_y_clips_and_normalizes_without_count_targets() -> None:
+def test_final_y_uses_nonnegative_unscaled_failure_rates() -> None:
     rates = np.array([[-1, 2, 3, 4, 5], [80, 30, 10, 0, 0]], dtype=float)
-    normalized, derived, count = normalized_failure_rates(rates)
-
-    assert normalized[0, 0] == 0
-    assert normalized[1].sum() == pytest.approx(100.0)
+    nonnegative, derived, overflow_count = normalized_failure_rates(rates)
+    assert nonnegative[0].tolist() == pytest.approx([0, 2, 3, 4, 5])
+    assert nonnegative[1].sum() == pytest.approx(120.0)
     assert derived.tolist() == pytest.approx([86.0, 0.0])
-    assert count == 1
+    assert overflow_count == 1
 
 
-def test_hybrid_oof_bundle_prediction_and_target_explanation(
+def test_y1_y5_only_bundle_split_save_reload_and_analysis(
     hybrid_dataframe: pd.DataFrame,
     hybrid_model_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    trained = train_hybrid_multi_y(hybrid_dataframe, oof_folds=3)
-    assignments = trained.metadata["oof_group_assignments"]
-    assert assignments
-    assert all(
-        set(fold["train_groups"]).isdisjoint(fold["holdout_groups"])
-        for fold in assignments
-    )
-    assert set(trained.bundle.target_models) == set(FAIL_RATE_TARGETS + COUNT_TARGETS)
-    assert trained.metadata["selected_final_output"] in {"direct", "derived", "hybrid"}
-    assert set(trained.metadata["final_y_metrics"]) == {"direct", "derived", "hybrid"}
-    protocol = trained.metadata["cv_protocol"]
-    assert protocol["name"] == "group_3_fold"
-    assert protocol["outer_folds"] == 3
-    assert protocol["inner_folds"] is None
-    assert protocol["seed"] == 42
+    trained = train_hybrid_multi_y(hybrid_dataframe)
     assert trained.metadata["pipeline_version"] == PIPELINE_VERSION
-    assert trained.metadata["fallback_used"] is False
-    assert trained.metadata["outlier_strategy"] == "fold_train_winsor_0.5_99.5"
-    assert trained.metadata["preprocessing_summary"]["winsorization_quantiles"] == [0.005, 0.995]
-    assert trained.metadata["preprocessing_summary"]["missing_indicator_count"] == 0
-    assert trained.metadata["preprocessing_summary"]["outlier_indicator_count"] == 0
-    assert trained.metadata["preprocessing_summary"]["categorical_column_count"] == len(
-        trained.metadata["feature_schema"]["config_columns"]
-    )
-    assert len(protocol["fold_metrics"]) == 3
-    assert all(
-        set(fold["train_groups"]).isdisjoint(fold["holdout_groups"])
-        for fold in protocol["outer_group_assignments"]
-    )
+    assert trained.metadata["available_targets"] == FAIL_RATE_TARGETS
+    assert set(trained.bundle.target_models) == set(FAIL_RATE_TARGETS)
+    assert not set(COUNT_TARGETS) & set(trained.bundle.target_models)
+    assert not hasattr(trained.bundle, "direct_model")
+    assert trained.metadata["dataset_split"] == {
+        "train": 0.7, "validation": 0.15, "test": 0.15,
+    }
+    assignments = trained.metadata["split_metadata"]["lot_assignments"]
+    split_sets = [set(assignments[name]) for name in ("train", "validation", "test")]
+    assert split_sets[0].isdisjoint(split_sets[1])
+    assert split_sets[0].isdisjoint(split_sets[2])
+    assert split_sets[1].isdisjoint(split_sets[2])
+    assert trained.metadata["split_metadata"]["lot_overlap_count"] == 0
 
-    model_id = "HYBRID_MULTI_Y_TEST"
-    trained.metadata.update({
-        "model_id": model_id,
-        "created_at": "2026-08-01T00:00:00+09:00",
-        "schema_version": "semicon_yield_v2",
-        "schema_fingerprint": schema_fingerprint(["Step1_R1", "Step1_D1", "Step1_EQ"]),
-        "raw_feature_columns": ["Step1_R1", "Step1_D1", "Step1_EQ"],
-    })
+    model_id = "AUTO_Y1_Y5_TEST"
+    trained.metadata["model_id"] = model_id
     save_hybrid_bundle(trained, hybrid_model_dir, model_id)
-    assert (hybrid_model_dir / model_id / "oof_predictions.json.gz").is_file()
-    assert (hybrid_model_dir / model_id / "fold_assignments.json.gz").is_file()
-    assert all(
-        (hybrid_model_dir / model_id / filename).is_file()
-        for filename in TARGET_MODEL_ARTIFACTS.values()
-    )
-    assert not (Path.cwd() / ".ml-training-staging").exists()
+    model_root = hybrid_model_dir / model_id
+    assert all((model_root / name).is_file() for name in TARGET_MODEL_ARTIFACTS.values())
+    assert len(TARGET_MODEL_ARTIFACTS) == 5
+    assert not any(target in path.name for target in COUNT_TARGETS for path in model_root.iterdir())
+
     models, warnings = list_prediction_models(hybrid_model_dir)
     assert warnings == []
-    assert len(models) == 1
-    assert models[0]["model_type"] == "hybrid_multi_y"
-    assert models[0]["available_targets"] == [
-        "Y",
-        *FAIL_RATE_TARGETS,
-        *COUNT_TARGETS,
-    ]
-
+    assert models[0]["available_targets"] == FAIL_RATE_TARGETS
     loaded = load_prediction_model(model_id, hybrid_model_dir)
     prediction = predict_dataframe(hybrid_dataframe, loaded, max_rows=None)
     first = prediction.predictions[0]
+    assert not {"direct_y", "derived_y", "hybrid_y", "direct_Y", "derived_Y"} & set(first)
     assert set(first["failure_rates"]) == set(FAIL_RATE_TARGETS)
     assert set(first["fail_bit_counts"]) == set(COUNT_TARGETS)
-    assert first["derived_y"] == pytest.approx(100 - sum(first["failure_rates"].values()))
-    assert first["predicted_Y"] == pytest.approx(first["hybrid_y"])
-    assert first["direct_Y"] == pytest.approx(first["direct_y"])
-    assert first["derived_Y"] == pytest.approx(first["derived_y"])
-    assert all(target in first for target in [*FAIL_RATE_TARGETS, *COUNT_TARGETS])
+    assert first["predicted_Y"] == pytest.approx(
+        np.clip(100 - sum(first["failure_rates"].values()), 0, 100)
+    )
+    assert 0 <= first["predicted_Y"] <= 100
+    with pytest.raises(InferenceInputError):
+        load_prediction_model_target(model_id, "Y", hybrid_model_dir)
+    with pytest.raises(InferenceInputError):
+        load_prediction_model_target(model_id, "Y6", hybrid_model_dir)
 
-    y6_model = load_prediction_model_target(model_id, "Y6", hybrid_model_dir)
-    y6_prediction = predict_dataframe(hybrid_dataframe, y6_model, max_rows=None)
-    monkeypatch.setattr(data_routes, "MODEL_DIR", hybrid_model_dir)
-    multi_y, multi_y_warnings = data_routes._collect_multi_y_predictions(
-        hybrid_dataframe, y6_model, y6_prediction
-    )
-    assert multi_y_warnings == []
-    assert set(multi_y["failure_rates"]) == set(FAIL_RATE_TARGETS)
-    assert set(multi_y["fail_bit_counts"]) == set(COUNT_TARGETS)
-    assert multi_y["ensemble_y"] is not None
-    selected_first = y6_prediction.predictions[0]
-    assert set(selected_first["failure_rates"]) == set(FAIL_RATE_TARGETS)
-    assert set(selected_first["fail_bit_counts"]) == set(COUNT_TARGETS)
-    assert selected_first["critical_probability"] == pytest.approx(
-        first["critical_probability"]
-    )
-    assert selected_first["warning_probability"] == pytest.approx(
-        first["warning_probability"]
-    )
-    explanation = explain_dataframe(hybrid_dataframe, y6_model, max_rows=8, top_n=5)
-    assert explanation.target == "Y6"
-    assert explanation.global_importance
-    lot_analysis = build_lot_cause_analysis(y6_prediction, explanation)
-    assert lot_analysis["lots"]
-    assert all(
-        lot["average_confidence"] is not None
-        for lot in lot_analysis["lots"]
-    )
-    assert all(
-        lot["top_failure_rate_target"] in FAIL_RATE_TARGETS
-        and lot["top_fail_bit_count_target"] in COUNT_TARGETS
-        for lot in lot_analysis["lots"]
+    y1_model = load_prediction_model_target(model_id, "Y1", hybrid_model_dir)
+    explanation = explain_dataframe(hybrid_dataframe, y1_model, max_rows=20, top_n=8)
+    lot_analysis = build_lot_cause_analysis(prediction, explanation)
+    assert explanation.target == "Y1"
+    assert lot_analysis["ranking_policy"] == "actual_y_if_available_else_predicted_y"
+    assert lot_analysis["lots"] == sorted(
+        lot_analysis["lots"], key=lambda item: item["ranking_yield"]
     )
 
 
-def test_train_and_predict_api_use_one_hybrid_bundle_without_target_selection(
+def test_train_api_forces_automatic_contract(
     hybrid_dataframe: pd.DataFrame,
     hybrid_model_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(data_routes, "MODEL_DIR", hybrid_model_dir)
-
-    def upload(filename: str) -> UploadFile:
-        return UploadFile(
-            file=BytesIO(hybrid_dataframe.to_csv(index=False).encode("utf-8")),
-            filename=filename,
-        )
-
-    trained = asyncio.run(
-        data_routes.train_model(
-            upload("hybrid-training.csv"),
-            target=None,
-            train_ratio=64,
-            validation_ratio=16,
-            test_ratio=20,
-            missing_indicator=True,
-            compare_missingness=False,
-        )
+    upload = UploadFile(
+        file=BytesIO(hybrid_dataframe.to_csv(index=False).encode("utf-8")),
+        filename="automatic.csv",
     )
-    assert trained.model_type == "hybrid_multi_y"
-    assert trained.model_id
-    assert trained.selected_final_output in {"direct", "derived", "hybrid"}
-    assert len(list(hybrid_model_dir.iterdir())) == 1
+    response = asyncio.run(data_routes.train_model(
+        upload,
+        target="Y",
+        train_ratio=64,
+        validation_ratio=16,
+        test_ratio=20,
+        missing_indicator=True,
+    ))
+    assert response.model_type == "hybrid_multi_y"
+    assert response.split.train_rows + response.split.validation_rows + response.split.test_rows == len(hybrid_dataframe)
+    assert response.target == "Y1~Y5"
 
-    prediction = asyncio.run(
-        data_routes.predict_csv(
-            upload("hybrid-prediction.csv"),
-            model_id=trained.model_id,
-            warning_threshold=90,
-            danger_threshold=85,
-        )
+
+def test_random_forest_is_skipped_when_hgbr_beats_baseline() -> None:
+    run_rf, reason = _should_run_random_forest(
+        object(),
+        {"rmse": 4.0},
+        np.array([1.0, 2.0, 3.0]),
+        {"rmse": 10.0},
     )
-    first = prediction.predictions[0]
-    assert set(first["failure_rates"]) == set(FAIL_RATE_TARGETS)
-    assert set(first["fail_bit_counts"]) == set(COUNT_TARGETS)
-    assert prediction.preprocessing
+    assert run_rf is False
+    assert reason is None
 
 
-def test_auto_schema_formula_and_fold_local_inference_resilience(
+def test_random_forest_runs_when_hgbr_improvement_is_insufficient() -> None:
+    run_rf, reason = _should_run_random_forest(
+        object(),
+        {"rmse": 9.8},
+        np.array([1.0, 2.0, 3.0]),
+        {"rmse": 10.0},
+    )
+    assert run_rf is True
+    assert reason == "hgbr_baseline_improvement_below_5_percent"
+
+
+def test_one_percent_rmse_tie_selects_smaller_model() -> None:
+    selected, reason = _selection_reason(
+        {
+            "rmse": 10.0,
+            "model_file_size": 100,
+            "validation_inference_seconds": 0.2,
+        },
+        {
+            "rmse": 10.05,
+            "model_file_size": 1000,
+            "validation_inference_seconds": 0.1,
+        },
+    )
+    assert selected == "HistGradientBoostingRegressor"
+    assert reason == "validation_rmse_within_1_percent_smaller_model"
+
+
+def test_auto_schema_whole_config_and_unknown_frequency_resilience(
     hybrid_dataframe: pd.DataFrame,
     hybrid_model_dir: Path,
 ) -> None:
     schema = detect_auto_schema(hybrid_dataframe)
-    assert schema["identifier_columns"] == ["Lot_Wafer_ID"]
-    assert schema["response_columns"] == ["Step1_R1"]
-    assert schema["defect_columns"] == ["Step1_D1"]
-    assert schema["config_columns"] == ["Step1_EQ"]
-    assert not set(schema["feature_columns"]) & {"Y", *FAIL_RATE_TARGETS, *COUNT_TARGETS}
-
-    targets = hybrid_dataframe[["Y", *FAIL_RATE_TARGETS, *COUNT_TARGETS]]
-    formula = validate_y_formula(targets)
-    assert formula["formula_consistent"] is True
-    assert formula["within_tolerance_ratio"] == pytest.approx(1.0)
-
+    assert schema["config_columns"] == ["Step1_Config"]
+    assert not any("Model" in name or "Equipment" in name or "Chamber" in name for name in schema["feature_columns"])
     trained = train_hybrid_multi_y(hybrid_dataframe)
-    assert trained.metadata["direct_weight"] + trained.metadata["derived_weight"] == pytest.approx(1.0)
-    assert trained.metadata["target_leakage_check"]["passed"] is True
-    model_id = "AUTO_MULTI_Y_RESILIENCE"
-    trained.metadata.update({
-        "model_id": model_id,
-        "created_at": "2026-08-02T00:00:00+09:00",
-        "schema_version": "semicon_yield_v2",
-        "schema_fingerprint": schema_fingerprint(schema["feature_columns"]),
-    })
+    model_id = "AUTO_RESILIENCE"
+    trained.metadata["model_id"] = model_id
     save_hybrid_bundle(trained, hybrid_model_dir, model_id)
     loaded = load_prediction_model(model_id, hybrid_model_dir)
     inference = hybrid_dataframe.drop(columns=["Step1_D1"]).copy()
-    inference.loc[0, "Step1_R1"] = np.nan
-    inference.loc[0, "Step1_EQ"] = "NEW_EQ"
+    inference.loc[0, "Step1_Config"] = "UNSEEN_WHOLE_CONFIG"
     inference["Step99_R1"] = 123.0
-    prediction = predict_dataframe(inference, loaded, max_rows=None)
-    assert len(prediction.predictions) == len(inference)
-    assert prediction.preprocessing_summary["missing_input_features"] == ["Step1_D1"]
-    assert prediction.preprocessing_summary["ignored_extra_features"] == ["Step99_R1"]
-    assert all(0 <= row["predicted_Y"] <= 100 for row in prediction.predictions)
+    result = predict_dataframe(inference, loaded, max_rows=None)
+    assert len(result.predictions) == len(inference)
+    assert result.preprocessing_summary["missing_input_features"] == ["Step1_D1"]
+    assert result.preprocessing_summary["ignored_extra_features"] == ["Step99_R1"]
+    assert result.preprocessing_summary["unknown_config_count"] >= 1

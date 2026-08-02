@@ -80,19 +80,19 @@ def test_analysis_returns_group_rankings_and_top_n() -> None:
     assert len(rankings["overall"]) == 1
     assert len(rankings["R"]) == 1
     assert len(rankings["D"]) == 1
-    assert len(rankings["EQ"]) == 1
+    assert len(rankings["Config"]) == 1
     assert rankings["all"] == rankings["overall"]
     assert rankings["r"] == rankings["R"]
     assert rankings["d"] == rankings["D"]
-    assert rankings["equipment"] == rankings["EQ"]
-    assert rankings["eq"] == rankings["equipment"]
+    assert "EQ" not in rankings
+    assert "eq" not in rankings
     assert rankings["missing"] == rankings["measurement"]
     assert set(("config", "model", "chamber", "observed", "indicator")) <= set(rankings)
-    assert rankings["EQ"][0]["ranking_basis"] == "Eta squared vs target"
+    assert rankings["Config"][0]["ranking_basis"] == "Eta squared vs target"
     assert rankings["overall"][0]["p_value"] is not None
     assert rankings["overall"][0]["fdr_p_value"] is not None
     assert rankings["overall"][0]["effect_size"] is not None
-    assert rankings["EQ"][0]["signed_association"] is None
+    assert rankings["Config"][0]["signed_association"] is None
 
 
 def test_analysis_builds_relationship_path_and_confidence() -> None:
@@ -308,7 +308,9 @@ def test_categorical_statistics_return_empty_result_for_insufficient_sample() ->
         pd.Series(["A", "B", None]),
         pd.Series([1.0, 2.0, 3.0]),
     )
-    assert result["valid_count"] == 2
+    assert result["valid_count"] == 0
+    assert result["insufficient_category_count"] == 2
+    assert result["excluded_low_sample_count"] == 2
     assert result["anova"]["p_value"] is None
     assert result["welch_anova"]["p_value"] is None
     assert result["kruskal"]["p_value"] is None

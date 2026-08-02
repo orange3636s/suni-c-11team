@@ -18,6 +18,20 @@ function missingLabel(value: ProcessingSummary["missing_strategy"]): string {
 
 export default function PreprocessingSummary({ summary }: PreprocessingSummaryProps) {
   if (!summary) return null;
+  if (summary.pipeline_version?.startsWith("auto_y1_y5_frequency")) {
+    const items = [
+      ["Target 모델", "Y1~Y5 순차 학습"],
+      ["최종 Y", "100 - Σ(Y1~Y5), 0~100 clip"],
+      ["Config", "Train Frequency Encoding · 미지값 0"],
+      ["Config 문자열", summary.config_strings_decomposed === false ? "분해하지 않음" : "원본 Category"],
+      ["R 이상치", "Train 1~99 percentile"],
+      ["D 이상치", "Train 상위 99.9 percentile · 0 보존"],
+      ["숫자 결측", "Train 중앙값"],
+      ["Config 결측", "Train 최빈값"],
+      ["Pipeline", summary.pipeline_version],
+    ];
+    return <section className="preprocessingSummaryCard" aria-labelledby="preprocessing-summary-title"><div><span className="sectionLabel">Auto Pipeline</span><h3 id="preprocessing-summary-title">데이터 처리 요약</h3></div><ul>{items.map(([label, value]) => <li key={label}><span aria-hidden="true">✓</span><strong>{label}</strong><small>{value}</small></li>)}</ul></section>;
+  }
   if (summary.pipeline_version === "auto_multi_y_hgbr_v1") {
     const removedColumns = [
       ...(summary.removed_all_missing_columns ?? []),

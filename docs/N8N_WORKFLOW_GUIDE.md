@@ -133,8 +133,8 @@ PowerShell에서 직접 통합 API를 호출하는 예시:
 curl.exe -X POST "http://127.0.0.1:8000/api/analyze" `
   -F "file=@tests/fixtures/training_sample.csv;type=text/csv" `
   -F "model_id=YOUR_MODEL_ID" `
-  -F "warning_threshold=95" `
-  -F "danger_threshold=90" `
+  -F "warning_threshold=90" `
+  -F "danger_threshold=85" `
   -F "max_rows=500" `
   -F "top_n=20" `
   -F "per_wafer_top_n=5" `
@@ -161,24 +161,6 @@ curl.exe -X POST "http://localhost:5678/webhook-test/manufacturing-ai-analysis" 
 워크플로우를 활성화한 후에는 `/webhook-test/` 대신 `/webhook/` URL을
 사용한다.
 
-## HTML 보고서
-
-`POST /api/analyze`는 분석 요약과 다음 안내 경로를 반환한다.
-
-```json
-{
-  "report": {
-    "included": true,
-    "report_id": "...",
-    "download_endpoint": "/api/report/download"
-  }
-}
-```
-
-서버가 업로드 CSV나 생성 HTML을 영구 저장하지 않으므로
-`download_endpoint`는 가짜 파일 URL이 아니라 호출 안내다. n8n에서 HTML이
-필요하면 동일 CSV와 옵션으로 `POST /api/report/download`를 다시 호출한다.
-
 ## 오류 대응
 
 - `binary.data CSV 파일이 필요합니다`: Webhook multipart 파일 필드가
@@ -186,7 +168,7 @@ curl.exe -X POST "http://localhost:5678/webhook-test/manufacturing-ai-analysis" 
 - `model_id가 필요합니다`: body의 model_id와 저장 모델 목록을 확인한다.
 - threshold 오류: 숫자 형식과 주의 기준이 위험 기준보다 큰지 확인한다.
 - FastAPI 연결 실패: `FASTAPI_BASE_URL`, 방화벽, Docker host 주소를 확인한다.
-- feature 누락: 학습 데이터와 신규 CSV의 R/D/EQ feature 구성을 비교한다.
+- feature 누락: 학습 데이터와 신규 CSV의 R/D/Config feature 구성을 비교한다.
 - SHAP 지연: 먼저 `max_rows`를 낮춰 확인하고 FastAPI 로그를 점검한다.
 - Slack 실패: credential 권한, 채널 ID, Slack 앱의 채널 참여 여부를 확인한다.
 

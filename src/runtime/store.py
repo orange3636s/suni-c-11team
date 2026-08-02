@@ -82,15 +82,14 @@ class RuntimeStore:
                     "SELECT COUNT(*) FROM prediction_runs"
                 ).fetchone()[0]
             )
-            analysis_row = active_connection.execute(
-                "SELECT COUNT(*), "
-                "COALESCE(SUM(CASE WHEN report_snapshot_available != 0 "
-                "THEN 1 ELSE 0 END), 0) FROM analysis_runs"
-            ).fetchone()
+            analysis_count = int(
+                active_connection.execute(
+                    "SELECT COUNT(*) FROM analysis_runs"
+                ).fetchone()[0]
+            )
             return {
                 "prediction_history_count": prediction_count,
-                "analysis_history_count": int(analysis_row[0]),
-                "report_snapshot_count": int(analysis_row[1]),
+                "analysis_history_count": analysis_count,
             }
 
         if connection is not None:
@@ -134,7 +133,6 @@ class RuntimeStore:
         return {
             "prediction_history_count": int(prediction_cursor.rowcount),
             "analysis_history_count": int(analysis_cursor.rowcount),
-            "report_snapshot_count": counts["report_snapshot_count"],
         }
 
     def _initialize(self) -> None:
@@ -254,8 +252,133 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_training_jobs_created
                 ON training_jobs(created_at DESC);
+                CREATE TABLE IF NOT EXISTS migration_registry (
+                    migration_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    details_json TEXT,
+                    error_message TEXT
+                );
+                CREATE TABLE IF NOT EXISTS model_slots (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    active_model_id TEXT, pipeline_version TEXT, promoted_at TEXT,
+                    dataset_version INTEGER, previous_model_id TEXT, status TEXT NOT NULL DEFAULT 'empty',
+                    rollback_json TEXT NOT NULL DEFAULT '[]', active_metadata_json TEXT
+                );
+                INSERT OR IGNORE INTO model_slots(singleton,status) VALUES(1,'empty');
+                CREATE TABLE IF NOT EXISTS latest_analysis_snapshot (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    payload_json TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
                 """
             )
+
+    def active_model(self) -> dict[str, Any] | None:
+        with _lock, self._connect() as connection:
+            row = connection.execute("SELECT * FROM model_slots WHERE singleton=1").fetchone()
+        if row is None or not row["active_model_id"]:
+            return None
+        value = dict(row)
+        value["rollback_model_ids"] = json.loads(value.pop("rollback_json") or "[]")
+        value["metadata"] = json.loads(value.pop("active_metadata_json") or "{}")
+        return value
+
+    def promote_model(self, *, model_id: str, pipeline_version: str, dataset_version: int, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Atomically switch only the pointer; model files are never overwritten."""
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute("SELECT active_model_id,rollback_json FROM model_slots WHERE singleton=1").fetchone()
+            rollbacks = json.loads(current["rollback_json"] or "[]") if current else []
+            previous = current["active_model_id"] if current else None
+            if previous and previous != model_id:
+                rollbacks = [previous, *[item for item in rollbacks if item != previous]][:2]
+            connection.execute("""UPDATE model_slots SET active_model_id=?,pipeline_version=?,promoted_at=?,dataset_version=?,previous_model_id=?,status='active',rollback_json=?,active_metadata_json=? WHERE singleton=1""", (model_id, pipeline_version, now, dataset_version, previous, self._json(rollbacks), self._json(metadata)))
+        return self.active_model() or {}
+
+    def save_latest_analysis_snapshot(self, payload: dict[str, Any]) -> None:
+        # JSON validation happens before the atomic upsert, preserving old data on failure.
+        encoded = self._json(payload)
+        json.loads(encoded)
+        with _lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("""INSERT INTO latest_analysis_snapshot(singleton,payload_json,updated_at) VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at""", (encoded, datetime.now(timezone.utc).isoformat()))
+
+    def latest_analysis_snapshot(self) -> dict[str, Any] | None:
+        with _lock, self._connect() as connection:
+            row = connection.execute("SELECT payload_json FROM latest_analysis_snapshot WHERE singleton=1").fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+
+    def mark_analysis_snapshot_stale(self, reason: str) -> None:
+        snapshot = self.latest_analysis_snapshot()
+        if snapshot is None:
+            return
+        snapshot["stale"] = True
+        snapshot["stale_reason"] = reason
+        self.save_latest_analysis_snapshot(snapshot)
+
+    def migration_status(self, migration_id: str) -> dict[str, Any] | None:
+        with _lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM migration_registry WHERE migration_id=?",
+                (migration_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        raw_details = result.pop("details_json", None)
+        try:
+            result["details"] = json.loads(raw_details) if raw_details else None
+        except json.JSONDecodeError:
+            result["details"] = None
+        return result
+
+    def start_migration(self, migration_id: str) -> None:
+        started_at = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO migration_registry
+                (migration_id,status,started_at,completed_at,details_json,error_message)
+                VALUES (?, 'running', ?, NULL, NULL, NULL)
+                ON CONFLICT(migration_id) DO UPDATE SET
+                status='running',started_at=excluded.started_at,completed_at=NULL,
+                details_json=NULL,error_message=NULL""",
+                (migration_id, started_at),
+            )
+
+    def complete_migration(self, migration_id: str, details: dict[str, Any]) -> None:
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE migration_registry SET status='completed',completed_at=?,
+                details_json=?,error_message=NULL WHERE migration_id=?""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    self._json(details),
+                    migration_id,
+                ),
+            )
+
+    def fail_migration(self, migration_id: str, message: str) -> None:
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE migration_registry SET status='failed',completed_at=?,
+                error_message=? WHERE migration_id=?""",
+                (datetime.now(timezone.utc).isoformat(), str(message)[:1000], migration_id),
+            )
+
+    def clear_report_snapshot_markers(self) -> int:
+        with _lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE analysis_runs SET report_snapshot_available=0 "
+                "WHERE report_snapshot_available != 0"
+            )
+            return int(cursor.rowcount)
 
     @staticmethod
     def _json(value: Any) -> str:
@@ -600,7 +723,7 @@ class RuntimeStore:
                 schema_version=:schema_version,row_count=:row_count,lot_count=:lot_count,
                 available_targets_json=:available_targets_json,default_target=:default_target,
                 summary_json=:summary_json,methodology_json=:methodology_json,
-                artifact_path=:artifact_path,report_snapshot_available=:report_snapshot_available,
+                artifact_path=:artifact_path,report_snapshot_available=0,
                 warning_count=:warning_count,error_message=NULL
                 WHERE analysis_id=:analysis_id""",
                 values,

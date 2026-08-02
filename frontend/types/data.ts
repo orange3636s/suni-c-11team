@@ -78,6 +78,11 @@ export type ProcessingSummary = {
   model_strategies?: Record<string, unknown>;
   model_outlier_strategies?: Record<string, unknown>;
   schema_version?: string;
+  config_encoding?: string;
+  config_strings_decomposed?: boolean;
+  r_clipping?: string;
+  d_clipping?: string;
+  by_target?: Record<string, unknown>;
 };
 
 export type PreprocessResponse = {
@@ -433,7 +438,6 @@ export type HistoryResetSummary = {
   model_artifact_count?: number;
   prediction_artifact_count?: number;
   analysis_artifact_count?: number;
-  report_snapshot_count?: number;
 };
 
 export type HistoryResetResponse = {
@@ -445,7 +449,6 @@ export type HistoryResetResponse = {
     prediction_artifacts: number;
     analysis_histories: number;
     analysis_artifacts: number;
-    report_snapshots: number;
   };
   preserved: {
     alert_logs: boolean;
@@ -669,6 +672,8 @@ export type CategoryTargetSummary = {
   outliers: number[];
   outlier_count: number;
   sample_warning: boolean | null;
+  eligible_for_inference?: boolean | null;
+  difference_from_overall?: number | null;
 };
 
 export type StatisticalTestResult = {
@@ -685,6 +690,10 @@ export type CategoricalStatistic = {
   excluded_count: number;
   coverage: number;
   category_count: number;
+  eligible_category_count?: number;
+  insufficient_category_count?: number;
+  excluded_low_sample_count?: number;
+  minimum_category_sample?: number;
   effect_size: number | null;
   anova: StatisticalTestResult;
   welch_anova: StatisticalTestResult;
@@ -715,6 +724,17 @@ export type LotFeatureImportanceItem = {
   mean_abs_shap: number;
   adverse_contribution: number;
   improvement_contribution: number;
+  total_signed_contribution?: number;
+  total_absolute_contribution?: number;
+  total_adverse_contribution?: number;
+  total_improvement_contribution?: number;
+  lot_mean_value?: number | null;
+  overall_mean_value?: number | null;
+  mean_difference?: number | null;
+  overall_yield?: number | null;
+  related_failure_target?: string | null;
+  related_fail_bit_count_target?: string | null;
+  related_fail_bit_count_average?: number | null;
   sample_count: number;
   coverage: number;
   source_features: string[];
@@ -742,6 +762,8 @@ export type LotWaferItem = {
   prediction: number | null;
   predicted_value: number | null;
   predicted_yield: number | null;
+  actual_yield?: number | null;
+  ranking_yield?: number | null;
   risk_level: "normal" | "warning" | "danger" | null;
   confidence: number | null;
   top_feature: string | null;
@@ -757,6 +779,15 @@ export type LotCauseItem = {
   shap_coverage: number | null;
   average_predicted_value: number | null;
   average_predicted_yield: number | null;
+  average_actual_yield?: number | null;
+  ranking_yield?: number | null;
+  ranking_basis?: "actual_y" | "predicted_y" | null;
+  overall_average_yield?: number | null;
+  difference_from_overall?: number | null;
+  yield_loss?: number | null;
+  minimum_yield?: number | null;
+  maximum_yield?: number | null;
+  yield_standard_deviation?: number | null;
   minimum_predicted_value: number | null;
   maximum_predicted_value: number | null;
   risk_extreme_predicted_value: number | null;
@@ -770,7 +801,11 @@ export type LotCauseItem = {
   top_failure_rate_average: number | null;
   top_fail_bit_count_target: string | null;
   top_fail_bit_count_average: number | null;
+  failure_rate_averages?: Record<string, number>;
+  fail_bit_count_averages?: Record<string, number>;
   feature_importance: Record<"all" | "r" | "d" | "config", LotFeatureImportanceItem[]>;
+  config_categories?: LotFeatureImportanceItem[];
+  low_sample_config?: LotFeatureImportanceItem[];
   pareto: Record<"all" | "r" | "d" | "config", LotParetoItem[]>;
   wafer_list: LotWaferItem[];
   top_causes: {
@@ -787,6 +822,9 @@ export type LotCauseAnalysis = {
   sampling_used: boolean | null;
   total_lot_count: number | null;
   excluded_row_count: number | null;
+  ranking_policy?: string | null;
+  overall_actual_yield?: number | null;
+  overall_predicted_yield?: number | null;
   lots: LotCauseItem[];
 };
 
@@ -806,7 +844,7 @@ export type RelationshipAnalysisResponse = {
     cumulative_contribution: number;
     total_feature_count: number;
     total_impact: number;
-    group_counts: Record<"R" | "D" | "EQ", number>;
+    group_counts: Record<"R" | "D" | "Config", number>;
     ranking_basis: string;
     caveat: string;
     features: (RelationshipFeature & {
@@ -825,7 +863,6 @@ export type RelationshipAnalysisResponse = {
   config_summary: Record<string, unknown>;
   selection_bias_warnings: string[];
   analysis_result: AnalysisResult | null;
-  report_snapshot: ReportResponse | null;
   lot_analysis: LotCauseAnalysis | null;
   analysis_id?: string | null;
   prediction_id?: string | null;
@@ -839,7 +876,6 @@ export type AnalysisHistoryDetail = {
   artifact: {
     response?: RelationshipAnalysisResponse;
     analysis_result?: AnalysisResult;
-    report_snapshot?: ReportResponse;
     lot_analysis?: LotCauseAnalysis;
     [key: string]: unknown;
   } | null;
@@ -901,9 +937,7 @@ export type OverviewKpi = {
 export type OverviewModelMetrics = { r2: number | null; rmse: number | null; mae: number | null };
 
 export type OverviewMultiY = {
-  direct_y_mean: number | null;
-  derived_y_mean: number | null;
-  hybrid_y_mean: number | null;
+  predicted_y_mean: number | null;
   failure_rates: Record<string, number | null>;
   fail_bit_counts: Record<string, number | null>;
 };
@@ -1026,18 +1060,12 @@ export type AnalysisResult = {
   target: { name: string; label: string; type: string | null; unit: string | null };
   metrics: Record<string, unknown>;
   multi_y: {
-    average_direct_y: number | null;
-    average_derived_y: number | null;
-    average_ensemble_y: number | null;
-    ensemble_weight: number | null;
+    average_predicted_y: number | null;
     failure_rate_averages: Record<string, number | null>;
     fail_bit_count_averages: Record<string, number | null>;
     wafer_results: Array<{
       identifier: unknown;
-      direct_y: number | null;
-      derived_y: number | null;
-      ensemble_y: number | null;
-      direct_derived_gap: number | null;
+      predicted_y: number | null;
       failure_rates: Record<string, number>;
       fail_bit_counts: Record<string, number>;
     }>;
@@ -1057,8 +1085,8 @@ export type AnalysisResult = {
   relationships: RelationshipPath[];
   statistics: RelationshipStatistics;
   lot_analysis?: LotCauseAnalysis | null;
-  risk_wafers: ReportRiskWafer[];
-  lot_summary: ReportLotSummary[];
+  risk_wafers: AnalysisRiskWafer[];
+  lot_summary: AnalysisLotSummary[];
   data_quality: {
     r_measurement_coverage: number;
     d_measurement_coverage: number;
@@ -1070,44 +1098,10 @@ export type AnalysisResult = {
     selection_bias_warnings: string[];
   };
   methodology: Record<string, unknown> & { notes?: string[] };
-  report: { report_id: string | null; report_version: string | null };
   warnings: string[];
 };
 
-export type ReportOptions = {
-  warning_threshold: number;
-  danger_threshold: number;
-  max_rows: number;
-  top_n: number;
-};
-
-export type ReportExecutiveSummary = {
-  total_wafers: number | null;
-  average_predicted_yield: number;
-  normal_count: number;
-  warning_count: number;
-  danger_count: number;
-  risk_ratio: number;
-  analyzed_rows: number | null;
-  shap_sampling_used: boolean | null;
-  sampling_strategy: string | null;
-};
-
-export type ReportModelInfo = {
-  model_id: string;
-  target: string;
-  model_name: string;
-  test_metrics: ModelMetrics;
-};
-
-export type ReportFinding = {
-  severity: "info" | "warning" | "danger";
-  title: string;
-  description: string;
-  evidence: string;
-};
-
-export type ReportRiskWafer = {
+export type AnalysisRiskWafer = {
   identifier: unknown;
   predicted_value: number;
   risk_level: "normal" | "warning" | "danger" | null;
@@ -1118,7 +1112,7 @@ export type ReportRiskWafer = {
   top_parameter_type: string | null;
 };
 
-export type ReportLotSummary = {
+export type AnalysisLotSummary = {
   lot_id: string;
   wafer_count: number;
   average_predicted_yield: number;
@@ -1128,48 +1122,6 @@ export type ReportLotSummary = {
   danger_ratio: number;
   top_harmful_feature: string | null;
   top_harmful_step: string | null;
-};
-
-export type ReportRecommendation = {
-  priority: "high" | "medium" | "low";
-  title: string;
-  description: string;
-};
-
-export type ReportResponse = {
-  success: boolean;
-  report_id: string;
-  created_at: string;
-  filename: string;
-  model: ReportModelInfo;
-  executive_summary: ReportExecutiveSummary;
-  key_findings: ReportFinding[];
-  top_risk_wafers: ReportRiskWafer[];
-  lot_summary: ReportLotSummary[];
-  top_features: GlobalImportanceItem[];
-  top_steps: StepSummaryItem[];
-  parameter_type_summary: (ParameterTypeSummaryItem & {
-    ratio: number | null;
-  })[];
-  recommendations: ReportRecommendation[];
-  model_quality_warnings: string[];
-  methodology_notes: string[];
-  explanation_method: string;
-  is_fallback: boolean;
-  warnings: string[];
-  analysis_id: string | null;
-  snapshot_metadata: Record<string, unknown> | null;
-  lot_analysis?: LotCauseAnalysis | null;
-  target_analysis?: {
-    target: string | null;
-    rankings: RelationshipAnalysisResponse["rankings"];
-    pareto: RelationshipAnalysisResponse["pareto"];
-    statistics: RelationshipStatistics;
-  } | null;
-  relationship_analysis?: {
-    relationship_paths: RelationshipPath[];
-    statistics: RelationshipStatistics;
-  } | null;
 };
 
 export type AlertStatus = "New" | "Acknowledged" | "Resolved";

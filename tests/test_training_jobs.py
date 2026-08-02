@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import pandas as pd
+import numpy as np
 import pytest
 from fastapi import HTTPException, UploadFile
 
@@ -294,8 +295,18 @@ def test_train_job_api_runs_real_training_and_saves_model(
     monkeypatch.setattr(data_routes, "get_training_job_manager", lambda: manager)
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_dir)
     fixture = Path(__file__).parent / "fixtures" / "training_sample.csv"
+    source = pd.read_csv(fixture)
+    frame = pd.concat([source] * 3, ignore_index=True)
+    frame["Lot_Wafer_ID"] = [
+        f"LOT{index // 5:02d}_WF{index % 5 + 1:02d}" for index in range(len(frame))
+    ]
+    frame["Lot_ID"] = frame["Lot_Wafer_ID"].str.extract(r"^(LOT\d+)", expand=False)
+    total_failure = np.clip(100.0 - frame["Y"], 0.0, None)
+    for index, weight in enumerate((0.10, 0.15, 0.20, 0.25, 0.30), 1):
+        frame[f"Y{index}"] = total_failure * weight
+    frame["Step1_Config"] = frame.pop("Step1_EQ")
     upload = UploadFile(
-        file=fixture.open("rb"),
+        file=BytesIO(frame.to_csv(index=False).encode("utf-8")),
         filename=fixture.name,
     )
     try:
@@ -307,8 +318,8 @@ def test_train_job_api_runs_real_training_and_saves_model(
         result = row["result"]
         assert result is not None
         assert result["model_id"]
-        assert (model_dir / f"{result['model_id']}.joblib").is_file()
-        assert (model_dir / f"{result['model_id']}.json").is_file()
+        assert (model_dir / result["model_id"] / "bundle.joblib").is_file()
+        assert (model_dir / result["model_id"] / "metadata.json").is_file()
         assert result["test_metrics"]["rmse"] is not None
     finally:
         manager.shutdown()
@@ -504,12 +515,12 @@ def test_relationship_browser_snapshot_is_compact_without_mutating_artifact() ->
     assert "direct_y" not in compact["multi_y"]
     assert len(compact["multi_y"]["wafer_results"]) == 300
     assert compact["multi_y"]["wafer_results_truncated"] is True
-    assert len(compact["lot_analysis"]["lots"]) == 5
+    assert len(compact["lot_analysis"]["lots"]) == 7
     assert all(
-        len(lot["wafer_list"]) == 50
+        len(lot["wafer_list"]) == 60
         for lot in compact["lot_analysis"]["lots"]
     )
-    assert compact["lot_analysis"]["lot_list_truncated"] is True
+    assert compact["lot_analysis"]["lot_list_truncated"] is False
     assert len(compact["lot_summary"]) == 5
     assert len(full["multi_y"]["direct_y"]) == 600
     assert len(full["multi_y"]["wafer_results"]) == 600

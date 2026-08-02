@@ -164,8 +164,8 @@ def prepare_dataset(
     categorical_columns = list(
         dict.fromkeys(
             column for column in [
+                *detected.get("config_columns", []),
                 *detected["eq_columns"],
-                *[name for name in config_report.get("derived_columns", [])],
             ]
             if column not in excluded_columns and column in working.columns
         )
@@ -182,7 +182,7 @@ def prepare_dataset(
     )
     if not feature_columns:
         raise ValueError(
-            "학습에 사용할 R, D, EQ 계열 feature 컬럼이 없습니다."
+            "학습에 사용할 R, D, Config 계열 feature 컬럼이 없습니다."
         )
 
     numeric_target = pd.to_numeric(
@@ -260,7 +260,7 @@ def prepare_dataset(
         ]
     if not feature_columns:
         raise ValueError(
-            "학습 가능한 feature가 없습니다. R, D, EQ 컬럼이 "
+            "학습 가능한 feature가 없습니다. R, D, Config 컬럼이 "
             "전부 결측이거나 상수인지 확인해 주세요."
         )
 

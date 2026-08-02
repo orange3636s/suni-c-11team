@@ -20,8 +20,8 @@ credential은 저장소에 기록하지 않고 Vercel 프로젝트 환경변수�
    | `NEXT_PUBLIC_N8N_WEBHOOK_URL` | `https://your-n8n.example/webhook/manufacturing-ai-analysis` | 필요한 환경 |
 
 8. Deploy를 실행하고 빌드 로그가 성공인지 확인한다.
-9. 발급된 HTTPS URL에서 `/`, `/upload`, `/training`, `/prediction`,
-   `/root-cause`, `/report`, `/automation`을 확인한다.
+9. 발급된 HTTPS URL에서 `/`, `/training`, `/prediction`,
+   `/root-cause`, `/alerts`, `/automation`을 확인한다.
 10. Render 환경변수 `FRONTEND_ORIGINS`에 Vercel의 정확한 origin을
     추가한다. 경로와 끝 슬래시는 넣지 않는다.
 
@@ -49,4 +49,3 @@ credential은 저장소에 기록하지 않고 Vercel 프로젝트 환경변수�
 - 404/잘못된 프로젝트: Root Directory가 반드시 `frontend`인지 확인한다.
 - 로고 오류: `frontend/public/sk-hynix-logo.png`가 배포 결과에 포함됐는지
   확인한다.
-

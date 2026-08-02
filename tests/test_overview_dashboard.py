@@ -61,9 +61,7 @@ def _analysis_artifact(*, sparse: bool = False) -> dict[str, Any]:
         "risk": {"normal_count": 7, "warning_count": 2, "critical_count": 1},
         "confidence": {"low_confidence_count": 0},
         "multi_y": {
-            "average_direct_y": 92.0,
-            "average_derived_y": 91.5,
-            "average_ensemble_y": 91.8,
+            "average_predicted_y": 91.8,
             "failure_rate_averages": {"Y1": 1.2},
             "fail_bit_count_averages": {"Y6": 3.0},
         },

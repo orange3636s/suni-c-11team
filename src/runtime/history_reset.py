@@ -141,7 +141,6 @@ class HistoryResetService:
             "model_artifact_count": plan.model_artifact_count,
             "prediction_artifact_count": plan.prediction_artifact_count,
             "analysis_artifact_count": plan.analysis_artifact_count,
-            "report_snapshot_count": database["report_snapshot_count"],
         }
 
     def reset(self) -> dict[str, Any]:
@@ -192,9 +191,6 @@ class HistoryResetService:
                     "analysis_history_count"
                 ],
                 "analysis_artifacts": plan.analysis_artifact_count,
-                "report_snapshots": database_counts[
-                    "report_snapshot_count"
-                ],
             },
             "preserved": {
                 "alert_logs": True,

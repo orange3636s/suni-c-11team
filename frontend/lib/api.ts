@@ -16,8 +16,6 @@ import type {
   PredictionHistorySummary,
   PredictionThresholds,
   RelationshipAnalysisResponse,
-  ReportOptions,
-  ReportResponse,
   TrainResponse,
   TrainingJobCreateResponse,
   TrainingJobStatusResponse,
@@ -46,10 +44,30 @@ export class ApiResponseError extends Error {
   }
 }
 
+export type CumulativeDataStatus = {
+  dataset_version: string;
+  total_rows: number; total_lots: number; labeled_rows: number;
+  pending_label_rows: number; conflict_rows: number;
+  new_labeled_rows_since_active_model: number; new_lots_since_active_model: number;
+  retraining_required: boolean;
+};
+
+async function championRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, { cache: "no-store", ...init });
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json() as Promise<T>;
+}
+
+export function getCumulativeDataStatus() { return championRequest<CumulativeDataStatus>("/api/data/status"); }
+export function ingestProcessData(file: File) { const body = new FormData(); body.append("file", file); return championRequest<Record<string, unknown>>("/api/data/ingest", { method: "POST", body }); }
+export function createModelUpdate() { return championRequest<{job_id: string; status: string}>("/api/model/update", { method: "POST" }); }
+export function getModelUpdate(jobId: string) { return championRequest<Record<string, unknown>>(`/api/model/update/${encodeURIComponent(jobId)}`); }
+export function getActiveModel() { return championRequest<{active_model: Record<string, unknown> | null}>("/api/model/active"); }
+
 function historyResetErrorMessage(status: number): string {
   if (status === 400) return "초기화 확인값이 올바르지 않습니다.";
-  if (status === 403) return "초기화 권한이 없습니다.";
   if (status === 409) return "현재 실행 중인 작업이 있어 초기화할 수 없습니다.";
+  if (status === 429) return "초기화 요청이 너무 많습니다. 10분 뒤 다시 시도해 주세요.";
   if (status === 502 || status === 503) return "초기화 서버에 연결할 수 없습니다.";
   return "이력 초기화 중 서버 오류가 발생했습니다.";
 }
@@ -87,7 +105,7 @@ export function getHistoryResetSummary(): Promise<HistoryResetSummary> {
 
 export function resetAllHistory(): Promise<HistoryResetResponse> {
   return requestHistoryResetApi("/api/admin/history", {
-    method: "DELETE",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirmation: "RESET_ALL_HISTORY" }),
   });
@@ -463,7 +481,7 @@ export async function explainCsv(
   } catch (error) {
     rethrowApiConfigurationError(error);
     throw new Error(
-      "불량 원인 분석 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
+      "원인 분석 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
     );
   }
   if (!response.ok) {
@@ -585,72 +603,7 @@ export async function downloadExplanation(
     });
   } catch (error) {
     rethrowApiConfigurationError(error);
-    throw new Error("불량 원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
-  }
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-  return response.blob();
-}
-
-function reportFormData(
-  file: File,
-  modelId: string,
-  options: ReportOptions,
-): FormData {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("model_id", modelId);
-  formData.append(
-    "warning_threshold",
-    String(options.warning_threshold),
-  );
-  formData.append(
-    "danger_threshold",
-    String(options.danger_threshold),
-  );
-  formData.append("max_rows", String(options.max_rows));
-  formData.append("top_n", String(options.top_n));
-  return formData;
-}
-
-export async function generateReport(
-  file: File,
-  modelId: string,
-  options: ReportOptions,
-): Promise<ReportResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`${getApiBaseUrl()}/api/report`, {
-      method: "POST",
-      body: reportFormData(file, modelId, options),
-    });
-  } catch (error) {
-    rethrowApiConfigurationError(error);
-    throw new Error(
-      "분석 보고서 서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.",
-    );
-  }
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-  return response.json() as Promise<ReportResponse>;
-}
-
-export async function downloadReport(
-  file: File,
-  modelId: string,
-  options: ReportOptions,
-): Promise<Blob> {
-  let response: Response;
-  try {
-    response = await fetch(`${getApiBaseUrl()}/api/report/download`, {
-      method: "POST",
-      body: reportFormData(file, modelId, options),
-    });
-  } catch (error) {
-    rethrowApiConfigurationError(error);
-    throw new Error("HTML 보고서 다운로드 서버에 연결할 수 없습니다.");
+    throw new Error("원인 분석 결과 다운로드 서버에 연결할 수 없습니다.");
   }
   if (!response.ok) {
     throw new Error(await getErrorMessage(response));

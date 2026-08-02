@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import gc
+import gzip
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-import gzip
 from io import BytesIO
 import json
 import logging
@@ -11,7 +11,8 @@ from pathlib import Path
 import re
 import shutil
 from threading import Lock
-from typing import Any
+import time
+from typing import Any, Callable
 from uuid import uuid4
 
 import joblib
@@ -20,11 +21,10 @@ import pandas as pd
 import sklearn
 from scipy.stats import spearmanr
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import GroupKFold, KFold
+from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OrdinalEncoder
 from threadpoolctl import threadpool_limits
 
 from src.ml.dataset import RANDOM_STATE
@@ -32,39 +32,34 @@ from src.ml.memory_usage import log_memory_stage
 from src.ml.model_io import to_json_safe
 
 
-PIPELINE_VERSION = "auto_multi_y_hgbr_v1"
-TARGETS = ["Y", *[f"Y{index}" for index in range(1, 11)]]
-TRAINING_TARGET_ORDER = [*[f"Y{index}" for index in range(1, 11)], "Y"]
+PIPELINE_VERSION = "auto_y1_y5_frequency_v2"
 FAIL_RATE_TARGETS = [f"Y{index}" for index in range(1, 6)]
 COUNT_TARGETS = [f"Y{index}" for index in range(6, 11)]
+# Only Y1~Y5 have fitted estimators. Y and Y6~Y10 remain analysis fields.
+TARGETS = list(FAIL_RATE_TARGETS)
+TRAINING_TARGET_ORDER = list(FAIL_RATE_TARGETS)
 TARGET_MODEL_ARTIFACTS = {
-    target: f"target_{target}.joblib"
-    for target in TARGETS
+    target: f"target_{target}.joblib" for target in TRAINING_TARGET_ORDER
 }
 MISSING_STRINGS = {"", "na", "n/a", "nan", "none", "null", "missing", "-"}
 logger = logging.getLogger(__name__)
 _STAGING_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _ACTIVE_STAGING_PATHS: set[Path] = set()
 _STAGING_LOCK = Lock()
+ProgressCallback = Callable[[str, int], None]
 
 
 def normalized_failure_rates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
-    clipped = np.clip(
-        np.asarray(values, dtype=np.float32),
-        np.float32(0.0),
-        np.float32(100.0),
-    )
-    totals = clipped.sum(axis=1)
-    normalized = clipped.copy()
+    """Apply the production final-y rule without changing valid fail rates."""
+    rates = np.maximum(np.asarray(values, dtype=np.float32), np.float32(0.0))
+    totals = rates.sum(axis=1)
     overflow = totals > 100.0
-    if overflow.any():
-        normalized[overflow] *= 100.0 / totals[overflow, None]
     derived = np.clip(
-        np.float32(100.0) - normalized.sum(axis=1),
+        np.float32(100.0) - totals,
         np.float32(0.0),
         np.float32(100.0),
     ).astype(np.float32, copy=False)
-    return normalized, derived, int(overflow.sum())
+    return rates, derived, int(overflow.sum())
 
 
 def _canonical(name: object) -> str:
@@ -75,45 +70,39 @@ def detect_auto_schema(dataframe: pd.DataFrame) -> dict[str, Any]:
     columns = [str(column) for column in dataframe.columns]
     canonical = {_canonical(column): column for column in columns}
     target_columns: dict[str, str] = {}
-    target_aliases = {"Y": ("y", "finalyield")}
-    target_aliases.update({f"Y{i}": (f"y{i}",) for i in range(1, 11)})
-    for target, aliases in target_aliases.items():
-        for alias in aliases:
-            if alias in canonical:
-                target_columns[target] = canonical[alias]
+    aliases = {"Y": ("y", "finalyield")}
+    aliases.update({f"Y{i}": (f"y{i}",) for i in range(1, 11)})
+    for target, candidates in aliases.items():
+        for candidate in candidates:
+            if candidate in canonical:
+                target_columns[target] = canonical[candidate]
                 break
 
     identifier_columns = [
         column
         for column in columns
-        if _canonical(column) in {
-            "lotid", "waferid", "waferslot", "lotwaferid", "rowid", "sampleid"
-        }
+        if _canonical(column)
+        in {"lotid", "waferid", "waferslot", "lotwaferid", "rowid", "sampleid"}
         or _canonical(column).endswith("identifier")
     ]
-    config_pattern = re.compile(
-        r"(?i)^step\d+_(?:config|eq(?:uipment)?.*)$"
-    )
-    response_pattern = re.compile(r"(?i)^step\d+_r(?:esponse)?\d*$")
-    defect_pattern = re.compile(r"(?i)^step\d+_d(?:efect)?\d*$")
+    config_pattern = re.compile(r"(?i)^step\d+_config$")
+    # Legacy Step_EQ columns are accepted as whole categories, never tokenized,
+    # and are exposed through the Config group in new metadata.
+    legacy_config_pattern = re.compile(r"(?i)^step\d+_eq.*$")
+    response_pattern = re.compile(r"(?i)^step\d+_r\d*$")
+    defect_pattern = re.compile(r"(?i)^step\d+_d\d*$")
     config_columns = [
         column
         for column in columns
-        if config_pattern.fullmatch(column)
-        or ("equipment" in column.lower() and re.search(r"(?i)step\d+", column))
+        if config_pattern.fullmatch(column) or legacy_config_pattern.fullmatch(column)
     ]
     response_columns = [column for column in columns if response_pattern.fullmatch(column)]
     defect_columns = [column for column in columns if defect_pattern.fullmatch(column)]
-    feature_columns = list(dict.fromkeys([
-        *config_columns,
-        *response_columns,
-        *defect_columns,
-    ]))
-    target_source_columns = set(target_columns.values())
-    feature_columns = [
-        column for column in feature_columns
-        if column not in target_source_columns and column not in identifier_columns
-    ]
+    feature_columns = list(
+        dict.fromkeys([*config_columns, *response_columns, *defect_columns])
+    )
+    excluded = {*target_columns.values(), *identifier_columns}
+    feature_columns = [column for column in feature_columns if column not in excluded]
     return {
         "identifier_columns": identifier_columns,
         "config_columns": config_columns,
@@ -125,14 +114,24 @@ def detect_auto_schema(dataframe: pd.DataFrame) -> dict[str, Any]:
 
 
 def validate_y_formula(targets: pd.DataFrame, tolerance: float = 1e-6) -> dict[str, Any]:
+    if "Y" not in targets or any(target not in targets for target in FAIL_RATE_TARGETS):
+        return {
+            "formula": "100 - (Y1 + Y2 + Y3 + Y4 + Y5)",
+            "tolerance": tolerance,
+            "valid_row_count": 0,
+            "mean_absolute_error": None,
+            "maximum_absolute_error": None,
+            "exact_match_ratio": None,
+            "within_tolerance_ratio": None,
+            "formula_consistent": False,
+        }
     derived = 100.0 - targets[FAIL_RATE_TARGETS].sum(axis=1)
-    difference = targets["Y"] - derived
-    valid = difference.replace([np.inf, -np.inf], np.nan).dropna()
-    absolute = valid.abs()
+    difference = pd.to_numeric(targets["Y"], errors="coerce") - derived
+    absolute = difference.replace([np.inf, -np.inf], np.nan).dropna().abs()
     return {
         "formula": "100 - (Y1 + Y2 + Y3 + Y4 + Y5)",
         "tolerance": tolerance,
-        "valid_row_count": int(len(valid)),
+        "valid_row_count": int(len(absolute)),
         "mean_absolute_error": float(absolute.mean()) if len(absolute) else None,
         "maximum_absolute_error": float(absolute.max()) if len(absolute) else None,
         "exact_match_ratio": float((absolute == 0).mean()) if len(absolute) else None,
@@ -149,164 +148,236 @@ def _normalize_category(value: object) -> object:
 
 
 class AutoFeaturePreprocessor(TransformerMixin, BaseEstimator):
-    """Fold-local numeric cleanup, winsorization, imputation and ordinal encoding."""
+    """Train-only imputation, R/D clipping, and Config frequency encoding."""
 
     def __init__(
         self,
-        numeric_columns: list[str],
+        response_columns: list[str],
+        defect_columns: list[str],
         categorical_columns: list[str],
-        lower_quantile: float = 0.005,
-        upper_quantile: float = 0.995,
+        r_lower_quantile: float = 0.01,
+        r_upper_quantile: float = 0.99,
+        d_upper_quantile: float = 0.999,
+        unknown_frequency: float = 0.0,
     ) -> None:
-        self.numeric_columns = numeric_columns
+        self.response_columns = response_columns
+        self.defect_columns = defect_columns
         self.categorical_columns = categorical_columns
-        self.lower_quantile = lower_quantile
-        self.upper_quantile = upper_quantile
+        self.r_lower_quantile = r_lower_quantile
+        self.r_upper_quantile = r_upper_quantile
+        self.d_upper_quantile = d_upper_quantile
+        self.unknown_frequency = unknown_frequency
 
     @staticmethod
     def _frame(x: Any) -> pd.DataFrame:
-        # fit/transform never mutate the caller's frame. Avoid a full fold-sized
-        # copy before the numeric and categorical output arrays are allocated.
         return x if isinstance(x, pd.DataFrame) else pd.DataFrame(x)
 
-    def fit(self, x: Any, y: Any = None) -> "AutoFeaturePreprocessor":
-        frame = self._frame(x)
-        numeric = pd.DataFrame(index=frame.index)
-        for column in self.numeric_columns:
-            source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
-            numeric[column] = pd.to_numeric(source, errors="coerce").replace(
-                [np.inf, -np.inf], np.nan
-            )
+    @staticmethod
+    def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+        source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+        return pd.to_numeric(source, errors="coerce").replace([np.inf, -np.inf], np.nan)
 
-        self.numeric_columns_ = []
+    def fit(self, x: Any, y: Any = None) -> "AutoFeaturePreprocessor":
+        del y
+        frame = self._frame(x)
+        self.response_columns_ = []
+        self.defect_columns_ = []
         self.numeric_medians_: dict[str, float] = {}
-        self.numeric_bounds_: dict[str, tuple[float, float] | None] = {}
+        self.r_bounds_: dict[str, tuple[float, float] | None] = {}
+        self.d_upper_bounds_: dict[str, float | None] = {}
+        self.d_zero_ratios_: dict[str, float] = {}
         self.all_missing_columns_: list[str] = []
         self.constant_columns_: list[str] = []
-        self.near_constant_columns_: list[str] = []
-        for column in self.numeric_columns:
-            observed = numeric[column].dropna()
-            if observed.empty:
-                self.all_missing_columns_.append(column)
-                continue
-            counts = observed.value_counts(dropna=False)
-            if len(counts) <= 1:
-                self.constant_columns_.append(column)
-                continue
-            if len(observed) >= 100 and float(counts.iloc[0] / len(observed)) >= 0.999:
-                self.near_constant_columns_.append(column)
-                continue
-            self.numeric_columns_.append(column)
-            self.numeric_medians_[column] = float(observed.median())
-            if len(observed) >= 20 and observed.nunique() > 2:
-                lower, upper = observed.quantile(
-                    [self.lower_quantile, self.upper_quantile]
-                ).to_numpy(dtype=float)
-                self.numeric_bounds_[column] = (
-                    (float(lower), float(upper))
-                    if np.isfinite(lower) and np.isfinite(upper) and lower < upper
-                    else None
-                )
-            else:
-                self.numeric_bounds_[column] = None
+        train_missing_count = 0
 
-        categorical = pd.DataFrame(index=frame.index)
+        for group, configured in (
+            ("R", self.response_columns),
+            ("D", self.defect_columns),
+        ):
+            for column in configured:
+                values = self._numeric(frame, column)
+                observed = values.dropna()
+                if observed.empty:
+                    self.all_missing_columns_.append(column)
+                    continue
+                if observed.nunique() <= 1:
+                    self.constant_columns_.append(column)
+                    continue
+                train_missing_count += int(values.isna().sum())
+                self.numeric_medians_[column] = float(observed.median())
+                if group == "R":
+                    self.response_columns_.append(column)
+                    bounds: tuple[float, float] | None = None
+                    if len(observed) >= 10 and observed.nunique() > 2:
+                        lower, upper = observed.quantile(
+                            [self.r_lower_quantile, self.r_upper_quantile]
+                        ).to_numpy(dtype=float)
+                        if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+                            bounds = (float(lower), float(upper))
+                    self.r_bounds_[column] = bounds
+                else:
+                    self.defect_columns_.append(column)
+                    self.d_zero_ratios_[column] = float((observed == 0).mean())
+                    upper_bound: float | None = None
+                    if len(observed) >= 10 and observed.nunique() > 2:
+                        upper = float(observed.quantile(self.d_upper_quantile))
+                        maximum = float(observed.max())
+                        if np.isfinite(upper) and upper < maximum and not np.isclose(upper, maximum):
+                            upper_bound = upper
+                    self.d_upper_bounds_[column] = upper_bound
+
         self.categorical_columns_ = []
+        self.config_modes_: dict[str, str] = {}
+        self.frequency_mappings_: dict[str, dict[str, float]] = {}
+        config_missing_count = 0
         for column in self.categorical_columns:
             source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
             normalized = source.map(_normalize_category)
-            if normalized.dropna().empty:
+            observed = normalized.dropna().astype(str)
+            if observed.empty:
                 self.all_missing_columns_.append(column)
                 continue
-            if normalized.dropna().nunique() <= 1:
-                self.constant_columns_.append(column)
-                continue
-            categorical[column] = normalized.fillna("__MISSING__")
+            mode = str(observed.mode(dropna=True).iloc[0])
+            filled = normalized.fillna(mode).astype(str)
+            config_missing_count += int(normalized.isna().sum())
+            frequency = filled.value_counts(dropna=False) / max(len(filled), 1)
             self.categorical_columns_.append(column)
-        self.encoder_ = None
-        if self.categorical_columns_:
-            self.encoder_ = OrdinalEncoder(
-                handle_unknown="use_encoded_value",
-                unknown_value=-1,
-                encoded_missing_value=-1,
-                dtype=np.float32,
-            )
-            self.encoder_.fit(categorical[self.categorical_columns_])
+            self.config_modes_[column] = mode
+            self.frequency_mappings_[column] = {
+                str(category): float(value) for category, value in frequency.items()
+            }
 
-        self.feature_names_out_ = [*self.numeric_columns_, *self.categorical_columns_]
+        self.feature_names_out_ = [
+            *self.response_columns_,
+            *self.defect_columns_,
+            *self.categorical_columns_,
+        ]
         if not self.feature_names_out_:
-            raise ValueError("Fold 학습 데이터에 사용할 수 있는 공정 Feature가 없습니다.")
+            raise ValueError("Train 데이터에 학습 가능한 R, D, Config Feature가 없습니다.")
         self.summary_ = {
-            "numeric_feature_count": len(self.numeric_columns_),
-            "categorical_config_count": len(self.categorical_columns_),
+            "r_column_count": len(self.response_columns_),
+            "d_column_count": len(self.defect_columns_),
+            "config_column_count": len(self.categorical_columns_),
+            "numeric_feature_count": len(self.response_columns_) + len(self.defect_columns_),
+            "categorical_column_count": len(self.categorical_columns_),
+            "total_category_count": int(sum(len(v) for v in self.frequency_mappings_.values())),
+            "numeric_missing_fill_count_train": train_missing_count,
+            "config_missing_fill_count_train": config_missing_count,
             "removed_all_missing_columns": list(self.all_missing_columns_),
             "removed_constant_columns": list(self.constant_columns_),
-            "removed_near_constant_columns": list(self.near_constant_columns_),
-            "missing_imputed_columns": int(sum(numeric[c].isna().any() for c in self.numeric_columns_)),
-            "winsorized_columns": int(sum(v is not None for v in self.numeric_bounds_.values())),
-            "winsorization_quantiles": [self.lower_quantile, self.upper_quantile],
+            "r_clipped_column_count": int(sum(v is not None for v in self.r_bounds_.values())),
+            "d_upper_clipped_column_count": int(sum(v is not None for v in self.d_upper_bounds_.values())),
+            "r_clipping_quantiles": [self.r_lower_quantile, self.r_upper_quantile],
+            "d_upper_clipping_quantile": self.d_upper_quantile,
+            "r_bounds": self.r_bounds_,
+            "d_upper_bounds": self.d_upper_bounds_,
+            "d_zero_ratios": self.d_zero_ratios_,
+            "config_frequency_mappings": self.frequency_mappings_,
+            "unknown_frequency": self.unknown_frequency,
+            "config_encoding": "frequency",
+            "config_strings_decomposed": False,
         }
         return self
 
     def transform(self, x: Any) -> np.ndarray:
         frame = self._frame(x)
-        parts: list[np.ndarray] = []
-        if self.numeric_columns_:
-            output = np.empty((len(frame), len(self.numeric_columns_)), dtype=np.float32)
-            for index, column in enumerate(self.numeric_columns_):
-                source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
-                values = pd.to_numeric(source, errors="coerce").replace(
-                    [np.inf, -np.inf], np.nan
-                )
-                bounds = self.numeric_bounds_[column]
-                if bounds is not None:
-                    values = values.clip(lower=bounds[0], upper=bounds[1])
-                output[:, index] = values.fillna(self.numeric_medians_[column]).to_numpy(
-                    dtype=np.float32
-                )
-            parts.append(output)
-        if self.categorical_columns_ and self.encoder_ is not None:
-            categorical = pd.DataFrame(index=frame.index)
-            for column in self.categorical_columns_:
-                source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
-                categorical[column] = source.map(_normalize_category).fillna("__MISSING__")
-            parts.append(self.encoder_.transform(categorical[self.categorical_columns_]))
-        return np.hstack(parts).astype(np.float32, copy=False)
+        output = np.empty((len(frame), len(self.feature_names_out_)), dtype=np.float32)
+        position = 0
+        for column in self.response_columns_:
+            values = self._numeric(frame, column).fillna(self.numeric_medians_[column])
+            bounds = self.r_bounds_[column]
+            if bounds is not None:
+                values = values.clip(lower=bounds[0], upper=bounds[1])
+            output[:, position] = values.to_numpy(dtype=np.float32)
+            position += 1
+        for column in self.defect_columns_:
+            values = self._numeric(frame, column).fillna(self.numeric_medians_[column])
+            upper = self.d_upper_bounds_[column]
+            if upper is not None:
+                values = values.clip(upper=upper)
+            output[:, position] = values.to_numpy(dtype=np.float32)
+            position += 1
+        for column in self.categorical_columns_:
+            source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+            normalized = source.map(_normalize_category).fillna(self.config_modes_[column]).astype(str)
+            mapping = self.frequency_mappings_[column]
+            output[:, position] = normalized.map(mapping).fillna(self.unknown_frequency).to_numpy(dtype=np.float32)
+            position += 1
+        return output
+
+    def audit(self, x: Any) -> dict[str, Any]:
+        frame = self._frame(x)
+        r_adjusted = 0
+        d_adjusted = 0
+        unknown_by_column: dict[str, int] = {}
+        for column in self.response_columns_:
+            values = self._numeric(frame, column)
+            bounds = self.r_bounds_[column]
+            if bounds is not None:
+                r_adjusted += int(((values < bounds[0]) | (values > bounds[1])).sum())
+        for column in self.defect_columns_:
+            values = self._numeric(frame, column)
+            upper = self.d_upper_bounds_[column]
+            if upper is not None:
+                d_adjusted += int((values > upper).sum())
+        for column in self.categorical_columns_:
+            source = frame[column] if column in frame else pd.Series(np.nan, index=frame.index)
+            normalized = source.map(_normalize_category).fillna(self.config_modes_[column]).astype(str)
+            unknown_by_column[column] = int((~normalized.isin(self.frequency_mappings_[column])).sum())
+        return {
+            "r_adjusted_value_count": r_adjusted,
+            "d_adjusted_value_count": d_adjusted,
+            "unknown_config_count": int(sum(unknown_by_column.values())),
+            "unknown_config_by_column": unknown_by_column,
+        }
 
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
+        del input_features
         return np.asarray(self.feature_names_out_, dtype=object)
 
 
-def _estimator(row_count: int) -> HistGradientBoostingRegressor:
-    if row_count < 200:
-        max_iter, min_samples_leaf = 80, 5
-    elif row_count < 1000:
-        max_iter, min_samples_leaf = 120, 10
-    else:
-        max_iter, min_samples_leaf = 160, 20
+def _hgbr(row_count: int) -> HistGradientBoostingRegressor:
+    max_iter = 80 if row_count < 200 else 120 if row_count < 1000 else 150
     return HistGradientBoostingRegressor(
         loss="squared_error",
         learning_rate=0.05,
         max_iter=max_iter,
         max_leaf_nodes=31,
-        max_depth=None,
-        min_samples_leaf=min_samples_leaf,
+        min_samples_leaf=20,
         l2_regularization=1.0,
         early_stopping=True,
-        validation_fraction=0.1,
-        n_iter_no_change=12,
+        n_iter_no_change=10,
         random_state=RANDOM_STATE,
     )
 
 
-def _pipeline(schema: dict[str, Any], row_count: int) -> Pipeline:
-    return Pipeline([
-        ("features", AutoFeaturePreprocessor(
-            numeric_columns=[*schema["response_columns"], *schema["defect_columns"]],
-            categorical_columns=schema["config_columns"],
-        )),
-        ("model", _estimator(row_count)),
-    ])
+def _random_forest() -> RandomForestRegressor:
+    return RandomForestRegressor(
+        n_estimators=80,
+        max_depth=12,
+        min_samples_leaf=3,
+        min_samples_split=6,
+        max_features="sqrt",
+        max_samples=0.8,
+        n_jobs=1,
+        random_state=RANDOM_STATE,
+    )
+
+
+def _pipeline(schema: dict[str, Any], estimator: Any) -> Pipeline:
+    return Pipeline(
+        [
+            (
+                "features",
+                AutoFeaturePreprocessor(
+                    response_columns=list(schema["response_columns"]),
+                    defect_columns=list(schema["defect_columns"]),
+                    categorical_columns=list(schema["config_columns"]),
+                ),
+            ),
+            ("model", estimator),
+        ]
+    )
 
 
 def _metrics(actual: Any, predicted: Any) -> dict[str, float | None]:
@@ -320,9 +391,10 @@ def _metrics(actual: Any, predicted: Any) -> dict[str, float | None]:
     pearson = None
     spearman = None
     if len(truth) > 1 and np.std(truth) > 0 and np.std(estimate) > 0:
-        pearson = float(np.corrcoef(truth, estimate)[0, 1])
-        spearman_value = spearmanr(truth, estimate).statistic
-        spearman = float(spearman_value) if np.isfinite(spearman_value) else None
+        pearson_value = float(np.corrcoef(truth, estimate)[0, 1])
+        pearson = pearson_value if np.isfinite(pearson_value) else None
+        ranked = spearmanr(truth, estimate).statistic
+        spearman = float(ranked) if np.isfinite(ranked) else None
     return {
         "r2": float(r2_score(truth, estimate)) if len(truth) > 1 else None,
         "rmse": float(np.sqrt(mse)),
@@ -333,70 +405,215 @@ def _metrics(actual: Any, predicted: Any) -> dict[str, float | None]:
     }
 
 
-def _splitter(features: pd.DataFrame, groups: pd.Series) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
-    unique_groups = groups.dropna().astype(str).nunique()
-    if unique_groups >= 3:
-        splits = list(GroupKFold(n_splits=3).split(features, groups=groups.astype(str)))
-        return splits, "group_3_fold"
-    if len(features) >= 12:
-        return list(KFold(n_splits=3, shuffle=True, random_state=RANDOM_STATE).split(features)), "kfold_3"
-    folds = 2 if len(features) >= 4 else 0
-    if not folds:
-        raise ValueError("자동 교차검증에는 유효한 행이 최소 4개 필요합니다.")
-    return list(KFold(n_splits=folds, shuffle=True, random_state=RANDOM_STATE).split(features)), "kfold_2"
+def _lot_groups(dataframe: pd.DataFrame, schema: dict[str, Any]) -> tuple[pd.Series, str | None]:
+    lot_column = next(
+        (column for column in schema["identifier_columns"] if _canonical(column) == "lotid"),
+        None,
+    )
+    if lot_column is not None:
+        values = dataframe[lot_column].astype("string").str.strip()
+    else:
+        combined = next(
+            (column for column in schema["identifier_columns"] if _canonical(column) == "lotwaferid"),
+            None,
+        )
+        values = (
+            dataframe[combined].astype("string").str.extract(
+                r"^(.+?)(?:[_-]?(?:WAFER|WF|W)[_-]?\d+)$",
+                expand=False,
+            )
+            if combined is not None
+            else pd.Series(pd.NA, index=dataframe.index, dtype="string")
+        )
+    missing = values.isna() | values.eq("")
+    if missing.any():
+        values = values.copy()
+        values.loc[missing] = [f"__ROW_{index}" for index in dataframe.index[missing]]
+    return values.astype(str).reset_index(drop=True), lot_column
 
 
-def _hybrid_weights(direct: dict[str, Any], derived: dict[str, Any]) -> tuple[float, float, str]:
-    direct_r2 = direct.get("r2")
-    derived_r2 = derived.get("r2")
-    if direct_r2 is not None and direct_r2 < 0 <= (derived_r2 if derived_r2 is not None else -1):
-        return 0.0, 1.0, "derived_only_direct_invalid"
-    if derived_r2 is not None and derived_r2 < 0 <= (direct_r2 if direct_r2 is not None else -1):
-        return 1.0, 0.0, "direct_only_derived_invalid"
-    direct_rmse = float(direct.get("rmse") or np.inf)
-    derived_rmse = float(derived.get("rmse") or np.inf)
-    if (direct_r2 is not None and direct_r2 < 0) and (derived_r2 is not None and derived_r2 < 0):
-        return (1.0, 0.0, "direct_only_both_low_confidence") if direct_rmse <= derived_rmse else (0.0, 1.0, "derived_only_both_low_confidence")
-    inverse_direct = 1.0 / max(direct_rmse, 1e-12)
-    inverse_derived = 1.0 / max(derived_rmse, 1e-12)
-    direct_weight = inverse_direct / (inverse_direct + inverse_derived)
-    direct_weight = float(np.clip(direct_weight, 0.1, 0.9))
-    return direct_weight, 1.0 - direct_weight, "inverse_oof_rmse"
+def _yield_proxy(dataframe: pd.DataFrame, schema: dict[str, Any]) -> pd.Series:
+    actual_column = schema["target_columns"].get("Y")
+    actual = (
+        pd.to_numeric(dataframe[actual_column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        if actual_column is not None
+        else pd.Series(np.nan, index=dataframe.index)
+    )
+    derived = pd.Series(np.nan, index=dataframe.index, dtype=float)
+    if all(target in schema["target_columns"] for target in FAIL_RATE_TARGETS):
+        rates = pd.DataFrame(
+            {
+                target: pd.to_numeric(dataframe[schema["target_columns"][target]], errors="coerce")
+                for target in FAIL_RATE_TARGETS
+            }
+        )
+        complete = rates.notna().all(axis=1)
+        derived.loc[complete] = np.clip(100.0 - rates.loc[complete].sum(axis=1), 0.0, 100.0)
+    return actual.fillna(derived).reset_index(drop=True)
 
 
-@dataclass(frozen=True)
-class SerializedEstimator:
-    """Compressed, lazily materialized estimator used by new Hybrid bundles.
-
-    Older bundles still contain fitted estimators directly and remain supported.
-    New training serializes each target as soon as it is fitted, so the next
-    target/fold does not coexist with every prior fitted production model.
-    """
-
-    payload: bytes
-
-    @classmethod
-    def from_estimator(cls, estimator: Any) -> "SerializedEstimator":
-        buffer = BytesIO()
-        joblib.dump(estimator, buffer, compress=3)
-        return cls(payload=buffer.getvalue())
-
-    def load(self) -> Any:
-        return joblib.load(BytesIO(self.payload))
-
-    def predict(self, features: pd.DataFrame) -> np.ndarray:
-        estimator = self.load()
+def _partition_lots(
+    lot_table: pd.DataFrame,
+    *,
+    random_state: int,
+) -> tuple[list[str], list[str], list[str], str, int | None]:
+    lot_ids = lot_table["lot_id"].astype(str).to_numpy()
+    for bins in (5, 4, 3, 2):
+        if len(lot_table) < bins * 4 or lot_table["yield"].notna().sum() < bins * 4:
+            continue
         try:
-            return np.asarray(estimator.predict(features), dtype=np.float32)
-        finally:
-            del estimator
-            gc.collect()
+            labels = pd.qcut(
+                lot_table["yield"].rank(method="first"),
+                q=bins,
+                labels=False,
+            ).to_numpy()
+            first = StratifiedShuffleSplit(n_splits=1, test_size=0.30, random_state=random_state)
+            train_index, temporary_index = next(first.split(lot_ids, labels))
+            temporary_labels = labels[temporary_index]
+            second = StratifiedShuffleSplit(n_splits=1, test_size=0.50, random_state=random_state)
+            validation_relative, test_relative = next(
+                second.split(lot_ids[temporary_index], temporary_labels)
+            )
+            return (
+                lot_ids[train_index].tolist(),
+                lot_ids[temporary_index[validation_relative]].tolist(),
+                lot_ids[temporary_index[test_relative]].tolist(),
+                "stratified_group_holdout",
+                bins,
+            )
+        except ValueError:
+            continue
+
+    random = np.random.default_rng(random_state)
+    shuffled = lot_ids.copy()
+    random.shuffle(shuffled)
+    count = len(shuffled)
+    if count < 3:
+        raise ValueError("Train/Validation/Test Lot 분할에는 유효한 Lot이 최소 3개 필요합니다.")
+    validation_count = max(1, int(round(count * 0.15)))
+    test_count = max(1, int(round(count * 0.15)))
+    if validation_count + test_count >= count:
+        validation_count = 1
+        test_count = 1
+    train_count = count - validation_count - test_count
+    return (
+        shuffled[:train_count].tolist(),
+        shuffled[train_count : train_count + validation_count].tolist(),
+        shuffled[train_count + validation_count :].tolist(),
+        "group_shuffle_fallback",
+        None,
+    )
+
+
+def split_lot_dataset(
+    dataframe: pd.DataFrame,
+    schema: dict[str, Any],
+    random_state: int = RANDOM_STATE,
+) -> tuple[dict[str, np.ndarray], pd.Series, dict[str, Any]]:
+    groups, lot_column = _lot_groups(dataframe, schema)
+    proxy = _yield_proxy(dataframe, schema)
+    lot_table = pd.DataFrame({"lot_id": groups, "yield": proxy}).groupby(
+        "lot_id", as_index=False
+    )["yield"].mean()
+    if lot_table["yield"].notna().any():
+        lot_table["yield"] = lot_table["yield"].fillna(float(lot_table["yield"].median()))
+    train_lots, validation_lots, test_lots, method, bins = _partition_lots(
+        lot_table, random_state=random_state
+    )
+    lot_sets = {
+        "train": set(train_lots),
+        "validation": set(validation_lots),
+        "test": set(test_lots),
+    }
+    indices = {
+        name: np.flatnonzero(groups.isin(lots).to_numpy()) for name, lots in lot_sets.items()
+    }
+    if any(len(values) == 0 for values in indices.values()):
+        raise ValueError("Lot 기준 Train/Validation/Test 분할 결과가 비어 있습니다.")
+    overlap = {
+        "train_validation": sorted(lot_sets["train"] & lot_sets["validation"]),
+        "train_test": sorted(lot_sets["train"] & lot_sets["test"]),
+        "validation_test": sorted(lot_sets["validation"] & lot_sets["test"]),
+    }
+    if any(overlap.values()):
+        raise ValueError("같은 Lot이 여러 Split에 포함되었습니다.")
+
+    try:
+        risk_bins = pd.qcut(lot_table["yield"].rank(method="first"), 3, labels=["low", "mid", "high"])
+        lot_table = lot_table.assign(risk_bin=risk_bins.astype(str))
+    except ValueError:
+        lot_table = lot_table.assign(risk_bin="unknown")
+    split_statistics: dict[str, Any] = {}
+    for name, selected_lots in lot_sets.items():
+        rows = proxy.iloc[indices[name]].dropna()
+        selected_table = lot_table[lot_table["lot_id"].isin(selected_lots)]
+        shares = selected_table["risk_bin"].value_counts(normalize=True).to_dict()
+        split_statistics[name] = {
+            "row_count": int(len(indices[name])),
+            "lot_count": int(len(selected_lots)),
+            "yield_mean": float(rows.mean()) if len(rows) else None,
+            "yield_std": float(rows.std(ddof=0)) if len(rows) else None,
+            "yield_bin_proportions": {str(key): float(value) for key, value in shares.items()},
+        }
+    metadata = {
+        "split_method": method,
+        "stratification_bins": bins,
+        "random_state": random_state,
+        "ratios": {"train": 0.70, "validation": 0.15, "test": 0.15},
+        "group_column": lot_column or "Lot_Wafer_ID-derived",
+        "lot_overlap": overlap,
+        "lot_overlap_count": int(sum(len(values) for values in overlap.values())),
+        "lot_overlap_check_passed": not any(overlap.values()),
+        "statistics": split_statistics,
+        "lot_assignments": {name: sorted(values) for name, values in lot_sets.items()},
+    }
+    return indices, groups, metadata
+
+
+def _splitter(features: pd.DataFrame, groups: pd.Series) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+    """Compatibility helper that now returns holdout splits, never K-Fold."""
+    proxy = pd.Series(np.arange(len(features), dtype=float))
+    table = pd.DataFrame({"lot_id": groups.astype(str), "yield": proxy}).groupby(
+        "lot_id", as_index=False
+    )["yield"].mean()
+    train, validation, test, method, _ = _partition_lots(table, random_state=RANDOM_STATE)
+    train_index = np.flatnonzero(groups.astype(str).isin(set(train)).to_numpy())
+    validation_index = np.flatnonzero(groups.astype(str).isin(set(validation)).to_numpy())
+    test_index = np.flatnonzero(groups.astype(str).isin(set(test)).to_numpy())
+    return [(train_index, validation_index), (np.concatenate([train_index, validation_index]), test_index)], method
+
+
+def _serialized_size(model: Any) -> int:
+    buffer = BytesIO()
+    joblib.dump(model, buffer, compress=3)
+    return len(buffer.getvalue())
+
+
+def _fit_candidate(
+    name: str,
+    schema: dict[str, Any],
+    x_train: pd.DataFrame,
+    y_train: pd.Series,
+    x_validation: pd.DataFrame,
+    y_validation: pd.Series,
+) -> tuple[Pipeline, dict[str, Any], np.ndarray]:
+    estimator = _hgbr(len(x_train)) if name == "HistGradientBoostingRegressor" else _random_forest()
+    model = _pipeline(schema, estimator)
+    with threadpool_limits(limits=1):
+        model.fit(x_train, y_train)
+        start = time.perf_counter()
+        prediction = np.asarray(model.predict(x_validation), dtype=np.float32)
+        inference_seconds = time.perf_counter() - start
+    prediction = np.maximum(prediction, 0.0).astype(np.float32, copy=False)
+    return model, {
+        **_metrics(y_validation, prediction),
+        "model_file_size": _serialized_size(model),
+        "validation_inference_seconds": inference_seconds,
+    }, prediction
 
 
 @dataclass
 class ModelArtifactRef:
-    """Reference one target estimator without keeping it resident in RAM."""
-
     artifact_path: str
     artifact_root: str | None = field(default=None, repr=False)
 
@@ -422,11 +639,11 @@ class ModelArtifactRef:
         return joblib.load(self.resolved_path())
 
     def predict(self, features: pd.DataFrame) -> np.ndarray:
-        estimator = self.load()
+        model = self.load()
         try:
-            return np.asarray(estimator.predict(features), dtype=np.float32)
+            return np.asarray(model.predict(features), dtype=np.float32)
         finally:
-            del estimator
+            del model
             gc.collect()
 
 
@@ -436,10 +653,9 @@ def _is_junction(path: Path) -> bool:
 
 
 def _cleanup_stale_staging(root: Path) -> None:
-    """Remove only abandoned, fully allowlisted target-shard directories."""
     if not root.is_dir() or root.is_symlink() or _is_junction(root):
         return
-    allowed_files = set(TARGET_MODEL_ARTIFACTS.values())
+    allowed = set(TARGET_MODEL_ARTIFACTS.values())
     for candidate in root.iterdir():
         if (
             candidate in _ACTIVE_STAGING_PATHS
@@ -450,30 +666,17 @@ def _cleanup_stale_staging(root: Path) -> None:
         ):
             continue
         entries = list(candidate.iterdir())
-        if any(
-            entry.name not in allowed_files
-            or entry.is_symlink()
-            or _is_junction(entry)
-            or not entry.is_file()
-            for entry in entries
-        ):
+        if any(entry.name not in allowed or entry.is_symlink() or not entry.is_file() for entry in entries):
             logger.warning("안전하지 않은 ML staging 경로를 보존합니다: %s", candidate.name)
             continue
         shutil.rmtree(candidate)
-        logger.info("중단된 ML staging 정리: %s", candidate.name)
 
 
 class ModelStagingDirectory:
-    """Workspace-local staging with deterministic, allowlisted cleanup."""
-
     def __init__(self) -> None:
         workspace = Path.cwd().resolve()
         self.root = workspace / ".ml-training-staging"
-        if self.root.exists() and (
-            self.root.is_symlink()
-            or _is_junction(self.root)
-            or not self.root.is_dir()
-        ):
+        if self.root.exists() and (self.root.is_symlink() or _is_junction(self.root) or not self.root.is_dir()):
             raise ValueError("ML staging root가 안전하지 않습니다.")
         self.root.mkdir(exist_ok=True)
         with _STAGING_LOCK:
@@ -492,14 +695,8 @@ class ModelStagingDirectory:
         with _STAGING_LOCK:
             if resolved.is_dir():
                 entries = list(resolved.iterdir())
-                allowed_files = set(TARGET_MODEL_ARTIFACTS.values())
-                if any(
-                    entry.name not in allowed_files
-                    or entry.is_symlink()
-                    or _is_junction(entry)
-                    or not entry.is_file()
-                    for entry in entries
-                ):
+                allowed = set(TARGET_MODEL_ARTIFACTS.values())
+                if any(entry.name not in allowed or entry.is_symlink() or not entry.is_file() for entry in entries):
                     raise ValueError("모델 임시 저장 경로에 허용되지 않은 파일이 있습니다.")
                 shutil.rmtree(resolved)
             _ACTIVE_STAGING_PATHS.discard(self.path)
@@ -513,110 +710,55 @@ class ModelStagingDirectory:
         try:
             self.cleanup()
         except Exception:
-            # Best effort only during interpreter shutdown; explicit save paths
-            # still propagate cleanup failures.
             pass
-
-
-def _materialize_estimator(value: Any) -> Any:
-    return (
-        value.load()
-        if isinstance(value, (SerializedEstimator, ModelArtifactRef))
-        else value
-    )
 
 
 @dataclass
 class HybridMultiYBundle:
     feature_columns: list[str]
-    direct_model: Any
     target_models: dict[str, Any]
-    risk_classifiers: dict[str, Any] | None = None
-    meta_model: Any | None = None
-    selected_final_output: str = "hybrid"
+    selected_final_output: str = "derived"
     warning_threshold: float = 90.0
     critical_threshold: float = 85.0
-    direct_weight: float = 0.5
-    derived_weight: float = 0.5
     pipeline_version: str = PIPELINE_VERSION
 
     def attach_artifact_root(self, root: str | Path) -> None:
-        for stored in [self.direct_model, *self.target_models.values()]:
+        for stored in self.target_models.values():
             if isinstance(stored, ModelArtifactRef):
                 stored.attach(root)
 
     def model_for_target(self, target: str) -> Any:
-        stored = self.direct_model if target == "Y" else self.target_models.get(target)
-        if stored is None:
-            return None
-        return _materialize_estimator(stored)
+        stored = self.target_models.get(target)
+        return stored.load() if isinstance(stored, ModelArtifactRef) else stored
 
     def predict_components(self, features: pd.DataFrame) -> dict[str, Any]:
-        direct_model = _materialize_estimator(self.direct_model)
-        try:
-            direct = np.clip(
-                np.asarray(direct_model.predict(features), dtype=np.float32),
-                np.float32(0.0),
-                np.float32(100.0),
-            )
-        finally:
-            if isinstance(self.direct_model, (SerializedEstimator, ModelArtifactRef)):
-                del direct_model
-                gc.collect()
-        target_predictions: dict[str, np.ndarray] = {}
-        for target, stored_model in self.target_models.items():
-            model = _materialize_estimator(stored_model)
+        predictions: dict[str, np.ndarray] = {}
+        for target in FAIL_RATE_TARGETS:
+            stored = self.target_models.get(target)
+            if stored is None:
+                raise ValueError(f"{target} 모델 Artifact가 없습니다.")
+            model = stored.load() if isinstance(stored, ModelArtifactRef) else stored
             try:
-                raw = np.asarray(model.predict(features), dtype=np.float32)
+                values = np.asarray(model.predict(features), dtype=np.float32)
             finally:
-                if isinstance(stored_model, (SerializedEstimator, ModelArtifactRef)):
+                if isinstance(stored, ModelArtifactRef):
                     del model
                     gc.collect()
-            upper = 100.0 if target in FAIL_RATE_TARGETS else None
-            target_predictions[target] = np.clip(
-                raw,
-                np.float32(0.0),
-                np.float32(upper) if upper is not None else None,
-            ).astype(np.float32, copy=False)
-        rate_matrix = np.column_stack([target_predictions[target] for target in FAIL_RATE_TARGETS])
-        normalized_rates, derived, normalization_count = normalized_failure_rates(rate_matrix)
-        for index, target in enumerate(FAIL_RATE_TARGETS):
-            target_predictions[target] = normalized_rates[:, index]
-
-        if getattr(self, "pipeline_version", None) == PIPELINE_VERSION:
-            hybrid = np.clip(
-                getattr(self, "direct_weight", 0.5) * direct
-                + getattr(self, "derived_weight", 0.5) * derived,
-                0.0,
-                100.0,
-            )
-            selected = hybrid
-            critical_probability = 1.0 / (1.0 + np.exp((hybrid - self.critical_threshold) / 3.0))
-            warning_probability = 1.0 / (1.0 + np.exp((hybrid - self.warning_threshold) / 3.0))
-        else:
-            meta_features = np.column_stack([
-                direct, derived,
-                *[target_predictions[target] for target in FAIL_RATE_TARGETS + COUNT_TARGETS],
-            ])
-            hybrid = np.clip(np.asarray(self.meta_model.predict(meta_features), dtype=float), 0.0, 100.0)
-            selected = {"direct": direct, "derived": derived, "hybrid": hybrid}[self.selected_final_output]
-            probabilities: dict[str, np.ndarray] = {}
-            for name, classifier in (self.risk_classifiers or {}).items():
-                values = np.asarray(classifier.predict_proba(meta_features), dtype=float)
-                classes = list(classifier.classes_)
-                probabilities[name] = values[:, classes.index(1)] if 1 in classes else np.zeros(len(features))
-            critical_probability = probabilities.get("critical", np.zeros(len(features)))
-            warning_probability = probabilities.get("warning", np.zeros(len(features)))
+            predictions[target] = np.maximum(values, 0.0).astype(np.float32, copy=False)
+        rates, derived, overflow_count = normalized_failure_rates(
+            np.column_stack([predictions[target] for target in FAIL_RATE_TARGETS])
+        )
+        for position, target in enumerate(FAIL_RATE_TARGETS):
+            predictions[target] = rates[:, position]
+        critical_probability = 1.0 / (1.0 + np.exp((derived - self.critical_threshold) / 3.0))
+        warning_probability = 1.0 / (1.0 + np.exp((derived - self.warning_threshold) / 3.0))
         return {
-            "selected": selected,
-            "direct": direct,
-            "derived": derived,
-            "hybrid": hybrid,
-            "targets": target_predictions,
+            "selected": derived,
+            "targets": predictions,
             "critical_probability": critical_probability,
             "warning_probability": warning_probability,
-            "normalization_count": normalization_count,
-            "model_agreement": {"available": False, "mean_spread": None, "target_spread": {}},
+            "normalization_count": 0,
+            "sum_over_100_count": overflow_count,
         }
 
     def predict(self, features: pd.DataFrame) -> np.ndarray:
@@ -629,376 +771,383 @@ class HybridTrainingResult:
     metadata: dict[str, Any]
     warnings: list[str]
     oof_predictions: dict[str, np.ndarray] | None = None
-    _staging_directory: ModelStagingDirectory | None = field(
-        default=None,
-        repr=False,
+    _staging_directory: ModelStagingDirectory | None = field(default=None, repr=False)
+
+
+def _selection_reason(
+    hgbr_metrics: dict[str, Any],
+    rf_metrics: dict[str, Any],
+) -> tuple[str, str]:
+    hgbr_rmse = float(hgbr_metrics["rmse"])
+    rf_rmse = float(rf_metrics["rmse"])
+    relative = abs(hgbr_rmse - rf_rmse) / max(min(hgbr_rmse, rf_rmse), 1e-12)
+    if relative <= 0.01:
+        if int(hgbr_metrics["model_file_size"]) != int(rf_metrics["model_file_size"]):
+            selected = (
+                "HistGradientBoostingRegressor"
+                if int(hgbr_metrics["model_file_size"]) < int(rf_metrics["model_file_size"])
+                else "RandomForestRegressor"
+            )
+            return selected, "validation_rmse_within_1_percent_smaller_model"
+        if float(hgbr_metrics["validation_inference_seconds"]) != float(rf_metrics["validation_inference_seconds"]):
+            selected = (
+                "HistGradientBoostingRegressor"
+                if float(hgbr_metrics["validation_inference_seconds"]) < float(rf_metrics["validation_inference_seconds"])
+                else "RandomForestRegressor"
+            )
+            return selected, "validation_rmse_within_1_percent_faster_inference"
+        return "HistGradientBoostingRegressor", "validation_rmse_within_1_percent_hgbr_tiebreak"
+    return (
+        ("HistGradientBoostingRegressor", "lower_validation_rmse")
+        if hgbr_rmse < rf_rmse
+        else ("RandomForestRegressor", "lower_validation_rmse")
     )
+
+
+def _should_run_random_forest(
+    hgbr_model: Any | None,
+    hgbr_metrics: dict[str, Any],
+    hgbr_prediction: np.ndarray | None,
+    baseline_metrics: dict[str, Any],
+) -> tuple[bool, str | None]:
+    if hgbr_model is None:
+        return True, "hgbr_training_failed"
+    hgbr_rmse = hgbr_metrics.get("rmse")
+    if hgbr_rmse is None or not np.isfinite(float(hgbr_rmse)):
+        return True, "hgbr_metric_invalid"
+    if hgbr_prediction is None or float(np.var(hgbr_prediction)) <= 1e-12:
+        return True, "hgbr_prediction_variance_near_zero"
+    baseline_rmse = baseline_metrics.get("rmse")
+    if baseline_rmse is None or not np.isfinite(float(baseline_rmse)):
+        return True, "baseline_metric_invalid"
+    if float(hgbr_rmse) > float(baseline_rmse) * 0.95:
+        return True, "hgbr_baseline_improvement_below_5_percent"
+    return False, None
 
 
 def train_hybrid_multi_y(
     dataframe: pd.DataFrame,
     *,
-    train_ratio: float = 0.64,
-    validation_ratio: float = 0.16,
-    test_ratio: float = 0.20,
+    train_ratio: float = 0.70,
+    validation_ratio: float = 0.15,
+    test_ratio: float = 0.15,
     missing_indicator: bool = False,
-    oof_folds: int = 3,
-    outer_folds: int = 3,
+    oof_folds: int = 0,
+    outer_folds: int = 0,
     ensemble_options: Any | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> HybridTrainingResult:
-    del train_ratio, validation_ratio, test_ratio, missing_indicator, oof_folds, outer_folds, ensemble_options
-    log_memory_stage(
-        logger,
-        "hybrid_csv_loaded",
-        rows=len(dataframe),
-        columns=len(dataframe.columns),
-    )
+    del missing_indicator, oof_folds, outer_folds, ensemble_options
+    if not np.allclose([train_ratio, validation_ratio, test_ratio], [0.70, 0.15, 0.15]):
+        raise ValueError("자동 학습 분할 비율은 Train 70% / Validation 15% / Test 15%로 고정됩니다.")
+    log_memory_stage(logger, "auto_training_csv_loaded", rows=len(dataframe), columns=len(dataframe.columns))
     schema = detect_auto_schema(dataframe)
-    missing_targets = [target for target in TARGETS if target not in schema["target_columns"]]
+    missing_targets = [target for target in FAIL_RATE_TARGETS if target not in schema["target_columns"]]
     if missing_targets:
-        raise ValueError("자동 Multi-Y 학습에 필요한 Target이 없습니다: " + ", ".join(missing_targets))
+        raise ValueError("자동 학습에 필요한 Target이 없습니다: " + ", ".join(missing_targets))
     if not schema["feature_columns"]:
-        raise ValueError("Config/EQ, R, D 공정 Feature를 탐지하지 못했습니다.")
-
-    log_memory_stage(
-        logger,
-        "hybrid_schema_detected",
-        features=len(schema["feature_columns"]),
-        targets=len(schema["target_columns"]),
-    )
-    targets = pd.DataFrame({
-        target: pd.to_numeric(dataframe[source], errors="coerce")
-        .replace([np.inf, -np.inf], np.nan)
-        .astype(np.float32)
-        for target, source in schema["target_columns"].items()
-    })
-    valid = targets[TARGETS].notna().all(axis=1)
-    if int(valid.sum()) < 15:
-        raise ValueError("Y와 Y1~Y10이 모두 유효한 행이 최소 15개 필요합니다.")
-    targets = targets.loc[valid, TARGETS].reset_index(drop=True)
-    # Select only model features instead of copying the complete CSV (IDs and
-    # all targets included) into a second working DataFrame.
-    features = dataframe.loc[valid, schema["feature_columns"]].reset_index(drop=True)
-    for column in [*schema["response_columns"], *schema["defect_columns"]]:
-        features[column] = (
-            pd.to_numeric(features[column], errors="coerce")
-            .replace([np.inf, -np.inf], np.nan)
-            .astype(np.float32)
-        )
-    lot_column = next((c for c in schema["identifier_columns"] if _canonical(c) == "lotid"), None)
-    if lot_column:
-        groups = (
-            dataframe.loc[valid, lot_column]
-            .reset_index(drop=True)
-            .astype("string")
-            .fillna("__MISSING_LOT__")
-        )
-    else:
-        identifier = next((c for c in schema["identifier_columns"] if _canonical(c) == "lotwaferid"), None)
-        groups = (
-            dataframe.loc[valid, identifier]
-            .reset_index(drop=True)
-            .astype("string")
-            .str.extract(r"^([^_]+)", expand=False)
-            if identifier else pd.Series(np.arange(len(features)).astype(str))
-        ).fillna("__MISSING_LOT__")
-    splits, split_method = _splitter(features, groups)
-    log_memory_stage(
-        logger,
-        "hybrid_features_prepared",
-        rows=len(features),
-        features=len(features.columns),
-        split=split_method,
-    )
-
-    staging_directory = ModelStagingDirectory()
-    staging_root = staging_directory.path
-    oof: dict[str, np.ndarray] = {}
-    production_models: dict[str, Any] = {}
+        raise ValueError("Config, R, D 공정 Feature를 탐지하지 못했습니다.")
+    features = dataframe.reindex(columns=schema["feature_columns"]).reset_index(drop=True)
+    indices, groups, split_metadata = split_lot_dataset(dataframe.reset_index(drop=True), schema)
+    staging = ModelStagingDirectory()
+    production_models: dict[str, ModelArtifactRef] = {}
     target_metrics: dict[str, Any] = {}
-    fold_metrics: list[dict[str, Any]] = []
-    direct_preprocessing_summary: dict[str, Any] | None = None
-    fold_assignments = [{
-        "fold": index + 1,
-        "train_groups": sorted(set(groups.iloc[train].astype(str))),
-        "holdout_groups": sorted(set(groups.iloc[holdout].astype(str))),
-    } for index, (train, holdout) in enumerate(splits)]
+    validation_predictions: dict[str, np.ndarray] = {}
+    test_predictions: dict[str, np.ndarray] = {}
+    preprocessing_by_target: dict[str, Any] = {}
+    warnings: list[str] = []
 
-    for target in TRAINING_TARGET_ORDER:
-        prediction = np.zeros(len(features), dtype=np.float32)
-        per_fold: list[dict[str, Any]] = []
-        for fold_number, (train_index, holdout_index) in enumerate(splits, start=1):
-            model = _pipeline(schema, len(train_index))
-            with threadpool_limits(limits=1):
-                model.fit(features.iloc[train_index], targets[target].iloc[train_index])
-                fold_prediction = np.asarray(
-                    model.predict(features.iloc[holdout_index]),
-                    dtype=np.float32,
+    try:
+        for target_position, target in enumerate(TRAINING_TARGET_ORDER):
+            source = schema["target_columns"][target]
+            values = pd.to_numeric(dataframe[source], errors="coerce").replace([np.inf, -np.inf], np.nan).astype(np.float32)
+            valid = values.notna().to_numpy()
+            selected_indices = {
+                name: split_indices[valid[split_indices]] for name, split_indices in indices.items()
+            }
+            if len(selected_indices["train"]) < 10 or len(selected_indices["validation"]) < 2 or len(selected_indices["test"]) < 2:
+                raise ValueError(f"{target}의 유효 Train/Validation/Test 행이 부족합니다.")
+            x_train = features.iloc[selected_indices["train"]]
+            y_train = values.iloc[selected_indices["train"]]
+            x_validation = features.iloc[selected_indices["validation"]]
+            y_validation = values.iloc[selected_indices["validation"]]
+            baseline_value = float(y_train.mean())
+            baseline_prediction = np.full(len(y_validation), baseline_value, dtype=np.float32)
+            baseline_metrics = _metrics(y_validation, baseline_prediction)
+
+            progress = 35 + target_position * 11
+            if progress_callback:
+                progress_callback(f"{target} HistGradientBoosting 검증", progress)
+            hgbr_model: Pipeline | None = None
+            hgbr_metrics: dict[str, Any]
+            hgbr_prediction: np.ndarray | None = None
+            try:
+                hgbr_model, hgbr_metrics, hgbr_prediction = _fit_candidate(
+                    "HistGradientBoostingRegressor", schema, x_train, y_train, x_validation, y_validation
                 )
-            fold_prediction = np.clip(
-                fold_prediction,
+            except Exception as exc:
+                logger.exception("%s HistGradientBoosting 학습 실패", target)
+                hgbr_metrics = {"r2": None, "rmse": None, "mae": None, "mse": None, "error": str(exc)}
+
+            run_rf, rf_reason = _should_run_random_forest(
+                hgbr_model,
+                hgbr_metrics,
+                hgbr_prediction,
+                baseline_metrics,
+            )
+            rf_model: Pipeline | None = None
+            rf_metrics: dict[str, Any] | None = None
+            rf_prediction: np.ndarray | None = None
+            if run_rf:
+                if progress_callback:
+                    progress_callback(f"{target} RandomForest 비교", progress + 5)
+                rf_model, rf_metrics, rf_prediction = _fit_candidate(
+                    "RandomForestRegressor", schema, x_train, y_train, x_validation, y_validation
+                )
+
+            if rf_model is None or rf_metrics is None or rf_prediction is None:
+                if hgbr_model is None or hgbr_prediction is None:
+                    raise ValueError(f"{target}에서 학습에 성공한 모델이 없습니다.")
+                selected_name = "HistGradientBoostingRegressor"
+                selection_reason = "hgbr_improves_baseline_at_least_5_percent"
+                selected_validation_prediction = hgbr_prediction
+                selected_validation_metrics = hgbr_metrics
+            else:
+                if hgbr_model is None or hgbr_prediction is None or hgbr_metrics.get("rmse") is None:
+                    selected_name = "RandomForestRegressor"
+                    selection_reason = "hgbr_unavailable"
+                    selected_validation_prediction = rf_prediction
+                    selected_validation_metrics = rf_metrics
+                else:
+                    selected_name, selection_reason = _selection_reason(hgbr_metrics, rf_metrics)
+                    if selected_name == "HistGradientBoostingRegressor":
+                        selected_validation_prediction = hgbr_prediction
+                        selected_validation_metrics = hgbr_metrics
+                    else:
+                        selected_validation_prediction = rf_prediction
+                        selected_validation_metrics = rf_metrics
+
+            validation_predictions[target] = np.maximum(
+                (hgbr_model if selected_name == "HistGradientBoostingRegressor" else rf_model).predict(
+                    features.iloc[indices["validation"]]
+                ),
                 0.0,
-                100.0 if target in ["Y", *FAIL_RATE_TARGETS] else None,
+            ).astype(np.float32)
+            del selected_validation_prediction
+
+            combined_indices = np.concatenate([selected_indices["train"], selected_indices["validation"]])
+            final_model = _pipeline(
+                schema,
+                _hgbr(len(combined_indices)) if selected_name == "HistGradientBoostingRegressor" else _random_forest(),
             )
-            prediction[holdout_index] = fold_prediction
-            metrics = _metrics(targets[target].iloc[holdout_index], fold_prediction)
-            per_fold.append({"fold": fold_number, **metrics})
-            del fold_prediction
-            del model
+            with threadpool_limits(limits=1):
+                final_model.fit(features.iloc[combined_indices], values.iloc[combined_indices])
+                test_target_prediction = np.maximum(
+                    final_model.predict(features.iloc[selected_indices["test"]]), 0.0
+                ).astype(np.float32)
+                test_predictions[target] = np.maximum(
+                    final_model.predict(features.iloc[indices["test"]]), 0.0
+                ).astype(np.float32)
+            preprocessor = final_model.named_steps["features"]
+            preprocessing_by_target[target] = {
+                **preprocessor.summary_,
+                "validation_audit": preprocessor.audit(features.iloc[indices["validation"]]),
+                "test_audit": preprocessor.audit(features.iloc[indices["test"]]),
+            }
+            target_path = staging.path / TARGET_MODEL_ARTIFACTS[target]
+            joblib.dump(final_model, target_path, compress=3)
+            production_models[target] = ModelArtifactRef(str(target_path))
+            final_size = int(target_path.stat().st_size)
+            target_metrics[target] = {
+                "baseline_validation": baseline_metrics,
+                "hist_gradient_boosting_validation": hgbr_metrics,
+                "random_forest_executed": run_rf,
+                "random_forest_reason": rf_reason,
+                "random_forest_validation": rf_metrics,
+                "selected_model": selected_name,
+                "selection_reason": selection_reason,
+                "validation": selected_validation_metrics,
+                "test": _metrics(values.iloc[selected_indices["test"]], test_target_prediction),
+                "valid_rows": {
+                    "train": int(len(selected_indices["train"])),
+                    "validation": int(len(selected_indices["validation"])),
+                    "test": int(len(selected_indices["test"])),
+                    "excluded": int((~valid).sum()),
+                },
+                "model_file_size": final_size,
+            }
+            del final_model, hgbr_model, rf_model, test_target_prediction
             gc.collect()
-            log_memory_stage(
-                logger,
-                "hybrid_fold_released",
-                target=target,
-                fold=fold_number,
-            )
-        oof[target] = prediction
-        overall = _metrics(targets[target], prediction)
-        target_metrics[target] = {
-            "oof": overall,
-            "validation": overall,
-            "test": overall,
-            "folds": per_fold,
-        }
-        production = _pipeline(schema, len(features))
-        with threadpool_limits(limits=1):
-            production.fit(features, targets[target])
-        if target == "Y":
-            direct_preprocessing_summary = dict(
-                production.named_steps["features"].summary_
-            )
-        target_artifact = staging_root / TARGET_MODEL_ARTIFACTS[target]
-        joblib.dump(production, target_artifact, compress=3)
-        production_models[target] = ModelArtifactRef(str(target_artifact))
-        del production
-        gc.collect()
-        log_memory_stage(
-            logger,
-            "hybrid_target_serialized",
-            target=target,
-            retained_fitted_models=0,
+            log_memory_stage(logger, "auto_target_released", target=target, selected=selected_name)
+
+        validation_rates, validation_y, validation_overflow = normalized_failure_rates(
+            np.column_stack([validation_predictions[target] for target in FAIL_RATE_TARGETS])
         )
+        test_rates, test_y, test_overflow = normalized_failure_rates(
+            np.column_stack([test_predictions[target] for target in FAIL_RATE_TARGETS])
+        )
+        del validation_rates, test_rates
+        actual_y_column = schema["target_columns"].get("Y")
+        if actual_y_column is not None:
+            actual_y = pd.to_numeric(dataframe[actual_y_column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            validation_actual = actual_y.iloc[indices["validation"]]
+            test_actual = actual_y.iloc[indices["test"]]
+            validation_y_metrics = _metrics(validation_actual, validation_y)
+            test_y_metrics = _metrics(test_actual, test_y)
+        else:
+            validation_y_metrics = _metrics([], [])
+            test_y_metrics = _metrics([], [])
 
-    oof_rates, derived_oof, normalization_count = normalized_failure_rates(
-        np.column_stack([oof[target] for target in FAIL_RATE_TARGETS])
-    )
-    for index, target in enumerate(FAIL_RATE_TARGETS):
-        oof[target] = oof_rates[:, index]
-    direct_oof = np.clip(oof["Y"], 0.0, 100.0)
-    direct_metrics = _metrics(targets["Y"], direct_oof)
-    derived_metrics = _metrics(targets["Y"], derived_oof)
-    direct_weight, derived_weight, weight_method = _hybrid_weights(
-        direct_metrics, derived_metrics
-    )
-    hybrid_oof = np.clip(
-        direct_weight * direct_oof + derived_weight * derived_oof, 0.0, 100.0
-    ).astype(np.float32, copy=False)
-    hybrid_metrics = _metrics(targets["Y"], hybrid_oof)
-    final_y_metrics = {
-        name: {"train": metrics, "validation": metrics, "test": metrics, "oof": metrics}
-        for name, metrics in {
-            "direct": direct_metrics,
-            "derived": derived_metrics,
-            "hybrid": hybrid_metrics,
-        }.items()
-    }
-    for fold_number, (_, holdout_index) in enumerate(splits, start=1):
-        fold_metrics.append({
-            "fold": fold_number,
-            **_metrics(targets["Y"].iloc[holdout_index], hybrid_oof[holdout_index]),
-            "strategy_metrics": {
-                "direct": _metrics(targets["Y"].iloc[holdout_index], direct_oof[holdout_index]),
-                "derived": _metrics(targets["Y"].iloc[holdout_index], derived_oof[holdout_index]),
-                "hybrid": _metrics(targets["Y"].iloc[holdout_index], hybrid_oof[holdout_index]),
-            },
-        })
-    metric_summary = {
-        metric: {
-            "mean": float(np.mean([fold[metric] for fold in fold_metrics if fold[metric] is not None])),
-            "std": float(np.std([fold[metric] for fold in fold_metrics if fold[metric] is not None])),
+        bundle = HybridMultiYBundle(
+            feature_columns=list(schema["feature_columns"]),
+            target_models=production_models,
+        )
+        dataset_rows = {name: int(len(value)) for name, value in indices.items()}
+        dataset_lots = {
+            name: int(split_metadata["statistics"][name]["lot_count"])
+            for name in ("train", "validation", "test")
         }
-        for metric in ("r2", "rmse", "mae", "mse")
-    }
-
-    direct_model = production_models.pop("Y")
-    if direct_preprocessing_summary is None:
-        raise ValueError("Y 전처리 학습 요약을 생성하지 못했습니다.")
-    preprocessing_summary = direct_preprocessing_summary
-    formula_validation = validate_y_formula(targets)
-    first_train, first_holdout = splits[0]
-    target_configs = {
-        target: {
-            "selected_type": "single",
-            "base_models": ["HistGradientBoostingRegressor"],
-            "weights": {"HistGradientBoostingRegressor": 1.0},
-            "best_single_metrics": target_metrics[target]["oof"],
-            "ensemble_metrics": target_metrics[target]["oof"],
-            "improvement_over_single": {"rmse_relative": 0.0},
-            "agreement": {"mean_pairwise_correlation": None},
+        selected_models = {
+            target: target_metrics[target]["selected_model"] for target in FAIL_RATE_TARGETS
         }
-        for target in TARGETS
-    }
-    bundle = HybridMultiYBundle(
-        feature_columns=schema["feature_columns"],
-        direct_model=direct_model,
-        target_models=production_models,
-        direct_weight=direct_weight,
-        derived_weight=derived_weight,
-    )
-    metadata = to_json_safe({
-        "schema_version": "semicon_yield_v2",
-        "pipeline_version": PIPELINE_VERSION,
-        "model_version": PIPELINE_VERSION,
-        "model_type": "hybrid_multi_y",
-        "bundle_type": "hybrid_multi_y",
-        "target": "Y",
-        "model_name": "Auto Multi-Y HGBR",
-        "created_at": datetime.now().astimezone().isoformat(),
-        "feature_columns": schema["feature_columns"],
-        "raw_feature_columns": schema["feature_columns"],
-        "feature_count": len(schema["feature_columns"]),
-        "feature_schema": schema,
-        "feature_groups": {
-            "config": schema["config_columns"],
-            "response": schema["response_columns"],
-            "defect": schema["defect_columns"],
-        },
-        "identifier_columns": schema["identifier_columns"],
-        "target_columns": schema["target_columns"],
-        "selected_final_output": "hybrid",
-        "direct_weight": direct_weight,
-        "derived_weight": derived_weight,
-        "weight_method": weight_method,
-        "final_y_metrics": final_y_metrics,
-        "target_metrics": target_metrics,
-        "metrics": final_y_metrics["hybrid"],
-        "formula_validation": formula_validation,
-        "risk_metrics": {},
-        "ensemble_enabled": False,
-        "ensemble_mode": "disabled",
-        "ensemble_method": "automatic_hybrid_weight",
-        "target_ensemble_configs": target_configs,
-        "direct_y_ensemble": target_configs["Y"],
-        "base_model_names": ["HistGradientBoostingRegressor"],
-        "missing_strategy": "fold_train_median",
-        "outlier_strategy": "fold_train_winsor_0.5_99.5",
-        "missing_indicator_used": False,
-        "outlier_indicator_used": False,
-        "fallback_used": False,
-        "preprocessing_strategy": "fold_local_auto_numeric_and_ordinal_config",
-        "preprocessing_summary": {
-            **preprocessing_summary,
-            "missing_strategy": "fold_train_median",
-            "outlier_strategy": "fold_train_winsor_0.5_99.5",
-            "missing_indicator": False,
-            "outlier_indicator": False,
-            "missing_indicator_count": 0,
-            "outlier_indicator_count": 0,
-            "fallback_used": False,
-            "categorical_column_count": len(schema["config_columns"]),
-            "r_column_count": len(schema["response_columns"]),
-            "d_column_count": len(schema["defect_columns"]),
-            "config_column_count": len(schema["config_columns"]),
-            "training_row_count": len(features),
-            "lot_count": int(groups.nunique()),
-            "split_method": split_method,
-            "pipeline_version": PIPELINE_VERSION,
-        },
-        "cv_protocol": {
-            "name": split_method,
-            "group_column": lot_column,
-            "outer_folds": len(splits),
-            "inner_folds": None,
-            "seed": RANDOM_STATE,
-            "selection_target": "Hybrid Y OOF",
-            "fold_metrics": fold_metrics,
-            "metric_summary": metric_summary,
-            "outer_group_assignments": fold_assignments,
-        },
-        "oof_folds": len(splits),
-        "oof_group_assignments": fold_assignments,
-        "normalization_count": normalization_count,
-        "dataset_rows": {
-            "train": len(first_train),
-            "validation": len(first_holdout),
-            "test": 0,
-        },
-        "training_row_count": len(features),
-        "lot_count": int(groups.nunique()),
-        "split_method": split_method,
-        "group_column": lot_column,
-        "target_leakage_check": {
-            "passed": not bool(set(schema["feature_columns"]) & set(schema["target_columns"].values())),
-            "excluded_targets": list(schema["target_columns"].values()),
-            "excluded_identifiers": schema["identifier_columns"],
-            "leakage_columns": [],
-        },
-        "training_config": {
-            "model": "HistGradientBoostingRegressor",
-            "learning_rate": 0.05,
-            "max_iter": _estimator(len(features)).max_iter,
-            "max_leaf_nodes": 31,
-            "min_samples_leaf": _estimator(len(features)).min_samples_leaf,
-            "l2_regularization": 1.0,
-            "early_stopping": True,
-            "n_iter_no_change": 12,
-            "random_state": RANDOM_STATE,
-        },
-        "library_versions": {
-            "numpy": np.__version__,
-            "pandas": pd.__version__,
-            "scikit_learn": sklearn.__version__,
-            "joblib": joblib.__version__,
-        },
-        "sklearn_version": sklearn.__version__,
-        "scikit_learn_version": sklearn.__version__,
-        "available_targets": TARGETS,
-        "memory_policy": {
-            "numeric_dtype": "float32",
-            "categorical_encoder": "OrdinalEncoder",
-            "maximum_cv_folds": 3,
-            "target_training": "sequential",
-            "fold_models_released_immediately": True,
-            "production_models": "disk_backed_lazy_target_shards",
-        },
-        "target_model_artifacts": TARGET_MODEL_ARTIFACTS,
-    })
-    result = HybridTrainingResult(
-        bundle=bundle,
-        metadata=metadata,
-        warnings=[],
-        oof_predictions={
-            **oof,
-            "derived_Y": derived_oof.astype(np.float32, copy=False),
-            "hybrid_Y": hybrid_oof,
-        },
-        _staging_directory=staging_directory,
-    )
-    log_memory_stage(
-        logger,
-        "hybrid_training_complete",
-        rows=len(features),
-        targets=len(TARGETS),
-    )
-    return result
+        formula_targets = pd.DataFrame(
+            {
+                target: pd.to_numeric(dataframe[schema["target_columns"][target]], errors="coerce")
+                for target in FAIL_RATE_TARGETS
+            }
+        )
+        if "Y" in schema["target_columns"]:
+            formula_targets["Y"] = pd.to_numeric(dataframe[schema["target_columns"]["Y"]], errors="coerce")
+        metadata = to_json_safe(
+            {
+                "schema_version": "semicon_yield_v2",
+                "pipeline_version": PIPELINE_VERSION,
+                "model_version": PIPELINE_VERSION,
+                "model_type": "hybrid_multi_y",
+                "bundle_type": "y1_y5_derived_y",
+                "target": "Y",
+                "model_name": "Y1~Y5 자동 수율 모델",
+                "created_at": datetime.now().astimezone().isoformat(),
+                "feature_columns": schema["feature_columns"],
+                "raw_feature_columns": schema["feature_columns"],
+                "feature_count": len(schema["feature_columns"]),
+                "feature_schema": schema,
+                "feature_groups": {
+                    "config": schema["config_columns"],
+                    "response": schema["response_columns"],
+                    "defect": schema["defect_columns"],
+                },
+                "identifier_columns": schema["identifier_columns"],
+                "target_columns": schema["target_columns"],
+                "available_targets": FAIL_RATE_TARGETS,
+                "analysis_only_targets": ["Y", *COUNT_TARGETS],
+                "selected_final_output": "derived",
+                "final_y_formula": "clip(100 - sum(max(predicted_Y1..predicted_Y5, 0)), 0, 100)",
+                "final_y_metrics": {
+                    "derived": {
+                        "validation": validation_y_metrics,
+                        "test": test_y_metrics,
+                    }
+                },
+                "metrics": {
+                    "train": _metrics([], []),
+                    "validation": validation_y_metrics,
+                    "test": test_y_metrics,
+                },
+                "target_metrics": target_metrics,
+                "risk_metrics": {},
+                "selected_models": selected_models,
+                "formula_validation": validate_y_formula(formula_targets),
+                "dataset_split": {"train": 0.70, "validation": 0.15, "test": 0.15},
+                "dataset_rows": dataset_rows,
+                "dataset_lots": dataset_lots,
+                "split_method": split_metadata["split_method"],
+                "split_metadata": split_metadata,
+                "group_column": split_metadata["group_column"],
+                "random_state": RANDOM_STATE,
+                "preprocessing_strategy": "train_only_frequency_r01_99_d_upper_999",
+                "preprocessing_summary": {
+                    "by_target": preprocessing_by_target,
+                    "config_encoding": "frequency",
+                    "config_strings_decomposed": False,
+                    "r_clipping": "train_percentile_1_99",
+                    "d_clipping": "train_upper_percentile_99.9",
+                },
+                "missing_strategy": "train_median_and_train_config_mode",
+                "outlier_strategy": "r_1_99_d_upper_99_9",
+                "target_leakage_check": {
+                    "passed": not bool(set(schema["feature_columns"]) & set(schema["target_columns"].values())),
+                    "excluded_targets": list(schema["target_columns"].values()),
+                    "excluded_identifiers": schema["identifier_columns"],
+                    "leakage_columns": [],
+                },
+                "training_config": {
+                    "primary_model": "HistGradientBoostingRegressor",
+                    "comparison_model": "RandomForestRegressor",
+                    "rf_condition": "hgbr_validation_rmse_not_5_percent_better_than_baseline_or_invalid",
+                    "tie_rule": "validation_rmse_within_1_percent_choose_smaller_model",
+                    "target_training": "sequential",
+                    "random_state": RANDOM_STATE,
+                },
+                "cv_protocol": {
+                    "name": "fixed_lot_holdout_70_15_15",
+                    "outer_folds": 0,
+                    "inner_folds": 0,
+                    "seed": RANDOM_STATE,
+                    "selection_data": "validation_only",
+                    "test_used_for_selection": False,
+                },
+                "target_model_artifacts": TARGET_MODEL_ARTIFACTS,
+                "sum_over_100_count": {
+                    "validation": validation_overflow,
+                    "test": test_overflow,
+                },
+                "memory_policy": {
+                    "numeric_dtype": "float32",
+                    "categorical_encoder": "FrequencyEncoding",
+                    "target_training": "sequential",
+                    "candidate_training": "sequential",
+                    "random_forest_n_jobs": 1,
+                    "production_models": "disk_backed_lazy_target_shards",
+                },
+                "scikit_learn_version": sklearn.__version__,
+                "sklearn_version": sklearn.__version__,
+                "library_versions": {
+                    "numpy": np.__version__,
+                    "pandas": pd.__version__,
+                    "scikit_learn": sklearn.__version__,
+                    "joblib": joblib.__version__,
+                },
+            }
+        )
+        oof_predictions = {
+            **validation_predictions,
+            "validation_predicted_Y": validation_y,
+            **{f"test_{target}": values for target, values in test_predictions.items()},
+            "test_predicted_Y": test_y,
+        }
+        return HybridTrainingResult(
+            bundle=bundle,
+            metadata=metadata,
+            warnings=warnings,
+            oof_predictions=oof_predictions,
+            _staging_directory=staging,
+        )
+    except Exception:
+        staging.cleanup()
+        raise
 
 
-def _write_oof_predictions(
-    path: Path,
-    predictions: dict[str, np.ndarray] | None,
-) -> None:
-    """Write one target at a time to avoid materializing all Python float lists."""
+def _write_oof_predictions(path: Path, predictions: dict[str, np.ndarray] | None) -> None:
     with gzip.open(path, "wt", encoding="utf-8") as handle:
-        handle.write("{")
-        for index, (target, values) in enumerate((predictions or {}).items()):
-            if index:
-                handle.write(",")
-            json.dump(str(target), handle, ensure_ascii=False)
-            handle.write(":")
-            target_values = np.asarray(values, dtype=np.float32).tolist()
-            json.dump(target_values, handle, ensure_ascii=False)
-            del target_values
-        handle.write("}")
+        json.dump(
+            {
+                str(target): np.asarray(values, dtype=np.float32).tolist()
+                for target, values in (predictions or {}).items()
+            },
+            handle,
+            ensure_ascii=False,
+        )
 
 
 def save_hybrid_bundle(
@@ -1010,64 +1159,47 @@ def save_hybrid_bundle(
     bundle_dir.mkdir(parents=True, exist_ok=False)
     bundle_path = bundle_dir / "bundle.joblib"
     metadata_path = bundle_dir / "metadata.json"
-    oof_path = bundle_dir / "oof_predictions.json.gz"
-    folds_path = bundle_dir / "fold_assignments.json.gz"
+    predictions_path = bundle_dir / "oof_predictions.json.gz"
+    assignments_path = bundle_dir / "fold_assignments.json.gz"
     target_paths = {
-        target: bundle_dir / filename
-        for target, filename in TARGET_MODEL_ARTIFACTS.items()
+        target: bundle_dir / filename for target, filename in TARGET_MODEL_ARTIFACTS.items()
     }
-    log_memory_stage(logger, "hybrid_bundle_save_start", model_id=model_id)
     try:
-        persistent_models: dict[str, ModelArtifactRef] = {}
-        stored_by_target = {
-            "Y": result.bundle.direct_model,
-            **result.bundle.target_models,
-        }
-        for target in TARGETS:
-            stored = stored_by_target[target]
+        persistent: dict[str, ModelArtifactRef] = {}
+        for target in TRAINING_TARGET_ORDER:
+            stored = result.bundle.target_models[target]
             destination = target_paths[target]
             if isinstance(stored, ModelArtifactRef):
                 shutil.copy2(stored.resolved_path(), destination)
             else:
-                estimator = _materialize_estimator(stored)
-                try:
-                    joblib.dump(estimator, destination, compress=3)
-                finally:
-                    if estimator is not stored:
-                        del estimator
-            persistent_models[target] = ModelArtifactRef(
-                TARGET_MODEL_ARTIFACTS[target]
-            )
-        persistent_bundle = replace(
-            result.bundle,
-            direct_model=persistent_models.pop("Y"),
-            target_models=persistent_models,
-        )
-        joblib.dump(persistent_bundle, bundle_path)
-        persistent_bundle.attach_artifact_root(bundle_dir)
+                joblib.dump(stored, destination, compress=3)
+            persistent[target] = ModelArtifactRef(TARGET_MODEL_ARTIFACTS[target])
+        bundle = replace(result.bundle, target_models=persistent)
+        joblib.dump(bundle, bundle_path, compress=3)
+        bundle.attach_artifact_root(bundle_dir)
         metadata_path.write_text(
             json.dumps(result.metadata, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        _write_oof_predictions(oof_path, result.oof_predictions)
-        with gzip.open(folds_path, "wt", encoding="utf-8") as handle:
-            json.dump(result.metadata.get("oof_group_assignments", []), handle, ensure_ascii=False)
+        _write_oof_predictions(predictions_path, result.oof_predictions)
+        with gzip.open(assignments_path, "wt", encoding="utf-8") as handle:
+            json.dump(
+                result.metadata.get("split_metadata", {}).get("lot_assignments", {}),
+                handle,
+                ensure_ascii=False,
+            )
     except Exception:
-        for generated in (
-            bundle_path,
-            metadata_path,
-            oof_path,
-            folds_path,
-            *target_paths.values(),
-        ):
+        for generated in [bundle_path, metadata_path, predictions_path, assignments_path, *target_paths.values()]:
             if generated.is_file():
                 generated.unlink()
-        bundle_dir.rmdir()
+        try:
+            bundle_dir.rmdir()
+        except OSError:
+            pass
         raise
-    result.bundle = persistent_bundle
+    result.bundle = bundle
     result.oof_predictions = None
     if result._staging_directory is not None:
         result._staging_directory.cleanup()
         result._staging_directory = None
     gc.collect()
-    log_memory_stage(logger, "hybrid_bundle_save_complete", model_id=model_id)
     return bundle_path, metadata_path

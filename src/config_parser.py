@@ -1,9 +1,12 @@
-"""Deterministic parser for semicon yield schema-v2 Step_Config values."""
+"""Config normalization without token decomposition.
+
+Config is one categorical process value.  Model, equipment, and chamber tokens
+are deliberately not derived from it.
+"""
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -11,56 +14,26 @@ import pandas as pd
 from src.data_validation import load_data_schema
 
 
-CONFIG_PARSER_VERSION = "2.0"
-
-
-@dataclass(frozen=True)
-class ParsedConfig:
-    step: int
-    model: str
-    equipment: str
-    chamber: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "step": self.step,
-            "model": self.model,
-            "equipment": self.equipment,
-            "chamber": self.chamber,
-        }
+CONFIG_PARSER_VERSION = "3.0-frequency-no-decomposition"
+MISSING_CONFIG_STRINGS = {"", "nan", "none", "null", "na", "n/a"}
 
 
 def parse_config_value(
     column: str,
     value: Any,
     schema_config: dict[str, Any] | None = None,
-) -> ParsedConfig:
-    """Parse one Config value and verify its embedded step."""
+) -> str:
+    """Return the trimmed whole Config category; never parse embedded tokens."""
     schema = schema_config or load_data_schema()
-    column_match = re.fullmatch(
-        schema["feature_patterns"]["config_column"], column
-    )
-    if column_match is None:
+    pattern = re.compile(schema["feature_patterns"]["config_column"], re.IGNORECASE)
+    if pattern.fullmatch(column) is None:
         raise ValueError(f"Config 컬럼명이 올바르지 않습니다: {column}")
-    if pd.isna(value) or not isinstance(value, str) or not value.strip():
+    if value is None or pd.isna(value):
         raise ValueError(f"{column} 값이 비어 있습니다.")
-    value_match = re.fullmatch(
-        schema["feature_patterns"]["config_value"], value.strip()
-    )
-    if value_match is None:
-        raise ValueError(f"{column} Config 형식이 올바르지 않습니다: {value}")
-    column_step = int(column_match.group("step"))
-    value_step = int(value_match.group("step"))
-    if column_step != value_step:
-        raise ValueError(
-            f"{column}의 Step과 Config 값의 Step{value_step}이 일치하지 않습니다."
-        )
-    return ParsedConfig(
-        step=value_step,
-        model=f"Model{value_match.group('model')}",
-        equipment=value_match.group("equipment"),
-        chamber=value_match.group("chamber"),
-    )
+    normalized = str(value).strip()
+    if normalized.lower() in MISSING_CONFIG_STRINGS:
+        raise ValueError(f"{column} 값이 비어 있습니다.")
+    return normalized
 
 
 def parse_config_columns(
@@ -69,55 +42,44 @@ def parse_config_columns(
     *,
     keep_original: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Expand all detected Config columns without converting errors to categories."""
+    """Normalize whole Config strings while preserving the original columns."""
+    if not keep_original:
+        raise ValueError("원본 Config 컬럼은 삭제할 수 없습니다.")
     schema = schema_config or load_data_schema()
-    pattern = re.compile(schema["feature_patterns"]["config_column"])
+    pattern = re.compile(schema["feature_patterns"]["config_column"], re.IGNORECASE)
     config_columns = [
-        str(column) for column in dataframe.columns
+        str(column)
+        for column in dataframe.columns
         if isinstance(column, str) and pattern.fullmatch(column)
     ]
-    result = dataframe.copy(deep=True)
-    derived: dict[str, pd.Series] = {}
-    errors: list[dict[str, Any]] = []
-    parsed_count = 0
+    result = dataframe.copy(deep=False)
+    missing_count = 0
+    category_counts: dict[str, int] = {}
     for column in config_columns:
-        step = int(pattern.fullmatch(column).group("step"))  # type: ignore[union-attr]
-        names = {
-            "model": f"Step{step}_Model",
-            "equipment": f"Step{step}_Equipment",
-            "chamber": f"Step{step}_Chamber",
-        }
-        collisions = [name for name in names.values() if name in result.columns]
-        if collisions:
-            raise ValueError(
-                "Config 파생 컬럼명이 기존 컬럼과 충돌합니다: "
-                + ", ".join(collisions)
+        normalized = dataframe[column].map(
+            lambda value: (
+                pd.NA
+                if value is None
+                or pd.isna(value)
+                or str(value).strip().lower() in MISSING_CONFIG_STRINGS
+                else str(value).strip()
             )
-        values = {key: [] for key in names}
-        for index, value in result[column].items():
-            try:
-                parsed = parse_config_value(column, value, schema)
-                parsed_count += 1
-                values["model"].append(parsed.model)
-                values["equipment"].append(parsed.equipment)
-                values["chamber"].append(parsed.chamber)
-            except ValueError as exc:
-                values["model"].append(pd.NA)
-                values["equipment"].append(pd.NA)
-                values["chamber"].append(pd.NA)
-                errors.append({"row": index, "column": column, "message": str(exc)})
-        for key, name in names.items():
-            derived[name] = pd.Series(values[key], index=result.index, dtype="string")
-    if derived:
-        result = pd.concat([result, pd.DataFrame(derived, index=result.index)], axis=1)
-    if not keep_original and config_columns:
-        result = result.drop(columns=config_columns)
+        ).astype("string")
+        result[column] = normalized
+        missing_count += int(normalized.isna().sum())
+        category_counts[column] = int(normalized.nunique(dropna=True))
     return result, {
         "parser_version": CONFIG_PARSER_VERSION,
+        "config_parser_version": CONFIG_PARSER_VERSION,
+        "normalization": "trim_whole_config_category",
         "config_columns": config_columns,
         "config_column_count": len(config_columns),
-        "parsed_value_count": parsed_count,
-        "parse_error_count": len(errors),
-        "parse_errors": errors,
-        "derived_columns": list(derived),
+        "category_counts": category_counts,
+        "total_category_count": int(sum(category_counts.values())),
+        "missing_value_count": missing_count,
+        "parsed_value_count": int(len(dataframe) * len(config_columns) - missing_count),
+        "parse_error_count": 0,
+        "parse_errors": [],
+        "derived_columns": [],
+        "config_strings_decomposed": False,
     }

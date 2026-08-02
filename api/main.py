@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routes.admin import router as admin_router
 from api.routes.data import (
     recover_interrupted_training_jobs,
     router as data_router,
@@ -19,6 +18,8 @@ from src.runtime.operation_coordinator import (
     OperationKind,
     operation_coordinator,
 )
+from src.runtime.migrations import run_startup_migrations
+from src.runtime.store import RuntimeStore
 
 
 APP_VERSION = "1.0.0"
@@ -30,8 +31,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _is_deployment_environment() -> bool:
+    return (
+        settings.app_env.lower() == "production"
+        or bool(os.environ.get("RAILWAY_ENVIRONMENT_ID"))
+        or os.environ.get("RENDER", "").lower() == "true"
+    )
+
 if (
-    settings.app_env.lower() == "production"
+    _is_deployment_environment()
     and "FRONTEND_ORIGINS" not in os.environ
 ):
     logger.warning(
@@ -45,6 +54,20 @@ async def lifespan(_: FastAPI):
         recover_interrupted_training_jobs()
     except Exception:
         logger.exception("중단된 학습 Job 시작 복구 실패")
+    if _is_deployment_environment():
+        try:
+            results = run_startup_migrations(
+                model_dir=settings.model_dir,
+                store=RuntimeStore(
+                    settings.runtime_db_path,
+                    settings.runtime_artifact_dir,
+                ),
+            )
+            logger.info("Startup Migration 결과: %s", results)
+        except Exception:
+            # Migration failures are recorded and logged, but readiness and
+            # health endpoints must remain available for investigation.
+            logger.exception("Startup Migration 실행 실패")
     yield
 
 
@@ -68,8 +91,6 @@ _PROTECTED_OPERATION_PATHS: dict[str, OperationKind] = {
     "/api/relationships": "analysis",
     "/api/explain": "analysis",
     "/api/explain/download": "analysis",
-    "/api/report": "analysis",
-    "/api/report/download": "analysis",
     "/api/analyze": "analysis",
 }
 
@@ -93,14 +114,13 @@ async def protect_active_operations(request: Request, call_next):
         )
 
 
-app.include_router(admin_router)
 app.include_router(data_router)
 app.include_router(runtime_router)
 
 
 @app.get("/")
 def read_root() -> dict[str, str]:
-    return {"message": "제조 공정 불량 예측 및 원인 분석 AI"}
+    return {"message": "제조 공정 불량 예측 & 원인 분석 AI"}
 
 
 @app.get("/health")
