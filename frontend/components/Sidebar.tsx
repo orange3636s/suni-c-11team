@@ -160,14 +160,15 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
       <Link
         className="brand"
         href="/"
-        aria-label="써니C 11팀 홈으로 이동"
+        aria-label="SK SUNI C 5기"
       >
         <Image
           className="brandLogo"
-          src="/sk-hynix-logo.png"
-          alt="SK hynix"
-          width={88}
-          height={43}
+          src="/sk-suni-c-5-character.png"
+          alt="SK SUNI C 5기"
+          width={150}
+          height={150}
+          unoptimized
           priority
         />
         <strong className="brandTitle">써니C 11팀</strong>

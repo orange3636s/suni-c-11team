@@ -3502,7 +3502,7 @@ select,
 
 .brandLogo {
   width: auto;
-  height: 17px;
+  height: 36px;
   flex: 0 0 auto;
   object-fit: contain;
 }
@@ -4849,11 +4849,11 @@ select,
   .brand {
     min-height: 36px;
     margin: 0 0 8px;
-    padding: 6px 8px;
+    padding: 3px 8px;
   }
 
   .brandLogo {
-    height: 16px;
+    height: 32px;
   }
 
   .brandTitle {
@@ -6453,7 +6453,7 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon {
   .sidebar .brand {
     min-height: 38px;
     margin: 0 54px 8px 0;
-    padding: 6px 8px;
+    padding: 3px 8px;
     border-radius: 14px;
   }
 
