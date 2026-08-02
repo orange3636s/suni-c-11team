@@ -107,8 +107,8 @@ def test_startup_migrations_delete_only_legacy_assets_and_preserve_history(
     assert [row["status"] for row in results] == ["completed", "completed"]
     assert not (model_root / "legacy_model.joblib").exists()
     assert not (model_root / "legacy_model.json").exists()
-    assert (model_root / "current_model.joblib").is_file()
-    assert (model_root / "current_model.json").is_file()
+    assert not (model_root / "current_model.joblib").exists()
+    assert not (model_root / "current_model.json").exists()
     assert not (report_root / "report_old.json").exists()
     assert (report_root / "keep.txt").read_text(encoding="utf-8") == "preserve"
 

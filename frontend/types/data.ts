@@ -386,6 +386,8 @@ export type PredictionResponse = {
     model_id: string;
     target: string;
     model_name: string;
+    version?: string | null;
+    trained_at?: string | null;
   };
   summary: PredictionSummary;
   identifier_column: string;
@@ -398,6 +400,7 @@ export type PredictionResponse = {
   history_warning?: string | null;
   artifact_available?: boolean | null;
   preview_row_count?: number | null;
+  executed_at?: string | null;
 };
 
 export type HistoryStatus =

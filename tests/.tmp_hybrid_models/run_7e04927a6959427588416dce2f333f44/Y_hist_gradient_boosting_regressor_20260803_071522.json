@@ -1,0 +1,164 @@
+{
+  "model_id": "Y_hist_gradient_boosting_regressor_20260803_071522",
+  "target": "Y",
+  "model_name": "HistGradientBoostingRegressor",
+  "model_type": "HistGradientBoostingRegressor",
+  "feature_columns": [
+    "Step1_R1",
+    "Step1_D1",
+    "Step1_Config"
+  ],
+  "feature_count": 3,
+  "created_at": "2026-08-03T07:15:22.855959+09:00",
+  "metrics": {
+    "train": {
+      "r2": 0.8539305133863094,
+      "rmse": 1.4936071288734745,
+      "mae": 0.9275782705092576,
+      "mse": 2.2308622554216635
+    },
+    "validation": {
+      "r2": 0.8725661080988022,
+      "rmse": 0.9083270033752342,
+      "mae": 0.5680406070474997,
+      "mse": 0.8250579450606327
+    },
+    "test": {
+      "r2": 0.8676372450720173,
+      "rmse": 1.1067334424667101,
+      "mae": 0.7658757015471537,
+      "mse": 1.2248589126742147
+    }
+  },
+  "random_state": 42,
+  "split_method": "group",
+  "model_file": "Y_hist_gradient_boosting_regressor_20260803_071522.joblib",
+  "metadata_file": "Y_hist_gradient_boosting_regressor_20260803_071522.json",
+  "scikit_learn_version": "1.9.0",
+  "sklearn_version": "1.9.0",
+  "dataset_split": {
+    "train": 0.7,
+    "validation": 0.15,
+    "test": 0.15
+  },
+  "dataset_rows": {
+    "train": 70,
+    "validation": 15,
+    "test": 15
+  },
+  "training_time_seconds": 1.222183900012169,
+  "source_filename": "automatic.csv",
+  "preprocessing_config": {
+    "missing_strategy": "native",
+    "outlier_policy": "flag_only",
+    "statistics_fit_scope": "model_train_split",
+    "missing_indicator": true,
+    "outlier_indicator": true,
+    "fallback_used": false,
+    "outlier_strategy": "flag_only",
+    "model_strategies": {
+      "HistGradientBoostingRegressor": "native"
+    },
+    "model_outlier_strategies": {
+      "HistGradientBoostingRegressor": "flag_only"
+    }
+  },
+  "python_version": "3.14.3",
+  "pandas_version": "3.0.5",
+  "xgboost_version": "3.3.0",
+  "catboost_version": "1.2.10",
+  "schema_version": "semicon_yield_v2",
+  "schema_fingerprint": "236f2ef1c29cd00839374cc625a7cec1a0e4c40d44c875245f792d8699cf4016",
+  "raw_feature_columns": [
+    "Step1_R1",
+    "Step1_D1",
+    "Step1_Config"
+  ],
+  "transformed_feature_columns": [
+    "Step1_R1",
+    "Step1_D1",
+    "Step1_R1_outlier",
+    "Step1_D1_outlier",
+    "Step1_Config"
+  ],
+  "config_parser_version": "3.0-frequency-no-decomposition",
+  "preprocessing_strategy": "native_flag_only_train_only",
+  "missing_strategy": "native",
+  "outlier_strategy": "flag_only",
+  "missing_indicator_used": false,
+  "outlier_indicator_used": true,
+  "outlier_policy": "flag_only",
+  "fallback_used": false,
+  "preprocessing_summary": {
+    "missing_strategy": "native",
+    "outlier_strategy": "flag_only",
+    "missing_indicator": false,
+    "outlier_indicator": true,
+    "missing_indicator_count": 2,
+    "outlier_indicator_count": 2,
+    "r_column_count": 1,
+    "d_column_count": 1,
+    "categorical_column_count": 1,
+    "config_parsed": true,
+    "config_column_count": 1,
+    "step_feature_count": 2,
+    "fallback_used": false,
+    "model_strategies": {
+      "HistGradientBoostingRegressor": "native"
+    },
+    "model_outlier_strategies": {
+      "HistGradientBoostingRegressor": "flag_only"
+    }
+  },
+  "split_strategy": "group",
+  "group_column": "Lot_ID",
+  "train_lot_count": 14,
+  "validation_lot_count": 3,
+  "test_lot_count": 3,
+  "train_row_count": 70,
+  "validation_row_count": 15,
+  "test_row_count": 15,
+  "target_leakage_check": {
+    "passed": true,
+    "target_column": "Y",
+    "excluded_target_columns": [
+      "Y1",
+      "Y2",
+      "Y3",
+      "Y4",
+      "Y5",
+      "Y6",
+      "Y7",
+      "Y8",
+      "Y9",
+      "Y10"
+    ],
+    "leakage_columns": [],
+    "excluded_identifiers": [
+      "Lot_Wafer_ID",
+      "Lot_ID",
+      "Wafer_Slot"
+    ]
+  },
+  "data_summary": {
+    "row_count": 100,
+    "column_count": 16,
+    "lot_count": 20
+  },
+  "measurement_coverage": {
+    "r": 1.0,
+    "d": 1.0
+  },
+  "threshold_policy": {
+    "warning": 90.0,
+    "critical": 85.0,
+    "source": "data_distribution_reference_not_official_spec"
+  },
+  "missingness_sensitivity": null,
+  "evaluation_summary": {
+    "generalization_gap": -0.013706731685707907,
+    "dummy_test_r2": -0.053894923435263475,
+    "dummy_test_rmse": 3.12290512734426,
+    "dummy_rmse_improvement": 2.0161716848775497
+  }
+}

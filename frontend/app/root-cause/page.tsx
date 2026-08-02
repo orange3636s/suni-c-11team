@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import StatusBadge from "@/components/StatusBadge";
+import CsvUploadPanel from "@/components/CsvUploadPanel";
 import {
   analyzeRelationships,
 } from "@/lib/api";
@@ -17,12 +18,11 @@ import type {
   RelationshipFeature,
 } from "@/types/data";
 
-type WorkspaceTab = "target" | "lot" | "wafer" | "relationships";
+type WorkspaceTab = "yield" | "lot" | "wafer" | "relationships";
 type LotFeatureGroup = "all" | "r" | "d" | "config";
 
-const TARGETS = ["Y", "Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 const TABS: Array<[WorkspaceTab, string]> = [
-  ["target", "Target 분석"],
+  ["yield", "Y 수율 분석"],
   ["lot", "Lot별 원인"],
   ["wafer", "Wafer 상세"],
   ["relationships", "공정 관계"],
@@ -46,12 +46,11 @@ function compactFeatureName(feature: string | null | undefined): string {
 
 export default function RootCausePage() {
   const [file, setFile] = useState<File | null>(null);
-  const [target, setTarget] = useState<(typeof TARGETS)[number]>("Y");
   const [correlation, setCorrelation] = useState<"pearson" | "spearman">("spearman");
   const [result, setResult] = useState<RelationshipAnalysisResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<WorkspaceTab>("target");
+  const [tab, setTab] = useState<WorkspaceTab>("yield");
   const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
   const [selectedWaferId, setSelectedWaferId] = useState<string | null>(null);
   const [lotGroup, setLotGroup] = useState<LotFeatureGroup>("all");
@@ -113,17 +112,15 @@ export default function RootCausePage() {
     try {
       const response = await analyzeRelationships(
         file,
-        null,
         ANALYSIS_OPTIONS,
         correlation,
         "wafer_observed_only",
         { warning_threshold: 90, danger_threshold: 85 },
-        target,
       );
       setResult(response);
       setSelectedLotId(null);
       setSelectedWaferId(null);
-      setTab("target");
+      setTab("yield");
       window.history.replaceState({}, "", window.location.pathname);
     } catch (analysisError) {
       setError(analysisError instanceof Error ? analysisError.message : "원인 분석 중 오류가 발생했습니다.");
@@ -139,13 +136,12 @@ export default function RootCausePage() {
         <Header />
         <main className="pageContent rcPage">
           <section className="pageHeading compactHeading">
-            <div><span className="eyebrow">ROOT CAUSE WORKSPACE</span><h1>원인 분석</h1><p>Y1~Y5 불량률, Lot 위험, Wafer 기여도와 공정 관계를 한 화면에서 추적합니다.</p></div>
+            <div><span className="eyebrow">ROOT CAUSE WORKSPACE</span><h1>원인 분석</h1><p>최신 Y 모델로 Lot 위험, Wafer 기여도와 공정 관계를 추적합니다.</p></div>
             {result && <StatusBadge label={`${result.target} · ${lots.length} Lots`} tone="success" />}
           </section>
 
           <section className="resultCard rcControlBar" aria-label="분석 조건">
-            <label className="fieldGroup"><span>CSV</span><input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>
-            <label className="fieldGroup rcSmallField"><span>Target</span><select value={target} onChange={(event) => setTarget(event.target.value as typeof target)}>{TARGETS.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <CsvUploadPanel id="root-cause-file" file={file} onFileSelect={(selected) => setFile(selected ?? null)} compact title="CSV 파일을 선택해 주세요." description="활성 Y 모델로 원인 분석을 실행합니다." />
             <label className="fieldGroup rcSmallField"><span>상관</span><select value={correlation} onChange={(event) => setCorrelation(event.target.value as typeof correlation)}><option value="spearman">Spearman</option><option value="pearson">Pearson</option></select></label>
             <button className="button primary" type="button" disabled={!file || running} onClick={() => void runAnalysis()}>{running ? "분석 중…" : "원인 분석 실행"}</button>
           </section>
@@ -157,8 +153,8 @@ export default function RootCausePage() {
           </nav>
 
           {!result ? (
-            <section className="resultCard rcEmpty"><h2>분석할 데이터를 선택해 주세요</h2><p>현재 활성 Champion 모델로 CSV의 Y1~Y5 불량률과 공정 원인을 분석합니다.</p></section>
-          ) : tab === "target" ? (
+            <section className="resultCard rcEmpty"><h2>분석할 데이터를 선택해 주세요</h2><p>서버에 저장된 최신 Y 모델로 공정 원인을 분석합니다.</p></section>
+          ) : tab === "yield" ? (
             <TargetView result={result} dangerWafers={dangerWafers} onWaferClick={openWafer} />
           ) : tab === "lot" ? (
             <LotView lots={shownLots} riskLots={riskLots} selectedLot={selectedLot} search={lotSearch} onSearch={setLotSearch} onSelect={selectLot} group={lotGroup} onGroup={setLotGroup} onWaferClick={openWafer} />
@@ -177,9 +173,8 @@ export default function RootCausePage() {
 function TargetView({ result, dangerWafers, onWaferClick }: { result: RelationshipAnalysisResponse; dangerWafers: Array<{ lot: LotCauseItem; wafer: LotWaferItem }>; onWaferClick: (lot: LotCauseItem, wafer: LotWaferItem) => void }) {
   const explanation = result.explanation;
   const risk = result.analysis_result?.risk;
-  const failures = result.analysis_result?.multi_y.failure_rate_averages ?? {};
   return <div className="rcGrid">
-    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Failure targets</span><h2>{result.target === "Y" ? "최종 수율 Y 원인 분석" : "Y1~Y5 예측 불량률"}</h2></div><StatusBadge label={`최종 Y = 100 - Σ(Y1~Y5)`} tone="neutral" /></div><div className="rcMetricStrip">{TARGETS.filter((item) => item !== "Y").map((item) => <div key={item}><span>{item}</span><strong>{formatNumber(failures[item])}%</strong></div>)}</div><p className="microcopy">{result.target === "Y" ? "Y1~Y5 Fail Rate 기여도를 합산한 뒤 부호를 반전하여 최종 수율을 낮추거나 높이는 원인을 표시합니다." : "각 불량률 예측은 0 이상으로 제한하며, 최종 수율은 0~100 범위로 제한합니다."}</p></section>
+    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Final yield</span><h2>최종 수율 Y 원인 분석</h2></div><StatusBadge label="정답 레이블: Y" tone="neutral" /></div><p className="microcopy">활성 Y 모델의 기여도를 직접 사용합니다. 음수 기여는 수율 악화, 양수 기여는 수율 개선을 뜻합니다.</p></section>
     <section className="resultCard"><span className="sectionLabel">Risk mix</span><h2>Wafer 위험 분포</h2><div className="rcRiskCounts"><span className="normal">정상 <strong>{risk?.normal_count ?? 0}</strong></span><span className="warning">주의 <strong>{risk?.warning_count ?? 0}</strong></span><span className="danger">위험 <strong>{risk?.critical_count ?? 0}</strong></span></div></section>
     <section className="resultCard"><span className="sectionLabel">SHAP coverage</span><h2>설명 범위</h2><strong className="rcHeroNumber">{formatNumber(explanation?.analysis_summary.analyzed_rows, 0)}</strong><p>전체 {formatNumber(explanation?.analysis_summary.total_rows, 0)} Wafer · {explanation?.explanation_method ?? "-"}</p></section>
     <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Global importance</span><h2>상위 영향 Feature</h2></div></div><FeatureTable features={(explanation?.global_importance ?? []).slice(0, 12).map((item) => ({ feature: item.feature, display_name: compactFeatureName(item.feature), group: item.parameter_type, score: item.mean_abs_shap, direction: item.direction, valid_count: null } as RelationshipFeature))} /></section>

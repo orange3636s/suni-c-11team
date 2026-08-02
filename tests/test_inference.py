@@ -56,7 +56,12 @@ def inference_environment():
         "feature_columns": dataset.feature_columns,
     }
     for generated_file in model_dir.iterdir():
-        generated_file.unlink()
+        if generated_file.is_dir():
+            for nested in generated_file.iterdir():
+                nested.unlink()
+            generated_file.rmdir()
+        else:
+            generated_file.unlink()
     model_dir.rmdir()
     if not any(temporary_root.iterdir()):
         temporary_root.rmdir()
@@ -624,12 +629,17 @@ def test_predict_api_response_is_json_serializable(
         "MODEL_DIR",
         inference_environment["model_dir"],
     )
+    data_routes._runtime_store().promote_model(
+        model_id=inference_environment["model_id"],
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={"target": "Y"},
+    )
     dataframe = inference_environment["dataframe"].drop(columns=["Y"])
 
     response = asyncio.run(
         data_routes.predict_csv(
             _upload(dataframe),
-            model_id=inference_environment["model_id"],
             warning_threshold=95,
             danger_threshold=90,
         )
@@ -650,11 +660,16 @@ def test_predict_download_returns_csv(
         "MODEL_DIR",
         inference_environment["model_dir"],
     )
+    data_routes._runtime_store().promote_model(
+        model_id=inference_environment["model_id"],
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={"target": "Y"},
+    )
 
     response = asyncio.run(
         data_routes.download_predictions(
             _upload(inference_environment["dataframe"]),
-            model_id=inference_environment["model_id"],
             warning_threshold=95,
             danger_threshold=90,
         )
@@ -675,15 +690,20 @@ def test_predict_api_unknown_model_returns_400(
         "MODEL_DIR",
         inference_environment["model_dir"],
     )
+    data_routes._runtime_store().promote_model(
+        model_id="missing",
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={"target": "Y"},
+    )
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(
             data_routes.predict_csv(
                 _upload(inference_environment["dataframe"]),
-                model_id="missing",
                 warning_threshold=95,
                 danger_threshold=90,
             )
         )
 
-    assert error.value.status_code == 400
+    assert error.value.status_code == 409

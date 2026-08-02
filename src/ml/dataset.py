@@ -16,7 +16,13 @@ from src.ml.memory_usage import log_memory_stage
 
 
 logger = logging.getLogger(__name__)
-ALLOWED_TARGETS = tuple(["Y", *[f"Y{index}" for index in range(1, 11)]])
+ALLOWED_TARGETS = ("Y",)
+EXCLUDED_TARGET_COLUMNS = tuple(f"Y{index}" for index in range(1, 11))
+TARGET_COLUMN = "Y"
+KNOWN_IDENTIFIER_COLUMNS = (
+    "Lot_Wafer_ID", "LOT_WAFER_ID", "LOT_WF_ID", "Lot_ID", "LOT_ID",
+    "Wafer_ID", "WAFER_ID", "Wafer_Slot", "WAFER_SLOT",
+)
 RANDOM_STATE = 42
 MINIMUM_TRAINING_ROWS = 10
 
@@ -70,7 +76,7 @@ def prepare_dataset(
     *,
     add_missing_indicators: bool = True,
 ) -> PreparedDataset:
-    if target not in ALLOWED_TARGETS:
+    if target != TARGET_COLUMN:
         raise ValueError(
             "지원하지 않는 목표 변수입니다. Y부터 Y10까지만 사용할 수 있습니다."
         )
@@ -105,7 +111,10 @@ def prepare_dataset(
             + ", ".join(str(column) for column in duplicate_columns)
         )
     if target not in working.columns:
-        raise ValueError(f"목표 변수 '{target}' 컬럼이 없습니다.")
+        raise ValueError(
+            "학습 데이터에 최종 수율 컬럼 Y가 없습니다. "
+            "Y 컬럼이 포함된 CSV 파일을 선택해주세요."
+        )
 
     id_column = schema["id_column"]
     if id_column not in working.columns:
@@ -149,10 +158,12 @@ def prepare_dataset(
     lot_id_column = schema.get("lot_id_column", "Lot_ID")
     wafer_slot_column = schema.get("wafer_slot_column", "Wafer_Slot")
     excluded_columns = {
-        *ALLOWED_TARGETS,
+        "Y",
+        *EXCLUDED_TARGET_COLUMNS,
         id_column,
         lot_id_column,
         wafer_slot_column,
+        *KNOWN_IDENTIFIER_COLUMNS,
     }
     numeric_columns = list(
         dict.fromkeys(
@@ -275,10 +286,11 @@ def prepare_dataset(
             lot_id_column,
             id_column,
         )
-    leakage_columns = sorted(set(feature_columns) & set(ALLOWED_TARGETS))
+    leakage_columns = sorted(set(feature_columns) & {"Y", *EXCLUDED_TARGET_COLUMNS})
     leakage_check = {
         "passed": not leakage_columns,
-        "excluded_targets": list(ALLOWED_TARGETS),
+        "target_column": "Y",
+        "excluded_target_columns": list(EXCLUDED_TARGET_COLUMNS),
         "leakage_columns": leakage_columns,
         "excluded_identifiers": [id_column, lot_id_column, wafer_slot_column],
     }
@@ -353,9 +365,9 @@ def _take_split(
 def split_dataset(
     dataset: PreparedDataset,
     random_state: int = RANDOM_STATE,
-    train_ratio: float = 0.64,
-    validation_ratio: float = 0.16,
-    test_ratio: float = 0.2,
+    train_ratio: float = 0.70,
+    validation_ratio: float = 0.15,
+    test_ratio: float = 0.15,
 ) -> DatasetSplit:
     row_count = len(dataset.features)
     if row_count < MINIMUM_TRAINING_ROWS:

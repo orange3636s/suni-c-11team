@@ -103,12 +103,11 @@ def test_y_target_training_succeeds(prepared_training_data) -> None:
     result = train_regression_models(dataset, split)
 
     assert result.best_model_name
-    assert len(result.model_comparison) == 4
+    assert len(result.model_comparison) == 1
     assert sum(item.selected for item in result.model_comparison) == 1
     assert result.outlier_strategy == outlier_strategy_for_model(result.best_model_name)
     assert result.outlier_indicator is (result.outlier_strategy == "flag_only")
     assert set(result.model_strategies.values()) <= {"native", "median"}
-    assert result.model_outlier_strategies["Ridge"] == "iqr"
     assert result.model_outlier_strategies["HistGradientBoostingRegressor"] == "flag_only"
     assert result.fallback_used is False
 
@@ -296,9 +295,9 @@ def test_train_validation_test_split_ratio(
     _, split = prepared_training_data
 
     assert split.row_counts == {
-        "train_rows": 64,
+        "train_rows": 68,
         "validation_rows": 16,
-        "test_rows": 20,
+        "test_rows": 16,
     }
 
 
@@ -352,9 +351,9 @@ def test_insufficient_groups_fall_back_to_random_split(
 
     assert split.group_split_used is False
     assert split.row_counts == {
-        "train_rows": 64,
+        "train_rows": 69,
         "validation_rows": 16,
-        "test_rows": 20,
+        "test_rows": 15,
     }
     assert any("random split" in warning for warning in split.warnings)
 
@@ -469,15 +468,12 @@ def test_train_api_response_is_json_serializable(
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_output_dir)
 
     response = asyncio.run(
-        data_routes.train_model(
-            _as_upload(_automatic_targets(training_dataframe)),
-            target="Y",
-        )
+        data_routes.train_model(_as_upload(_automatic_targets(training_dataframe)))
     )
     serialized = response.model_dump_json()
 
     assert response.success is True
-    assert response.target == "Y1~Y5"
+    assert response.target == "Y"
     assert response.split.group_split_used is True
     assert json.loads(serialized)["metrics"]["test"]["rmse"] is not None
     assert (model_output_dir / response.artifacts.model_file).exists()
@@ -507,10 +503,10 @@ def test_train_api_succeeds_with_fixture_csv(
     fixture_frame = _automatic_targets(pd.read_csv(fixture_path))
     upload = _as_upload(fixture_frame, fixture_path.name)
 
-    response = asyncio.run(data_routes.train_model(upload, target="Y"))
+    response = asyncio.run(data_routes.train_model(upload))
 
     assert response.success is True
-    assert response.target == "Y1~Y5"
+    assert response.target == "Y"
     assert response.split.train_rows > 0
     assert response.split.validation_rows > 0
     assert response.split.test_rows > 0
@@ -521,7 +517,7 @@ def test_train_api_rejects_non_csv() -> None:
     upload = UploadFile(file=BytesIO(b"not csv"), filename="training.txt")
 
     with pytest.raises(HTTPException) as error:
-        asyncio.run(data_routes.train_model(upload, target="Y"))
+        asyncio.run(data_routes.train_model(upload))
 
     assert error.value.status_code == 400
 
@@ -536,17 +532,14 @@ def test_unexpected_training_error_returns_json_detail(
 
     monkeypatch.setattr(
         data_routes,
-        "train_hybrid_multi_y",
+        "train_regression_models",
         raise_unexpected_error,
     )
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(
-            data_routes.train_model(
-                _as_upload(_automatic_targets(training_dataframe)),
-                target="Y",
-            )
+            data_routes.train_model(_as_upload(_automatic_targets(training_dataframe)))
         )
 
     assert error.value.status_code == 500
-    assert "Hybrid Multi-Y" in error.value.detail
+    assert "모델 학습" in error.value.detail

@@ -11,6 +11,7 @@ from api.routes.data import (
     router as data_router,
 )
 from api.routes.runtime import router as runtime_router
+from api.routes.admin import router as admin_router
 from api.settings import settings
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -116,6 +117,7 @@ async def protect_active_operations(request: Request, call_next):
 
 app.include_router(data_router)
 app.include_router(runtime_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

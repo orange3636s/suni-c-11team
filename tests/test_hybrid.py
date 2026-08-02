@@ -65,10 +65,13 @@ def hybrid_model_dir():
     output = root / f"run_{uuid4().hex}"
     output.mkdir()
     yield output
-    for bundle_dir in output.iterdir():
-        for generated_file in bundle_dir.iterdir():
-            generated_file.unlink()
-        bundle_dir.rmdir()
+    for generated_path in output.iterdir():
+        if generated_path.is_dir():
+            for generated_file in generated_path.iterdir():
+                generated_file.unlink()
+            generated_path.rmdir()
+        else:
+            generated_path.unlink()
     output.rmdir()
     if not any(root.iterdir()):
         root.rmdir()
@@ -149,17 +152,10 @@ def test_train_api_forces_automatic_contract(
         file=BytesIO(hybrid_dataframe.to_csv(index=False).encode("utf-8")),
         filename="automatic.csv",
     )
-    response = asyncio.run(data_routes.train_model(
-        upload,
-        target="Y",
-        train_ratio=64,
-        validation_ratio=16,
-        test_ratio=20,
-        missing_indicator=True,
-    ))
-    assert response.model_type == "hybrid_multi_y"
+    response = asyncio.run(data_routes.train_model(upload))
+    assert response.model_type == "HistGradientBoostingRegressor"
     assert response.split.train_rows + response.split.validation_rows + response.split.test_rows == len(hybrid_dataframe)
-    assert response.target == "Y1~Y5"
+    assert response.target == "Y"
 
 
 def test_random_forest_is_skipped_when_hgbr_beats_baseline() -> None:

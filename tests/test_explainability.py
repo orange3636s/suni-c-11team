@@ -323,6 +323,12 @@ def test_explain_response_and_download_are_serializable(
         model_dir=model_dir,
     )
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_dir)
+    data_routes._runtime_store().promote_model(
+        model_id=model_path.stem,
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={"target": "Y"},
+    )
 
     def upload() -> UploadFile:
         return UploadFile(
@@ -334,7 +340,6 @@ def test_explain_response_and_download_are_serializable(
         response = asyncio.run(
             data_routes.explain_csv(
                 upload(),
-                model_id=model_path.stem,
                 max_rows=5,
                 top_n=5,
                 per_wafer_top_n=3,
@@ -343,7 +348,6 @@ def test_explain_response_and_download_are_serializable(
         download = asyncio.run(
             data_routes.download_explanation(
                 upload(),
-                model_id=model_path.stem,
                 max_rows=5,
                 top_n=5,
                 per_wafer_top_n=3,
@@ -356,7 +360,12 @@ def test_explain_response_and_download_are_serializable(
         assert "mean_abs_shap" in download.body.decode("utf-8-sig")
     finally:
         for generated_file in model_dir.iterdir():
-            generated_file.unlink()
+            if generated_file.is_dir():
+                for nested in generated_file.iterdir():
+                    nested.unlink()
+                generated_file.rmdir()
+            else:
+                generated_file.unlink()
         model_dir.rmdir()
         if not any(temporary_root.iterdir()):
             temporary_root.rmdir()

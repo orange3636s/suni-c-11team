@@ -16,7 +16,7 @@ from src.ml.inference import LoadedPredictionModel, PredictionResult
 from src.ml.model_io import to_json_safe
 
 
-ANALYSIS_RESULT_VERSION = "y1_y5_cause_analysis_v2"
+ANALYSIS_RESULT_VERSION = "direct_y_cause_analysis_v1"
 
 
 def dataset_fingerprint(dataframe: pd.DataFrame) -> str:
@@ -88,13 +88,13 @@ def build_analysis_result(
     quality = validate_dataframe(dataframe, validation_mode="analysis")
     metadata = loaded.metadata
     metrics = metadata.get("metrics", {})
-    multi_y_values = multi_y or compose_multi_y_predictions(
-        {prediction.target: [
-            float(row[f"predicted_{prediction.target}"])
-            for row in prediction.predictions
-        ]},
-        metadata.get("ensemble_weight"),
-    )
+    # The compatibility field name remains for older dashboard artifacts, but
+    # it contains only the direct final-yield prediction series.
+    multi_y_values = {
+        "predicted_y": [float(row["predicted_Y"]) for row in prediction.predictions],
+        "failure_rates": {},
+        "fail_bit_counts": {},
+    }
     multi_y_summary = {
         **multi_y_values,
         "average_predicted_y": _average(multi_y_values.get("predicted_y")),
@@ -139,7 +139,7 @@ def build_analysis_result(
             "model_version": metadata.get("model_version"),
             "schema_version": metadata.get("schema_version"),
             "compatibility": "compatible",
-            "structure": metadata.get("model_structure", "Y1~Y5 기반 최종 Y"),
+            "structure": metadata.get("model_structure", "Direct Y model"),
         },
         "dataset": {
             "filename": filename,

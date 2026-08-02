@@ -41,6 +41,17 @@ def _metadata_candidates(root: Path) -> list[tuple[str, Path]]:
 
 
 def _legacy_metadata(metadata: dict[str, Any]) -> bool:
+    # Only former multi-target bundles are incompatible.  Direct Y pipelines
+    # produced by the current app must survive startup untouched.
+    target = str(metadata.get("target") or "")
+    model_type = " ".join(
+        str(metadata.get(key) or "")
+        for key in ("model_type", "bundle_type", "model_name")
+    ).lower()
+    if target == "Y" and "multi" not in model_type and "hybrid" not in model_type:
+        return False
+    if "multi" in model_type or "hybrid" in model_type or target.startswith("Y"):
+        return True
     pipeline = str(metadata.get("pipeline_version") or "").strip()
     if pipeline == PIPELINE_VERSION:
         return False

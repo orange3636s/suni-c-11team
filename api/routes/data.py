@@ -69,6 +69,7 @@ from src.data_validation import load_data_schema, validate_dataframe
 from src.ml.dataset import (
     ALLOWED_TARGETS,
     RANDOM_STATE,
+    TARGET_COLUMN,
     prepare_dataset,
     split_dataset,
 )
@@ -90,6 +91,8 @@ from src.ml.inference import (
     delete_model_bundle,
     list_prediction_models,
     load_prediction_model,
+    load_latest_model_bundle,
+    get_latest_model_metadata,
     load_prediction_model_target,
     predict_dataframe,
 )
@@ -126,7 +129,7 @@ router = APIRouter(prefix="/api", tags=["data"])
 MAX_FILE_SIZE = settings.max_upload_size_bytes
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
 MODEL_DIR = settings.model_dir
-TRAINABLE_TARGETS = tuple(["Y", *[f"Y{index}" for index in range(1, 6)]])
+TRAINABLE_TARGETS = ("Y",)
 PREDICTION_PREVIEW_ROWS = 10
 _TRAINING_LOCK = threading.Lock()
 _TRAINING_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar(
@@ -162,6 +165,24 @@ def _active_model_id() -> str:
             detail="현재 사용할 수 있는 활성 모델이 없습니다. 먼저 누적 데이터를 등록하고 모델 갱신을 실행해 주세요.",
         )
     return str(active["active_model_id"])
+
+
+def _runtime_store() -> RuntimeStore:
+    configured_model_dir = Path(settings.model_dir).resolve()
+    resolved_model_dir = Path(MODEL_DIR).resolve()
+    if resolved_model_dir != configured_model_dir:
+        runtime_root = resolved_model_dir / ".runtime"
+        return RuntimeStore(runtime_root / "dashboard.db", runtime_root)
+    return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+
+
+def _latest_model() -> Any:
+    try:
+        return load_latest_model_bundle(_runtime_store(), MODEL_DIR)
+    except InferenceInputError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ModelLoadError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
 def get_training_job_manager() -> TrainingJobManager:
@@ -459,7 +480,6 @@ def _preview_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
-@router.post("/data/ingest", status_code=status.HTTP_200_OK)
 async def ingest_process_data(file: UploadFile = File(...)) -> dict[str, Any]:
     """Upsert a process batch; this endpoint never replaces cumulative data."""
     filename, dataframe = await _read_csv_upload(file)
@@ -483,7 +503,6 @@ async def ingest_process_data(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.get("/data/status")
 def get_cumulative_data_status() -> dict[str, Any]:
     active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
     result = get_cumulative_store().status(
@@ -494,7 +513,6 @@ def get_cumulative_data_status() -> dict[str, Any]:
     return result
 
 
-@router.post("/model/update", status_code=status.HTTP_202_ACCEPTED)
 def create_model_update() -> dict[str, Any]:
     try:
         return get_model_update_manager().submit()
@@ -502,7 +520,6 @@ def create_model_update() -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc) or HEAVY_JOB_MESSAGE) from exc
 
 
-@router.get("/model/update/{job_id}")
 def get_model_update(job_id: str) -> dict[str, Any]:
     row = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).get_training_job(job_id)
     if row is None or not job_id.startswith("model_update_"):
@@ -515,10 +532,9 @@ def get_model_update(job_id: str) -> dict[str, Any]:
     return {"job_id": job_id, "status": row["status"], "stage": row["stage"], "progress": row["progress"], "elapsed_seconds": elapsed, "result": row.get("result"), "promotion_result": (row.get("result") or {}).get("promotion_result"), "error": row.get("error_message")}
 
 
-@router.get("/model/active")
-def get_active_model() -> dict[str, Any]:
-    active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
-    return {"active_model": active}
+@router.get("/model/latest")
+def get_latest_model() -> dict[str, Any]:
+    return {"latest_model": get_latest_model_metadata(_runtime_store())}
 
 
 @router.post("/validate", response_model=ValidationResponse)
@@ -596,23 +612,20 @@ async def preprocess_csv(
     )
 
 
+@router.post("/train", response_model=TrainResponse)
 async def train_model(
     file: UploadFile = File(...),
-    target: str | None = Form(None),
-    train_ratio: Annotated[int, Form()] = 70,
-    validation_ratio: Annotated[int, Form()] = 15,
-    test_ratio: Annotated[int, Form()] = 15,
-    missing_indicator: Annotated[bool, Form()] = False,
-    compare_missingness: Annotated[bool, Form()] = False,
-    ensemble_enabled: Annotated[bool, Form()] = True,
-    ensemble_size: Annotated[str, Form()] = "auto",
-    ensemble_method: Annotated[str, Form()] = "auto",
-    ensemble_min_improvement: Annotated[float, Form()] = 0.01,
-    diversity_check: Annotated[bool, Form()] = True,
-    max_base_models: Annotated[int, Form()] = 3,
 ) -> TrainResponse:
     training_started_at = time.perf_counter()
     filename, dataframe = await _read_csv_upload(file)
+    if TARGET_COLUMN not in dataframe.columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "학습 데이터에 최종 수율 컬럼 Y가 없습니다. "
+                "Y 컬럼이 포함된 CSV 파일을 선택해주세요."
+            ),
+        )
     logger.info(
         "학습 CSV 읽기 완료: rows=%d, columns=%d",
         dataframe.shape[0],
@@ -620,29 +633,17 @@ async def train_model(
     )
     _report_training_progress("학습 CSV 확인", 10)
 
-    # The v2 automatic pipeline has no user-selectable target, split,
-    # preprocessing, search, or ensemble controls. Keep legacy form fields as
-    # ignored compatibility inputs while every request follows the same fixed
-    # production policy.
-    if target is not None:
-        logger.info("Legacy target 입력을 무시하고 Y1~Y5 자동 학습을 실행합니다: %s", target)
-    target = None
+    # Fixed server-side training contract.
+    target = TARGET_COLUMN
     train_ratio, validation_ratio, test_ratio = 70, 15, 15
     missing_indicator = False
     compare_missingness = False
     ensemble_enabled = False
-    del ensemble_size, ensemble_method, ensemble_min_improvement, diversity_check, max_base_models
-
-    if target is not None and target not in TRAINABLE_TARGETS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="지원하지 않는 목표 변수입니다. Y 또는 Y1~Y5만 학습할 수 있습니다.",
-        )
 
     split_ratios = (train_ratio, validation_ratio, test_ratio)
-    if target is not None and (sum(split_ratios) != 100 or any(
+    if sum(split_ratios) != 100 or any(
         ratio < 5 or ratio > 90 for ratio in split_ratios
-    )):
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -736,6 +737,11 @@ async def train_model(
                 "schema_version": "semicon_yield_v2",
                 "schema_fingerprint": schema_fingerprint(raw_features),
                 "raw_feature_columns": raw_features,
+                "categorical_columns": list(dataset.categorical_columns),
+                "numeric_columns": list(dataset.numeric_columns),
+                "target_column": "Y",
+                "excluded_target_columns": [f"Y{index}" for index in range(1, 11)],
+                "model_structure": "Direct Y model",
                 "config_parser_version": CONFIG_PARSER_VERSION,
                 "preprocessing_config": {
                     "missing_strategy": hybrid.metadata.get("missing_strategy"),
@@ -1064,6 +1070,27 @@ async def train_model(
     logger.info("학습 모델 저장 완료")
     _report_training_progress("학습 결과 정리", 98)
 
+    # Switch the active pointer only after the saved bundle is complete.  Any
+    # failure above leaves the previous active model untouched.
+    RuntimeStore(
+        settings.runtime_db_path,
+        settings.runtime_artifact_dir,
+    ).promote_model(
+        model_id=str(saved_metadata["model_id"]),
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={
+            "model_id": str(saved_metadata["model_id"]),
+            "target": "Y",
+            "model_name": training.best_model_name,
+            "source_filename": filename,
+            "metrics": metrics,
+            "row_count": int(len(dataset.features)),
+            "feature_columns": list(dataset.feature_columns),
+            "categorical_columns": list(dataset.categorical_columns),
+        },
+    )
+
     warnings = list(
         dict.fromkeys(
             [
@@ -1139,20 +1166,9 @@ async def train_model(
     return response
 
 
+@router.post("/train/jobs", response_model=TrainJobAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_training_job(
     file: UploadFile = File(...),
-    target: str | None = Form(None),
-    train_ratio: Annotated[int, Form()] = 70,
-    validation_ratio: Annotated[int, Form()] = 15,
-    test_ratio: Annotated[int, Form()] = 15,
-    missing_indicator: Annotated[bool, Form()] = False,
-    compare_missingness: Annotated[bool, Form()] = False,
-    ensemble_enabled: Annotated[bool, Form()] = True,
-    ensemble_size: Annotated[str, Form()] = "auto",
-    ensemble_method: Annotated[str, Form()] = "auto",
-    ensemble_min_improvement: Annotated[float, Form()] = 0.01,
-    diversity_check: Annotated[bool, Form()] = True,
-    max_base_models: Annotated[int, Form()] = 3,
 ) -> TrainJobAccepted:
     manager = get_training_job_manager()
     job_id = new_training_job_id()
@@ -1171,20 +1187,7 @@ async def create_training_job(
         manager.cleanup_input(job_id)
         raise
 
-    options = {
-        "target": target,
-        "train_ratio": train_ratio,
-        "validation_ratio": validation_ratio,
-        "test_ratio": test_ratio,
-        "missing_indicator": missing_indicator,
-        "compare_missingness": compare_missingness,
-        "ensemble_enabled": ensemble_enabled,
-        "ensemble_size": ensemble_size,
-        "ensemble_method": ensemble_method,
-        "ensemble_min_improvement": ensemble_min_improvement,
-        "diversity_check": diversity_check,
-        "max_base_models": max_base_models,
-    }
+    options: dict[str, Any] = {}
     try:
         manager.submit(
             job_id=job_id,
@@ -1211,6 +1214,7 @@ async def create_training_job(
     return TrainJobAccepted(job_id=job_id)
 
 
+@router.get("/train/jobs/{job_id}", response_model=TrainJobStatus)
 def get_training_job(job_id: str) -> TrainJobStatus:
     row = get_training_job_manager().get(job_id)
     if row is None:
@@ -1229,6 +1233,7 @@ def get_training_job(job_id: str) -> TrainJobStatus:
     )
 
 
+@router.get("/models", response_model=ModelListResponse)
 def get_models() -> ModelListResponse:
     try:
         models, warnings = list_prediction_models(MODEL_DIR)
@@ -1245,6 +1250,7 @@ def get_models() -> ModelListResponse:
         ) from exc
 
 
+@router.get("/models/{model_id}", response_model=ModelDetailResponse)
 def get_model_detail(model_id: str) -> ModelDetailResponse:
     try:
         detail = get_prediction_model_detail(model_id, MODEL_DIR)
@@ -1273,6 +1279,7 @@ def get_model_detail(model_id: str) -> ModelDetailResponse:
         ) from exc
 
 
+@router.get("/models/{model_id}/references")
 def get_model_references(model_id: str) -> dict[str, Any]:
     try:
         detail = get_prediction_model_detail(model_id, MODEL_DIR)
@@ -1282,6 +1289,15 @@ def get_model_references(model_id: str) -> dict[str, Any]:
     return {"model_id": model_id, "model_name": detail.get("model_name"), "model_type": detail.get("model_type"), "created_at": detail.get("created_at"), **counts}
 
 
+@router.delete(
+    "/models/{model_id}",
+    response_model=ModelDeleteResponse,
+    responses={
+        400: {"description": "삭제할 수 없는 모델"},
+        404: {"description": "모델을 찾을 수 없음"},
+        500: {"description": "모델 삭제 실패"},
+    },
+)
 def delete_model(model_id: str) -> ModelDeleteResponse:
     try:
         store = RuntimeStore(
@@ -1349,12 +1365,15 @@ def _prediction_response(
         if result.evaluation is not None
         else None
     )
+    latest = get_latest_model_metadata(_runtime_store()) or {}
     response = PredictionResponse(
         filename=filename,
         model=PredictionModelInfo(
             model_id=result.model_id,
             target=result.target,
             model_name=result.model_name,
+            version=str(latest.get("version") or "") or None,
+            trained_at=str(latest.get("trained_at") or "") or None,
         ),
         summary=PredictionSummary(
             total_rows=result.total_rows,
@@ -1380,6 +1399,7 @@ def _prediction_response(
             len(result.predictions),
             PREDICTION_PREVIEW_ROWS,
         ),
+        executed_at=datetime.now().astimezone().isoformat(),
     )
     response.model_dump_json()
     return response
@@ -1593,13 +1613,11 @@ async def _run_prediction(
 @router.post("/predict", response_model=PredictionResponse)
 async def predict_csv(
     file: UploadFile = File(...),
-    model_id: str | None = Form(None),
     warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
     danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
 ) -> PredictionResponse:
-    # Client supplied model IDs are intentionally ignored: operations always
-    # use the single Champion pointer.
-    model_id = _active_model_id()
+    # Every operation is pinned to the persisted latest-model pointer.
+    model_id = _latest_model().model_id
     try:
         filename, dataframe, loaded, result = await _run_prediction(
             file, model_id, warning_threshold, danger_threshold,
@@ -1617,11 +1635,10 @@ async def predict_csv(
 @router.post("/predict/download")
 async def download_predictions(
     file: UploadFile = File(...),
-    model_id: str | None = Form(None),
     warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
     danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
 ) -> Response:
-    model_id = _active_model_id()
+    model_id = _latest_model().model_id
     _, _, _, result = await _run_prediction(
         file,
         model_id,
@@ -1645,12 +1662,15 @@ def _explain_response(
     filename: str,
     result: ExplainResult,
 ) -> ExplainResponse:
+    latest = get_latest_model_metadata(_runtime_store()) or {}
     response = ExplainResponse(
         filename=filename,
         model=ExplainModelInfo(
             model_id=result.model_id,
             target=result.target,
             model_name=result.model_name,
+            version=str(latest.get("version") or "") or None,
+            trained_at=str(latest.get("trained_at") or "") or None,
         ),
         analysis_summary=ExplainAnalysisSummary(
             total_rows=result.total_rows,
@@ -1767,11 +1787,7 @@ async def _run_explanation(
     filename, dataframe = await _read_csv_upload(file)
     try:
         bundle = load_prediction_model(model_id, MODEL_DIR)
-        loaded = (
-            load_prediction_model_target(model_id, "Y1", MODEL_DIR)
-            if bundle.metadata.get("model_type") == "hybrid_multi_y"
-            else bundle
-        )
+        loaded = bundle
         result = explain_dataframe(
             dataframe,
             loaded,
@@ -1803,14 +1819,13 @@ async def _run_explanation(
 @router.post("/explain", response_model=ExplainResponse)
 async def explain_csv(
     file: UploadFile = File(...),
-    model_id: str = Form(...),
     max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
     top_n: int = Form(DEFAULT_TOP_N),
     per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
 ) -> ExplainResponse:
     filename, result = await _run_explanation(
         file,
-        model_id,
+        _latest_model().model_id,
         max_rows,
         top_n,
         per_wafer_top_n,
@@ -1831,7 +1846,6 @@ async def explain_csv(
 )
 async def analyze_feature_relationships(
     file: UploadFile = File(...),
-    model_id: str | None = Form(None),
     max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
     top_n: int = Form(10),
     per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
@@ -1839,24 +1853,21 @@ async def analyze_feature_relationships(
     analysis_unit: str = Form("wafer_observed_only"),
     warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
     danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-    analysis_target: str | None = Form(None),
     prediction_id: str | None = Form(None),
 ) -> RelationshipAnalysisResponse:
     analysis_id = f"analysis_{uuid4().hex}"
     resolved_prediction_id = prediction_id if isinstance(prediction_id, str) else None
     # Analysis is pinned to the Champion at its start; model selection is not
     # exposed to callers.
-    resolved_model_id = _active_model_id()
+    resolved_model_id = _latest_model().model_id
     started_clock = time.perf_counter()
     history_started = False
     filename, dataframe = await _read_csv_upload(file)
     try:
-        resolved_analysis_target = analysis_target if isinstance(analysis_target, str) else None
         history_started = False
         bundle_loaded = load_prediction_model(resolved_model_id, MODEL_DIR)
-        effective_target = resolved_analysis_target or (
-            "Y1" if bundle_loaded.metadata.get("model_type") == "hybrid_multi_y" else None
-        )
+        # The active direct model is the only analysis target.
+        effective_target = "Y"
         prediction = predict_dataframe(
             dataframe,
             bundle_loaded,
@@ -1864,21 +1875,23 @@ async def analyze_feature_relationships(
             danger_threshold=danger_threshold,
             max_rows=None,
         )
-        multi_y, multi_y_warnings = _collect_multi_y_predictions(dataframe, bundle_loaded, prediction)
-        if effective_target == "Y":
-            component_explanations: list[ExplainResult] = []
-            for component_target in ("Y1", "Y2", "Y3", "Y4", "Y5"):
-                loaded_component = load_prediction_model_target(resolved_model_id, component_target, MODEL_DIR)
-                try:
-                    component_explanations.append(explain_dataframe(dataframe, loaded_component, max_rows=max_rows, top_n=MAX_TOP_N, per_wafer_top_n=per_wafer_top_n, warning_threshold=warning_threshold, danger_threshold=danger_threshold, prediction_result=prediction))
-                finally:
-                    del loaded_component
-                    gc.collect()
-            explanation = compose_final_y_explanation(component_explanations, top_n=MAX_TOP_N)
-            loaded = bundle_loaded
-        else:
-            loaded = load_prediction_model_target(resolved_model_id, effective_target, MODEL_DIR) if effective_target else bundle_loaded
-            explanation = explain_dataframe(dataframe, loaded, max_rows=max_rows, top_n=MAX_TOP_N, per_wafer_top_n=per_wafer_top_n, warning_threshold=warning_threshold, danger_threshold=danger_threshold, prediction_result=prediction)
+        multi_y = {
+            "predicted_y": [float(row["predicted_Y"]) for row in prediction.predictions],
+            "failure_rates": {},
+            "fail_bit_counts": {},
+        }
+        multi_y_warnings: list[str] = []
+        loaded = bundle_loaded
+        explanation = explain_dataframe(
+            dataframe,
+            loaded,
+            max_rows=max_rows,
+            top_n=MAX_TOP_N,
+            per_wafer_top_n=per_wafer_top_n,
+            warning_threshold=warning_threshold,
+            danger_threshold=danger_threshold,
+            prediction_result=prediction,
+        )
         analysis = analyze_relationships(
             dataframe,
             target=explanation.target,
@@ -2018,14 +2031,13 @@ async def analyze_feature_relationships(
 @router.post("/explain/download")
 async def download_explanation(
     file: UploadFile = File(...),
-    model_id: str = Form(...),
     max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
     top_n: int = Form(DEFAULT_TOP_N),
     per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
 ) -> Response:
     _, result = await _run_explanation(
         file,
-        model_id,
+        _latest_model().model_id,
         max_rows,
         top_n,
         per_wafer_top_n,
@@ -2045,7 +2057,6 @@ async def download_explanation(
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_csv(
     file: UploadFile = File(...),
-    model_id: str = Form(...),
     warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
     danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
     max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
@@ -2053,6 +2064,7 @@ async def analyze_csv(
     per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
 ) -> AnalyzeResponse:
     try:
+        model_id = _latest_model().model_id
         filename, dataframe = await _read_csv_upload(file)
         loaded = load_prediction_model(model_id, MODEL_DIR)
         prediction = predict_dataframe(
@@ -2062,14 +2074,9 @@ async def analyze_csv(
             danger_threshold=danger_threshold,
             max_rows=None,
         )
-        explanation_model = (
-            load_prediction_model_target(model_id, "Y1", MODEL_DIR)
-            if loaded.metadata.get("model_type") == "hybrid_multi_y"
-            else loaded
-        )
         explanation = explain_dataframe(
             dataframe,
-            explanation_model,
+            loaded,
             max_rows=max_rows,
             top_n=top_n,
             per_wafer_top_n=per_wafer_top_n,
@@ -2146,6 +2153,8 @@ async def analyze_csv(
         )
         response.model_dump_json()
         return response
+    except HTTPException:
+        raise
     except (InferenceInputError, ModelLoadError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

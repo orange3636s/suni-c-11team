@@ -12,13 +12,10 @@ from sklearn.base import BaseEstimator, TransformerMixin
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from sklearn.compose import ColumnTransformer
-from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import (
     HistGradientBoostingRegressor,
-    RandomForestRegressor,
 )
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
 from threadpoolctl import threadpool_limits
@@ -209,6 +206,7 @@ def _build_preprocessor(
 
 
 def _candidate_estimators(random_state: int) -> dict[str, Any]:
+    """Production uses one bounded model; comparisons waste Railway memory."""
     return {
         "HistGradientBoostingRegressor": HistGradientBoostingRegressor(
             learning_rate=0.05,
@@ -220,13 +218,6 @@ def _candidate_estimators(random_state: int) -> dict[str, Any]:
             n_iter_no_change=12,
             random_state=random_state,
         ),
-        "Ridge": Ridge(alpha=1.0),
-        "RandomForestRegressor": RandomForestRegressor(
-            n_estimators=100,
-            random_state=random_state,
-            n_jobs=1,
-        ),
-        "DummyRegressor": DummyRegressor(strategy="mean"),
     }
 
 

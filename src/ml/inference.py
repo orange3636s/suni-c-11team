@@ -213,6 +213,38 @@ def load_prediction_model(
     )
 
 
+def load_latest_model_bundle(
+    store: Any,
+    model_dir: str | Path = DEFAULT_MODEL_DIR,
+) -> LoadedPredictionModel:
+    """Load the persisted active Y model shared by prediction and analysis."""
+    active = store.active_model()
+    if not active or not active.get("active_model_id"):
+        raise InferenceInputError(
+            "저장된 학습 모델이 없습니다. 모델 학습 페이지에서 Y 모델을 먼저 학습해주세요."
+        )
+    loaded = load_prediction_model(str(active["active_model_id"]), model_dir)
+    if str(loaded.metadata.get("target")) != "Y":
+        raise ModelLoadError(
+            "저장된 최신 모델이 Y 최종 수율 모델과 호환되지 않습니다. 모델을 다시 학습해주세요."
+        )
+    return loaded
+
+
+def get_latest_model_metadata(store: Any) -> dict[str, Any] | None:
+    active = store.active_model()
+    if not active:
+        return None
+    metadata = dict(active.get("metadata") or {})
+    return {
+        **metadata,
+        "model_id": active.get("active_model_id"),
+        "version": active.get("pipeline_version"),
+        "trained_at": active.get("promoted_at"),
+        "target": "Y",
+    }
+
+
 def _missing_dependency_name(error: BaseException) -> str | None:
     current: BaseException | None = error
     visited: set[int] = set()

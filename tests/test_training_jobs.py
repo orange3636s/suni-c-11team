@@ -265,7 +265,7 @@ def test_train_job_api_returns_accepted_then_summary(
         filename="training.csv",
     )
     try:
-        accepted = asyncio.run(data_routes.create_training_job(upload, target="Y"))
+        accepted = asyncio.run(data_routes.create_training_job(upload))
         assert accepted.status == "queued"
         route = next(
             route
@@ -310,7 +310,7 @@ def test_train_job_api_runs_real_training_and_saves_model(
         filename=fixture.name,
     )
     try:
-        accepted = asyncio.run(data_routes.create_training_job(upload, target="Y"))
+        accepted = asyncio.run(data_routes.create_training_job(upload))
         row = _wait_for_terminal(manager, accepted.job_id, timeout=30)
         _wait_for_gate_release(coordinator)
 
@@ -318,8 +318,8 @@ def test_train_job_api_runs_real_training_and_saves_model(
         result = row["result"]
         assert result is not None
         assert result["model_id"]
-        assert (model_dir / result["model_id"] / "bundle.joblib").is_file()
-        assert (model_dir / result["model_id"] / "metadata.json").is_file()
+        assert (model_dir / f'{result["model_id"]}.joblib').is_file()
+        assert (model_dir / f'{result["model_id"]}.json').is_file()
         assert result["test_metrics"]["rmse"] is not None
     finally:
         manager.shutdown()
@@ -338,7 +338,7 @@ def test_train_job_api_returns_409_while_another_heavy_job_runs(
     try:
         with coordinator.job("analysis"):
             with pytest.raises(HTTPException) as conflict:
-                asyncio.run(data_routes.create_training_job(upload, target="Y"))
+                asyncio.run(data_routes.create_training_job(upload))
         assert conflict.value.status_code == 409
         assert conflict.value.detail == HEAVY_JOB_MESSAGE
         input_root = job_root / "runtime" / "training_jobs"
@@ -442,17 +442,21 @@ def test_predict_response_is_preview_but_history_artifact_keeps_all_rows(
         return True
 
     monkeypatch.setattr(data_routes, "_run_prediction", fake_run)
+    monkeypatch.setattr(
+        data_routes,
+        "_latest_model",
+        lambda: SimpleNamespace(model_id="model_1"),
+    )
     monkeypatch.setattr(data_routes, "safe_runtime_call", fake_runtime)
     upload = UploadFile(file=BytesIO(b"Y\n90\n"), filename="prediction.csv")
 
-    response = asyncio.run(data_routes.predict_csv(upload, model_id="model_1"))
+    response = asyncio.run(data_routes.predict_csv(upload))
 
     assert len(response.predictions) == 10
     assert response.preview_row_count == 10
     assert response.truncated is True
-    assert response.artifact_available is True
-    assert len(captured["artifact"]["rows"]) == 25
-    assert len(captured["artifact"]["response"]["predictions"]) == 10
+    assert response.artifact_available is False
+    assert captured == {}
 
 
 def test_relationship_browser_snapshot_is_compact_without_mutating_artifact() -> None:

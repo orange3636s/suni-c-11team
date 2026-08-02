@@ -44,12 +44,17 @@ export class ApiResponseError extends Error {
   }
 }
 
-export type CumulativeDataStatus = {
-  dataset_version: string;
-  total_rows: number; total_lots: number; labeled_rows: number;
-  pending_label_rows: number; conflict_rows: number;
-  new_labeled_rows_since_active_model: number; new_lots_since_active_model: number;
-  retraining_required: boolean;
+export type LatestModelMetadata = {
+  model_id: string;
+  model_name?: string | null;
+  target: "Y";
+  version?: string | null;
+  trained_at?: string | null;
+  source_filename?: string | null;
+  row_count?: number | null;
+  feature_columns?: string[];
+  categorical_columns?: string[];
+  metrics?: Record<string, { r2?: number | null; rmse?: number | null; mae?: number | null }>;
 };
 
 async function championRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -58,11 +63,9 @@ async function championRequest<T>(path: string, init?: RequestInit): Promise<T> 
   return response.json() as Promise<T>;
 }
 
-export function getCumulativeDataStatus() { return championRequest<CumulativeDataStatus>("/api/data/status"); }
-export function ingestProcessData(file: File) { const body = new FormData(); body.append("file", file); return championRequest<Record<string, unknown>>("/api/data/ingest", { method: "POST", body }); }
-export function createModelUpdate() { return championRequest<{job_id: string; status: string}>("/api/model/update", { method: "POST" }); }
-export function getModelUpdate(jobId: string) { return championRequest<Record<string, unknown>>(`/api/model/update/${encodeURIComponent(jobId)}`); }
-export function getActiveModel() { return championRequest<{active_model: Record<string, unknown> | null}>("/api/model/active"); }
+export function getLatestModel() {
+  return championRequest<{ latest_model: LatestModelMetadata | null }>("/api/model/latest");
+}
 
 function historyResetErrorMessage(status: number): string {
   if (status === 400) return "초기화 확인값이 올바르지 않습니다.";
@@ -390,12 +393,10 @@ export async function deleteModel(modelId: string): Promise<DeleteModelResponse>
 
 function predictionFormData(
   file: File,
-  modelId: string | null,
   thresholds: PredictionThresholds,
 ): FormData {
   const formData = new FormData();
   formData.append("file", file);
-  if (modelId) formData.append("model_id", modelId);
   formData.append(
     "warning_threshold",
     String(thresholds.warning_threshold),
@@ -409,14 +410,13 @@ function predictionFormData(
 
 export async function predictCsv(
   file: File,
-  modelId: string | null,
   thresholds: PredictionThresholds,
 ): Promise<PredictionResponse> {
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/api/predict`, {
       method: "POST",
-      body: predictionFormData(file, modelId, thresholds),
+      body: predictionFormData(file, thresholds),
     });
   } catch (error) {
     rethrowApiConfigurationError(error);
@@ -432,14 +432,13 @@ export async function predictCsv(
 
 export async function downloadPredictions(
   file: File,
-  modelId: string | null,
   thresholds: PredictionThresholds,
 ): Promise<Blob> {
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/api/predict/download`, {
       method: "POST",
-      body: predictionFormData(file, modelId, thresholds),
+      body: predictionFormData(file, thresholds),
     });
   } catch (error) {
     rethrowApiConfigurationError(error);
@@ -455,12 +454,10 @@ export async function downloadPredictions(
 
 function explanationFormData(
   file: File,
-  modelId: string | null | undefined,
   options: ExplainOptions,
 ): FormData {
   const formData = new FormData();
   formData.append("file", file);
-  if (modelId?.trim()) formData.append("model_id", modelId);
   formData.append("max_rows", String(options.max_rows));
   formData.append("top_n", String(options.top_n));
   formData.append("per_wafer_top_n", String(options.per_wafer_top_n));
@@ -469,14 +466,13 @@ function explanationFormData(
 
 export async function explainCsv(
   file: File,
-  modelId: string,
   options: ExplainOptions,
 ): Promise<ExplainResponse> {
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/api/explain`, {
       method: "POST",
-      body: explanationFormData(file, modelId, options),
+      body: explanationFormData(file, options),
     });
   } catch (error) {
     rethrowApiConfigurationError(error);
@@ -493,20 +489,17 @@ export async function explainCsv(
 
 export async function analyzeRelationships(
   file: File,
-  modelId: string | null,
   options: ExplainOptions,
   correlationMethod: "pearson" | "spearman",
   analysisUnit: "wafer_observed_only" | "lot_aggregated" = "wafer_observed_only",
   thresholds: PredictionThresholds = { warning_threshold: 90, danger_threshold: 85 },
-  analysisTarget = "Y",
   predictionId?: string | null,
 ): Promise<RelationshipAnalysisResponse> {
-  const formData = explanationFormData(file, modelId, options);
+  const formData = explanationFormData(file, options);
   formData.append("correlation_method", correlationMethod);
   formData.append("analysis_unit", analysisUnit);
   formData.append("warning_threshold", String(thresholds.warning_threshold));
   formData.append("danger_threshold", String(thresholds.danger_threshold));
-  formData.append("analysis_target", analysisTarget);
   if (predictionId) formData.append("prediction_id", predictionId);
   let response: Response;
   try {
@@ -592,14 +585,13 @@ export async function getDashboardOverview(
 
 export async function downloadExplanation(
   file: File,
-  modelId: string,
   options: ExplainOptions,
 ): Promise<Blob> {
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/api/explain/download`, {
       method: "POST",
-      body: explanationFormData(file, modelId, options),
+      body: explanationFormData(file, options),
     });
   } catch (error) {
     rethrowApiConfigurationError(error);

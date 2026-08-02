@@ -27,7 +27,7 @@ import type {
 
 type BarDatum = { label: string; value: number | null; unit?: string };
 
-const HISTORY_EMPTY_MESSAGE = "저장된 원인 분석 이력이 없습니다.";
+const HISTORY_EMPTY_MESSAGE = "아직 실행된 원인 분석이 없습니다.";
 
 function formatNumber(value: number | null, digits = 2): string {
   return value === null
@@ -381,12 +381,6 @@ export default function Home() {
   const kpiLoading = dashboardState === "loading-history" || dashboardState === "loading-analysis";
   const kpiError = dashboardState === "api-error";
 
-  const failureRateData = Object.entries(display.multi_y.failure_rates).map(([label, value]) => ({
-    label,
-    value,
-    unit: "%",
-  }));
-  const failBitData = Object.entries(display.multi_y.fail_bit_counts).map(([label, value]) => ({ label, value }));
   const causeData = display.causes.top_features.map((item) => ({
     label: causeLabel(item),
     value: causeValue(item),
@@ -403,7 +397,6 @@ export default function Home() {
   const riskAvailable = riskData.some((item) => item.value !== null);
 
   const summaryState = sectionState(overviewLoading, detailError, display.availability.summary, source.artifact_status);
-  const multiYState = sectionState(overviewLoading, detailError, display.availability.multi_y, source.artifact_status);
   const causesState = sectionState(overviewLoading, detailError, display.availability.causes, source.artifact_status);
   const paretoState = sectionState(overviewLoading, detailError, display.availability.pareto, source.artifact_status);
   const riskState = sectionState(overviewLoading, detailError, riskAvailable, source.artifact_status);
@@ -515,28 +508,6 @@ export default function Home() {
                     ? detailError
                     : dashboardEmptyMessage ?? "현재 분석 이력에는 수율 분포·시계열 데이터가 없습니다."}
                 onRetry={summaryState === "error" ? retryOverview : undefined}
-              />
-            </article>
-
-            <article className="surfaceCard overviewChartCard">
-              <div className="sectionHeading compact"><div><span className="sectionLabel">Y1–Y5</span><h2>Failure Rate</h2></div></div>
-              <p className="chartDescription">실제 Multi-Y 분석에 저장된 Target별 평균입니다.</p>
-              <MetricBars
-                data={failureRateData}
-                state={failureRateData.length ? multiYState : multiYState === "ready" ? "empty" : multiYState}
-                message={sectionMessage(multiYState, dashboardEmptyMessage ?? "현재 분석 이력에는 Y1~Y5 Failure Rate가 없습니다.", detailError, source.artifact_status)}
-                onRetry={retryOverview}
-              />
-            </article>
-
-            <article className="surfaceCard overviewChartCard">
-              <div className="sectionHeading compact"><div><span className="sectionLabel">Y6–Y10</span><h2>Fail Bit Count</h2></div></div>
-              <p className="chartDescription">실제 Multi-Y 분석에 저장된 Target별 평균입니다.</p>
-              <MetricBars
-                data={failBitData}
-                state={failBitData.length ? multiYState : multiYState === "ready" ? "empty" : multiYState}
-                message={sectionMessage(multiYState, dashboardEmptyMessage ?? "현재 분석 이력에는 Y6~Y10 Fail Bit Count가 없습니다.", detailError, source.artifact_status)}
-                onRetry={retryOverview}
               />
             </article>
 

@@ -53,7 +53,12 @@ def analyze_api_environment():
         "model_id": model_path.stem,
     }
     for generated_file in model_dir.iterdir():
-        generated_file.unlink()
+        if generated_file.is_dir():
+            for nested in generated_file.iterdir():
+                nested.unlink()
+            generated_file.rmdir()
+        else:
+            generated_file.unlink()
     model_dir.rmdir()
     if not any(temporary_root.iterdir()):
         temporary_root.rmdir()
@@ -75,11 +80,16 @@ def test_analyze_api_success(
         "MODEL_DIR",
         analyze_api_environment["model_dir"],
     )
+    data_routes._runtime_store().promote_model(
+        model_id=analyze_api_environment["model_id"],
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={"target": "Y"},
+    )
 
     response = asyncio.run(
         data_routes.analyze_csv(
             _upload(analyze_api_environment["dataframe"]),
-            model_id=analyze_api_environment["model_id"],
             warning_threshold=96,
             danger_threshold=93,
             max_rows=8,
@@ -120,12 +130,17 @@ def test_analyze_api_rejects_invalid_request(
         if model_id == "valid"
         else model_id
     )
+    data_routes._runtime_store().promote_model(
+        model_id=selected_model,
+        pipeline_version="direct_y_v1",
+        dataset_version=0,
+        metadata={"target": "Y"},
+    )
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(
             data_routes.analyze_csv(
                 _upload(analyze_api_environment["dataframe"]),
-                model_id=selected_model,
                 warning_threshold=warning,
                 danger_threshold=danger,
                 max_rows=8,
@@ -134,7 +149,7 @@ def test_analyze_api_rejects_invalid_request(
             )
         )
 
-    assert error.value.status_code == 400
+    assert error.value.status_code == (409 if model_id == "missing-model" else 400)
     assert expected_detail in str(error.value.detail)
 
 

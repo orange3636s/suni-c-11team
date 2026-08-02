@@ -1,28 +1,67 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import CsvUploadPanel from "@/components/CsvUploadPanel";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
-import { createModelUpdate, getActiveModel, getCumulativeDataStatus, getModelUpdate, ingestProcessData, type CumulativeDataStatus } from "@/lib/api";
+import { createTrainingJob, getLatestModel, getTrainingJob, type LatestModelMetadata } from "@/lib/api";
 
-const EMPTY: CumulativeDataStatus = { dataset_version: "-", total_rows: 0, total_lots: 0, labeled_rows: 0, pending_label_rows: 0, conflict_rows: 0, new_labeled_rows_since_active_model: 0, new_lots_since_active_model: 0, retraining_required: false };
+const showMetric = (value?: number | null) => typeof value === "number" && Number.isFinite(value) ? value.toFixed(4) : "-";
+const showDate = (value?: string | null) => value ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 
 export default function TrainingPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [data, setData] = useState<CumulativeDataStatus>(EMPTY);
-  const [active, setActive] = useState<Record<string, unknown> | null>(null);
+  const [latest, setLatest] = useState<LatestModelMetadata | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [stage, setStage] = useState("");
+  const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
-  const [job, setJob] = useState<Record<string, unknown> | null>(null);
-  const refresh = async () => { const [status, model] = await Promise.all([getCumulativeDataStatus(), getActiveModel()]); setData(status); setActive(model.active_model); };
-  useEffect(() => { const timer = window.setTimeout(() => { void refresh().catch((error: unknown) => setMessage(error instanceof Error ? error.message : "현황을 불러오지 못했습니다.")); }, 0); return () => clearTimeout(timer); }, []);
-  useEffect(() => { if (!job?.job_id || ["completed", "failed"].includes(String(job.status))) return; const timer = window.setTimeout(async () => { try { const next = await getModelUpdate(String(job.job_id)); setJob(next); if (["completed", "failed"].includes(String(next.status))) void refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "갱신 상태를 확인하지 못했습니다."); } }, 2000); return () => clearTimeout(timer); }, [job, job?.job_id, job?.status]);
-  async function ingest() { if (!file) return; try { const result = await ingestProcessData(file); setMessage(`입력 완료: 신규 ${result.inserted_rows ?? 0} · Label 갱신 ${result.updated_label_rows ?? 0} · 중복 ${result.duplicate_rows ?? 0} · 충돌 ${result.conflict_rows ?? 0}`); setFile(null); await refresh(); } catch (error) { setMessage(error instanceof Error ? error.message : "데이터 입력에 실패했습니다."); } }
-  async function update() { try { setJob(await createModelUpdate()); setMessage(""); } catch (error) { setMessage(error instanceof Error ? error.message : "모델 갱신을 시작하지 못했습니다."); } }
-  return <div className="appShell"><Sidebar activeItem="모델 학습" /><div className="contentShell"><Header /><main className="mainContent uploadPage"><section className="uploadIntro"><span className="eyebrow">머신러닝</span><h1>모델 학습</h1><p>누적 공정 데이터를 안전하게 Upsert하고, 후보 모델이 Champion보다 우수할 때만 승격합니다.</p></section>
-    <section className="resultCard"><h2>누적 데이터 현황</h2><div className="trainingSummaryGrid">{[["전체 Wafer",data.total_rows],["전체 Lot",data.total_lots],["Label 완료",data.labeled_rows],["Label 대기",data.pending_label_rows],["충돌 데이터",data.conflict_rows],["신규 Label",data.new_labeled_rows_since_active_model]].map(([label,value])=><div key={String(label)}><span>{label}</span><strong>{value}</strong></div>)}</div><p>Dataset {data.dataset_version} · 신규 Lot {data.new_lots_since_active_model} · {data.retraining_required ? "모델 갱신 권장" : "갱신 기준 미도달"}</p></section>
-    <section className="uploadCard"><h2>데이터 추가</h2><CsvUploadPanel id="ingest-file" file={file} onFileSelect={(selected) => setFile(selected ?? null)} compact /><div className="uploadActions"><button className="button primary" disabled={!file} onClick={ingest}>누적 데이터 입력</button></div></section>
-    <section className="resultCard"><h2>현재 활성 모델</h2>{active ? <p>{String(active.active_model_id)} · 승격 {String(active.promoted_at ?? "-")} · {String(active.pipeline_version ?? "-")}</p> : <p>활성 모델이 없습니다. 누적 Label 데이터를 등록한 뒤 모델 학습을 실행해 주세요.</p>}<button className="button primary" onClick={update} disabled={Boolean(job && !["completed", "failed"].includes(String(job.status)))}>모델 학습</button>{job && <p role="status">{String(job.stage ?? job.status)} · {String(job.progress ?? 0)}% {job.promotion_result ? `· ${String(job.promotion_result)}` : ""}</p>}</section>
-    {message && <p className="messageBox" role="status">{message}</p>}
+  const [error, setError] = useState("");
+
+  const loadLatest = useCallback(async () => setLatest((await getLatestModel()).latest_model), []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadLatest().catch(() => setLatest(null)); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadLatest]);
+  useEffect(() => {
+    if (!jobId) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const job = await getTrainingJob(jobId);
+        setStage(job.stage); setProgress(job.progress);
+        if (job.status === "completed") {
+          window.clearInterval(timer); setJobId(null); setFile(null);
+          setMessage("Y 최종 수율 모델 학습이 완료되었으며 최신 모델로 저장되었습니다.");
+          await loadLatest();
+        } else if (job.status === "failed" || job.status === "interrupted") {
+          window.clearInterval(timer); setJobId(null);
+          setError(job.error || "모델 학습 중 서버 오류가 발생했습니다.");
+        }
+      } catch (pollError) {
+        window.clearInterval(timer); setJobId(null);
+        setError(pollError instanceof Error ? pollError.message : "학습 상태를 확인하지 못했습니다.");
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [jobId, loadLatest]);
+
+  async function train() {
+    if (!file || jobId) return;
+    setError(""); setMessage(""); setStage("학습 파일을 전송하는 중입니다."); setProgress(0);
+    try { setJobId((await createTrainingJob(file)).job_id); }
+    catch (trainingError) { setError(trainingError instanceof Error ? trainingError.message : "모델 학습을 시작하지 못했습니다."); }
+  }
+
+  const metrics = latest?.metrics?.test;
+  return <div className="appShell"><Sidebar activeItem="모델 학습" /><div className="contentShell"><Header /><main className="mainContent uploadPage">
+    <section className="uploadIntro pageHeading"><span className="eyebrow">Machine Learning</span><h1>모델 학습</h1><p>CSV의 최종 수율 Y를 직접 학습해 가장 최근 성공 모델로 저장합니다.</p></section>
+    <section className="uploadCard"><div className="sectionHeading compact"><div><span className="sectionLabel">Target Y</span><h2>학습 파일</h2></div></div>
+      <CsvUploadPanel id="training-file" file={file} onFileSelect={(selected) => setFile(selected ?? null)} disabled={Boolean(jobId)} compact title="Y 컬럼이 포함된 CSV 파일을 선택해주세요." description="Y1~Y10과 식별자 컬럼은 학습 특성에서 자동 제외됩니다." />
+      <div className="uploadActions"><button className="button primary" type="button" disabled={!file || Boolean(jobId)} onClick={() => void train()}>{jobId ? "모델 학습 중…" : "모델 학습"}</button></div>
+      {jobId && <p className="trainingProgress" role="status">{stage} · {progress}%</p>}{message && <p className="messageBox success" role="status">{message}</p>}{error && <p className="errorMessage" role="alert">{error}</p>}
+    </section>
+    <section className="resultCard"><div className="sectionHeading compact"><div><span className="sectionLabel">Latest model</span><h2>현재 사용 모델</h2></div></div>
+      {latest ? <div className="trainingSummaryGrid"><div><span>모델</span><strong>{latest.model_name || latest.model_id}</strong></div><div><span>Target</span><strong>Y</strong></div><div><span>학습 시각</span><strong>{showDate(latest.trained_at)}</strong></div><div><span>버전</span><strong>{latest.version || latest.model_id}</strong></div><div><span>Test R²</span><strong>{showMetric(metrics?.r2)}</strong></div><div><span>Test RMSE</span><strong>{showMetric(metrics?.rmse)}</strong></div><div><span>Test MAE</span><strong>{showMetric(metrics?.mae)}</strong></div><div><span>학습 행</span><strong>{latest.row_count ?? "-"}</strong></div></div> : <p className="emptyMessage">저장된 학습 모델이 없습니다.</p>}
+    </section>
   </main></div></div>;
 }

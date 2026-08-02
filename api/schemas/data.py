@@ -292,6 +292,8 @@ class PredictionModelInfo(BaseModel):
     model_id: str
     target: str
     model_name: str
+    version: str | None = None
+    trained_at: str | None = None
 
 
 class PredictionSummary(BaseModel):
@@ -318,6 +320,7 @@ class PredictionResponse(BaseModel):
     history_warning: str | None = None
     artifact_available: bool | None = None
     preview_row_count: int | None = None
+    executed_at: str | None = None
 
 
 class ExplainAnalysisSummary(BaseModel):
@@ -388,6 +391,8 @@ class ExplainModelInfo(BaseModel):
     model_id: str
     target: str
     model_name: str
+    version: str | None = None
+    trained_at: str | None = None
 
 
 class ExplainResponse(BaseModel):

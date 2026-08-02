@@ -67,8 +67,7 @@ def patch_alert(alert_id: str, patch: AlertPatch) -> dict[str, Any]:
     return alert
 
 
-# Legacy history helpers intentionally remain private for migration support;
-# they are not registered as user-facing HTTP endpoints.
+@router.get("/predictions/history")
 def get_prediction_history(
     model_id: str | None = None,
     filename: str | None = None,
@@ -86,6 +85,7 @@ def get_prediction_history(
     ))
 
 
+@router.get("/predictions/history/{prediction_id}")
 def get_prediction_history_detail(prediction_id: str) -> dict[str, Any]:
     detail = get_runtime_store().get_prediction(prediction_id)
     if detail is None:
@@ -99,6 +99,7 @@ def delete_prediction_history(prediction_id: str) -> dict[str, Any]:
     return {"success": True, "prediction_id": prediction_id, "linked_analyses_preserved": True}
 
 
+@router.get("/analyses/history")
 def get_analysis_history(
     model_id: str | None = None,
     prediction_id: str | None = None,
@@ -119,6 +120,7 @@ def get_analysis_history(
     ))
 
 
+@router.get("/analyses/history/{analysis_id}")
 def get_analysis_history_detail(analysis_id: str) -> dict[str, Any]:
     detail = get_runtime_store().get_analysis(analysis_id)
     if detail is None:
@@ -525,8 +527,24 @@ def _overview_analysis(
 
 
 @router.get("/dashboard/overview", response_model=AnalysisOverviewResponse)
-def get_dashboard_overview() -> dict[str, Any]:
+def get_dashboard_overview(analysis_id: str | None = None) -> dict[str, Any]:
     store = get_runtime_store()
+    if analysis_id:
+        selected = store.get_analysis(analysis_id)
+        if selected is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="선택한 분석 이력을 찾을 수 없습니다.")
+        return _overview_analysis(selected, explicitly_selected=True)
+
+    listing = store.list_analyses({"limit": 100, "offset": 0, "sort": "newest"})
+    items = listing.get("items", []) if isinstance(listing, dict) else []
+    selected_item = next((item for item in items if item.get("status") == "completed"), None)
+    if selected_item is None:
+        selected_item = next((item for item in items if item.get("status") in {"partial", "running"}), None)
+    if selected_item and selected_item.get("analysis_id"):
+        detail = store.get_analysis(str(selected_item["analysis_id"]))
+        if detail is not None:
+            return _overview_analysis(detail)
+
     snapshot = store.latest_analysis_snapshot()
     if snapshot is not None:
         # Snapshot is complete overview material and never needs a model/artifact load.
