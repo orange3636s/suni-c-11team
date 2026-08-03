@@ -13,7 +13,7 @@ import pytest
 
 from src.analysis.screening.heatmap import build_heatmap
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import select_pareto_factors_all_targets
+from src.analysis.screening.selector import select_primary_factor
 
 TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 
@@ -125,12 +125,11 @@ def test_eps2_mode_never_disagrees_with_pareto_selection(train_df, schema, eps2_
     """The heatmap is a browse tool, not a selection tool -- but it must
     never contradict the actual §3-1 selection output for this dataset.
     """
-    results = select_pareto_factors_all_targets(train_df, schema)
-    selected_by_target = {
-        target: result.factors[0].feature
-        for target, result in results.items()
-        if result.factors
-    }
+    selected_by_target = {}
+    for target in schema.target_cols:
+        factor = select_primary_factor(train_df, schema, target)
+        if factor is not None:
+            selected_by_target[target] = factor.feature
     for target, expected_feature in selected_by_target.items():
         col_index = eps2_heatmap.targets.index(target)
         best_row = max(

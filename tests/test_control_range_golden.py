@@ -19,7 +19,7 @@ from src.analysis.control_range import (
     summarize_wafer_status,
 )
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import select_pareto_factors_all_targets
+from src.analysis.screening.selector import select_primary_factor
 
 TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 TEST_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "test.CSV"
@@ -62,9 +62,8 @@ def test_df():
 @pytest.fixture(scope="module")
 def control_ranges(train_df):
     schema = parse_schema(train_df)
-    results = select_pareto_factors_all_targets(train_df, schema)
     return {
-        target: compute_control_range(train_df, results[target].factors[0])
+        target: compute_control_range(train_df, select_primary_factor(train_df, schema, target))
         for target in GOLDEN_STATS
     }
 

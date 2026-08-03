@@ -81,6 +81,7 @@ class ScatterData:
     bins: list[dict[str, float]]
     optimal_center: float | None
     eps2: float
+    spearman_r: float | None
     p_value: float
     q_value: float
     significant: bool
@@ -149,6 +150,7 @@ def build_scatter_data(
         bins=_quantile_bins(frame["x"], frame["y"]),
         optimal_center=factor.optimal_center,
         eps2=factor.eps2,
+        spearman_r=factor.spearman_r,
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,

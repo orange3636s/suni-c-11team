@@ -82,12 +82,10 @@ const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate:
 
 export default function CorrelationHeatmap({
   datasetId,
-  kind,
   enabled,
   onSelectCell,
 }: {
   datasetId: string;
-  kind: "all" | "R" | "D" | "Config";
   enabled: boolean;
   onSelectCell: (selection: HeatmapCellSelection) => void;
 }) {
@@ -103,16 +101,13 @@ export default function CorrelationHeatmap({
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const cache = useRef<Map<string, HeatmapResponse>>(new Map());
 
-  // Config has no rho -- the toggle only makes sense for all/R/D.
-  const effectiveMetric: HeatmapMetric = kind === "Config" ? "eps2" : metric;
-
   useEffect(() => {
     cache.current = new Map();
   }, [datasetId]);
 
   useEffect(() => {
     if (!enabled) return;
-    const cacheKey = `${kind}:${effectiveMetric}`;
+    const cacheKey = metric;
     const cached = cache.current.get(cacheKey);
     if (cached) {
       setData(cached);
@@ -124,7 +119,7 @@ export default function CorrelationHeatmap({
         setLoading(true);
         setError("");
         try {
-          const response = await getScreeningHeatmap(datasetId, effectiveMetric, kind);
+          const response = await getScreeningHeatmap(datasetId, metric);
           if (cancelled) return;
           cache.current.set(cacheKey, response);
           setData(response);
@@ -141,7 +136,7 @@ export default function CorrelationHeatmap({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetId, kind, effectiveMetric, enabled]);
+  }, [datasetId, metric, enabled]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -205,25 +200,23 @@ export default function CorrelationHeatmap({
       <div className="heatmapHeaderRow">
         <div>
           <span className="sectionLabel">CORRELATION OVERVIEW</span>
-          <h2>{kind === "all" ? "전체" : kind} 히트맵</h2>
+          <h2>전체 상관관계 히트맵</h2>
           <p>산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</p>
         </div>
-        {kind !== "Config" && (
-          <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
-            {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={metric === key}
-                className={metric === key ? "active" : ""}
-                onClick={() => setMetric(key)}
-              >
-                {METRIC_LABEL[key]}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
+          {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={metric === key}
+              className={metric === key ? "active" : ""}
+              onClick={() => setMetric(key)}
+            >
+              {METRIC_LABEL[key]}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="heatmapControls">
@@ -265,7 +258,7 @@ export default function CorrelationHeatmap({
                 feature={feature}
                 rowIndex={rowIndex}
                 data={data}
-                metric={effectiveMetric}
+                metric={metric}
                 theme={theme}
                 scaleMin={scaleMin}
                 scaleMax={scaleMax}
@@ -298,11 +291,7 @@ export default function CorrelationHeatmap({
       </div>
 
       <p className="heatmapCaption">
-        {kind === "all"
-          ? `Config ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 박스플롯 참조. `
-          : kind === "Config"
-            ? "Config는 장비당 표본 278장 수준으로 검출력이 낮습니다. 아래 결과는 탐색용입니다. "
-            : ""}
+        {`Config ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
         표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
         <br />
         인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
@@ -311,7 +300,7 @@ export default function CorrelationHeatmap({
       {tooltip && (
         <div className="heatmapTooltip" style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
           <strong>{tooltip.feature} × {tooltip.target}</strong>
-          <div className="heatmapTooltipRow"><span>{effectiveMetric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
+          <div className="heatmapTooltipRow"><span>{metric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltip.n.toLocaleString()}</b></div>
           <div className="heatmapTooltipRow"><span>q</span><b>{formatQ(tooltip.q)}</b></div>
           <div className="heatmapTooltipRow"><span>신뢰도</span><b>{tooltip.tier ? TIER_LABEL[tooltip.tier] : "-"}</b></div>

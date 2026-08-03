@@ -27,10 +27,10 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import (
-    DEFAULT_CUTOFF,
     DEFAULT_FDR_ALPHA,
     ParetoFactor,
-    select_pareto_factors,
+    confidence_tier,
+    select_primary_factor,
 )
 
 FAIL_RATE_TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"]
@@ -76,7 +76,7 @@ class TargetPipelineResult:
     factors: list[ParetoFactor]
     feature_columns: list[str]
     model: HistGradientBoostingRegressor
-    no_significant_factor: bool = False
+    no_factor_available: bool = False
     baseline_value: float = 0.0
 
 
@@ -85,28 +85,35 @@ def fit_target_pipeline(
     schema: Schema,
     target: str,
     *,
-    cutoff: float = DEFAULT_CUTOFF,
     fdr_alpha: float = DEFAULT_FDR_ALPHA,
 ) -> TargetPipelineResult:
-    selection = select_pareto_factors(train_df, schema, target, cutoff=cutoff, fdr_alpha=fdr_alpha)
+    """The model always uses the single strongest (by eps2) factor for this
+    target, regardless of its p-value -- confidence is communicated via a
+    tier badge on the summary card, not by falling back to a baseline
+    model. The baseline-constant fallback only fires when NO factor in the
+    whole pool clears its own minimum sample size (`select_primary_factor`
+    returns None) -- see that function's docstring for what "분석 불가"
+    means precisely.
+    """
+    factor = select_primary_factor(train_df, schema, target, fdr_alpha=fdr_alpha)
     baseline_value = float(_numeric(train_df[target]).mean())
 
-    if selection.no_significant_factor or not selection.factors:
+    if factor is None:
         return TargetPipelineResult(
             target=target,
             factors=[],
             feature_columns=[],
             model=None,  # type: ignore[arg-type]
-            no_significant_factor=True,
+            no_factor_available=True,
             baseline_value=baseline_value,
         )
 
-    features = build_features(train_df, selection.factors)
+    features = build_features(train_df, [factor])
     model = HistGradientBoostingRegressor(**HGBR_PARAMS)
     model.fit(features, _numeric(train_df[target]))
     return TargetPipelineResult(
         target=target,
-        factors=selection.factors,
+        factors=[factor],
         feature_columns=list(features.columns),
         model=model,
         baseline_value=baseline_value,
@@ -114,7 +121,7 @@ def fit_target_pipeline(
 
 
 def predict_target(result: TargetPipelineResult, df: pd.DataFrame) -> np.ndarray:
-    if result.no_significant_factor:
+    if result.no_factor_available:
         return np.full(len(df), result.baseline_value, dtype=np.float32)
     features = build_features(df, result.factors).reindex(columns=result.feature_columns)
     return np.asarray(result.model.predict(features), dtype=np.float32)
@@ -146,7 +153,6 @@ def train_and_evaluate(
     test_df: pd.DataFrame,
     schema: Schema,
     *,
-    cutoff: float = DEFAULT_CUTOFF,
     fdr_alpha: float = DEFAULT_FDR_ALPHA,
 ) -> PipelineEvaluation:
     target_results: dict[str, TargetPipelineResult] = {}
@@ -154,7 +160,7 @@ def train_and_evaluate(
     metrics: dict[str, dict[str, float]] = {}
 
     for target in FAIL_RATE_TARGETS:
-        result = fit_target_pipeline(train_df, schema, target, cutoff=cutoff, fdr_alpha=fdr_alpha)
+        result = fit_target_pipeline(train_df, schema, target, fdr_alpha=fdr_alpha)
         target_results[target] = result
         prediction = predict_target(result, test_df)
         test_predictions[target] = prediction
@@ -177,21 +183,29 @@ def train_and_evaluate(
 
 
 def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str, object]]:
-    """Per-target detail for the training tab's 5 performance cards."""
+    """Per-target detail for the training tab's 5 performance cards. The
+    primary factor is always surfaced when one exists -- see
+    `select_primary_factor`'s docstring: `no_factor_available` only fires
+    when every candidate fails its own minimum-sample-size gate, never
+    because of a low p-value.
+    """
     summary: dict[str, dict[str, object]] = {}
     for target in FAIL_RATE_TARGETS:
         result = evaluation.target_results[target]
         metrics = evaluation.metrics[target]
-        if result.no_significant_factor:
+        if result.no_factor_available:
             summary[target] = {
-                "no_significant_factor": True,
+                "no_factor_available": True,
                 "feature": None,
                 "kind": None,
                 "eps2": None,
+                "contribution_pct": None,
                 "relation_shape": None,
                 "optimal_center": None,
                 "cumulative_pct": None,
+                "p_value": None,
                 "q_value": None,
+                "confidence_tier": None,
                 "r2": metrics["r2"],
                 "rmse": metrics["rmse"],
                 "mae": metrics["mae"],
@@ -200,14 +214,17 @@ def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str
             continue
         factor = result.factors[0]
         summary[target] = {
-            "no_significant_factor": False,
+            "no_factor_available": False,
             "feature": factor.feature,
             "kind": factor.kind,
             "eps2": factor.eps2,
+            "contribution_pct": factor.contribution_pct,
             "relation_shape": factor.relation_shape,
             "optimal_center": factor.optimal_center,
             "cumulative_pct": factor.cumulative_pct,
+            "p_value": factor.p_value,
             "q_value": factor.q_value,
+            "confidence_tier": confidence_tier(factor.p_value),
             "r2": metrics["r2"],
             "rmse": metrics["rmse"],
             "mae": metrics["mae"],

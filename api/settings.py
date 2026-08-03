@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src import upload_limits
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_VERSION = "1.0.0"
@@ -154,7 +156,7 @@ class Settings:
     )
     max_upload_size_mb: int = field(
         default_factory=lambda: _parse_positive_int(
-            "MAX_UPLOAD_SIZE_MB", 20
+            "MAX_UPLOAD_SIZE_MB", upload_limits.max_upload_size_mb()
         )
     )
     log_level: str = field(

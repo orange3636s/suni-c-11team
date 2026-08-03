@@ -211,7 +211,7 @@ function AlarmSummaryCard({
 function AlarmRow({ item }: { item: AlarmItem }) {
   const [lo, hi] = item.normal_range;
   const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"} ~ ${hi != null ? hi.toFixed(1) : "+∞"}`;
-  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&kind=all&feature=${encodeURIComponent(item.feature)}`;
+  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
   return (
     <tr>
       <td>

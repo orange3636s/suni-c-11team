@@ -8,9 +8,10 @@ features instead of imputing/clipping/frequency-encoding everything.
      frequency-encoded (reuses src.ml.hybrid.AutoFeaturePreprocessor)
   B: same full R+D+Config feature set, but NaN preserved (R unclipped, D
      still upper-clipped), Config as a native categorical column
-  C: only the factor(s) src.analysis.screening selects per target (BH-FDR
-     -> 80% cumulative cut), with a missingness flag and, for u_shape
-     factors, a |value - optimal_center| deviation column
+  C: only the single strongest-by-eps2 factor src.analysis.screening
+     selects per target (select_primary_factor -- no significance gate),
+     with a missingness flag and, for u_shape factors, a
+     |value - optimal_center| deviation column
 
 Factor selection for C is re-run inside every fold on that fold's training
 split only (never on the held-out fold), matching src/ml/pipeline.py's
@@ -33,7 +34,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import GroupKFold
 
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import select_pareto_factors
+from src.analysis.screening.selector import select_primary_factor
 from src.ml.hybrid import AutoFeaturePreprocessor
 from src.ml.pipeline import FAIL_RATE_TARGETS, HGBR_PARAMS, build_features
 
@@ -100,15 +101,15 @@ def method_b_features(schema, train_fold: pd.DataFrame, test_fold: pd.DataFrame)
 
 
 def method_c_predict(schema, train_fold: pd.DataFrame, test_fold: pd.DataFrame, target: str):
-    selection = select_pareto_factors(train_fold, schema, target)
-    if selection.no_significant_factor or not selection.factors:
+    factor = select_primary_factor(train_fold, schema, target)
+    if factor is None:
         baseline = float(_numeric(train_fold[target]).mean())
-        return np.full(len(test_fold), baseline, dtype=np.float32), selection
-    x_train = build_features(train_fold, selection.factors)
-    x_test = build_features(test_fold, selection.factors).reindex(columns=x_train.columns)
+        return np.full(len(test_fold), baseline, dtype=np.float32), None
+    x_train = build_features(train_fold, [factor])
+    x_test = build_features(test_fold, [factor]).reindex(columns=x_train.columns)
     model = _hgbr()
     model.fit(x_train, _numeric(train_fold[target]))
-    return np.asarray(model.predict(x_test), dtype=np.float32), selection
+    return np.asarray(model.predict(x_test), dtype=np.float32), factor
 
 
 def run_benchmark(df: pd.DataFrame) -> tuple[dict[str, dict[str, dict[str, float]]], dict[str, list[list[str]]]]:
@@ -142,13 +143,9 @@ def run_benchmark(df: pd.DataFrame) -> tuple[dict[str, dict[str, dict[str, float
             model_b.fit(x_train_b, y_train)
             oof["B"][target][test_original_idx] = model_b.predict(x_test_b)
 
-            prediction_c, selection = method_c_predict(schema, train_fold, test_fold, target)
+            prediction_c, factor = method_c_predict(schema, train_fold, test_fold, target)
             oof["C"][target][test_original_idx] = prediction_c
-            chosen = (
-                [factor.feature for factor in selection.factors]
-                if not selection.no_significant_factor
-                else []
-            )
+            chosen = [factor.feature] if factor is not None else []
             fold_factor_choice[target].append(chosen)
 
     def compute_metrics(method_oof: dict[str, np.ndarray]) -> dict[str, dict[str, float]]:

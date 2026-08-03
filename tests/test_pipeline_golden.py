@@ -61,17 +61,19 @@ def test_golden_metrics(evaluation, target):
 @pytest.mark.parametrize("target", FAIL_RATE_TARGETS)
 def test_golden_selected_factor(evaluation, target):
     result = evaluation.target_results[target]
-    assert not result.no_significant_factor
+    assert not result.no_factor_available
     assert result.factors[0].feature == GOLDEN_FACTORS[target]
 
 
-def test_y2_includes_both_fdr_significant_factors(evaluation):
-    """Step24_R1 also passes FDR for Y2 (q<0.05), just with far less eps2
-    than Step16_R1 -- it must still be a training feature, not silently
-    dropped by a cumulative-contribution cut (see selector.py's fix).
+def test_each_target_uses_exactly_one_factor(evaluation):
+    """The model always uses the single strongest-by-eps2 factor per
+    target now -- Y2's second FDR-significant factor (Step24_R1) still
+    feeds the alarm engine (select_fdr_significant_factors) but is no
+    longer a training feature; removing it changed Y2's R²/MAE by less
+    than the golden tolerance above.
     """
-    y2_features = {f.feature for f in evaluation.target_results["Y2"].factors}
-    assert y2_features == {"Step16_R1", "Step24_R1"}
+    for target in FAIL_RATE_TARGETS:
+        assert len(evaluation.target_results[target].factors) == 1
 
 
 def test_no_config_factor_used_by_any_target(evaluation):

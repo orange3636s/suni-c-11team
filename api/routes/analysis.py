@@ -16,7 +16,6 @@ from api.schemas.analysis import (
     HeatmapResponse,
     ModelPerformanceResponse,
     ParetoRankingResponse,
-    ScreeningResponse,
     ScreeningScatterResponse,
 )
 from api.settings import APP_VERSION, settings
@@ -26,15 +25,18 @@ from src.analysis.control_range import (
     summarize_wafer_status,
 )
 from src.analysis.report import build_analysis_report
+from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import (
+    DEFAULT_TOP_N,
+    ParetoFactor,
     confidence_tier,
     find_factor,
-    score_all_factors,
-    select_pareto_factors_all_targets,
+    select_fdr_significant_factors,
 )
+from src.analysis.screening.selector import _ranked_rows_with_contribution as _ranked_rows
 from src.ml.inference import get_latest_model_metadata
 from src.runtime.datasets import DatasetNotFoundError
 from src.runtime.store import RuntimeStore
@@ -56,44 +58,15 @@ def _dataframe_or_404(dataset_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.") from exc
 
 
-@router.get("/screening", response_model=ScreeningResponse)
-def get_screening(dataset: str = "train") -> dict[str, Any]:
-    df = _dataframe_or_404(dataset)
-    schema = parse_schema(df)
-    results = select_pareto_factors_all_targets(df, schema)
-    return {
-        "dataset_id": dataset,
-        "schema_warnings": [f"파싱하지 못한 컬럼: {column}" for column in schema.unmapped],
-        "targets": [
-            {
-                "target": target,
-                "factors": [vars(factor) for factor in result.factors],
-                "reference_only": [vars(factor) for factor in result.reference_only],
-                "excluded_count": result.excluded_count,
-                "no_significant_factor": result.no_significant_factor,
-            }
-            for target, result in results.items()
-        ],
-    }
-
-
 @router.get("/screening/scatter", response_model=ScreeningScatterResponse)
 def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, Any]:
     df = _dataframe_or_404(dataset)
     schema = parse_schema(df)
-    results = select_pareto_factors_all_targets(df, schema)
-    target_result = results.get(target)
-    if target_result is None:
+    if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃 결과가 없습니다.")
-    factor = next(
-        (f for f in [*target_result.factors, *target_result.reference_only] if f.feature == feature),
-        None,
-    )
-    if factor is None:
-        # Not among the selected/top-10-reference factors -- still resolve it
-        # so a heatmap cell for any of the 58 R/D factors can open a scatter,
-        # even when it never passed FDR (see get_screening_heatmap).
-        factor = find_factor(df, schema, target, feature)
+    # Resolves any of the 88 factors regardless of Pareto rank -- a heatmap
+    # cell click can open a scatter for a factor outside the top 5.
+    factor = find_factor(df, schema, target, feature)
     if factor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}' 인자를 찾을 수 없습니다.")
     if factor.kind == "Config":
@@ -103,13 +76,19 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         )
 
     data = build_scatter_data(df, df, factor)
+    # Only the bulky per-point/per-bin arrays are rounded -- they're what
+    # actually drives payload size (108KB for 1,470 points); scalar stats
+    # (p_value/q_value/eps2) keep full precision since a very small
+    # p-value (e.g. 7.7e-66) rounded to 4 decimals would collapse to a
+    # meaningless 0.0 in the "p<0.001" exponential display.
     return {
-        "points": data.points,
-        "reference_lines": data.reference_lines,
-        "normal_range": data.normal_range,
-        "bins": data.bins,
+        "points": round_floats(data.points),
+        "reference_lines": round_floats(data.reference_lines),
+        "normal_range": round_floats(data.normal_range),
+        "bins": round_floats(data.bins),
         "optimal_center": data.optimal_center,
         "eps2": data.eps2,
+        "spearman_r": data.spearman_r,
         "p_value": data.p_value,
         "q_value": data.q_value,
         "significant": data.significant,
@@ -139,7 +118,7 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
 
     data = build_categorical_data(df, factor)
     return {
-        "groups": [vars(group) for group in data.groups],
+        "groups": round_floats([vars(group) for group in data.groups]),
         "eps2": data.eps2,
         "p_value": data.p_value,
         "q_value": data.q_value,
@@ -150,30 +129,35 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
     }
 
 
-@lru_cache(maxsize=128)
-def _cached_heatmap(dataset_id: str, metric: str, kind: str) -> HeatmapData:
-    # Cached per (dataset_id, metric, kind): dataset content is immutable
+HEATMAP_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict older ones
+HEATMAP_METRICS = 2  # spearman + eps2
+
+@lru_cache(maxsize=HEATMAP_CACHE_DATASETS * HEATMAP_METRICS)
+def _cached_heatmap(dataset_id: str, metric: str) -> HeatmapData:
+    # Cached per (dataset_id, metric), capped at the 2 most-recent
+    # datasets (LRU-evicted) so this never grows unbounded in server
+    # memory across a long-running process. Dataset content is immutable
     # once a dataset_id exists (uploads mint a fresh uuid; bundled files
-    # are static).
+    # are static). One heatmap per dataset now -- the R/D/Config split
+    # view was removed, so there is no more per-kind cache dimension.
     df = _dataframe_or_404(dataset_id)
     schema = parse_schema(df)
-    return build_heatmap(df, schema, metric=metric, kind=kind)  # type: ignore[arg-type]
+    return build_heatmap(df, schema, metric=metric)  # type: ignore[arg-type]
 
 
 @router.get("/screening/heatmap", response_model=HeatmapResponse)
 def get_screening_heatmap(
     dataset: str = "train",
     metric: Literal["spearman", "eps2"] = "spearman",
-    kind: Literal["all", "R", "D", "Config"] = "all",
 ) -> dict[str, Any]:
-    heatmap = _cached_heatmap(dataset, metric, kind)
-    # Config has no rho -- build_heatmap silently forces eps2 internally;
-    # echo the metric it actually used, not necessarily what was asked for.
-    effective_metric = "eps2" if kind == "Config" else metric
+    """The one shared correlation heatmap (R+D x Y1~Y5, Config excluded --
+    rho isn't defined for a category) used identically by both the
+    training tab and the root-cause tab.
+    """
+    heatmap = _cached_heatmap(dataset, metric)
     return {
         "dataset_id": dataset,
-        "metric": effective_metric,
-        "kind": kind,
+        "metric": metric,
         "features": heatmap.features,
         "targets": heatmap.targets,
         "values": heatmap.values,
@@ -186,94 +170,96 @@ def get_screening_heatmap(
     }
 
 
-@lru_cache(maxsize=256)
-def _cached_pareto_items(dataset_id: str, target: str, kind: str) -> tuple[dict, ...]:
-    # Cached per (dataset_id, target, kind): the root-cause tab's "실행"
-    # flow fetches all 5 targets x 4 kinds up front (20 combos), and each
-    # kind filter otherwise re-runs the same score_all_factors(target)
-    # pass redundantly. Dataset content is immutable once a dataset_id
+PARETO_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict older ones
+PARETO_TARGETS = 5  # Y1..Y5
+
+@lru_cache(maxsize=PARETO_CACHE_DATASETS * PARETO_TARGETS)
+def _cached_ranked_rows(dataset_id: str, target: str) -> tuple[dict, ...]:
+    # Cached per (dataset_id, target), capped at the 2 most-recent
+    # datasets (LRU-evicted): the training tab and the root-cause tab both
+    # request the same (dataset, target) pair and must see byte-identical
+    # results -- this cache is exactly what guarantees that, not just a
+    # performance nicety. Dataset content is immutable once a dataset_id
     # exists (see the heatmap cache's docstring for why that's safe).
     df = _dataframe_or_404(dataset_id)
     schema = parse_schema(df)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
-    rows = score_all_factors(df, schema, target)
-    if kind != "all":
-        rows = [row for row in rows if row["kind"] == kind]
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}'/{kind} 결과가 없습니다.")
-
-    rows.sort(key=lambda r: r["eps2"], reverse=True)
-    total_eps2 = sum(r["eps2"] for r in rows)
-    cumulative = 0.0
-    items = []
-    for row in rows:
-        pct = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
-        cumulative += pct
-        items.append(
-            {
-                "feature": row["feature"],
-                "kind": row["kind"],
-                "step": row["step"],
-                "eps2": row["eps2"],
-                "p_value": row["p_value"],
-                "q_value": row["q_value"],
-                "significant": row["significant"],
-                "confidence_tier": confidence_tier(row["p_value"]),
-                "n_observed": row["n_observed"],
-                "contribution_pct": pct,
-                "cumulative_pct": cumulative,
-            }
-        )
-    return tuple(items)
+    return tuple(_ranked_rows(df, schema, target, 0.05, 100, 20))
 
 
-@router.get("/screening/pareto", response_model=ParetoRankingResponse)
-def get_screening_pareto(
-    dataset: str = "train",
-    target: str = "Y1",
-    kind: Literal["all", "R", "D", "Config"] = "all",
-) -> dict[str, Any]:
-    """Every factor of the requested kind for one target, ranked by eps2,
-    with contribution/cumulative denominated by that kind's pool only --
-    the data behind the root-cause tab's Pareto chart (top-10/20/all is a
-    client slice of this one list, so switching that toggle needs no
-    refetch). Not gated by FDR significance: every candidate is included,
-    tiered by confidence_tier instead of filtered out.
-    """
-    items = list(_cached_pareto_items(dataset, target, kind))
+def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
+    ranked = list(_cached_ranked_rows(dataset_id, target))
+    top = ranked[: DEFAULT_TOP_N]
+    items = [
+        {
+            "feature": row["feature"],
+            "kind": row["kind"],
+            "step": row["step"],
+            "eps2": row["eps2"],
+            "p_value": row["p_value"],
+            "q_value": row["q_value"],
+            "significant": row["significant"],
+            "confidence_tier": confidence_tier(row["p_value"]),
+            "n_observed": row["n_observed"],
+            "contribution_pct": row["contribution_pct"],
+            "cumulative_pct": row["cumulative_pct"],
+        }
+        for row in top
+    ]
+    n80 = next((index + 1 for index, row in enumerate(ranked) if row["cumulative_pct"] >= 80.0), None)
     return {
-        "dataset_id": dataset,
+        "dataset_id": dataset_id,
         "target": target,
-        "kind": kind,
-        "total_factor_count": len(items),
+        "total_factor_count": len(ranked),
+        "n80": n80,
         "items": items,
     }
 
 
-def _selected_factors(train_df, schema):
-    results = select_pareto_factors_all_targets(train_df, schema)
-    factors = []
-    no_significant: list[str] = []
-    for target, result in results.items():
-        if result.no_significant_factor or not result.factors:
-            no_significant.append(target)
+@router.get("/screening/pareto", response_model=ParetoRankingResponse)
+def get_screening_pareto(dataset: str = "train", target: str = "Y1") -> dict[str, Any]:
+    """The fixed top-5-by-eps2 Pareto ranking for one target across the
+    full R+D+Config pool -- the single shared source for both the
+    training tab's and the root-cause tab's Pareto chart. Not gated by
+    FDR significance: every one of the 5 is included regardless of
+    p-value, tiered by confidence_tier instead of filtered out. `n80`
+    reports the rank (across the FULL pool, not just these 5) at which
+    cumulative contribution first reaches 80%, so the caller can render
+    "80%에 도달하지 못했습니다 -- N개 더 필요" without a second request.
+    """
+    return _pareto_payload(dataset, target)
+
+
+def _alarm_factors(train_df, schema) -> tuple[list[ParetoFactor], list[str]]:
+    """Per-target alarm-eligible factors: every BH-FDR-significant factor
+    (see select_fdr_significant_factors's docstring -- deliberately kept
+    unchanged so the golden 19-alarm-wafer count doesn't move). Screen
+    display no longer gates on significance, but alarm generation still
+    does.
+    """
+    factors: list[ParetoFactor] = []
+    no_alarm_factor: list[str] = []
+    for target in schema.target_cols:
+        target_factors = select_fdr_significant_factors(train_df, schema, target)
+        if not target_factors:
+            no_alarm_factor.append(target)
             continue
-        factors.extend(result.factors)
-    return factors, no_significant
+        factors.extend(target_factors)
+    return factors, no_alarm_factor
 
 
 def _control_range_dict(control_range) -> dict[str, Any]:
     data = vars(control_range).copy()
     data["reference_lines"] = [vars(line) for line in control_range.reference_lines]
-    return data
+    return round_floats(data)
 
 
 @router.get("/control-ranges", response_model=ControlRangeListResponse)
 def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
     train_df = _dataframe_or_404(dataset)
     schema = parse_schema(train_df)
-    factors, no_significant = _selected_factors(train_df, schema)
+    factors, no_significant = _alarm_factors(train_df, schema)
     items = [_control_range_dict(compute_control_range(train_df, factor)) for factor in factors]
     return {
         "train_dataset_id": dataset,
@@ -287,7 +273,7 @@ def get_alarms(train: str = "train", eval: str = "test", severity: str | None = 
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
     schema = parse_schema(train_df)
-    factors, _ = _selected_factors(train_df, schema)
+    factors, _ = _alarm_factors(train_df, schema)
 
     items: list[dict[str, Any]] = []
     for factor in factors:
@@ -321,7 +307,7 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
     schema = parse_schema(train_df)
-    factors, _ = _selected_factors(train_df, schema)
+    factors, _ = _alarm_factors(train_df, schema)
 
     control_ranges = [compute_control_range(train_df, factor) for factor in factors]
     alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
@@ -365,8 +351,8 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
 @router.get("/analysis/report", response_model=AnalysisReportResponse)
 def get_analysis_report(dataset: str = "train") -> dict[str, Any]:
     """Full JSON analysis report -- always denominated by the full
-    R+D+Config pool and always "전체" kind, regardless of which kind tab
-    the caller happens to be viewing (see build_analysis_report's
+    R+D+Config pool, matching the screen now that the R/D/Config split
+    view has been removed entirely (see build_analysis_report's
     docstring for why the factor list and the alarm list use different,
     deliberately non-interchangeable factor sets).
     """
@@ -399,12 +385,15 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
     targets = [
         {
             "target": target,
-            "no_significant_factor": bool(detail.get("no_significant_factor")),
+            "no_factor_available": bool(detail.get("no_factor_available")),
             "feature": detail.get("feature"),
             "kind": detail.get("kind"),
             "eps2": detail.get("eps2"),
+            "contribution_pct": detail.get("contribution_pct"),
             "relation_shape": detail.get("relation_shape"),
             "optimal_center": detail.get("optimal_center"),
+            "p_value": detail.get("p_value"),
+            "confidence_tier": detail.get("confidence_tier"),
             "r2": detail.get("r2"),
             "rmse": detail.get("rmse"),
             "mae": detail.get("mae"),
@@ -416,12 +405,15 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
     final_yield = (
         {
             "target": "Y",
-            "no_significant_factor": False,
+            "no_factor_available": False,
             "feature": None,
             "kind": None,
             "eps2": None,
+            "contribution_pct": None,
             "relation_shape": None,
             "optimal_center": None,
+            "p_value": None,
+            "confidence_tier": None,
             "r2": final_test_metrics.get("r2"),
             "rmse": final_test_metrics.get("rmse"),
             "mae": final_test_metrics.get("mae"),

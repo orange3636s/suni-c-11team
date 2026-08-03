@@ -18,10 +18,9 @@ from src.runtime.datasets import (
     DatasetRegistry,
 )
 from src.runtime.store import RuntimeStore
+from src.upload_limits import max_upload_size_bytes, max_upload_size_mb
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
-
-MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 
 
 def get_dataset_registry() -> DatasetRegistry:
@@ -39,11 +38,13 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
     filename = file.filename or ""
     if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV 파일만 업로드할 수 있습니다.")
-    content = await file.read(MAX_UPLOAD_SIZE_BYTES + 1)
-    if len(content) > MAX_UPLOAD_SIZE_BYTES:
+    limit_bytes = max_upload_size_bytes()
+    content = await file.read(limit_bytes + 1)
+    if len(content) > limit_bytes:
+        actual_mb = len(content) / (1024 * 1024)
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="파일 크기는 50MB 이하여야 합니다.",
+            detail=f"파일이 너무 큽니다 (최대 {max_upload_size_mb()}MB). 현재 {actual_mb:.1f}MB",
         )
     return get_dataset_registry().upload(filename, content)
 

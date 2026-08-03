@@ -1,17 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
-import PlotlyChart from "@/components/PlotlyChart";
+import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
+import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import {
   createTrainingJob,
   downloadDatasetFile,
   getModelPerformance,
-  getScreening,
+  getScreeningHeatmap,
+  getScreeningPareto,
   getTrainingJob,
 } from "@/lib/api";
-import type { DatasetSummary, ModelPerformanceResponse, ScreeningResponse, TargetScreeningResult } from "@/types/data";
+import type { DatasetSummary, ModelPerformanceResponse, ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
 
 const BUNDLED_TRAIN_ID = "train";
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -29,12 +32,6 @@ const SHAPE_LABEL: Record<string, string> = {
 };
 const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
-function confidenceTier(p: number): "strong" | "moderate" | "weak" | "reference" {
-  if (p < 0.01) return "strong";
-  if (p < 0.05) return "moderate";
-  if (p < 0.2) return "weak";
-  return "reference";
-}
 
 const BENCHMARK_REFERENCE = [
   { name: "A. 중앙값 대체 + 클리핑 (현행)", y: 0.114 },
@@ -42,45 +39,8 @@ const BENCHMARK_REFERENCE = [
   { name: "C. 선정 인자 + dev + 마스크", y: 0.177 },
 ];
 
-function paretoChartWidth(barCount: number, containerMax = 900): number {
-  // A Plotly bar chart auto-stretches its bars to fill whatever width its
-  // container gets, so a 1-bar result reads as one giant bar spanning the
-  // whole card. Constraining the OUTER wrapper (not the bars themselves)
-  // to roughly `count * 96px` keeps bars a sane width and centered
-  // instead of stretched, without needing to fight Plotly's own bar-width
-  // sizing model.
-  return Math.min(barCount * 96 + 120, containerMax);
-}
-
-function paretoChartSpec(result: TargetScreeningResult) {
-  const factors = result.factors;
-  return {
-    data: [
-      {
-        type: "bar",
-        x: factors.map((f) => f.feature),
-        y: factors.map((f) => f.contribution_pct),
-        name: "개별 기여율(%)",
-      },
-      {
-        type: "scatter",
-        mode: "lines+markers",
-        x: factors.map((f) => f.feature),
-        y: factors.map((f) => f.cumulative_pct),
-        name: "누적 기여율(%)",
-        yaxis: "y2",
-      },
-    ],
-    layout: {
-      title: { text: `${result.target} Pareto 차트` },
-      yaxis: { title: { text: "개별 기여율(%)" } },
-      yaxis2: { title: { text: "누적 기여율(%)" }, overlaying: "y", side: "right", range: [0, 105] },
-      shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, yref: "y2", y0: 80, y1: 80, line: { dash: "dash", color: "gray" } }],
-    },
-  };
-}
-
 export default function TrainingPage() {
+  const router = useRouter();
   const [datasetId, setDatasetId] = useState(BUNDLED_TRAIN_ID);
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -89,9 +49,10 @@ export default function TrainingPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [performance, setPerformance] = useState<ModelPerformanceResponse | null>(null);
-  const [screening, setScreening] = useState<ScreeningResponse | null>(null);
-  const [screeningLoading, setScreeningLoading] = useState(false);
-  const [showReferenceOnly, setShowReferenceOnly] = useState<Record<string, boolean>>({});
+
+  const [activeTarget, setActiveTarget] = useState<string>("Y1");
+  const [paretoByTarget, setParetoByTarget] = useState<Record<string, ParetoRankingResponse>>({});
+  const [analysisReady, setAnalysisReady] = useState(false);
 
   const loadPerformance = useCallback(async () => {
     try {
@@ -101,26 +62,20 @@ export default function TrainingPage() {
     }
   }, []);
 
-  const loadScreening = useCallback(async (id: string) => {
-    setScreeningLoading(true);
-    try {
-      setScreening(await getScreening(id));
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "인자 스크리닝 결과를 불러오지 못했습니다.");
-    } finally {
-      setScreeningLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     const timer = window.setTimeout(() => void loadPerformance(), 0);
     return () => window.clearTimeout(timer);
   }, [loadPerformance]);
 
+  // Switching datasets invalidates the heatmap/Pareto section -- back to
+  // "학습을 실행하면 표시됩니다" until retrained against the new dataset.
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadScreening(datasetId), 0);
+    const timer = window.setTimeout(() => {
+      setParetoByTarget({});
+      setAnalysisReady(false);
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [datasetId, loadScreening]);
+  }, [datasetId]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -132,6 +87,18 @@ export default function TrainingPage() {
         if (job.status === "completed") {
           window.clearInterval(timer);
           setJobId(null);
+          setStage("히트맵 집계 중");
+          setProgress(99);
+          try {
+            const paretoResults = await Promise.all(
+              TARGETS.map((t) => getScreeningPareto(datasetId, t).then((response) => [t, response] as const)),
+            );
+            setParetoByTarget(Object.fromEntries(paretoResults));
+            await getScreeningHeatmap(datasetId, "spearman").catch(() => {});
+            setAnalysisReady(true);
+          } catch {
+            setAnalysisReady(false);
+          }
           setMessage("스크리닝 기반 Y1~Y5 GBDT 학습이 완료되었습니다.");
           await loadPerformance();
         } else if (job.status === "failed" || job.status === "interrupted") {
@@ -146,12 +113,14 @@ export default function TrainingPage() {
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [jobId, loadPerformance]);
+  }, [jobId, loadPerformance, datasetId]);
 
   async function train() {
     if (jobId) return;
     setError("");
     setMessage("");
+    setAnalysisReady(false);
+    setParetoByTarget({});
     setStage("학습 데이터셋을 불러오는 중입니다.");
     setProgress(0);
     try {
@@ -163,16 +132,23 @@ export default function TrainingPage() {
     }
   }
 
+  function handleHeatmapSelect(selection: HeatmapCellSelection) {
+    router.push(`/root-cause?target=${encodeURIComponent(selection.target)}&feature=${encodeURIComponent(selection.feature)}`);
+  }
+
+  function handleParetoBarClick(item: ParetoRankingItem) {
+    router.push(`/root-cause?target=${encodeURIComponent(activeTarget)}&feature=${encodeURIComponent(item.feature)}`);
+  }
+
   const selectedDataset = datasets.find((item) => item.dataset_id === datasetId);
   const isBundledTrain = datasetId === BUNDLED_TRAIN_ID;
-  const noConfigSelected = screening?.targets.every((t) => t.factors.every((f) => f.kind !== "Config")) ?? true;
 
   return (
     <DashboardShell activeItem="모델 학습">
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">MACHINE LEARNING</span>
         <h1>모델 학습</h1>
-        <p>선정 인자(ε² + BH-FDR) 기반 Y1~Y5 GBDT를 학습하고, 인자 스크리닝 결과를 함께 확인합니다.</p>
+        <p>선정 인자(ε²) 기반 Y1~Y5 GBDT를 학습하고, 전체 상관관계 히트맵과 Pareto 인자 스크리닝을 함께 확인합니다.</p>
       </section>
 
       <section className="uploadCard">
@@ -203,6 +179,9 @@ export default function TrainingPage() {
             {stage} · {progress}%
           </p>
         )}
+        {!jobId && stage === "히트맵 집계 중" && !analysisReady && (
+          <p className="trainingProgress" role="status">히트맵 집계 중 · {progress}%</p>
+        )}
         {message && <p className="messageBox success" role="status">{message}</p>}
         {error && <p className="errorMessage" role="alert">{error}</p>}
       </section>
@@ -219,18 +198,28 @@ export default function TrainingPage() {
               <div className="sectionHeading compact">
                 <div>
                   <span className="sectionLabel">{target}</span>
-                  <h2>{detail?.no_significant_factor ? "유의 인자 없음" : detail?.feature ?? "-"}</h2>
+                  <h2>
+                    {detail?.no_factor_available ? "분석 불가" : detail?.feature ?? "-"}
+                    {detail && !detail.no_factor_available && detail.confidence_tier && (
+                      <span className={`confidenceBadge tier-${detail.confidence_tier}`} style={{ marginLeft: 8 }}>
+                        {TIER_LABEL[detail.confidence_tier]}
+                      </span>
+                    )}
+                  </h2>
                 </div>
               </div>
-              {detail && !detail.no_significant_factor ? (
+              {detail && !detail.no_factor_available ? (
                 <div className="secomKpiGrid">
+                  <div><span>ε²</span><strong>{showMetric(detail.eps2)}</strong></div>
+                  <div><span>기여율</span><strong>{detail.contribution_pct != null ? `${detail.contribution_pct.toFixed(1)}%` : "-"}</strong></div>
                   <div><span>R²</span><strong>{showMetric(detail.r2)}</strong></div>
                   <div><span>MAE</span><strong>{showMetric(detail.mae)}</strong></div>
-                  <div><span>ε²</span><strong>{showMetric(detail.eps2)}</strong></div>
                   <div><span>관계형태</span><strong>{SHAPE_LABEL[detail.relation_shape ?? ""] ?? "-"}</strong></div>
                 </div>
+              ) : detail ? (
+                <p className="emptyMessage">계측 표본이 부족해 분석할 수 없습니다.</p>
               ) : (
-                <p className="emptyMessage">통계적으로 유의한 인자가 없습니다.</p>
+                <p className="emptyMessage">학습을 실행하면 표시됩니다.</p>
               )}
             </article>
           );
@@ -270,106 +259,49 @@ export default function TrainingPage() {
         <p className="emptyMessage">scripts/benchmark.py 실행 결과. 억지로 인자를 늘리거나 전처리를 바꿔 이 값을 올리지 않습니다.</p>
       </section>
 
-      <section className="resultCard">
-        <div className="sectionHeading compact">
-          <div>
-            <span className="sectionLabel">SCREENING</span>
-            <h2>인자 스크리닝 결과</h2>
+      <HeatmapParetoSection
+        datasetId={datasetId}
+        enabled={analysisReady}
+        paretoByTarget={paretoByTarget}
+        activeTarget={activeTarget}
+        onActiveTargetChange={setActiveTarget}
+        onBarClick={handleParetoBarClick}
+        onHeatmapCellSelect={handleHeatmapSelect}
+      />
+
+      {analysisReady && (
+        <section className="resultCard">
+          <div className="sectionHeading compact">
+            <div>
+              <span className="sectionLabel">SCREENING</span>
+              <h2>{activeTarget} 인자 스크리닝 (상위 5개)</h2>
+            </div>
           </div>
-        </div>
-        {noConfigSelected && (
-          <p className="messageBox">Config(장비 설정) 30개 중 통계적으로 유의한 인자는 0개입니다.</p>
-        )}
-        {screeningLoading && <p className="emptyMessage">불러오는 중…</p>}
-        {screening?.targets.map((result) => (
-          <div key={result.target} style={{ marginBottom: 24 }}>
-            <h3 style={{ margin: "12px 0" }}>{result.target}</h3>
-            {result.no_significant_factor ? (
-              <p className="emptyMessage">통계적으로 유의한 인자가 없습니다.</p>
-            ) : (
-              <>
-                <div style={{ display: "flex", gap: 16, alignItems: "stretch", flexWrap: "wrap" }}>
-                  <div style={{ width: paretoChartWidth(result.factors.length), maxWidth: "100%", flex: "0 0 auto" }}>
-                    <PlotlyChart spec={paretoChartSpec(result)} height={280} />
-                  </div>
-                  {result.factors.length <= 2 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: "1 1 220px", minWidth: 200 }}>
-                      {result.factors.map((factor) => (
-                        <div key={factor.feature} className="resultCard" style={{ padding: 12 }}>
-                          <strong>{factor.feature}</strong>
-                          <div className="secomKpiGrid" style={{ marginTop: 8 }}>
-                            <div><span>ε²</span><strong>{showMetric(factor.eps2)}</strong></div>
-                            <div><span>p값</span><strong>{factor.p_value < 0.001 ? factor.p_value.toExponential(2) : showMetric(factor.p_value, 4)}</strong></div>
-                            <div><span>관측수</span><strong>{factor.n_observed}</strong></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="tableWrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>인자명</th><th>종류</th><th>ε²</th><th>기여율</th><th>누적%</th><th>관측수</th><th>q값</th><th>신뢰도</th><th>관계형태</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.factors.map((factor) => (
-                        <tr key={factor.feature}>
-                          <td>{factor.feature}</td>
-                          <td>{KIND_LABEL[factor.kind]}</td>
-                          <td>{showMetric(factor.eps2)}</td>
-                          <td>{showMetric(factor.contribution_pct, 1)}%</td>
-                          <td>{showMetric(factor.cumulative_pct, 1)}%</td>
-                          <td>{factor.n_observed}</td>
-                          <td>{factor.q_value < 0.001 ? factor.q_value.toExponential(2) : showMetric(factor.q_value, 4)}</td>
-                          <td><span className={`confidenceBadge tier-${confidenceTier(factor.p_value)}`} style={{ marginLeft: 0 }}>{TIER_LABEL[confidenceTier(factor.p_value)]}</span></td>
-                          <td>
-                            {SHAPE_LABEL[factor.relation_shape]}
-                            {factor.optimal_center != null && ` (중심 ${showMetric(factor.optimal_center, 1)})`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-            {result.reference_only.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  className="referenceOnlyToggle"
-                  onClick={() =>
-                    setShowReferenceOnly((current) => ({ ...current, [result.target]: !current[result.target] }))
-                  }
-                >
-                  {showReferenceOnly[result.target] ? "접기" : `FDR 탈락 인자 펼치기 (${result.reference_only.length})`}
-                </button>
-                {showReferenceOnly[result.target] && (
-                  <div className="tableWrap">
-                    <table>
-                      <thead><tr><th>인자명</th><th>종류</th><th>ε²</th><th>q값</th><th>상태</th></tr></thead>
-                      <tbody>
-                        {result.reference_only.map((factor) => (
-                          <tr key={factor.feature} className="referenceOnlyRow">
-                            <td>{factor.feature}</td>
-                            <td>{KIND_LABEL[factor.kind]}</td>
-                            <td>{showMetric(factor.eps2)}</td>
-                            <td>{showMetric(factor.q_value, 4)}</td>
-                            <td><span className="referenceOnlyBadge">통계적 유의성 미달</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </>
-            )}
+          <div className="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>인자명</th><th>종류</th><th>ε²</th><th>기여율</th><th>누적%</th><th>관측수</th><th>q값</th><th>신뢰도</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(paretoByTarget[activeTarget]?.items ?? []).map((factor) => (
+                  <tr key={factor.feature}>
+                    <td>{factor.feature}</td>
+                    <td>{KIND_LABEL[factor.kind] ?? factor.kind}</td>
+                    <td>{showMetric(factor.eps2)}</td>
+                    <td>{showMetric(factor.contribution_pct, 1)}%</td>
+                    <td>{showMetric(factor.cumulative_pct, 1)}%</td>
+                    <td>{factor.n_observed}</td>
+                    <td>{factor.q_value < 0.001 ? factor.q_value.toExponential(2) : showMetric(factor.q_value, 4)}</td>
+                    <td><span className={`confidenceBadge tier-${factor.confidence_tier}`} style={{ marginLeft: 0 }}>{TIER_LABEL[factor.confidence_tier]}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))}
-      </section>
+        </section>
+      )}
 
       <section className="analysisDisclaimers">
         <strong>해석 시 한계</strong>

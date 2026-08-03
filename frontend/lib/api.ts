@@ -15,7 +15,6 @@ import type {
   ModelPerformanceResponse,
   ParetoRankingResponse,
   PreprocessResponse,
-  ScreeningResponse,
   ScreeningScatterResponse,
   TrainResponse,
   TrainingJobCreateResponse,
@@ -350,10 +349,6 @@ export async function downloadDatasetFile(datasetId: string, filename: string): 
   return new File([blob], filename, { type: "text/csv" });
 }
 
-export function getScreening(dataset: string): Promise<ScreeningResponse> {
-  return getJson(`/api/screening?${new URLSearchParams({ dataset }).toString()}`);
-}
-
 export function getScreeningScatter(dataset: string, target: string, feature: string): Promise<ScreeningScatterResponse> {
   return getJson(`/api/screening/scatter?${new URLSearchParams({ dataset, target, feature }).toString()}`);
 }
@@ -380,12 +375,12 @@ export function getModelPerformance(): Promise<ModelPerformanceResponse> {
   return getJson("/api/models/performance");
 }
 
-export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric, kind: string = "all"): Promise<HeatmapResponse> {
-  return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric, kind }).toString()}`);
+export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric): Promise<HeatmapResponse> {
+  return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric }).toString()}`);
 }
 
-export function getScreeningPareto(dataset: string, target: string, kind: string = "all"): Promise<ParetoRankingResponse> {
-  return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target, kind }).toString()}`);
+export function getScreeningPareto(dataset: string, target: string): Promise<ParetoRankingResponse> {
+  return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target }).toString()}`);
 }
 
 export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {

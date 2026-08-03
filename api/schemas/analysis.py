@@ -5,38 +5,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class ParetoFactorSchema(BaseModel):
-    target: str
-    feature: str
-    kind: str
-    step: int
-    eps2: float
-    p_value: float
-    q_value: float
-    pearson_r: float | None
-    spearman_r: float | None
-    n_observed: int
-    contribution_pct: float
-    cumulative_pct: float
-    significant: bool
-    relation_shape: str
-    optimal_center: float | None
-
-
-class TargetScreeningResultSchema(BaseModel):
-    target: str
-    factors: list[ParetoFactorSchema] = Field(default_factory=list)
-    reference_only: list[ParetoFactorSchema] = Field(default_factory=list)
-    excluded_count: int
-    no_significant_factor: bool
-
-
-class ScreeningResponse(BaseModel):
-    dataset_id: str
-    targets: list[TargetScreeningResultSchema]
-    schema_warnings: list[str] = Field(default_factory=list)
-
-
 class ParetoRankingItemSchema(BaseModel):
     feature: str
     kind: str
@@ -54,8 +22,8 @@ class ParetoRankingItemSchema(BaseModel):
 class ParetoRankingResponse(BaseModel):
     dataset_id: str
     target: str
-    kind: str
     total_factor_count: int
+    n80: int | None
     items: list[ParetoRankingItemSchema]
 
 
@@ -91,6 +59,7 @@ class ScreeningScatterResponse(BaseModel):
     bins: list[dict[str, float]]
     optimal_center: float | None
     eps2: float
+    spearman_r: float | None
     p_value: float
     q_value: float
     significant: bool
@@ -128,7 +97,6 @@ class HeatmapScaleSchema(BaseModel):
 class HeatmapResponse(BaseModel):
     dataset_id: str
     metric: str
-    kind: str
     features: list[str]
     targets: list[str]
     values: list[list[float | None]]
@@ -210,12 +178,15 @@ class AlarmSummaryResponse(BaseModel):
 
 class TargetPerformanceSchema(BaseModel):
     target: str
-    no_significant_factor: bool
+    no_factor_available: bool
     feature: str | None
     kind: str | None
     eps2: float | None
+    contribution_pct: float | None
     relation_shape: str | None
     optimal_center: float | None
+    p_value: float | None
+    confidence_tier: str | None
     r2: float | None
     rmse: float | None
     mae: float | None

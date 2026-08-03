@@ -19,8 +19,8 @@ import pandas as pd
 
 from src.analysis.screening.schema import Schema, parse_schema
 from src.runtime.store import RuntimeStore
+from src.upload_limits import max_row_count, max_upload_size_bytes, max_upload_size_mb
 
-MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 LOW_ROW_COUNT_THRESHOLD = 1000
 UNSTABLE_ROW_COUNT_THRESHOLD = 2000
 MIN_FACTOR_OBSERVATIONS = 100
@@ -70,8 +70,11 @@ def _lot_summary(df: pd.DataFrame) -> tuple[str | None, str | None, int | None]:
 
 
 def parse_uploaded_csv(content: bytes) -> pd.DataFrame:
-    if len(content) > MAX_UPLOAD_SIZE_BYTES:
-        raise DatasetValidationError(["파일 크기는 50MB 이하여야 합니다."])
+    if len(content) > max_upload_size_bytes():
+        actual_mb = len(content) / (1024 * 1024)
+        raise DatasetValidationError(
+            [f"파일이 너무 큽니다 (최대 {max_upload_size_mb()}MB). 현재 {actual_mb:.1f}MB"]
+        )
     try:
         df = pd.read_csv(io.BytesIO(content))
     except Exception as exc:
@@ -101,6 +104,8 @@ def validate_dataset(df: pd.DataFrame, *, baseline_schema: Schema | None = None)
         warnings.append("표본이 부족해 인자 선정 결과를 신뢰하기 어렵습니다.")
     elif row_count < UNSTABLE_ROW_COUNT_THRESHOLD:
         warnings.append("인자 선정이 불안정할 수 있습니다.")
+    if row_count > max_row_count():
+        warnings.append(f"행 수가 많습니다 ({row_count:,}행, 권장 상한 {max_row_count():,}행). 처리 시간과 메모리 사용량이 늘어날 수 있습니다.")
 
     if LOT_COLUMN not in df.columns:
         warnings.append(
@@ -200,57 +205,66 @@ class DatasetRegistry:
         return pd.read_csv(self.upload_root / record["stored_path"])
 
     def upload(self, filename: str, content: bytes) -> dict[str, Any]:
+        import gc
+
         try:
-            df = parse_uploaded_csv(content)
-        except DatasetValidationError as exc:
-            return {
-                "success": False,
-                "dataset_id": None,
-                "blocking_errors": exc.blocking_errors,
-                "warnings": [],
-                "unmapped_columns": [],
-            }
+            try:
+                df = parse_uploaded_csv(content)
+            except DatasetValidationError as exc:
+                return {
+                    "success": False,
+                    "dataset_id": None,
+                    "blocking_errors": exc.blocking_errors,
+                    "warnings": [],
+                    "unmapped_columns": [],
+                }
 
-        baseline_schema = self.bundled_schema("train")
-        validation = validate_dataset(df, baseline_schema=baseline_schema)
-        if not validation.is_valid:
-            return {
-                "success": False,
-                "dataset_id": None,
-                "blocking_errors": validation.blocking_errors,
-                "warnings": [],
-                "unmapped_columns": [],
-            }
+            baseline_schema = self.bundled_schema("train")
+            validation = validate_dataset(df, baseline_schema=baseline_schema)
+            if not validation.is_valid:
+                return {
+                    "success": False,
+                    "dataset_id": None,
+                    "blocking_errors": validation.blocking_errors,
+                    "warnings": [],
+                    "unmapped_columns": [],
+                }
 
-        dataset_id = uuid4().hex
-        stored_name = f"{dataset_id}.csv"
-        (self.upload_root / stored_name).write_bytes(content)
-        lot_min, lot_max, lot_count = _lot_summary(df)
-        self.store.create_dataset(
-            dataset_id=dataset_id,
-            original_filename=filename,
-            stored_path=stored_name,
-            row_count=len(df),
-            column_count=df.shape[1],
-            lot_min=lot_min,
-            lot_max=lot_max,
-            lot_count=lot_count,
-            warnings=validation.warnings,
-            unmapped_columns=validation.unmapped_columns,
-            schema_diff={},
-        )
-        return {
-            "success": True,
-            "dataset_id": dataset_id,
-            "blocking_errors": [],
-            "warnings": validation.warnings,
-            "unmapped_columns": validation.unmapped_columns,
-            "row_count": len(df),
-            "column_count": df.shape[1],
-            "lot_min": lot_min,
-            "lot_max": lot_max,
-            "lot_count": lot_count,
-        }
+            dataset_id = uuid4().hex
+            stored_name = f"{dataset_id}.csv"
+            (self.upload_root / stored_name).write_bytes(content)
+            lot_min, lot_max, lot_count = _lot_summary(df)
+            self.store.create_dataset(
+                dataset_id=dataset_id,
+                original_filename=filename,
+                stored_path=stored_name,
+                row_count=len(df),
+                column_count=df.shape[1],
+                lot_min=lot_min,
+                lot_max=lot_max,
+                lot_count=lot_count,
+                warnings=validation.warnings,
+                unmapped_columns=validation.unmapped_columns,
+                schema_diff={},
+            )
+            return {
+                "success": True,
+                "dataset_id": dataset_id,
+                "blocking_errors": [],
+                "warnings": validation.warnings,
+                "unmapped_columns": validation.unmapped_columns,
+                "row_count": len(df),
+                "column_count": df.shape[1],
+                "lot_min": lot_min,
+                "lot_max": lot_max,
+                "lot_count": lot_count,
+            }
+        finally:
+            # The uploaded DataFrame is only needed for this validation pass --
+            # release it explicitly rather than waiting on Python's own GC,
+            # since RSS doesn't reliably shrink back to the OS otherwise.
+            df = None
+            gc.collect()
 
     def delete(self, dataset_id: str) -> None:
         if dataset_id in BUNDLED_DATASET_FILES:

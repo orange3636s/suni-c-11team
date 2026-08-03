@@ -417,20 +417,6 @@ export type ParetoFactor = {
   optimal_center: number | null;
 };
 
-export type TargetScreeningResult = {
-  target: string;
-  factors: ParetoFactor[];
-  reference_only: ParetoFactor[];
-  excluded_count: number;
-  no_significant_factor: boolean;
-};
-
-export type ScreeningResponse = {
-  dataset_id: string;
-  targets: TargetScreeningResult[];
-  schema_warnings: string[];
-};
-
 export type ScatterPoint = {
   x: number;
   y: number;
@@ -465,6 +451,7 @@ export type ScreeningScatterResponse = {
   bins: Array<{ x_mean: number; y_mean: number; y_lo: number; y_hi: number; n: number }>;
   optimal_center: number | null;
   eps2: number;
+  spearman_r: number | null;
   p_value: number;
   q_value: number;
   significant: boolean;
@@ -572,8 +559,8 @@ export type ParetoRankingItem = {
 export type ParetoRankingResponse = {
   dataset_id: string;
   target: string;
-  kind: string;
   total_factor_count: number;
+  n80: number | null;
   items: ParetoRankingItem[];
 };
 
@@ -582,7 +569,6 @@ export type HeatmapMetric = "spearman" | "eps2";
 export type HeatmapResponse = {
   dataset_id: string;
   metric: HeatmapMetric;
-  kind: string;
   features: string[];
   targets: string[];
   values: Array<Array<number | null>>;
@@ -596,12 +582,15 @@ export type HeatmapResponse = {
 
 export type TargetPerformance = {
   target: string;
-  no_significant_factor: boolean;
+  no_factor_available: boolean;
   feature: string | null;
   kind: string | null;
   eps2: number | null;
+  contribution_pct: number | null;
   relation_shape: RelationShape | null;
   optimal_center: number | null;
+  p_value: number | null;
+  confidence_tier: ConfidenceTier | null;
   r2: number | null;
   rmse: number | null;
   mae: number | null;

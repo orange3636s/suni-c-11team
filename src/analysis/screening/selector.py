@@ -1,22 +1,25 @@
-"""Per-target Pareto selection: effect size -> BH-FDR -> select all survivors.
+"""Factor scoring and selection: effect size -> BH-FDR q-value -> ranking.
 
-Order matters and must not be reshuffled:
-  1. compute eps2/p for every factor (R + D + Config)
-  2. BH-FDR correct p-values within the target (one target = one family)
-  3. drop anything with q >= fdr_alpha
-  4. every remaining (significant) factor is selected -- no further
-     cumulative-contribution cut. `contribution_pct`/`cumulative_pct` are
-     still reported on every factor (selected or not), denominated by the
-     FULL candidate pool's eps2 sum, for the Pareto chart/heatmap display.
-     Significance and contribution are different axes; neither filters
-     the other.
-  5. if nothing survives FDR, return an empty list with
-     no_significant_factor=True -- never backfill with insignificant factors
+Everything here operates on the FULL R+D+Config pool -- there is no "kind"
+split anymore (see the "원인 분석 단순화" prompt: R/D/Config tabs were
+removed, both the root-cause and training screens show one unified view).
+
+Three selection concepts, each serving a different caller:
+  - `select_top_factors`: fixed top-N (5) by eps2, full-pool contribution.
+    Feeds the Pareto chart / factor cards. Count never varies by target --
+    layout stability matters more than a cumulative-contribution cutoff.
+  - `select_primary_factor`: the single strongest factor for a target,
+    returned regardless of its p-value (confidence is communicated via a
+    tier badge, not by hiding the factor). Only `None` when every
+    candidate fails its own minimum-sample-size gate -- feeds the model
+    training pipeline and the "1위 인자" summary card.
+  - `select_alarm_factor`: `select_primary_factor` gated by p<0.05. Alarm
+    generation is the one place significance still filters what's shown.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -25,12 +28,10 @@ from src.analysis.screening.effect_size import eps2_categorical, eps2_numeric
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.shape import classify_shape
 
-DEFAULT_CUTOFF = 0.8
 DEFAULT_FDR_ALPHA = 0.05
 DEFAULT_MIN_N_NUMERIC = 100
 DEFAULT_MIN_N_CATEGORICAL = 20
-REFERENCE_ONLY_LIMIT = 10
-DEFAULT_MAX_DISPLAY = 10
+DEFAULT_TOP_N = 5
 
 CONFIDENCE_TIERS = ("strong", "moderate", "weak", "reference")
 
@@ -38,10 +39,11 @@ CONFIDENCE_TIERS = ("strong", "moderate", "weak", "reference")
 def confidence_tier(p_value: float) -> str:
     """p-value -> a display-confidence label, independent of FDR.
 
-    The FDR gate (q < 0.05) decides what feeds the alarm engine; it does
-    NOT decide what's allowed on screen. Everything gets shown, tiered
-    by raw p-value, so a factor never simply vanishes because it missed
-    a threshold -- it just reads as less trustworthy.
+    The FDR gate (q < 0.05) no longer decides what feeds the alarm engine
+    either (see select_alarm_factor, which gates on raw p instead) -- it
+    is purely informational now, surfaced in q_value for tooltips.
+    Nothing is hidden because of low confidence; it just reads as a
+    weaker tier.
     """
     if p_value < 0.01:
         return "strong"
@@ -83,15 +85,6 @@ class ParetoFactor:
     significant: bool
     relation_shape: str
     optimal_center: float | None
-
-
-@dataclass
-class TargetParetoResult:
-    target: str
-    factors: list[ParetoFactor] = field(default_factory=list)
-    reference_only: list[ParetoFactor] = field(default_factory=list)
-    excluded_count: int = 0
-    no_significant_factor: bool = False
 
 
 def _evaluate_all_factors(
@@ -158,10 +151,10 @@ def score_all_factors(
     min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
 ) -> list[dict]:
     """Score every R/D/Config candidate factor against `target`: eps2, BH-FDR
-    q-value, significance -- one target is one FDR family. Shared by the
-    Pareto selector and the correlation heatmap so both surfaces report
-    identical q-values for the same factor/target pair; do not duplicate
-    this FDR-application step elsewhere.
+    q-value (informational only -- see confidence_tier's docstring) -- one
+    target is one FDR family. Shared by every selection function below and
+    by the correlation heatmap so all surfaces report identical q-values
+    for the same factor/target pair.
     """
     rows = _evaluate_all_factors(df, schema, target, min_n_numeric, min_n_categorical)
     if not rows:
@@ -175,240 +168,32 @@ def score_all_factors(
     return rows
 
 
-def select_pareto_factors(
+def _ranked_rows_with_contribution(
     df: pd.DataFrame,
     schema: Schema,
     target: str,
-    cutoff: float = DEFAULT_CUTOFF,
-    fdr_alpha: float = DEFAULT_FDR_ALPHA,
-    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
-    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
-) -> TargetParetoResult:
-    del cutoff  # kept for API compatibility; selection no longer applies a cumulative cut (see below)
+    fdr_alpha: float,
+    min_n_numeric: int,
+    min_n_categorical: int,
+) -> list[dict]:
+    """Every candidate factor for `target`, sorted by eps2 descending, with
+    contribution_pct/cumulative_pct populated against the FULL pool's eps2
+    sum. The single ranked list every selection function below slices.
+    """
     rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
-
     if not rows:
-        return TargetParetoResult(target=target, no_significant_factor=True)
-
+        return []
     rows.sort(key=lambda r: r["eps2"], reverse=True)
-
-    # contribution_pct/cumulative_pct are reported against the FULL candidate
-    # pool (every R+D+Config factor evaluated for this target, e.g. 88 for
-    # the bundled dataset) -- not just the FDR-significant subset. FDR
-    # answers "is this factor trustworthy"; contribution answers "how much
-    # of total explanatory power is this" -- these are different axes, and
-    # denominating contribution by the significant-only sum made a single
-    # significant factor read as 100% of "everything", which is never true.
     total_eps2 = sum(r["eps2"] for r in rows)
     cumulative = 0.0
     for row in rows:
         row["contribution_pct"] = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
         cumulative += row["contribution_pct"]
         row["cumulative_pct"] = cumulative
-
-    significant_rows = [r for r in rows if r["significant"]]
-
-    if not significant_rows:
-        reference_only = _build_reference_only(df, target, rows)
-        return TargetParetoResult(
-            target=target,
-            factors=[],
-            reference_only=reference_only,
-            excluded_count=len(rows),
-            no_significant_factor=True,
-        )
-
-    # Every FDR-significant factor is selected here -- no further
-    # cumulative-contribution cut. Applying one would let contribution
-    # filter significance again (the same bug in the other direction): a
-    # factor can pass FDR yet still get silently dropped just because a
-    # stronger factor already accounts for most of the pool's total eps2.
-    factors: list[ParetoFactor] = []
-    for row in significant_rows:
-        shape, center = _relation_shape(df, target, row["feature"], row["kind"])
-        factors.append(
-            ParetoFactor(
-                target=target,
-                feature=row["feature"],
-                kind=row["kind"],
-                step=row["step"],
-                eps2=row["eps2"],
-                p_value=row["p_value"],
-                q_value=row["q_value"],
-                pearson_r=row["pearson_r"],
-                spearman_r=row["spearman_r"],
-                n_observed=row["n_observed"],
-                contribution_pct=row["contribution_pct"],
-                cumulative_pct=row["cumulative_pct"],
-                significant=True,
-                relation_shape=shape,
-                optimal_center=center,
-            )
-        )
-
-    reference_only = _build_reference_only(df, target, rows, exclude={f.feature for f in factors})
-
-    return TargetParetoResult(
-        target=target,
-        factors=factors,
-        reference_only=reference_only,
-        excluded_count=len(rows) - len(factors),
-        no_significant_factor=False,
-    )
+    return rows
 
 
-def _build_reference_only(
-    df: pd.DataFrame,
-    target: str,
-    rows: list[dict],
-    exclude: set[str] | None = None,
-) -> list[ParetoFactor]:
-    exclude = exclude or set()
-    candidates = [r for r in rows if r["feature"] not in exclude]
-    candidates.sort(key=lambda r: r["eps2"], reverse=True)
-    reference: list[ParetoFactor] = []
-    for row in candidates[:REFERENCE_ONLY_LIMIT]:
-        shape, center = _relation_shape(df, target, row["feature"], row["kind"])
-        reference.append(
-            ParetoFactor(
-                target=target,
-                feature=row["feature"],
-                kind=row["kind"],
-                step=row["step"],
-                eps2=row["eps2"],
-                p_value=row["p_value"],
-                q_value=row["q_value"],
-                pearson_r=row["pearson_r"],
-                spearman_r=row["spearman_r"],
-                n_observed=row["n_observed"],
-                contribution_pct=row.get("contribution_pct", 0.0),
-                cumulative_pct=row.get("cumulative_pct", 0.0),
-                significant=row["significant"],
-                relation_shape=shape,
-                optimal_center=center,
-            )
-        )
-    return reference
-
-
-def select_pareto_factors_all_targets(
-    df: pd.DataFrame,
-    schema: Schema,
-    targets: list[str] | None = None,
-    cutoff: float = DEFAULT_CUTOFF,
-    fdr_alpha: float = DEFAULT_FDR_ALPHA,
-) -> dict[str, TargetParetoResult]:
-    targets = targets or schema.target_cols
-    return {
-        target: select_pareto_factors(df, schema, target, cutoff=cutoff, fdr_alpha=fdr_alpha)
-        for target in targets
-    }
-
-
-def select_display_factors(
-    df: pd.DataFrame,
-    schema: Schema,
-    target: str,
-    kind: str = "all",
-    cutoff: float = DEFAULT_CUTOFF,
-    max_display: int = DEFAULT_MAX_DISPLAY,
-    fdr_alpha: float = DEFAULT_FDR_ALPHA,
-    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
-    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
-) -> TargetParetoResult:
-    """Kind-scoped display selection for the root-cause browsing view
-    (Pareto chart, scatter cards, heatmap) -- NOT gated by FDR
-    significance. `kind` restricts the candidate pool to "R"/"D"/"Config"
-    (or "all" for the combined pool), and the denominator for
-    contribution_pct is the eps2 sum within that pool only, not the full
-    88-factor total.
-
-    Selection rule: walk the pool in eps2-descending order until
-    cumulative contribution first reaches `cutoff`. If that takes more
-    than `max_display` factors, the signal is too diffuse to usefully
-    chart -- show only the single strongest factor instead of
-    `max_display` mostly-noise charts.
-    """
-    rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
-    if kind != "all":
-        rows = [r for r in rows if r["kind"] == kind]
-    if not rows:
-        return TargetParetoResult(target=target, no_significant_factor=True)
-
-    rows.sort(key=lambda r: r["eps2"], reverse=True)
-    total_eps2 = sum(r["eps2"] for r in rows)
-    cumulative = 0.0
-    n80: int | None = None
-    for index, row in enumerate(rows):
-        row["contribution_pct"] = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
-        cumulative += row["contribution_pct"]
-        row["cumulative_pct"] = cumulative
-        if n80 is None and cumulative >= cutoff * 100.0:
-            n80 = index + 1
-
-    display_rows = rows[:n80] if (n80 is not None and n80 <= max_display) else rows[:1]
-
-    factors: list[ParetoFactor] = []
-    for row in display_rows:
-        shape, center = _relation_shape(df, target, row["feature"], row["kind"])
-        factors.append(
-            ParetoFactor(
-                target=target,
-                feature=row["feature"],
-                kind=row["kind"],
-                step=row["step"],
-                eps2=row["eps2"],
-                p_value=row["p_value"],
-                q_value=row["q_value"],
-                pearson_r=row["pearson_r"],
-                spearman_r=row["spearman_r"],
-                n_observed=row["n_observed"],
-                contribution_pct=row["contribution_pct"],
-                cumulative_pct=row["cumulative_pct"],
-                significant=row["significant"],
-                relation_shape=shape,
-                optimal_center=center,
-            )
-        )
-
-    return TargetParetoResult(
-        target=target,
-        factors=factors,
-        reference_only=[],
-        excluded_count=len(rows) - len(factors),
-        no_significant_factor=False,
-    )
-
-
-def find_factor(
-    df: pd.DataFrame,
-    schema: Schema,
-    target: str,
-    feature: str,
-    fdr_alpha: float = DEFAULT_FDR_ALPHA,
-    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
-    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
-) -> ParetoFactor | None:
-    """Score a single named factor against `target`, regardless of whether it
-    passed the Pareto 80% cutoff -- lets a heatmap cell for a
-    non-significant factor still resolve to a (clearly-labeled) scatter
-    view. `q_value`/`significant` still come from the full FDR family, so
-    they agree with what select_pareto_factors would report.
-    """
-    rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
-    row = next((r for r in rows if r["feature"] == feature), None)
-    if row is None:
-        return None
-    total_eps2 = sum(r["eps2"] for r in rows)
-    rows_by_eps2 = sorted(rows, key=lambda r: r["eps2"], reverse=True)
-    cumulative = 0.0
-    contribution_pct = 0.0
-    for ranked_row in rows_by_eps2:
-        pct = (ranked_row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
-        cumulative += pct
-        if ranked_row["feature"] == feature:
-            contribution_pct = pct
-            break
+def _row_to_factor(df: pd.DataFrame, target: str, row: dict) -> ParetoFactor:
     shape, center = _relation_shape(df, target, row["feature"], row["kind"])
     return ParetoFactor(
         target=target,
@@ -421,9 +206,89 @@ def find_factor(
         pearson_r=row["pearson_r"],
         spearman_r=row["spearman_r"],
         n_observed=row["n_observed"],
-        contribution_pct=contribution_pct,
-        cumulative_pct=cumulative,
+        contribution_pct=row["contribution_pct"],
+        cumulative_pct=row["cumulative_pct"],
         significant=row["significant"],
         relation_shape=shape,
         optimal_center=center,
     )
+
+
+def select_top_factors(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    limit: int = DEFAULT_TOP_N,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> list[ParetoFactor]:
+    """Fixed top-`limit` factors by eps2 across the full R+D+Config pool,
+    contribution denominated by that same full pool. The count is always
+    `limit` (or fewer if the pool itself has fewer candidates) regardless
+    of whether cumulative contribution reaches 80% -- an 80%-cumulative
+    cutoff would make the displayed count vary per target, which is
+    exactly the layout instability this replaces.
+    """
+    rows = _ranked_rows_with_contribution(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
+    return [_row_to_factor(df, target, row) for row in rows[:limit]]
+
+
+def select_primary_factor(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> ParetoFactor | None:
+    """The single strongest (highest-eps2) factor for `target`, regardless
+    of p-value -- confidence is a tier badge, not a display filter. Only
+    `None` when nothing in the pool clears its own min-n gate (every
+    candidate's measured sample is too small to score at all), which is
+    the sole "분석 불가" condition.
+    """
+    rows = _ranked_rows_with_contribution(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
+    if not rows:
+        return None
+    return _row_to_factor(df, target, rows[0])
+
+
+def select_fdr_significant_factors(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> list[ParetoFactor]:
+    """Every factor for `target` that passes BH-FDR (q<fdr_alpha) -- the
+    alarm engine's factor set. This is the one place significance still
+    filters what's used: alarm generation was explicitly kept unchanged
+    (still q<0.05-gated, still possibly more than one factor per target,
+    e.g. Y2 -> Step16_R1 AND Step24_R1) even though display everywhere
+    else (Pareto/heatmap/training cards) no longer gates on significance
+    at all. Changing this would change the golden 19-alarm-wafer count.
+    """
+    rows = _ranked_rows_with_contribution(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
+    return [_row_to_factor(df, target, row) for row in rows if row["significant"]]
+
+
+def find_factor(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    feature: str,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> ParetoFactor | None:
+    """Score a single named factor against `target`, regardless of its
+    Pareto rank -- lets a heatmap cell for any of the 88 factors still
+    resolve to a (clearly-tiered) scatter view.
+    """
+    rows = _ranked_rows_with_contribution(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
+    row = next((r for r in rows if r["feature"] == feature), None)
+    if row is None:
+        return None
+    return _row_to_factor(df, target, row)

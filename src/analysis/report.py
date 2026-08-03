@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from src.analysis.control_range import (
@@ -30,18 +29,17 @@ from src.analysis.control_range import (
     evaluate_alarms,
     summarize_wafer_status,
 )
+from src.analysis.rounding import round_floats
 from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import (
     ParetoFactor,
     confidence_tier,
-    find_factor,
-    score_all_factors,
-    select_pareto_factors_all_targets,
+    select_fdr_significant_factors,
+    select_primary_factor,
 )
 
 REPORT_INCLUSION_P_THRESHOLD = 0.05
 BINNED_PROFILE_BINS = 12
-FLOAT_DECIMALS = 4
 
 _INTERPRETATION_BY_SHAPE = {
     "monotonic_increasing": "값이 클수록 불량률이 상승하는 관계다. 값을 낮추는 방향의 조치가 유효하다.",
@@ -60,20 +58,6 @@ LIMITATIONS = [
     "Config는 장비당 표본이 적어 검출력이 부족할 수 있다. p<0.05를 만족하지 못한 것이 영향이 없다는 뜻은 아니다.",
     "관리한계는 '평소와 다른가'를 판정하며 '수율이 좋은가'를 보장하지 않는다.",
 ]
-
-
-def _round(value: Any) -> Any:
-    """Recursively round every float to FLOAT_DECIMALS so the serialized
-    JSON never shows artifacts like 0.15900000000000003."""
-    if isinstance(value, float):
-        if not np.isfinite(value):
-            return None
-        return round(value, FLOAT_DECIMALS)
-    if isinstance(value, dict):
-        return {key: _round(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_round(item) for item in value]
-    return value
 
 
 def _binned_profile(x: pd.Series, y: pd.Series, bins: int = BINNED_PROFILE_BINS) -> list[dict[str, float]]:
@@ -142,14 +126,11 @@ def _eval_result(eval_df: pd.DataFrame, control_range: ControlRange, factor: Par
 def _top_factor_per_target(train_df: pd.DataFrame, schema: Schema, target: str) -> ParetoFactor | None:
     """The single strongest (highest-eps2) factor for `target` across the
     full R+D+Config pool, included only if it clears the report's own raw
-    p<0.05 bar. Reusing `find_factor` keeps contribution_pct/cumulative_pct
-    denominated by the same full pool the rest of the app uses.
+    p<0.05 bar. This is the report's own narrative-inclusion rule -- a
+    different, deliberately non-interchangeable concept from the alarm
+    engine's factor set below (see module docstring).
     """
-    rows = score_all_factors(train_df, schema, target)
-    if not rows:
-        return None
-    top_feature = max(rows, key=lambda row: row["eps2"])["feature"]
-    factor = find_factor(train_df, schema, target, top_feature)
+    factor = select_primary_factor(train_df, schema, target)
     if factor is None or factor.p_value >= REPORT_INCLUSION_P_THRESHOLD:
         return None
     return factor
@@ -160,10 +141,9 @@ def _alarm_engine_factors(train_df: pd.DataFrame, schema: Schema) -> list[Pareto
     /api/alarms and /api/alarms/summary -- reused as-is so the report's
     alarm numbers always agree with the live alarm log.
     """
-    results = select_pareto_factors_all_targets(train_df, schema)
     factors: list[ParetoFactor] = []
-    for result in results.values():
-        factors.extend(result.factors)
+    for target in schema.target_cols:
+        factors.extend(select_fdr_significant_factors(train_df, schema, target))
     return factors
 
 
@@ -322,7 +302,7 @@ def build_analysis_report(
         "alarms": alarm_records,
         "limitations": LIMITATIONS,
     }
-    return _round(report)
+    return round_floats(report)
 
 
 def _lot_range(meta: dict[str, Any]) -> str | None:

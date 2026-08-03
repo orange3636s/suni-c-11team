@@ -197,12 +197,10 @@ def _read_csv_stream(source: Any) -> pd.DataFrame:
             detail="업로드한 파일을 읽을 수 없습니다.",
         ) from exc
     if size > MAX_FILE_SIZE:
+        actual_mb = size / (1024 * 1024)
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                "파일 크기는 "
-                f"{settings.max_upload_size_mb}MB 이하여야 합니다."
-            ),
+            detail=f"파일이 너무 큽니다 (최대 {settings.max_upload_size_mb}MB). 현재 {actual_mb:.1f}MB",
         )
     if size == 0:
         raise HTTPException(
@@ -287,12 +285,10 @@ async def _persist_training_job_upload(
                     break
                 total += len(chunk)
                 if total > MAX_FILE_SIZE:
+                    actual_mb = total / (1024 * 1024)
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=(
-                            "파일 크기는 "
-                            f"{settings.max_upload_size_mb}MB 이하여야 합니다."
-                        ),
+                        detail=f"파일이 너무 큽니다 (최대 {settings.max_upload_size_mb}MB). 현재 {actual_mb:.1f}MB",
                     )
                 output.write(chunk)
         if total == 0:
@@ -700,7 +696,7 @@ async def train_model(
             else None
         ),
         "no_significant_factor_targets": [
-            target for target, detail in per_target_metrics.items() if detail["no_significant_factor"]
+            target for target, detail in per_target_metrics.items() if detail["no_factor_available"]
         ],
     }
 
@@ -733,13 +729,13 @@ async def train_model(
             model_comparison=[
                 ModelComparisonItem(
                     model_name=f"{target}_HistGradientBoostingRegressor",
-                    status="no_significant_factor" if detail["no_significant_factor"] else "trained",
+                    status="no_significant_factor" if detail["no_factor_available"] else "trained",
                     validation=(
                         None
-                        if detail["no_significant_factor"]
+                        if detail["no_factor_available"]
                         else ModelMetrics(r2=detail["r2"], rmse=detail["rmse"], mae=detail["mae"])
                     ),
-                    selected=not detail["no_significant_factor"],
+                    selected=not detail["no_factor_available"],
                     error_message=None,
                 )
                 for target, detail in per_target_metrics.items()
@@ -775,8 +771,12 @@ async def train_model(
             detail="학습 결과 응답을 생성하는 중 서버 내부 오류가 발생했습니다.",
         ) from exc
     logger.info("학습 API 응답 직렬화 완료")
-    return response
-
+    # Large intermediates (raw upload, internal splits, per-target models
+    # still referenced by `evaluation`) are no longer needed once the
+    # response is built -- release them explicitly rather than waiting on
+    # Python's own GC, since RSS doesn't reliably shrink back otherwise.
+    del dataframe, internal_train, internal_test, evaluation, hybrid_result
+    gc.collect()
     return response
 
 

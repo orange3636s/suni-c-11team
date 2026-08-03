@@ -1,4 +1,4 @@
-"""Golden-value regression tests for the Pareto correlation-factor module.
+"""Golden-value regression tests for the factor scoring/selection module.
 
 These tests only run against the real train.CSV, which is deliberately
 gitignored under data/raw/ (raw process data is not committed). They skip
@@ -15,11 +15,15 @@ import pandas as pd
 import pytest
 
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import score_all_factors, select_pareto_factors_all_targets
+from src.analysis.screening.selector import (
+    score_all_factors,
+    select_fdr_significant_factors,
+    select_primary_factor,
+)
 
 TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 
-# Per-target: the top-eps2 factor (selected or not), plus its shape/center.
+# Per-target: the top-eps2 factor (regardless of significance), plus its shape/center.
 GOLDEN_TABLE = {
     "Y1": {"feature": "Step28_R1", "eps2": 0.192, "shape": "u_shape", "center": 57.4},
     "Y2": {"feature": "Step16_R1", "eps2": 0.159, "shape": "u_shape", "center": 58.1},
@@ -61,17 +65,15 @@ def schema(train_df: pd.DataFrame):
 
 
 @pytest.fixture(scope="module")
-def results(train_df: pd.DataFrame, schema):
-    return select_pareto_factors_all_targets(train_df, schema)
+def primary_factors(train_df: pd.DataFrame, schema):
+    return {target: select_primary_factor(train_df, schema, target) for target in schema.target_cols}
 
 
 @pytest.mark.parametrize("target", list(GOLDEN_TABLE))
-def test_golden_top_factor(results, target):
+def test_golden_top_factor(primary_factors, target):
     expected = GOLDEN_TABLE[target]
-    result = results[target]
-    assert not result.no_significant_factor
-    assert len(result.factors) >= 1
-    factor = result.factors[0]
+    factor = primary_factors[target]
+    assert factor is not None
 
     assert factor.feature == expected["feature"]
     assert factor.eps2 == pytest.approx(expected["eps2"], abs=EPS2_TOLERANCE)
@@ -84,8 +86,8 @@ def test_golden_top_factor(results, target):
 
 @pytest.mark.parametrize("target", list(CONTRIBUTION_TABLE))
 def test_golden_contribution_denominator_is_full_pool(train_df, schema, target):
-    """§4 verification table: contribution_pct/cumulative_pct/80%-reach
-    count/FDR-pass count, all computed against the full ~88-factor pool.
+    """Contribution_pct/cumulative_pct/80%-reach rank/FDR-pass count, all
+    computed against the full ~88-factor pool.
     """
     expected = CONTRIBUTION_TABLE[target]
     rows = score_all_factors(train_df, schema, target)
@@ -109,43 +111,43 @@ def test_golden_contribution_denominator_is_full_pool(train_df, schema, target):
     assert fdr_count == expected["fdr_count"]
 
 
-def test_top_factor_contribution_never_reads_100_percent(results):
+def test_top_factor_contribution_never_reads_100_percent(primary_factors):
     """The bug: denominating by the significant-only sum made a lone
     significant factor read as 100% of "everything." A single factor
     covering 100% of 88 candidates' explanatory power is never plausible.
     """
-    for target, result in results.items():
-        for factor in result.factors:
-            assert factor.contribution_pct < 100.0, (
-                f"{target}/{factor.feature}: contribution_pct={factor.contribution_pct} "
-                "looks like the old significant-only-denominator bug"
-            )
+    for target, factor in primary_factors.items():
+        assert factor.contribution_pct < 100.0, (
+            f"{target}/{factor.feature}: contribution_pct={factor.contribution_pct} "
+            "looks like the old significant-only-denominator bug"
+        )
 
 
-def test_significance_does_not_filter_by_contribution(results):
-    """Every FDR-significant factor must be selected -- no cumulative-cut
-    exclusion. Step24_R1/Y2 passes FDR (q<0.05) but isn't Y2's strongest
-    factor; it must still appear in `factors`, not get silently dropped.
+def test_fdr_significant_factors_include_y2_second_factor(train_df, schema):
+    """The alarm engine's factor set (select_fdr_significant_factors) keeps
+    every BH-FDR-significant factor, not just the strongest. Step24_R1
+    passes FDR (q<0.05) for Y2 but isn't Y2's strongest factor; it must
+    still appear here even though the display-only `select_primary_factor`
+    (used for Pareto/training cards) never surfaces it for Y2.
     """
-    y2 = results["Y2"]
-    selected_features = {f.feature for f in y2.factors}
-    assert selected_features == {"Step16_R1", "Step24_R1"}
+    y2_factors = select_fdr_significant_factors(train_df, schema, "Y2")
+    assert {f.feature for f in y2_factors} == {"Step16_R1", "Step24_R1"}
 
 
-def test_no_config_factor_passes_fdr(results):
-    for target, result in results.items():
-        selected_kinds = {f.kind for f in result.factors}
-        assert "Config" not in selected_kinds, f"{target}: Config factor should never pass FDR"
+def test_no_config_factor_passes_fdr(train_df, schema):
+    for target in schema.target_cols:
+        factors = select_fdr_significant_factors(train_df, schema, target)
+        assert "Config" not in {f.kind for f in factors}, f"{target}: Config factor should never pass FDR"
 
 
-def test_step1_d1_observed_count(results):
-    y3_factor = results["Y3"].factors[0]
+def test_step1_d1_observed_count(primary_factors):
+    y3_factor = primary_factors["Y3"]
     assert y3_factor.feature == "Step1_D1"
     assert y3_factor.n_observed == 479
 
 
-def test_step18_r1_eps2_beats_pearson_r2(results):
-    factor = results["Y5"].factors[0]
+def test_step18_r1_eps2_beats_pearson_r2(primary_factors):
+    factor = primary_factors["Y5"]
     assert factor.feature == "Step18_R1"
     assert factor.pearson_r is not None
     assert factor.eps2 > factor.pearson_r**2

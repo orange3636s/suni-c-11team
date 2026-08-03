@@ -115,6 +115,10 @@ type TrendHover = {
 
 type LineHover = { key: ReferenceLineKey; x: number; y: number };
 
+type PointHover = { screenX: number; screenY: number; clientX: number; clientY: number; point: ScatterPoint };
+
+const POINT_HOVER_RADIUS_PX = 16;
+
 export default function ScatterChart({
   data,
   colorMode,
@@ -134,6 +138,7 @@ export default function ScatterChart({
   const [trendVisible, setTrendVisible] = useState(true);
   const [lineHover, setLineHover] = useState<LineHover | null>(null);
   const [trendHover, setTrendHover] = useState<TrendHover | null>(null);
+  const [pointHover, setPointHover] = useState<PointHover | null>(null);
   const [disabledHint, setDisabledHint] = useState<{ x: number; y: number; text: string } | null>(null);
 
   useEffect(() => {
@@ -208,6 +213,38 @@ export default function ScatterChart({
       else next.add(groupId);
       return next;
     });
+  }
+
+  function findNearestPoint(relativeX: number, relativeY: number): ScatterPoint | null {
+    // Linear scan over up to ~1,470 points is cheap per mousemove (no
+    // per-point DOM listeners needed) -- nearest-point-within-radius,
+    // not a list of every point under the cursor.
+    let best: ScatterPoint | null = null;
+    let bestDistance = POINT_HOVER_RADIUS_PX;
+    for (const point of data.points) {
+      const dx = xScale(point.x) - relativeX;
+      const dy = yScale(point.y) - relativeY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = point;
+      }
+    }
+    return best;
+  }
+
+  function handlePlotOverlayMouseMove(event: React.MouseEvent<SVGRectElement>) {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relativeX = event.clientX - rect.left - MARGIN.left;
+    const relativeY = event.clientY - rect.top - MARGIN.top;
+    const nearest = findNearestPoint(relativeX, relativeY);
+    if (nearest) {
+      setPointHover({ screenX: xScale(nearest.x), screenY: yScale(nearest.y), clientX: event.clientX, clientY: event.clientY, point: nearest });
+    } else {
+      setPointHover(null);
+    }
+    handleTrendMouseMove(event);
   }
 
   function handleTrendMouseMove(event: React.MouseEvent<SVGRectElement>) {
@@ -335,31 +372,34 @@ export default function ScatterChart({
           {/* data points */}
           {data.points.map((point, index) => {
             const style = colorForPoint(point, colorMode, lotIndex);
+            const isHovered = pointHover?.point === point;
             return (
               <circle
                 key={point.lot_wafer_id ?? index}
                 cx={xScale(point.x)}
                 cy={yScale(point.y)}
-                r={style.size}
+                r={isHovered ? style.size * 1.5 : style.size}
                 fill={style.color}
-                opacity={style.opacity}
+                opacity={isHovered ? 1 : style.opacity}
+                stroke={isHovered ? (theme === "dark" ? "#FFFFFF" : "#0E306D") : "none"}
+                strokeWidth={isHovered ? 1.5 : 0}
                 style={{ cursor: "pointer" }}
                 onClick={() => onSelectWafer(point)}
-              >
-                <title>{point.lot_wafer_id ?? "wafer"}: x={point.x.toFixed(2)}, y={point.y.toFixed(2)}</title>
-              </circle>
+              />
             );
           })}
 
-          {/* continuous trend hover overlay */}
-          {trendVisible && (
-            <rect
-              x={0} y={0} width={plotWidth} height={plotHeight} fill="transparent"
-              onMouseMove={handleTrendMouseMove}
-              onMouseLeave={() => setTrendHover(null)}
-            />
-          )}
-          {trendHover && (
+          {/* continuous point+trend hover overlay -- nearest-point search,
+              not per-point listeners (see findNearestPoint's comment). */}
+          <rect
+            x={0} y={0} width={plotWidth} height={plotHeight} fill="transparent"
+            onMouseMove={handlePlotOverlayMouseMove}
+            onMouseLeave={() => {
+              setPointHover(null);
+              setTrendHover(null);
+            }}
+          />
+          {trendHover && !pointHover && (
             <>
               <line x1={trendHover.screenX} x2={trendHover.screenX} y1={0} y2={plotHeight} className="scatterGuideLine" />
               <circle
@@ -422,13 +462,22 @@ export default function ScatterChart({
         );
       })()}
 
-      {trendHover && (
+      {trendHover && !pointHover && (
         <div className="heatmapTooltip" style={{ left: MARGIN.left + trendHover.screenX + 14, top: MARGIN.top + trendHover.screenY + 14 }}>
           <strong>{data.axis.x_label.split(" ")[0]} = {trendHover.dataX.toFixed(1)}</strong>
           <div className="heatmapTooltipRow"><span>구간 평균 불량률</span><b>{trendHover.dataY.toFixed(2)}%</b></div>
           <div className="heatmapTooltipRow"><span>95% 신뢰구간</span><b>{trendHover.ciLo.toFixed(2)} ~ {trendHover.ciHi.toFixed(2)}</b></div>
           <div className="heatmapTooltipRow"><span>이 구간 wafer 수</span><b>{trendHover.n.toLocaleString()}</b></div>
           <div className="heatmapTooltipRow"><span>관리한계 내</span><b>{withinControl ? "예" : "아니오"}</b></div>
+        </div>
+      )}
+
+      {pointHover && (
+        <div className="heatmapTooltip" style={{ left: pointHover.clientX + 14, top: pointHover.clientY + 14 }}>
+          {pointHover.point.lot_wafer_id && <strong>{pointHover.point.lot_wafer_id}</strong>}
+          <div className="heatmapTooltipRow"><span>{data.axis.x_label.split(" ")[0]}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
+          <div className="heatmapTooltipRow"><span>{data.axis.y_label.split(" ")[0]}</span><b>{pointHover.point.y.toFixed(1)}</b></div>
+          <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
         </div>
       )}
 

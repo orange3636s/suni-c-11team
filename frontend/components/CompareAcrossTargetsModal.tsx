@@ -1,0 +1,327 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getScreeningScatter } from "@/lib/api";
+import { useResolvedTheme } from "@/lib/useResolvedTheme";
+import type { ScreeningScatterResponse } from "@/types/data";
+
+const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
+const CHART_W = 320;
+const CHART_H = 260;
+const CHART_GAP = 24;
+const MARGIN = { top: 26, right: 10, bottom: 26, left: 36 };
+const STRONG_RHO = 0.15;
+const POINT_HOVER_RADIUS = 16;
+
+const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
+const NAVY = { light: "#0E306D", dark: "#7BA3E8" };
+const GREEN = { light: "#059669", dark: "#34D399" };
+const RED = { light: "#DC2626", dark: "#F87171" };
+
+function formatNum(v: number): string {
+  return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
+}
+
+function niceTicks(domain: readonly [number, number], count: number): number[] {
+  const [min, max] = domain;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return [min];
+  const step = (max - min) / count;
+  return Array.from({ length: count + 1 }, (_, i) => min + step * i);
+}
+
+type PointHover = { screenX: number; screenY: number; x: number; y: number } | null;
+
+export default function CompareAcrossTargetsModal({
+  feature,
+  originTarget,
+  datasetId,
+  onClose,
+  onSelectTarget,
+}: {
+  feature: string;
+  originTarget: string;
+  datasetId: string;
+  onClose: () => void;
+  onSelectTarget: (target: string) => void;
+}) {
+  const theme = useResolvedTheme();
+  const [dataByTarget, setDataByTarget] = useState<Record<string, ScreeningScatterResponse | null>>({});
+  const [loading, setLoading] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      void Promise.all(
+        TARGETS.map((t) =>
+          getScreeningScatter(datasetId, t, feature)
+            .then((d) => [t, d] as const)
+            .catch(() => [t, null] as const),
+        ),
+      ).then((results) => {
+        if (cancelled) return;
+        setDataByTarget(Object.fromEntries(results));
+        setLoading(false);
+      });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // Mounts once per (feature, origin target) open -- this reuses no
+    // cached client state by design (see design note in the parent: the
+    // heavy stats -- eps2/p-value/control limits -- were already computed
+    // during "원인 분석 실행"; this call is the cheap per-target point
+    // fetch, not a re-run of the screening pipeline).
+  }, [datasetId, feature]);
+
+  useEffect(() => {
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (loading || !scrollRef.current) return;
+    const index = TARGETS.indexOf(originTarget as (typeof TARGETS)[number]);
+    if (index >= 0) scrollRef.current.scrollLeft = index * (CHART_W + CHART_GAP);
+  }, [loading, originTarget]);
+
+  const xDomain = useMemo<[number, number]>(() => {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const t of TARGETS) {
+      const d = dataByTarget[t];
+      if (!d) continue;
+      for (const p of d.points) {
+        if (p.x < min) min = p.x;
+        if (p.x > max) max = p.x;
+      }
+    }
+    if (!Number.isFinite(min)) return [0, 1];
+    const pad = (max - min) * 0.04 || 1;
+    return [min - pad, max + pad];
+  }, [dataByTarget]);
+
+  const originData = dataByTarget[originTarget];
+  const lcl = originData?.reference_lines.find((l) => l.key === "iqr_lo");
+  const ucl = originData?.reference_lines.find((l) => l.key === "iqr_hi");
+  const mean = originData?.reference_lines.find((l) => l.key === "mean");
+
+  return (
+    <div className="compareModalBackdrop" onClick={onClose} role="presentation">
+      <div className="compareModal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${feature} 불량 유형별 영향 비교`}>
+        <div className="compareModalHeader">
+          <div>
+            <h2>{feature} — 불량 유형별 영향 비교</h2>
+            {originData && (
+              <p className="compareModalMeta">
+                n={originData.n.toLocaleString()} 계측
+                {lcl?.drawable && ucl?.drawable && ` · 관리한계 ${formatNum(lcl.value)} ~ ${formatNum(ucl.value)}`}
+              </p>
+            )}
+          </div>
+          <button type="button" className="compareModalClose" onClick={onClose} aria-label="닫기">✕</button>
+        </div>
+
+        {loading ? (
+          <p className="emptyMessage">불러오는 중…</p>
+        ) : (
+          <div className="compareModalScroll" ref={scrollRef}>
+            {TARGETS.map((t) => (
+              <MiniChart
+                key={t}
+                target={t}
+                data={dataByTarget[t]}
+                xDomain={xDomain}
+                isOrigin={t === originTarget}
+                theme={theme}
+                onSelectTarget={() => {
+                  onSelectTarget(t);
+                  onClose();
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="compareModalFooter">
+          <div className="compareModalLegend">
+            {lcl && ucl && (
+              <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? NAVY.dark : NAVY.light }} /> 관리한계 LCL/UCL ({formatNum(lcl.value)} / {formatNum(ucl.value)})</span>
+            )}
+            {mean && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GREEN.dark : GREEN.light }} /> 평균 {formatNum(mean.value)}</span>}
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? RED.dark : RED.light }} /> 구간 평균 불량률 E[Y|x]</span>
+          </div>
+          <a className="compareModalLink" href={`/root-cause?target=${encodeURIComponent(originTarget)}&feature=${encodeURIComponent(feature)}`}>
+            이 인자 산점도로 이동
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniChart({
+  target,
+  data,
+  xDomain,
+  isOrigin,
+  theme,
+  onSelectTarget,
+}: {
+  target: string;
+  data: ScreeningScatterResponse | null;
+  xDomain: [number, number];
+  isOrigin: boolean;
+  theme: "light" | "dark";
+  onSelectTarget: () => void;
+}) {
+  const [hover, setHover] = useState<PointHover>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const plotWidth = CHART_W - MARGIN.left - MARGIN.right;
+  const plotHeight = CHART_H - MARGIN.top - MARGIN.bottom;
+
+  const rho = data?.spearman_r ?? null;
+  const isStrong = rho != null && Math.abs(rho) >= STRONG_RHO;
+
+  const yDomain = useMemo<[number, number]>(() => {
+    if (!data || data.points.length === 0) return [0, 1];
+    const values = data.points.map((p) => p.y);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const pad = (max - min) * 0.1 || 1;
+    return [min - pad, max + pad];
+  }, [data]);
+
+  const xScale = (v: number) => ((v - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * plotWidth;
+  const yScale = (v: number) => plotHeight - ((v - yDomain[0]) / (yDomain[1] - yDomain[0] || 1)) * plotHeight;
+
+  const iqrLo = data?.reference_lines.find((l) => l.key === "iqr_lo");
+  const iqrHi = data?.reference_lines.find((l) => l.key === "iqr_hi");
+  const mean = data?.reference_lines.find((l) => l.key === "mean");
+
+  function handleMouseMove(event: React.MouseEvent<SVGRectElement>) {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || !data) return;
+    const relativeX = event.clientX - rect.left - MARGIN.left;
+    const relativeY = event.clientY - rect.top - MARGIN.top;
+    let best: { x: number; y: number } | null = null;
+    let bestDistance = POINT_HOVER_RADIUS;
+    for (const p of data.points) {
+      const dx = xScale(p.x) - relativeX;
+      const dy = yScale(p.y) - relativeY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { x: p.x, y: p.y };
+      }
+    }
+    if (best) setHover({ screenX: xScale(best.x), screenY: yScale(best.y), x: best.x, y: best.y });
+    else setHover(null);
+  }
+
+  const pointOpacity = isStrong ? 0.55 : 0.18;
+  const pointColor = isStrong ? "#1D4ED8" : "#93C5FD";
+  const trendOpacity = isStrong ? 1 : 0.45;
+  const lineOpacity = isStrong ? 1 : 0.5;
+  const titleColor = isStrong ? (theme === "dark" ? "#7BA3E8" : "#0E306D") : "#9CA3AF";
+  const navyColor = theme === "dark" ? NAVY.dark : NAVY.light;
+  const greenColor = theme === "dark" ? GREEN.dark : GREEN.light;
+  const redColor = theme === "dark" ? RED.dark : RED.light;
+
+  return (
+    <div className={`compareMiniChart ${isOrigin ? "origin" : ""}`} style={{ width: CHART_W }}>
+      <div className="compareMiniChartHeader">
+        <span className="compareMiniChartTitle" style={{ color: titleColor }}>
+          {target}{isOrigin && " ★"} {rho != null && <span className="compareMiniChartRho">ρ={rho >= 0 ? "+" : ""}{rho.toFixed(2)}</span>}
+        </span>
+        {data && (
+          <span className={`confidenceBadge tier-${data.confidence_tier}`}>{TIER_LABEL[data.confidence_tier]}</span>
+        )}
+      </div>
+
+      {!data ? (
+        <p className="emptyMessage">데이터 없음</p>
+      ) : (
+        <svg ref={svgRef} width={CHART_W} height={CHART_H} className="compareMiniChartSvg">
+          <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
+            {niceTicks(yDomain, 3).map((tick) => (
+              <g key={`y-${tick}`}>
+                <line x1={0} x2={plotWidth} y1={yScale(tick)} y2={yScale(tick)} className="compareMiniGridLine" />
+                <text x={-4} y={yScale(tick)} textAnchor="end" dominantBaseline="middle" className="compareMiniTick">{formatNum(tick)}</text>
+              </g>
+            ))}
+            {niceTicks(xDomain, 3).map((tick) => (
+              <text key={`x-${tick}`} x={xScale(tick)} y={plotHeight + 14} textAnchor="middle" className="compareMiniTick">{formatNum(tick)}</text>
+            ))}
+
+            {iqrLo?.drawable && (
+              <rect x={0} y={0} width={Math.max(xScale(iqrLo.value), 0)} height={plotHeight} className="compareMiniOutsideShade" />
+            )}
+            {iqrHi?.drawable && (
+              <rect x={xScale(iqrHi.value)} y={0} width={Math.max(plotWidth - xScale(iqrHi.value), 0)} height={plotHeight} className="compareMiniOutsideShade" />
+            )}
+
+            {data.bins.length > 0 && (
+              <path
+                d={data.bins.map((b, i) => `${i === 0 ? "M" : "L"}${xScale(b.x_mean)},${yScale(b.y_mean)}`).join(" ")}
+                fill="none"
+                stroke={redColor}
+                strokeWidth={2}
+                opacity={trendOpacity}
+              />
+            )}
+
+            {mean?.drawable && (
+              <line x1={xScale(mean.value)} x2={xScale(mean.value)} y1={0} y2={plotHeight} stroke={greenColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
+            )}
+            {iqrLo?.drawable && (
+              <line x1={xScale(iqrLo.value)} x2={xScale(iqrLo.value)} y1={0} y2={plotHeight} stroke={navyColor} strokeWidth={1.6} strokeDasharray="7 4" opacity={lineOpacity} />
+            )}
+            {iqrHi?.drawable && (
+              <line x1={xScale(iqrHi.value)} x2={xScale(iqrHi.value)} y1={0} y2={plotHeight} stroke={navyColor} strokeWidth={1.6} strokeDasharray="7 4" opacity={lineOpacity} />
+            )}
+
+            {data.points.map((p, i) => (
+              <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={2.4} fill={pointColor} opacity={pointOpacity} />
+            ))}
+
+            {hover && (
+              <>
+                <line x1={hover.screenX} x2={hover.screenX} y1={0} y2={plotHeight} className="compareMiniGuideLine" />
+                <circle cx={hover.screenX} cy={hover.screenY} r={3.5} fill={theme === "dark" ? "#2C2C2E" : "#fff"} stroke="#1D4ED8" strokeWidth={1.5} />
+              </>
+            )}
+
+            {/* margin-click switches segment; point-radius excluded so it doesn't fight point hover */}
+            <rect
+              x={0} y={0} width={plotWidth} height={plotHeight} fill="transparent" style={{ cursor: "pointer" }}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={() => setHover(null)}
+              onClick={(event) => {
+                const rect = svgRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const relativeX = event.clientX - rect.left - MARGIN.left;
+                const relativeY = event.clientY - rect.top - MARGIN.top;
+                const nearPoint = data.points.some((p) => Math.hypot(xScale(p.x) - relativeX, yScale(p.y) - relativeY) < POINT_HOVER_RADIUS);
+                if (!nearPoint) onSelectTarget();
+              }}
+            />
+          </g>
+        </svg>
+      )}
+
+      {hover && (
+        <div className="heatmapTooltip compareMiniTooltip">
+          <div className="heatmapTooltipRow"><span>x</span><b>{hover.x.toFixed(1)}</b></div>
+          <div className="heatmapTooltipRow"><span>y</span><b>{hover.y.toFixed(1)}</b></div>
+        </div>
+      )}
+    </div>
+  );
+}

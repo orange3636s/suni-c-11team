@@ -8304,29 +8304,22 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 }
 .waferDetailPopover dd{ margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
-/* Pareto chart (원인분석 tab, above each target's scatter list).
-   Bars are fixed pixel width/gap (48px / 12px) regardless of how many
-   are shown -- a 1-factor result is one 48px bar, not one bar stretched
-   across the whole card. The plot area's pixel width is `n * 96px`; when
-   that's narrower than the card, it just sits left-aligned with empty
-   space after it (.paretoPlotScroll only scrolls when it's wider). */
-.paretoChartCard{ display: flex; flex-direction: column; gap: 4px; }
+/* Pareto chart (원인분석/모델학습 탭 공유). Always exactly 5 bars (fewer
+   only for a small uploaded pool): fixed 360px plot height, bar width
+   clamped 28~48px with the plot centered when the container is wider
+   than the bars need, horizontal-scrolling only when it's narrower than
+   the 28px-bar floor allows. */
+.paretoChartCard{ display: flex; flex-direction: column; gap: 4px; padding: 24px; }
 .paretoChartHeader{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
 .paretoChartHeader h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
-.paretoCountToggle{ display: inline-flex; border: 1px solid var(--border-card, var(--border)); border-radius: 999px; padding: 3px; gap: 2px; flex: 0 0 auto; }
-.paretoCountToggle button{
-  border: none; background: transparent; padding: 6px 12px; border-radius: 999px; font: 600 12.5px/1 var(--font-ui);
-  color: var(--text-secondary); cursor: pointer; white-space: nowrap;
-}
-.paretoCountToggle button.active{ background: var(--accent); color: #fff; }
 
 .paretoChartBody{ display: flex; align-items: stretch; gap: 6px; }
 .paretoAxisCol{ display: flex; align-items: stretch; gap: 2px; flex: 0 0 auto; }
 .paretoAxisLabel{
   writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; color: var(--text-secondary);
-  white-space: nowrap; display: flex; align-items: center; justify-content: center; height: 280px;
+  white-space: nowrap; display: flex; align-items: center; justify-content: center;
 }
-.paretoTickCol{ position: relative; height: 280px; width: 28px; flex: 0 0 auto; }
+.paretoTickCol{ position: relative; width: 30px; flex: 0 0 auto; }
 .paretoTick{
   position: absolute; transform: translateY(50%); font-size: 10px; color: var(--text-secondary);
   white-space: nowrap; width: 100%;
@@ -8335,50 +8328,50 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 .paretoAxisCol-right .paretoTick{ left: 0; text-align: left; }
 
 .paretoPlotScroll{ flex: 1 1 auto; min-width: 0; overflow-x: auto; }
+.paretoPlotCenterer{ display: flex; flex-direction: column; align-items: center; margin: 0 auto; width: fit-content; max-width: 100%; }
 .paretoPlotArea{
-  position: relative; height: 280px;
+  position: relative;
   border-bottom: 1px solid var(--heatmap-cell-border, var(--border));
   border-left: 1px solid var(--heatmap-cell-border, var(--border));
 }
+.paretoOverlay{ display: block; overflow: visible; }
 .paretoBar{
-  position: absolute; bottom: 0; border: none; cursor: pointer; padding: 0; box-sizing: border-box;
-  border-radius: 4px 4px 0 0;
-  background: var(--pareto-bar, #0072c6);
-  transition: opacity 120ms ease, filter 120ms ease;
+  cursor: pointer; transition: opacity 120ms ease, filter 120ms ease;
+  fill: var(--pareto-bar, #0072c6);
 }
-.paretoBar.muted{ opacity: .35; }
-.paretoBar.emphasized{ opacity: 1; }
-.paretoBar.tier-strong{ background: var(--pareto-bar, #0072c6); }
-.paretoBar.tier-moderate{ background: color-mix(in srgb, var(--pareto-bar, #0072c6) 70%, var(--surface-card, #fff)); }
-.paretoBar.tier-weak{ background: color-mix(in srgb, var(--pareto-bar, #0072c6) 42%, var(--surface-card, #fff)); }
-.paretoBar.tier-reference{
-  background: color-mix(in srgb, var(--pareto-bar, #0072c6) 25%, var(--surface-card, #fff));
-  background-image: repeating-linear-gradient(45deg, rgba(0,0,0,.14) 0 4px, transparent 4px 8px);
-}
+.paretoBar.tier-strong{ fill: var(--pareto-bar, #0072c6); }
+.paretoBar.tier-moderate{ fill: color-mix(in srgb, var(--pareto-bar, #0072c6) 70%, var(--surface-card, #fff)); }
+.paretoBar.tier-weak{ fill: color-mix(in srgb, var(--pareto-bar, #0072c6) 42%, var(--surface-card, #fff)); }
+.paretoBar.tier-reference{ fill: color-mix(in srgb, var(--pareto-bar, #0072c6) 25%, var(--surface-card, #fff)); }
 .paretoBar:hover{ filter: brightness(1.12); }
-.paretoBar.active{ outline: 2px solid var(--accent); outline-offset: 2px; }
-.paretoBar:focus-visible{ outline: 3px solid var(--accent); outline-offset: 2px; }
-.paretoOverlay{ position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.paretoBar.active{ stroke: var(--accent); stroke-width: 2; }
 .paretoThresholdLine{ stroke-width: 1; stroke-dasharray: 4 4; }
 .paretoThresholdLabel{
-  position: absolute; right: 2px; transform: translateY(-100%); margin-top: -2px;
-  font-size: 10px; font-weight: 700; color: var(--text-secondary);
-  background: var(--surface-card, #fff); padding: 1px 5px; border-radius: 4px; pointer-events: none;
+  font-size: 10px; font-weight: 700; fill: var(--text-secondary);
 }
-.paretoDividerLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: 1; stroke-dasharray: 2 2; }
 .paretoCumulativeLine{ stroke-width: 1.5; }
 .paretoGuideLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: 1; stroke-dasharray: 3 3; opacity: .7; }
+.paretoSingleMarkerValue{ font-size: 12.5px; font-weight: 700; }
 
-.paretoFeatureLabels{ display: flex; margin-top: 4px; }
+.paretoFeatureLabels{ position: relative; margin-top: 4px; }
 .paretoFeatureLabel{
-  font-size: 10.5px; color: var(--text-secondary); text-align: center; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; box-sizing: border-box;
-  writing-mode: horizontal-tb; transform: none;
+  position: absolute; top: 4px;
+  font-size: 10.5px; color: var(--text-secondary); text-align: center; box-sizing: border-box;
+  display: flex; align-items: flex-start; justify-content: center;
+}
+.paretoFeatureLabelText{
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; display: inline-block;
+}
+.paretoFeatureLabels.rotated .paretoFeatureLabel{ justify-content: flex-end; align-items: center; height: 100%; }
+.paretoFeatureLabels.rotated .paretoFeatureLabelText{
+  transform: rotate(-90deg); transform-origin: right center; white-space: nowrap; max-width: none;
+  position: relative; right: 0; text-align: right;
 }
 .paretoAxisTitle{ margin: 2px 0 0; text-align: center; font-size: 11px; color: var(--text-secondary); }
 .paretoCaption{ margin: 6px 0 0; font-size: 12.5px; color: var(--text-secondary); text-align: right; }
-.paretoLegend{ display: flex; gap: 16px; margin-top: 8px; font-size: 11.5px; color: var(--text-secondary); flex-wrap: wrap; }
+.paretoLegend{ display: flex; gap: 16px; font-size: 11.5px; color: var(--text-secondary); flex-wrap: wrap; }
 .paretoLegend span{ display: inline-flex; align-items: center; gap: 6px; }
+.paretoLegendInline{ margin-top: 2px; }
 .paretoLegendSwatch{ display: inline-block; width: 14px; height: 14px; border-radius: 3px; background: var(--pareto-bar, #0072c6); }
 .paretoLegendSwatch.tier-strong{ background: var(--pareto-bar, #0072c6); }
 .paretoLegendSwatch.tier-moderate{ background: color-mix(in srgb, var(--pareto-bar, #0072c6) 70%, var(--surface-card, #fff)); }
@@ -8536,3 +8529,60 @@ html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
 @media (prefers-reduced-motion: reduce){
   .jsonReportToast{ animation: none; }
 }
+
+/* Y1~Y5 비교 모달: 인자 하나 고정, 타깃 5개를 가로 1행으로 비교. */
+.compareModalBackdrop{
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 300; padding: 24px;
+}
+.compareModal{
+  width: 92vw; max-width: 1760px; max-height: 88vh;
+  background: var(--surface); border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.compareModalHeader{
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+}
+.compareModalHeader h2{ margin: 0; font-size: 16px; font-weight: 700; }
+.compareModalMeta{ margin: 4px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+.compareModalClose{
+  border: none; background: var(--surface-secondary, var(--surface-muted)); border-radius: 8px;
+  width: 30px; height: 30px; cursor: pointer; font-size: 14px; color: var(--text-secondary); flex: 0 0 auto;
+}
+.compareModalScroll{
+  display: flex; gap: 24px; padding: 18px 22px; overflow-x: auto; flex: 1 1 auto;
+  background:
+    linear-gradient(to right, var(--surface) 0, transparent 24px) left / 32px 100% no-repeat,
+    linear-gradient(to left, var(--surface) 0, transparent 24px) right / 32px 100% no-repeat local;
+}
+.compareMiniChart{
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--border); border-radius: 12px; padding: 8px;
+}
+.compareMiniChart.origin{ border: 2px solid var(--brand-navy-text, #0E306D); }
+.compareMiniChartHeader{ display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 2px; }
+.compareMiniChartTitle{ font-size: 13px; font-weight: 700; }
+.compareMiniChartRho{ font-weight: 500; font-size: 11.5px; margin-left: 4px; }
+.compareMiniChartSvg{ display: block; }
+.compareMiniGridLine{ stroke: var(--border); stroke-width: 1; opacity: 0.6; }
+.compareMiniTick{ font-size: 9px; fill: var(--text-secondary); }
+.compareMiniOutsideShade{ fill: #F59E0B; opacity: 0.08; }
+.compareMiniGuideLine{ stroke: var(--text-secondary); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0.6; }
+.compareMiniTooltip{ position: fixed; pointer-events: none; }
+.compareModalFooter{
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 14px 22px; border-top: 1px solid var(--border);
+}
+.compareModalLegend{ display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
+.compareModalLegend span{ display: inline-flex; align-items: center; gap: 6px; }
+.compareLegendSwatch{ display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
+.compareModalLink{ font-size: 13px; font-weight: 600; color: var(--brand-navy-text, #0E306D); white-space: nowrap; }
+
+/* "Y1~Y5 비교" button on each scatter card header. */
+.compareTriggerButton{
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
+  background: transparent; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600;
+  color: var(--text-primary); cursor: pointer; white-space: nowrap;
+}
+.compareTriggerButton:hover{ background: var(--surface-secondary, var(--surface-muted)); border-color: var(--brand-navy-text); }

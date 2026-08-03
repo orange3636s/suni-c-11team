@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import select_pareto_factors
+from src.analysis.screening.selector import confidence_tier, select_primary_factor
 
 
 def _rng(seed: int) -> np.random.Generator:
@@ -71,7 +71,14 @@ def test_schema_with_only_y1_to_y3():
     assert "Y5" not in schema.target_cols
 
 
-def test_random_noise_yields_no_significant_factor():
+def test_random_noise_still_returns_a_primary_factor_with_low_confidence():
+    """The display-facing selector no longer hides a factor for failing
+    significance -- pure noise (Y independent of every candidate) still
+    returns the single strongest-by-eps2 factor, just tagged with a
+    weak/reference confidence tier instead of vanishing as "no significant
+    factor". This is the "유의한 인자 없음 폐기" policy: only an empty
+    candidate pool (every factor below its own min-n gate) returns None.
+    """
     rng = _rng(42)
     n = 500
     data = {"Lot_Wafer_ID": [f"L{i}" for i in range(n)]}
@@ -82,7 +89,28 @@ def test_random_noise_yields_no_significant_factor():
     df = pd.DataFrame(data)
 
     schema = parse_schema(df)
-    result = select_pareto_factors(df, schema, "Y1")
+    factor = select_primary_factor(df, schema, "Y1")
 
-    assert result.no_significant_factor is True
-    assert result.factors == []
+    assert factor is not None
+    assert confidence_tier(factor.p_value) in ("weak", "reference")
+
+
+def test_all_candidates_below_min_n_returns_none():
+    """The one remaining "분석 불가" condition: every candidate factor's
+    observed sample is too small to score at all (below its own min-n
+    gate), not merely insignificant.
+    """
+    rng = _rng(7)
+    n = 15  # below both DEFAULT_MIN_N_NUMERIC (100) and _CATEGORICAL (20)
+    data = {
+        "Lot_Wafer_ID": [f"L{i}" for i in range(n)],
+        "Step1_R1": rng.normal(size=n),
+        "Step1_Config": rng.choice(["A", "B"], size=n),
+        "Y1": rng.normal(size=n),
+    }
+    df = pd.DataFrame(data)
+
+    schema = parse_schema(df)
+    factor = select_primary_factor(df, schema, "Y1")
+
+    assert factor is None
