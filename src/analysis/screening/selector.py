@@ -125,6 +125,32 @@ def _relation_shape(df: pd.DataFrame, target: str, feature: str, kind: str) -> t
     return result.shape, result.optimal_center
 
 
+def score_all_factors(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> list[dict]:
+    """Score every R/D/Config candidate factor against `target`: eps2, BH-FDR
+    q-value, significance -- one target is one FDR family. Shared by the
+    Pareto selector and the correlation heatmap so both surfaces report
+    identical q-values for the same factor/target pair; do not duplicate
+    this FDR-application step elsewhere.
+    """
+    rows = _evaluate_all_factors(df, schema, target, min_n_numeric, min_n_categorical)
+    if not rows:
+        return []
+
+    p_values = [r["p_value"] for r in rows]
+    q_values = benjamini_hochberg(p_values)
+    for row, q in zip(rows, q_values):
+        row["q_value"] = float(q)
+        row["significant"] = bool(q < fdr_alpha)
+    return rows
+
+
 def select_pareto_factors(
     df: pd.DataFrame,
     schema: Schema,
@@ -134,16 +160,10 @@ def select_pareto_factors(
     min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
     min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
 ) -> TargetParetoResult:
-    rows = _evaluate_all_factors(df, schema, target, min_n_numeric, min_n_categorical)
+    rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
 
     if not rows:
         return TargetParetoResult(target=target, no_significant_factor=True)
-
-    p_values = [r["p_value"] for r in rows]
-    q_values = benjamini_hochberg(p_values)
-    for row, q in zip(rows, q_values):
-        row["q_value"] = float(q)
-        row["significant"] = bool(q < fdr_alpha)
 
     rows.sort(key=lambda r: r["eps2"], reverse=True)
 

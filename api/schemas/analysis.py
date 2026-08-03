@@ -69,6 +69,24 @@ class ScreeningScatterResponse(BaseModel):
     axis: dict[str, str]
 
 
+class HeatmapScaleSchema(BaseModel):
+    min: float
+    max: float
+
+
+class HeatmapResponse(BaseModel):
+    dataset_id: str
+    metric: str
+    features: list[str]
+    targets: list[str]
+    values: list[list[float | None]]
+    n: list[list[int]]
+    q: list[list[float | None]]
+    significant: list[list[bool]]
+    scale: HeatmapScaleSchema
+    excluded_configs: int
+
+
 class ControlRangeSchema(BaseModel):
     feature: str
     target: str

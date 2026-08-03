@@ -6,6 +6,8 @@ import type {
   DatasetSchemaResponse,
   DatasetUploadResponse,
   DeleteModelResponse,
+  HeatmapMetric,
+  HeatmapResponse,
   ModelDetail,
   ModelListResponse,
   ModelPerformanceResponse,
@@ -369,4 +371,8 @@ export function getAlarmSummary(trainDataset: string, evalDataset: string): Prom
 
 export function getModelPerformance(): Promise<ModelPerformanceResponse> {
   return getJson("/api/models/performance");
+}
+
+export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric): Promise<HeatmapResponse> {
+  return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric }).toString()}`);
 }

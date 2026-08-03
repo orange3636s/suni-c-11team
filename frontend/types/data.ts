@@ -520,6 +520,21 @@ export type AlarmSummaryResponse = {
   top_lots: Array<{ lot_id: string; alarm_count: number }>;
 };
 
+export type HeatmapMetric = "spearman" | "eps2";
+
+export type HeatmapResponse = {
+  dataset_id: string;
+  metric: HeatmapMetric;
+  features: string[];
+  targets: string[];
+  values: Array<Array<number | null>>;
+  n: number[][];
+  q: Array<Array<number | null>>;
+  significant: boolean[][];
+  scale: { min: number; max: number };
+  excluded_configs: number;
+};
+
 export type TargetPerformance = {
   target: string;
   no_significant_factor: boolean;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from functools import lru_cache
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -9,6 +10,7 @@ from api.schemas.analysis import (
     AlarmListResponse,
     AlarmSummaryResponse,
     ControlRangeListResponse,
+    HeatmapResponse,
     ModelPerformanceResponse,
     ScreeningResponse,
     ScreeningScatterResponse,
@@ -20,6 +22,7 @@ from src.analysis.control_range import (
     summarize_wafer_status,
 )
 from src.analysis.scatter import build_scatter_data
+from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import select_pareto_factors_all_targets
 from src.ml.inference import get_latest_model_metadata
@@ -87,6 +90,33 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "q_value": data.q_value,
         "n": data.n,
         "axis": data.axis,
+    }
+
+
+@lru_cache(maxsize=64)
+def _cached_heatmap(dataset_id: str, metric: str) -> HeatmapData:
+    # Cached per (dataset_id, metric): 58x5 factor scorings is ~290 eps2/BH-FDR
+    # + Spearman computations, and dataset content is immutable once a
+    # dataset_id exists (uploads mint a fresh uuid; bundled files are static).
+    df = _dataframe_or_404(dataset_id)
+    schema = parse_schema(df)
+    return build_heatmap(df, schema, metric=metric)  # type: ignore[arg-type]
+
+
+@router.get("/screening/heatmap", response_model=HeatmapResponse)
+def get_screening_heatmap(dataset: str = "train", metric: Literal["spearman", "eps2"] = "spearman") -> dict[str, Any]:
+    heatmap = _cached_heatmap(dataset, metric)
+    return {
+        "dataset_id": dataset,
+        "metric": metric,
+        "features": heatmap.features,
+        "targets": heatmap.targets,
+        "values": heatmap.values,
+        "n": heatmap.n,
+        "q": heatmap.q,
+        "significant": heatmap.significant,
+        "scale": {"min": heatmap.scale["min"], "max": heatmap.scale["max"]},
+        "excluded_configs": heatmap.excluded_configs,
     }
 
 
