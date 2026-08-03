@@ -11,7 +11,6 @@ from sklearn.dummy import DummyRegressor
 
 import src.ml.inference as inference_module
 from src.ml.dataset import prepare_dataset
-from src.ml.explainability import explain_dataframe
 from src.ml.hybrid import (
     ModelArtifactRef,
     ModelStagingDirectory,
@@ -170,13 +169,6 @@ def test_model_discovery_never_deserializes_joblib(
     assert warnings == []
     assert models[0]["available"] is True
     assert detail["available"] is True
-
-
-def test_explanation_limits_are_enforced_before_model_work() -> None:
-    with pytest.raises(ValueError, match="max_rows"):
-        explain_dataframe(pd.DataFrame(), None, max_rows=501)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="top_n"):
-        explain_dataframe(pd.DataFrame(), None, top_n=31)  # type: ignore[arg-type]
 
 
 def test_memory_snapshot_is_optional_and_numeric() -> None:

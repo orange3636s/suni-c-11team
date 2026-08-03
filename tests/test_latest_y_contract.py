@@ -21,16 +21,6 @@ def test_training_uses_only_server_side_y_contract() -> None:
     assert _multipart_properties("/api/train/jobs") == {"file"}
 
 
-@pytest.mark.parametrize(
-    "path",
-    ["/api/predict", "/api/explain", "/api/relationships"],
-)
-def test_runtime_endpoints_do_not_accept_model_or_target(path: str) -> None:
-    properties = _multipart_properties(path)
-    assert "model_id" not in properties
-    assert "target" not in properties
-
-
 def test_y1_through_y10_and_identifiers_never_become_features() -> None:
     rows = 12
     frame = pd.DataFrame(

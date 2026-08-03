@@ -7,12 +7,9 @@ import { useEffect, useRef, useState } from "react";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 
 const navigationItems = [
-  { label: "개요", href: "/", icon: "overview" },
   { label: "모델 학습", href: "/training", icon: "model" },
-  { label: "수율 예측", href: "/prediction", icon: "trend" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "사전 알람 로그", href: "/alerts", icon: "alert" },
-  { label: "자동화 상태", href: "/automation", icon: "automation" },
 ] as const;
 
 type NavigationLabel = (typeof navigationItems)[number]["label"];
@@ -21,7 +18,7 @@ type SidebarProps = {
   activeItem?: NavigationLabel;
 };
 
-export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
+export default function Sidebar({ activeItem = "모델 학습" }: SidebarProps) {
   const { theme, setTheme } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
@@ -75,7 +72,7 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
                 >
                   <NavIcon name={item.icon} />
                   <span>{item.label}</span>
-                  <i className={`menuStatusDot ${item.label === "자동화 상태" ? "idle" : "ready"}`} aria-label={item.label === "자동화 상태" ? "자동화 대기" : "사용 가능"} />
+                  <i className="menuStatusDot ready" aria-label="사용 가능" />
                 </Link>
               </li>
             );
@@ -132,12 +129,9 @@ export default function Sidebar({ activeItem = "개요" }: SidebarProps) {
 
 function NavIcon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
-    overview: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
     model: <><path d="M12 2v4" /><path d="M12 18v4" /><path d="M4.93 4.93l2.83 2.83" /><path d="M16.24 16.24l2.83 2.83" /><path d="M2 12h4" /><path d="M18 12h4" /><path d="M4.93 19.07l2.83-2.83" /><path d="M16.24 7.76l2.83-2.83" /><circle cx="12" cy="12" r="4" /></>,
-    trend: <><path d="M3 3v18h18" /><path d="m7 16 4-5 4 3 5-7" /></>,
     analysis: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /><path d="M8 11h6" /><path d="M11 8v6" /></>,
     alert: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
-    automation: <><path d="M4 12a8 8 0 0 1 14.9-4" /><path d="m19 3 .2 5-5-.2" /><path d="M20 12a8 8 0 0 1-14.9 4" /><path d="m5 21-.2-5 5 .2" /></>,
   };
   return <svg className="navigationIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }

@@ -10,8 +10,6 @@ from api.routes.data import (
     recover_interrupted_training_jobs,
     router as data_router,
 )
-from api.routes.runtime import router as runtime_router
-from api.routes.admin import router as admin_router
 from api.settings import settings
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -87,12 +85,6 @@ app.add_middleware(
 )
 _PROTECTED_OPERATION_PATHS: dict[str, OperationKind] = {
     "/api/train": "training",
-    "/api/predict": "prediction",
-    "/api/predict/download": "prediction",
-    "/api/relationships": "analysis",
-    "/api/explain": "analysis",
-    "/api/explain/download": "analysis",
-    "/api/analyze": "analysis",
 }
 
 
@@ -116,8 +108,6 @@ async def protect_active_operations(request: Request, call_next):
 
 
 app.include_router(data_router)
-app.include_router(runtime_router)
-app.include_router(admin_router)
 
 
 @app.get("/")
