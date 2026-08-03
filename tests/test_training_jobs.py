@@ -318,8 +318,8 @@ def test_train_job_api_runs_real_training_and_saves_model(
         result = row["result"]
         assert result is not None
         assert result["model_id"]
-        assert (model_dir / f'{result["model_id"]}.joblib').is_file()
-        assert (model_dir / f'{result["model_id"]}.json').is_file()
+        assert (model_dir / result["model_id"] / "bundle.joblib").is_file()
+        assert (model_dir / result["model_id"] / "metadata.json").is_file()
         assert result["test_metrics"]["rmse"] is not None
     finally:
         manager.shutdown()

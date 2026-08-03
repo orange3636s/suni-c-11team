@@ -15,15 +15,42 @@ bound isn't discriminating anything, so it falls back to the band's own
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from src.analysis.screening.selector import ParetoFactor
 
 FALLBACK_COVERAGE_THRESHOLD = 0.98
 FALLBACK_LOWER_QUANTILE = 0.01
 FALLBACK_UPPER_QUANTILE = 0.99
+
+SEVERITY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "alarm_severity.yaml"
+DEFAULT_SEVERITY_THRESHOLDS = {"low_max_ratio": 0.5, "medium_max_ratio": 1.5}
+
+
+@lru_cache(maxsize=1)
+def _severity_thresholds() -> dict[str, float]:
+    try:
+        loaded = yaml.safe_load(SEVERITY_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return dict(DEFAULT_SEVERITY_THRESHOLDS)
+    return {**DEFAULT_SEVERITY_THRESHOLDS, **loaded}
+
+
+def classify_severity(deviation: float, band_width: float) -> str:
+    if band_width <= 0:
+        return "high"
+    ratio = abs(deviation) / band_width
+    thresholds = _severity_thresholds()
+    if ratio <= thresholds["low_max_ratio"]:
+        return "low"
+    if ratio <= thresholds["medium_max_ratio"]:
+        return "medium"
+    return "high"
 
 
 @dataclass
@@ -41,6 +68,7 @@ class ControlRange:
     band_in_ratio: float  # n_band / n_observed -- how much of the observed sample the range rests on
     n_band: int  # rows in the Q1..Q3 band used to derive the range
     n_observed: int  # rows where `feature` is observed at all (pairwise)
+    band_width: float  # band's raw x extent (max - min), used to normalize alarm severity
 
     def contains(self, value: float) -> bool:
         if pd.isna(value):
@@ -100,6 +128,7 @@ def compute_control_range(train_df: pd.DataFrame, factor: ParetoFactor) -> Contr
             upper = float(band["x"].quantile(FALLBACK_UPPER_QUANTILE))
 
     band_in_ratio = n_band / n_observed if n_observed else 0.0
+    band_width = float(band["x"].max() - band["x"].min()) if n_band else 0.0
 
     return ControlRange(
         feature=feature,
@@ -115,6 +144,7 @@ def compute_control_range(train_df: pd.DataFrame, factor: ParetoFactor) -> Contr
         band_in_ratio=band_in_ratio,
         n_band=n_band,
         n_observed=n_observed,
+        band_width=band_width,
     )
 
 
@@ -131,6 +161,7 @@ class WaferAlarm:
     upper: float | None
     deviation: float
     direction: str  # "above" | "below"
+    severity: str  # "low" | "medium" | "high"
     actual_y: float | None
 
 
@@ -174,6 +205,7 @@ def evaluate_alarms(
                 upper=control_range.upper,
                 deviation=float(deviation),
                 direction=direction,
+                severity=classify_severity(deviation, control_range.band_width),
                 actual_y=(float(actual_y) if actual_y is not None and pd.notna(actual_y) else None),
             )
         )

@@ -10,6 +10,8 @@ from api.routes.data import (
     recover_interrupted_training_jobs,
     router as data_router,
 )
+from api.routes.analysis import router as analysis_router
+from api.routes.datasets import router as datasets_router
 from api.settings import settings
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -108,6 +110,8 @@ async def protect_active_operations(request: Request, call_next):
 
 
 app.include_router(data_router)
+app.include_router(datasets_router)
+app.include_router(analysis_router)
 
 
 @app.get("/")

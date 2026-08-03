@@ -26,12 +26,14 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from starlette.concurrency import run_in_threadpool
 
 from api.schemas.data import (
     ColumnDetectionResult,
     DataSummary,
     DatasetSplit,
+    EvaluationSummary,
     ModelArtifacts,
     ModelComparisonItem,
     ModelDeleteResponse,
@@ -48,17 +50,20 @@ from api.schemas.data import (
 )
 from api.schemas.jobs import TrainJobAccepted, TrainJobResult, TrainJobStatus
 from api.settings import settings
+from src.analysis.screening.schema import parse_schema
 from src.data_validation import load_data_schema, validate_dataframe
 from src.ml.dataset import (
     RANDOM_STATE,
     TARGET_COLUMN,
-    prepare_dataset,
-    split_dataset,
 )
-from src.config_parser import CONFIG_PARSER_VERSION
-from src.schema_compatibility import schema_fingerprint
-from src.ml.model_io import save_model_bundle
-from src.ml.hybrid import save_hybrid_bundle, train_hybrid_multi_y
+from src.ml.hybrid import save_hybrid_bundle
+from src.ml.pipeline import (
+    FINAL_YIELD_COLUMN,
+    build_hybrid_training_result,
+    target_metrics_summary,
+    train_and_evaluate,
+)
+from src.ml.evaluation import evaluate_regression
 from src.ml.inference import (
     InferenceInputError,
     InvalidModelIdError,
@@ -71,8 +76,6 @@ from src.ml.inference import (
     load_latest_model_bundle,
     get_latest_model_metadata,
 )
-from src.ml.training import train_regression_models
-from src.ml.evaluation import evaluate_regression
 from src.preprocessing import preprocess_dataframe
 from src.runtime.store import RuntimeStore
 from src.runtime.operation_coordinator import (
@@ -585,364 +588,69 @@ async def train_model(
         gc.collect()
     _report_training_progress("학습 데이터 전처리", 30)
 
-    if target is None:
-        if not _TRAINING_LOCK.acquire(blocking=False):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="다른 모델 학습이 진행 중입니다. 완료 후 다시 시도해 주세요.",
-            )
-        try:
-            try:
-                _report_training_progress("Multi-Y 모델 학습", 40)
-                hybrid = await run_in_threadpool(
-                    partial(
-                        train_hybrid_multi_y,
-                        dataframe,
-                        train_ratio=0.70,
-                        validation_ratio=0.15,
-                        test_ratio=0.15,
-                        progress_callback=_report_training_progress,
-                    )
-                )
-            finally:
-                _TRAINING_LOCK.release()
-            _report_training_progress("Multi-Y 모델 저장", 90)
-            created_at = datetime.now().astimezone()
-            model_id = f"AUTO_Y1_Y5_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
-            raw_features = list(hybrid.metadata["raw_feature_columns"])
-            hybrid_processing_summary = {
-                **preprocessing_report.get("processing_summary", {}),
-                **hybrid.metadata.get("preprocessing_summary", {}),
-            }
-            hybrid.metadata.update({
-                "model_id": model_id,
-                "created_at": created_at.isoformat(),
-                "schema_version": "semicon_yield_v2",
-                "schema_fingerprint": schema_fingerprint(raw_features),
-                "raw_feature_columns": raw_features,
-                "categorical_columns": list(dataset.categorical_columns),
-                "numeric_columns": list(dataset.numeric_columns),
-                "target_column": "Y",
-                "excluded_target_columns": [f"Y{index}" for index in range(1, 11)],
-                "model_structure": "Direct Y model",
-                "config_parser_version": CONFIG_PARSER_VERSION,
-                "preprocessing_config": {
-                    "missing_strategy": hybrid.metadata.get("missing_strategy"),
-                    "outlier_strategy": hybrid.metadata.get("outlier_strategy"),
-                    "missing_indicator": False,
-                    "outlier_indicator": False,
-                    "statistics_scope": "train_for_selection_and_train_validation_for_final_refit",
-                    "fallback_used": hybrid.metadata.get("fallback_used", False),
-                },
-                "preprocessing_summary": hybrid_processing_summary,
-                "measurement_coverage": {
-                    "r": validation.get("r_measurement_coverage", 0.0),
-                    "d": validation.get("d_measurement_coverage", 0.0),
-                },
-                "source_filename": filename,
-                "training_time_seconds": time.perf_counter() - training_started_at,
-            })
-            bundle_path, metadata_path = save_hybrid_bundle(hybrid, MODEL_DIR, model_id)
-            _report_training_progress("학습 결과 정리", 98)
-            selected = hybrid.metadata["selected_final_output"]
-            selected_metrics = hybrid.metadata["final_y_metrics"][selected]
-            rows = hybrid.metadata["dataset_rows"]
-            response = TrainResponse(
-                target="Y1~Y5",
-                best_model="Y1~Y5 자동 모델",
-                split=DatasetSplit(
-                    train_rows=rows["train"],
-                    validation_rows=rows["validation"],
-                    test_rows=rows["test"],
-                    group_split_used=True,
-                    split_method=hybrid.metadata["split_method"],
-                ),
-                metrics={name: ModelMetrics(**values) for name, values in selected_metrics.items()},
-                model_comparison=[],
-                feature_count=len(hybrid.bundle.feature_columns),
-                warnings=hybrid.warnings,
-                artifacts=ModelArtifacts(
-                    model_file=str(bundle_path.relative_to(MODEL_DIR)),
-                    metadata_file=str(metadata_path.relative_to(MODEL_DIR)),
-                ),
-                missingness_sensitivity=None,
-                evaluation_summary=hybrid.metadata["cv_protocol"],
-                model_id=model_id,
-                model_type="hybrid_multi_y",
-                selected_final_output=selected,
-                final_y_metrics=hybrid.metadata["final_y_metrics"],
-                target_metrics=hybrid.metadata["target_metrics"],
-                risk_metrics=hybrid.metadata["risk_metrics"],
-                preprocessing={
-                    "schema_version": "semicon_yield_v2",
-                    "config_parser_version": CONFIG_PARSER_VERSION,
-                    "measurement_coverage": hybrid.metadata["measurement_coverage"],
-                    "policy": hybrid.metadata["preprocessing_config"],
-                    **hybrid_processing_summary,
-                },
-                ensemble=None,
-            )
-            response.model_dump_json()
-            return response
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("Hybrid Multi-Y 학습 또는 Bundle 저장 실패")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Hybrid Multi-Y 모델 학습 또는 저장 중 서버 오류가 발생했습니다.",
-            ) from exc
-
-    try:
-        dataset = prepare_dataset(
-            dataframe,
-            target=target,
-            add_missing_indicators=missing_indicator,
-        )
-    except ValueError as exc:
-        logger.warning("학습 데이터 준비 실패: %s", exc)
+    schema = parse_schema(dataframe)
+    if not schema.target_cols:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("학습 feature 탐지 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="학습 feature를 준비하는 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-    logger.info(
-        "학습 feature 탐지 완료: target=%s, features=%d",
-        target,
-        len(dataset.feature_columns),
+            detail="Y1~Y5 타깃 열이 없어 학습할 수 없습니다.",
+        )
+
+    lot_column = "Lot_ID"
+    has_groups = lot_column in dataframe.columns and dataframe[lot_column].nunique(dropna=True) >= 10
+    if has_groups:
+        groups = dataframe[lot_column].astype(str)
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=RANDOM_STATE)
+        train_indices, test_indices = next(splitter.split(dataframe, groups=groups))
+        split_method = "group_shuffle_lot_85_15"
+        group_split_used = True
+    else:
+        all_indices = np.arange(len(dataframe))
+        train_indices, test_indices = train_test_split(
+            all_indices, test_size=0.15, random_state=RANDOM_STATE
+        )
+        split_method = "random_shuffle_85_15"
+        group_split_used = False
+
+    internal_train = dataframe.iloc[train_indices].reset_index(drop=True)
+    internal_test = dataframe.iloc[test_indices].reset_index(drop=True)
+    train_lots = (
+        sorted(internal_train[lot_column].astype(str).unique().tolist())
+        if lot_column in dataframe.columns
+        else []
     )
-    _report_training_progress(f"{target} Feature 준비", 38)
-
-    try:
-        split = split_dataset(
-            dataset,
-            random_state=RANDOM_STATE,
-            train_ratio=train_ratio / 100,
-            validation_ratio=validation_ratio / 100,
-            test_ratio=test_ratio / 100,
-        )
-    except ValueError as exc:
-        logger.warning("학습 데이터 분할 실패: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("학습 데이터 분할 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="학습 데이터를 분할하는 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-    logger.info(
-        "학습 데이터 분할 완료: method=%s, train=%d, validation=%d, test=%d",
-        split.split_method,
-        split.row_counts["train_rows"],
-        split.row_counts["validation_rows"],
-        split.row_counts["test_rows"],
+    test_lots = (
+        sorted(internal_test[lot_column].astype(str).unique().tolist())
+        if lot_column in dataframe.columns
+        else []
     )
-    _report_training_progress(f"{target} 학습 데이터 분할", 45)
 
+    _report_training_progress("인자 스크리닝 및 모델 학습", 40)
     try:
-        _report_training_progress(f"{target} 모델 학습", 50)
-        training = train_regression_models(
-            dataset,
-            split,
-            random_state=RANDOM_STATE,
+        evaluation = await run_in_threadpool(
+            partial(train_and_evaluate, internal_train, internal_test, schema)
         )
-    except ValueError as exc:
-        logger.warning("모델 학습 실패: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
     except Exception as exc:
-        logger.exception("모델 학습 중 내부 오류")
+        logger.exception("스크리닝 기반 파이프라인 학습 실패")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="모델 학습 중 서버 내부 오류가 발생했습니다.",
         ) from exc
-    logger.info("최적 모델 선정 완료: %s", training.best_model_name)
-    _report_training_progress(f"{target} 모델 평가", 82)
+    _report_training_progress("모델 저장", 90)
 
-    missingness_sensitivity: dict[str, Any] | None = None
-    if compare_missingness:
-        try:
-            alternate_dataset = prepare_dataset(
-                dataframe,
-                target=target,
-                add_missing_indicators=not missing_indicator,
-            )
-            alternate_split = split_dataset(
-                alternate_dataset,
-                random_state=RANDOM_STATE,
-                train_ratio=train_ratio / 100,
-                validation_ratio=validation_ratio / 100,
-                test_ratio=test_ratio / 100,
-            )
-            alternate_training = train_regression_models(
-                alternate_dataset,
-                alternate_split,
-                random_state=RANDOM_STATE,
-            )
-            primary_test = training.metrics["test"]
-            alternate_test = alternate_training.metrics["test"]
-            with_indicator = primary_test if missing_indicator else alternate_test
-            without_indicator = alternate_test if missing_indicator else primary_test
-            r2_difference = (
-                (with_indicator.r2 - without_indicator.r2)
-                if with_indicator.r2 is not None and without_indicator.r2 is not None
-                else None
-            )
-            sensitivity_warnings: list[str] = []
-            if r2_difference is not None and abs(r2_difference) >= 0.15:
-                sensitivity_warnings.append(
-                    "모델이 공정값뿐 아니라 측정 대상 선정 규칙을 학습했을 가능성이 있습니다."
-                )
-            missingness_sensitivity = {
-                "with_indicator_test_r2": with_indicator.r2,
-                "without_indicator_test_r2": without_indicator.r2,
-                "r2_difference": r2_difference,
-                "rmse_difference": (
-                    with_indicator.rmse - without_indicator.rmse
-                    if with_indicator.rmse is not None and without_indicator.rmse is not None
-                    else None
-                ),
-                "mae_difference": (
-                    with_indicator.mae - without_indicator.mae
-                    if with_indicator.mae is not None and without_indicator.mae is not None
-                    else None
-                ),
-                "indicator_in_feature_set": any(
-                    column.endswith("_missing") for column in dataset.feature_columns
-                ),
-                "warnings": sensitivity_warnings,
-            }
-        except Exception as exc:
-            logger.exception("측정 여부 Indicator 민감도 비교 실패")
-            missingness_sensitivity = {
-                "status": "failed",
-                "warnings": ["측정 여부 Indicator 민감도 비교를 완료하지 못했습니다."],
-            }
-
-    metrics = {
-        name: values.as_dict()
-        for name, values in training.metrics.items()
-    }
-    for name, values in training.metrics.items():
-        metrics[name]["mse"] = values.mse
-    dummy_test = evaluate_regression(
-        split.y_test,
-        np.full(len(split.y_test), float(split.y_train.mean())),
+    created_at = datetime.now().astimezone()
+    model_id = f"SCREENING_GBDT_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
+    hybrid_result = build_hybrid_training_result(
+        evaluation,
+        source_filename=filename,
+        dataset_rows={"train": len(internal_train), "test": len(internal_test)},
+        train_lots=train_lots,
+        test_lots=test_lots,
+        split_method=split_method,
     )
-    train_r2 = training.metrics["train"].r2
-    test_r2 = training.metrics["test"].r2
-    evaluation_summary = {
-        "generalization_gap": (
-            train_r2 - test_r2 if train_r2 is not None and test_r2 is not None else None
-        ),
-        "dummy_test_r2": dummy_test.r2,
-        "dummy_test_rmse": dummy_test.rmse,
-        "dummy_rmse_improvement": (
-            dummy_test.rmse - training.metrics["test"].rmse
-            if dummy_test.rmse is not None and training.metrics["test"].rmse is not None
-            else None
-        ),
-    }
+
     try:
-        try:
-            transformed_feature_columns = [
-                str(name).split("__", 1)[-1]
-                for name in training.best_model.named_steps["features"].get_feature_names_out()
-            ]
-        except Exception:
-            transformed_feature_columns = list(dataset.feature_columns)
-        raw_features = dataset.raw_feature_columns or dataset.feature_columns
-        _report_training_progress(f"{target} 모델 저장", 92)
-        model_path, metadata_path, saved_metadata = save_model_bundle(
-            training.best_model,
-            target=target,
-            model_name=training.best_model_name,
-            feature_columns=dataset.feature_columns,
-            metrics=metrics,
-            random_state=RANDOM_STATE,
-            split_method=split.split_method,
-            dataset_split={
-                "train": train_ratio / 100,
-                "validation": validation_ratio / 100,
-                "test": test_ratio / 100,
-            },
-            dataset_rows={
-                "train": split.row_counts["train_rows"],
-                "validation": split.row_counts["validation_rows"],
-                "test": split.row_counts["test_rows"],
-            },
-            training_time_seconds=(
-                time.perf_counter() - training_started_at
-            ),
-            source_filename=filename,
-            preprocessing_config={
-                **preprocessing_report.get("preprocessing_policy", {}),
-                "missing_strategy": training.missing_strategy,
-                "outlier_strategy": training.outlier_strategy,
-                "model_strategies": training.model_strategies,
-                "model_outlier_strategies": training.model_outlier_strategies,
-                "fallback_used": training.fallback_used,
-            },
-            metadata_extensions={
-                "schema_version": "semicon_yield_v2",
-                "schema_fingerprint": schema_fingerprint(raw_features),
-                "raw_feature_columns": raw_features,
-                "transformed_feature_columns": transformed_feature_columns,
-                "config_parser_version": CONFIG_PARSER_VERSION,
-                "preprocessing_strategy": f"{training.missing_strategy}_{training.outlier_strategy}_train_only",
-                "missing_strategy": training.missing_strategy,
-                "outlier_strategy": training.outlier_strategy,
-                "missing_indicator_used": training.missing_indicator,
-                "outlier_indicator_used": training.outlier_indicator,
-                "outlier_policy": training.outlier_strategy,
-                "fallback_used": training.fallback_used,
-                "preprocessing_summary": {
-                    **preprocessing_report.get("processing_summary", {}),
-                    "missing_strategy": training.missing_strategy,
-                    "outlier_strategy": training.outlier_strategy,
-                    "missing_indicator": training.missing_indicator,
-                    "outlier_indicator": training.outlier_indicator,
-                    "model_strategies": training.model_strategies,
-                    "model_outlier_strategies": training.model_outlier_strategies,
-                    "fallback_used": training.fallback_used,
-                },
-                "split_strategy": split.split_method,
-                "group_column": "Lot_ID" if "Lot_ID" in dataframe.columns else "Lot_Wafer_ID (legacy parsed)",
-                "train_lot_count": int(split.train_groups.nunique(dropna=True)),
-                "validation_lot_count": int(split.validation_groups.nunique(dropna=True)),
-                "test_lot_count": int(split.test_groups.nunique(dropna=True)),
-                "train_row_count": split.row_counts["train_rows"],
-                "validation_row_count": split.row_counts["validation_rows"],
-                "test_row_count": split.row_counts["test_rows"],
-                "target_leakage_check": dataset.target_leakage_check,
-                "data_summary": {
-                    "row_count": int(dataframe.shape[0]),
-                    "column_count": int(dataframe.shape[1]),
-                    "lot_count": validation.get("lot_count", 0),
-                },
-                "measurement_coverage": {
-                    "r": validation.get("r_measurement_coverage", 0.0),
-                    "d": validation.get("d_measurement_coverage", 0.0),
-                },
-                "threshold_policy": {
-                    "warning": 90.0,
-                    "critical": 85.0,
-                    "source": "data_distribution_reference_not_official_spec",
-                },
-                "missingness_sensitivity": missingness_sensitivity,
-                "evaluation_summary": evaluation_summary,
-            },
-            model_dir=MODEL_DIR,
+        bundle_path, metadata_path = await run_in_threadpool(
+            partial(save_hybrid_bundle, hybrid_result, MODEL_DIR, model_id)
         )
     except Exception as exc:
         logger.exception("학습 모델 또는 메타데이터 저장 실패")
@@ -959,83 +667,104 @@ async def train_model(
         settings.runtime_db_path,
         settings.runtime_artifact_dir,
     ).promote_model(
-        model_id=str(saved_metadata["model_id"]),
-        pipeline_version="direct_y_v1",
+        model_id=model_id,
+        pipeline_version=str(hybrid_result.metadata["pipeline_version"]),
         dataset_version=0,
         metadata={
-            "model_id": str(saved_metadata["model_id"]),
-            "target": "Y",
-            "model_name": training.best_model_name,
+            "model_id": model_id,
+            "target": TARGET_COLUMN,
+            "model_name": hybrid_result.metadata["model_name"],
             "source_filename": filename,
-            "metrics": metrics,
-            "row_count": int(len(dataset.features)),
-            "feature_columns": list(dataset.feature_columns),
-            "categorical_columns": list(dataset.categorical_columns),
+            "metrics": hybrid_result.metadata["metrics"],
+            "row_count": int(len(dataframe)),
+            "feature_columns": hybrid_result.metadata["feature_columns"],
         },
     )
+
+    final_metrics = evaluation.metrics[FINAL_YIELD_COLUMN]
+    per_target_metrics = target_metrics_summary(evaluation)
+    dummy_baseline = float(pd.to_numeric(internal_train[TARGET_COLUMN], errors="coerce").mean())
+    dummy_actual = pd.to_numeric(internal_test[TARGET_COLUMN], errors="coerce").to_numpy()
+    dummy_predicted = np.full(len(dummy_actual), dummy_baseline, dtype=np.float32)
+    dummy_valid = np.isfinite(dummy_actual)
+    dummy_test = evaluate_regression(
+        pd.Series(dummy_actual[dummy_valid]),
+        dummy_predicted[dummy_valid],
+    )
+    evaluation_summary = {
+        "dummy_test_r2": dummy_test.r2,
+        "dummy_test_rmse": dummy_test.rmse,
+        "dummy_rmse_improvement": (
+            dummy_test.rmse - final_metrics["rmse"]
+            if dummy_test.rmse is not None
+            else None
+        ),
+        "no_significant_factor_targets": [
+            target for target, detail in per_target_metrics.items() if detail["no_significant_factor"]
+        ],
+    }
 
     warnings = list(
         dict.fromkeys(
             [
                 *preprocessing_report["warnings"],
-                *dataset.warnings,
-                *split.warnings,
-                *training.warnings,
             ]
         )
     )
     try:
         response = TrainResponse(
-            target=target,
-            best_model=training.best_model_name,
+            target=TARGET_COLUMN,
+            best_model="HistGradientBoostingRegressor",
             split=DatasetSplit(
-                **split.row_counts,
-                group_split_used=split.group_split_used,
-                split_method=split.split_method,
+                train_rows=len(internal_train),
+                validation_rows=0,
+                test_rows=len(internal_test),
+                group_split_used=group_split_used,
+                split_method=split_method,
             ),
             metrics={
-                name: ModelMetrics(**values)
-                for name, values in metrics.items()
+                "test": ModelMetrics(
+                    r2=final_metrics["r2"],
+                    rmse=final_metrics["rmse"],
+                    mae=final_metrics["mae"],
+                    mse=final_metrics["mse"],
+                ),
             },
             model_comparison=[
                 ModelComparisonItem(
-                    model_name=item.model_name,
-                    status=item.status,
+                    model_name=f"{target}_HistGradientBoostingRegressor",
+                    status="no_significant_factor" if detail["no_significant_factor"] else "trained",
                     validation=(
-                        ModelMetrics(**item.validation.as_dict())
-                        if item.validation is not None
-                        else None
+                        None
+                        if detail["no_significant_factor"]
+                        else ModelMetrics(r2=detail["r2"], rmse=detail["rmse"], mae=detail["mae"])
                     ),
-                    selected=item.selected,
-                    error_message=item.error_message,
+                    selected=not detail["no_significant_factor"],
+                    error_message=None,
                 )
-                for item in training.model_comparison
+                for target, detail in per_target_metrics.items()
             ],
-            feature_count=len(dataset.feature_columns),
+            feature_count=len(hybrid_result.metadata["feature_columns"]),
             warnings=warnings,
             artifacts=ModelArtifacts(
-                model_file=model_path.name,
-                metadata_file=metadata_path.name,
+                model_file=f"{model_id}/bundle.joblib",
+                metadata_file=f"{model_id}/metadata.json",
             ),
-            missingness_sensitivity=missingness_sensitivity,
-            evaluation_summary=evaluation_summary,
-            model_id=str(saved_metadata["model_id"]),
-            model_type=str(saved_metadata.get("model_type") or training.best_model_name),
+            evaluation_summary=EvaluationSummary(**evaluation_summary),
+            model_id=model_id,
+            model_type=str(hybrid_result.metadata["model_type"]),
+            selected_final_output="derived",
+            final_y_metrics={"test": final_metrics},
+            target_metrics=per_target_metrics,
             preprocessing={
                 "schema_version": "semicon_yield_v2",
-                "config_parser_version": CONFIG_PARSER_VERSION,
+                "strategy": "screening_selected_factors_raw_miss_dev",
+                "missing_strategy": "native_nan_preserved",
+                "outlier_strategy": "none",
                 "measurement_coverage": {
                     "r": validation.get("r_measurement_coverage", 0.0),
                     "d": validation.get("d_measurement_coverage", 0.0),
                 },
-                **preprocessing_report.get("processing_summary", {}),
-                "missing_strategy": training.missing_strategy,
-                "outlier_strategy": training.outlier_strategy,
-                "missing_indicator": training.missing_indicator,
-                "outlier_indicator": training.outlier_indicator,
-                "model_strategies": training.model_strategies,
-                "model_outlier_strategies": training.model_outlier_strategies,
-                "fallback_used": training.fallback_used,
             },
         )
         response.model_dump_json()
@@ -1046,6 +775,8 @@ async def train_model(
             detail="학습 결과 응답을 생성하는 중 서버 내부 오류가 발생했습니다.",
         ) from exc
     logger.info("학습 API 응답 직렬화 완료")
+    return response
+
     return response
 
 

@@ -480,18 +480,12 @@ def test_train_api_response_is_json_serializable(
     metadata_path = model_output_dir / response.artifacts.metadata_file
     assert metadata_path.exists()
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    assert metadata["dataset_split"] == {
-        "train": 0.7,
-        "validation": 0.15,
-        "test": 0.15,
-    }
     assert metadata["dataset_rows"] == {
         "train": response.split.train_rows,
-        "validation": response.split.validation_rows,
         "test": response.split.test_rows,
     }
     assert metadata["source_filename"] == "training.csv"
-    assert metadata["training_time_seconds"] >= 0
+    assert set(metadata["available_targets"]) == {"Y1", "Y2", "Y3", "Y4", "Y5"}
 
 
 def test_train_api_succeeds_with_fixture_csv(
@@ -508,7 +502,7 @@ def test_train_api_succeeds_with_fixture_csv(
     assert response.success is True
     assert response.target == "Y"
     assert response.split.train_rows > 0
-    assert response.split.validation_rows > 0
+    assert response.split.validation_rows == 0
     assert response.split.test_rows > 0
     assert json.loads(response.model_dump_json())["best_model"]
 
@@ -532,7 +526,7 @@ def test_unexpected_training_error_returns_json_detail(
 
     monkeypatch.setattr(
         data_routes,
-        "train_regression_models",
+        "train_and_evaluate",
         raise_unexpected_error,
     )
 

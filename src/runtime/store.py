@@ -98,6 +98,22 @@ class RuntimeStore:
                     rollback_json TEXT NOT NULL DEFAULT '[]', active_metadata_json TEXT
                 );
                 INSERT OR IGNORE INTO model_slots(singleton,status) VALUES(1,'empty');
+                CREATE TABLE IF NOT EXISTS datasets (
+                    dataset_id TEXT PRIMARY KEY,
+                    original_filename TEXT NOT NULL,
+                    stored_path TEXT NOT NULL,
+                    uploaded_at TEXT NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    column_count INTEGER NOT NULL,
+                    lot_min TEXT,
+                    lot_max TEXT,
+                    lot_count INTEGER,
+                    warnings_json TEXT NOT NULL DEFAULT '[]',
+                    unmapped_columns_json TEXT NOT NULL DEFAULT '[]',
+                    schema_diff_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_datasets_uploaded
+                ON datasets(uploaded_at DESC);
                 """
             )
 
@@ -346,6 +362,56 @@ class RuntimeStore:
                 (model_id,),
             ).fetchone()[0])
         return {"prediction_history_count": prediction_count, "analysis_history_count": analysis_count}
+
+    def create_dataset(self, **values: Any) -> None:
+        record = {
+            "dataset_id": values["dataset_id"],
+            "original_filename": values["original_filename"],
+            "stored_path": values["stored_path"],
+            "uploaded_at": values.get("uploaded_at") or datetime.now(timezone.utc).isoformat(),
+            "row_count": int(values["row_count"]),
+            "column_count": int(values["column_count"]),
+            "lot_min": values.get("lot_min"),
+            "lot_max": values.get("lot_max"),
+            "lot_count": values.get("lot_count"),
+            "warnings_json": self._json(list(values.get("warnings") or [])),
+            "unmapped_columns_json": self._json(list(values.get("unmapped_columns") or [])),
+            "schema_diff_json": self._json(dict(values.get("schema_diff") or {})),
+        }
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO datasets
+                (dataset_id,original_filename,stored_path,uploaded_at,row_count,column_count,
+                 lot_min,lot_max,lot_count,warnings_json,unmapped_columns_json,schema_diff_json)
+                VALUES (:dataset_id,:original_filename,:stored_path,:uploaded_at,:row_count,:column_count,
+                        :lot_min,:lot_max,:lot_count,:warnings_json,:unmapped_columns_json,:schema_diff_json)""",
+                record,
+            )
+
+    @staticmethod
+    def _decode_dataset_row(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        result["warnings"] = json.loads(result.pop("warnings_json") or "[]")
+        result["unmapped_columns"] = json.loads(result.pop("unmapped_columns_json") or "[]")
+        result["schema_diff"] = json.loads(result.pop("schema_diff_json") or "{}")
+        return result
+
+    def list_datasets(self) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute("SELECT * FROM datasets ORDER BY uploaded_at DESC").fetchall()
+        return [self._decode_dataset_row(row) for row in rows]
+
+    def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
+        with _lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM datasets WHERE dataset_id=?", (dataset_id,)
+            ).fetchone()
+        return self._decode_dataset_row(row) if row is not None else None
+
+    def delete_dataset(self, dataset_id: str) -> bool:
+        with _lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM datasets WHERE dataset_id=?", (dataset_id,))
+            return cursor.rowcount > 0
 
 
 def safe_runtime_call(method: str, **values: Any) -> Any:
