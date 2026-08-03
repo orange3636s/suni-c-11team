@@ -1,0 +1,396 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getScreeningHeatmap } from "@/lib/api";
+import type { HeatmapMetric, HeatmapResponse } from "@/types/data";
+
+const DEFAULT_ROW_LIMIT = 20;
+const METRIC_LABEL: Record<HeatmapMetric, string> = { spearman: "상관계수 (ρ)", eps2: "설명력 (ε²)" };
+type KindFilter = "all" | "r" | "d";
+type SortMode = "max_rho" | "target" | "step";
+
+function featureKind(feature: string): "r" | "d" {
+  return /_R\d+$/.test(feature) ? "r" : "d";
+}
+
+function featureStep(feature: string): number {
+  const match = /^Step(\d+)_/.exec(feature);
+  return match ? Number(match[1]) : 0;
+}
+
+function useResolvedTheme(): "light" | "dark" {
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  useEffect(() => {
+    const root = document.documentElement;
+    const read = () => setTheme(root.dataset.theme === "dark" ? "dark" : "light");
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  return theme;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const value = hex.replace("#", "");
+  return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
+}
+
+function mixHex(from: string, to: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(from);
+  const [r2, g2, b2] = hexToRgb(to);
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function relativeLuminance(rgb: [number, number, number]): number {
+  const [r, g, b] = rgb.map((c) => c / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const THEME_COLORS = {
+  light: { pos: "#B42318", neg: "#1849A9", center: "#FFFFFF" },
+  dark: { pos: "#F97066", neg: "#84CAFF", center: "#2C2C2E" },
+};
+
+function cellBackground(value: number, min: number, max: number, theme: "light" | "dark"): { bg: string; light: boolean } {
+  const { pos, neg, center } = THEME_COLORS[theme];
+  if (min < 0) {
+    const clipped = Math.max(min, Math.min(max, value));
+    const denom = Math.max(Math.abs(min), Math.abs(max)) || 1;
+    const t = Math.min(1, Math.abs(clipped) / denom);
+    const target = clipped >= 0 ? pos : neg;
+    const bg = mixHex(center, target, t);
+    return { bg, light: relativeLuminance(hexToRgb(target)) * t + relativeLuminance(hexToRgb(center)) * (1 - t) < 0.45 };
+  }
+  const clipped = Math.max(min, Math.min(max, value));
+  const t = Math.min(1, clipped / (max || 1));
+  const bg = mixHex(center, pos, t);
+  return { bg, light: relativeLuminance(hexToRgb(pos)) * t + relativeLuminance(hexToRgb(center)) * (1 - t) < 0.45 };
+}
+
+function formatQ(q: number | null): string {
+  if (q == null) return "-";
+  return q < 0.001 ? q.toExponential(2) : q.toFixed(4);
+}
+
+export type HeatmapCellSelection = {
+  target: string;
+  feature: string;
+  significant: boolean;
+  qValue: number | null;
+};
+
+type TooltipState = {
+  x: number;
+  y: number;
+  feature: string;
+  target: string;
+  value: number | null;
+  n: number;
+  q: number | null;
+  significant: boolean;
+};
+
+export default function CorrelationHeatmap({
+  datasetId,
+  onSelectCell,
+}: {
+  datasetId: string;
+  onSelectCell: (selection: HeatmapCellSelection) => void;
+}) {
+  const theme = useResolvedTheme();
+  const [metric, setMetric] = useState<HeatmapMetric>("spearman");
+  const [data, setData] = useState<HeatmapResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [significantOnly, setSignificantOnly] = useState(false);
+  const [sortMode, setSortMode] = useState<SortMode>("max_rho");
+  const [sortTarget, setSortTarget] = useState<string>("");
+  const [expanded, setExpanded] = useState(false);
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const cache = useRef<Map<HeatmapMetric, HeatmapResponse>>(new Map());
+
+  useEffect(() => {
+    cache.current = new Map();
+  }, [datasetId]);
+
+  useEffect(() => {
+    const cached = cache.current.get(metric);
+    if (cached) {
+      setData(cached);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setLoading(true);
+        setError("");
+        try {
+          const response = await getScreeningHeatmap(datasetId, metric);
+          if (cancelled) return;
+          cache.current.set(metric, response);
+          setData(response);
+          if (!sortTarget && response.targets.length > 0) setSortTarget(response.targets[0]);
+        } catch (failure) {
+          if (!cancelled) setError(failure instanceof Error ? failure.message : "히트맵을 불러오지 못했습니다.");
+        } finally {
+          if (!cancelled) setLoading(false);
+        }
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, metric]);
+
+  const rows = useMemo(() => {
+    if (!data) return [];
+    let indices = data.features.map((_, index) => index);
+    if (kindFilter !== "all") {
+      indices = indices.filter((index) => featureKind(data.features[index]) === kindFilter);
+    }
+    if (significantOnly) {
+      indices = indices.filter((index) => data.significant[index].some(Boolean));
+    }
+    if (sortMode === "step") {
+      indices = [...indices].sort((a, b) => featureStep(data.features[a]) - featureStep(data.features[b]));
+    } else if (sortMode === "target" && sortTarget) {
+      const colIndex = data.targets.indexOf(sortTarget);
+      if (colIndex >= 0) {
+        indices = [...indices].sort((a, b) => {
+          const va = Math.abs(data.values[a][colIndex] ?? 0);
+          const vb = Math.abs(data.values[b][colIndex] ?? 0);
+          return vb - va;
+        });
+      }
+    }
+    // sortMode "max_rho" keeps the server's default order (already max|rho| desc)
+    return indices;
+  }, [data, kindFilter, significantOnly, sortMode, sortTarget]);
+
+  const visibleRows = expanded ? rows : rows.slice(0, DEFAULT_ROW_LIMIT);
+
+  if (loading && !data) {
+    return (
+      <section className="resultCard heatmapCard">
+        <p className="emptyMessage">상관관계 히트맵을 계산하는 중…</p>
+      </section>
+    );
+  }
+  if (error) {
+    return (
+      <section className="resultCard heatmapCard">
+        <p className="errorMessage">{error}</p>
+      </section>
+    );
+  }
+  if (!data) return null;
+
+  const [scaleMin, scaleMax] = [data.scale.min, data.scale.max];
+  const gridTemplateColumns = `160px repeat(${data.targets.length}, minmax(64px, 1fr))`;
+
+  return (
+    <section className="resultCard heatmapCard">
+      <div className="heatmapHeaderRow">
+        <div>
+          <span className="sectionLabel">CORRELATION OVERVIEW</span>
+          <h2>전체 인자 조망</h2>
+          <p>산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</p>
+        </div>
+        <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
+          {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={metric === key}
+              className={metric === key ? "active" : ""}
+              onClick={() => setMetric(key)}
+            >
+              {METRIC_LABEL[key]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="heatmapControls">
+        <div className="fieldGroup">
+          <span>행 필터</span>
+          <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as KindFilter)}>
+            <option value="all">전체 ({data.features.length})</option>
+            <option value="r">R만</option>
+            <option value="d">D만</option>
+          </select>
+        </div>
+        <div className="fieldGroup">
+          <span>정렬 기준</span>
+          <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
+            <option value="max_rho">최대 |ρ|</option>
+            <option value="target">특정 타깃 기준</option>
+            <option value="step">Step 순서</option>
+          </select>
+        </div>
+        {sortMode === "target" && (
+          <div className="fieldGroup">
+            <span>기준 타깃</span>
+            <select value={sortTarget} onChange={(event) => setSortTarget(event.target.value)}>
+              {data.targets.map((target) => (
+                <option key={target} value={target}>{target}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <label>
+          <input type="checkbox" checked={significantOnly} onChange={(event) => setSignificantOnly(event.target.checked)} />
+          유의 인자만 보기
+        </label>
+      </div>
+
+      <div className={`heatmapScrollArea ${expanded ? "" : "collapsed"}`}>
+        <div className="heatmapGrid" style={{ gridTemplateColumns }}>
+          <div className="heatmapCornerCell heatmapColHeader" />
+          {data.targets.map((target) => (
+            <div key={target} className="heatmapColHeader">{target}</div>
+          ))}
+          {visibleRows.map((rowIndex) => {
+            const feature = data.features[rowIndex];
+            return (
+              <FragmentRow
+                key={feature}
+                feature={feature}
+                rowIndex={rowIndex}
+                data={data}
+                metric={metric}
+                theme={theme}
+                scaleMin={scaleMin}
+                scaleMax={scaleMax}
+                onHover={setTooltip}
+                onSelectCell={onSelectCell}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="heatmapExpandRow">
+        <button type="button" className="referenceOnlyToggle" onClick={() => setExpanded((current) => !current)}>
+          {expanded ? "접기" : `전체 ${rows.length}행 보기`}
+        </button>
+      </div>
+
+      <div className="heatmapColorbar">
+        <span>{scaleMin.toFixed(2)}</span>
+        <div
+          className="heatmapColorbarTrack"
+          style={{
+            background:
+              scaleMin < 0
+                ? `linear-gradient(to right, ${THEME_COLORS[theme].neg}, ${THEME_COLORS[theme].center}, ${THEME_COLORS[theme].pos})`
+                : `linear-gradient(to right, ${THEME_COLORS[theme].center}, ${THEME_COLORS[theme].pos})`,
+          }}
+        />
+        <span>{scaleMax.toFixed(2)}</span>
+      </div>
+
+      <p className="heatmapCaption">
+        Config {data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 박스플롯 참조. 표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
+        <br />
+        인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
+      </p>
+
+      {tooltip && (
+        <div className="heatmapTooltip" style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
+          <strong>{tooltip.feature} × {tooltip.target}</strong>
+          <div className="heatmapTooltipRow"><span>{metric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
+          <div className="heatmapTooltipRow"><span>n</span><b>{tooltip.n.toLocaleString()}</b></div>
+          <div className="heatmapTooltipRow"><span>q</span><b>{formatQ(tooltip.q)}</b></div>
+          <div className="heatmapTooltipRow"><span>FDR 통과</span><b>{tooltip.significant ? "예" : "아니오"}</b></div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FragmentRow({
+  feature,
+  rowIndex,
+  data,
+  metric,
+  theme,
+  scaleMin,
+  scaleMax,
+  onHover,
+  onSelectCell,
+}: {
+  feature: string;
+  rowIndex: number;
+  data: HeatmapResponse;
+  metric: HeatmapMetric;
+  theme: "light" | "dark";
+  scaleMin: number;
+  scaleMax: number;
+  onHover: (tooltip: TooltipState | null) => void;
+  onSelectCell: (selection: HeatmapCellSelection) => void;
+}) {
+  return (
+    <>
+      <div className="heatmapRowLabel">{feature}</div>
+      {data.targets.map((target, colIndex) => {
+        const value = data.values[rowIndex][colIndex];
+        const n = data.n[rowIndex][colIndex];
+        const q = data.q[rowIndex][colIndex];
+        const significant = data.significant[rowIndex][colIndex];
+        const masked = value == null;
+        const style: React.CSSProperties = {};
+        if (!masked) {
+          const { bg, light } = cellBackground(value, scaleMin, scaleMax, theme);
+          style.background = bg;
+          style.color = light ? "var(--heatmap-text-inverse)" : "var(--heatmap-text)";
+        }
+        return (
+          <button
+            key={target}
+            type="button"
+            className={`heatmapCell ${significant ? "significant" : ""} ${masked ? "masked" : ""}`}
+            style={style}
+            onMouseEnter={(event) =>
+              onHover({
+                x: event.clientX,
+                y: event.clientY,
+                feature,
+                target,
+                value,
+                n,
+                q,
+                significant,
+              })
+            }
+            onMouseMove={(event) =>
+              onHover({
+                x: event.clientX,
+                y: event.clientY,
+                feature,
+                target,
+                value,
+                n,
+                q,
+                significant,
+              })
+            }
+            onMouseLeave={() => onHover(null)}
+            onClick={() => onSelectCell({ target, feature, significant, qValue: q })}
+            aria-label={`${feature}, ${target}, ${metric === "spearman" ? "rho" : "eps2"} ${value != null ? value.toFixed(2) : "표본 부족"}`}
+          >
+            {masked ? "" : value!.toFixed(2)}
+          </button>
+        );
+      })}
+    </>
+  );
+}
