@@ -43,15 +43,21 @@ export default function AiPanel({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        className="aiPanelTab"
-        onClick={onToggle}
-        aria-label="SUNI 패널 열기"
-        aria-expanded={false}
-      >
-        <SuniAvatar size={22} />
-      </button>
+      <aside className="aiPanel collapsed">
+        <button
+          type="button"
+          className="shellCircleButton"
+          onClick={onToggle}
+          aria-label="SUNI 채팅 열기"
+          title="SUNI"
+          aria-expanded={false}
+        >
+          <SuniAvatar size={34} />
+          <span className="shellCircleBadge" aria-hidden="true">
+            <ChatBadgeIcon />
+          </span>
+        </button>
+      </aside>
     );
   }
 
@@ -110,6 +116,14 @@ export default function AiPanel({
         <p className="aiPanelCaption">SUNI는 아직 연결되지 않았습니다</p>
       </div>
     </aside>
+  );
+}
+
+function ChatBadgeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="9" height="9" fill="currentColor">
+      <path d="M4 4h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4.4 3.3A.6.6 0 0 1 3 18.8V16H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+    </svg>
   );
 }
 

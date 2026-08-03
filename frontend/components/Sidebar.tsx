@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import SuniAvatar from "@/components/SuniAvatar";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 
 const navigationItems = [
@@ -20,17 +21,10 @@ type SidebarProps = {
   onToggleCollapse?: () => void;
 };
 
-const THEME_CYCLE: ThemePreference[] = ["system", "light", "dark"];
-
 export default function Sidebar({ activeItem = "모델 학습", collapsed = false, onToggleCollapse }: SidebarProps) {
   const { theme, setTheme } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
-
-  function cycleTheme() {
-    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
-    setTheme(next);
-  }
 
   useEffect(() => {
     if (!themeMenuOpen) return;
@@ -53,8 +47,24 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
     };
   }, [themeMenuOpen]);
 
+  if (collapsed) {
+    return (
+      <aside className="sidebar collapsed">
+        <button
+          type="button"
+          className="shellCircleButton"
+          onClick={onToggleCollapse}
+          aria-label="메뉴 열기"
+          title="메뉴"
+        >
+          <SuniAvatar size={34} />
+        </button>
+      </aside>
+    );
+  }
+
   return (
-    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+    <aside className="sidebar">
       <div className="sidebarTop">
         <Link className="brand" href="/" aria-label="SK하이닉스 수율 분석 대시보드 홈">
           <Image
@@ -66,17 +76,17 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
             unoptimized
             priority
           />
-          {!collapsed && <strong className="brandTitle">써니C 11팀</strong>}
+          <strong className="brandTitle">써니C 11팀</strong>
         </Link>
         {onToggleCollapse && (
           <button
             type="button"
             className="sidebarCollapseButton"
             onClick={onToggleCollapse}
-            aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
-            aria-expanded={!collapsed}
+            aria-label="사이드바 접기"
+            aria-expanded={true}
           >
-            <ChevronDown style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(90deg)" }} />
+            <ChevronDown style={{ transform: "rotate(90deg)" }} />
           </button>
         )}
       </div>
@@ -91,10 +101,9 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
                   className={`navigationItem ${isActive ? "active" : ""}`}
                   href={item.href}
                   aria-current={isActive ? "page" : undefined}
-                  title={collapsed ? item.label : undefined}
                 >
                   <NavIcon name={item.icon} />
-                  {!collapsed && <span>{item.label}</span>}
+                  <span>{item.label}</span>
                   <i className="menuStatusDot ready" aria-label="사용 가능" />
                 </Link>
               </li>
@@ -104,18 +113,6 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
       </nav>
 
       <div className="sidebarFooter" ref={themeMenuRef}>
-        {collapsed ? (
-          <button
-            type="button"
-            className="themeToggle themeTrigger collapsed"
-            aria-label={`Theme: ${theme}. 클릭하여 전환`}
-            title={`Theme: ${theme}`}
-            onClick={cycleTheme}
-          >
-            <ThemeIcon theme={theme} />
-          </button>
-        ) : (
-          <>
         {themeMenuOpen && (
           <div className="themeMenu" role="menu" aria-label="Theme 선택">
             <strong>Theme</strong>
@@ -157,8 +154,6 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
           <span className="themeTriggerLabel">Theme</span>
           <ChevronDown />
         </button>
-          </>
-        )}
       </div>
     </aside>
   );

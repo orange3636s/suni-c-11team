@@ -7872,33 +7872,40 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 
 /* ===================================================================
    Dashboard v2 shell: 3-column grid (sidebar / content / AI panel).
-   Sidebar and AI panel widths are CSS custom properties so collapsing
-   either one is a single grid-template-columns transition -- content
-   actually reflows into the freed space, it is never just re-centered.
+   Both side columns collapse to an 88px lane (16px margin + 56px circle
+   + 16px breathing room) holding nothing but a circular SUNI-mark
+   button; expanded, both render as an Apple-style floating card inset
+   16px from the viewport edge. Collapsed content is never just hidden
+   with opacity/width:0 -- it is a completely different conditional
+   render (see Sidebar.tsx/AiPanel.tsx), so there is nothing left in the
+   DOM to leak a status dot or a scrollbar out of a squeezed rail.
 =================================================================== */
 :root{
-  --shell-sidebar-open: 280px;
-  --shell-sidebar-closed: 56px;
-  --shell-ai-open: 360px;
-  --shell-ai-closed: 40px;
+  --shell-margin: 16px;
+  --shell-rail: 56px;
+  --shell-rail-col: 88px;   /* 16 + 56 + 16 */
+  --shell-sidebar-card: 280px;
+  --shell-ai-card: 360px;
+  --shell-sidebar-col: 312px; /* 280 + 16*2 */
+  --shell-ai-col: 392px;      /* 360 + 16*2 */
+  --shell-transition: 280ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 .dashboardGrid{
   display: grid;
-  grid-template-columns: var(--shell-sidebar-open) 1fr var(--shell-ai-closed);
+  grid-template-columns: var(--shell-sidebar-col) 1fr var(--shell-rail-col);
   min-height: 100vh;
   width: 100%;
-  transition: grid-template-columns 240ms ease;
+  transition: grid-template-columns var(--shell-transition);
 }
 .dashboardGrid[data-sidebar="collapsed"]{
-  grid-template-columns: var(--shell-sidebar-closed) 1fr var(--shell-ai-closed);
+  grid-template-columns: var(--shell-rail-col) 1fr var(--shell-rail-col);
 }
 .dashboardGrid[data-ai="open"]{
-  grid-template-columns: var(--shell-sidebar-open) 1fr var(--shell-ai-open);
+  grid-template-columns: var(--shell-sidebar-col) 1fr var(--shell-ai-col);
 }
 .dashboardGrid[data-sidebar="collapsed"][data-ai="open"]{
-  grid-template-columns: var(--shell-sidebar-closed) 1fr var(--shell-ai-open);
+  grid-template-columns: var(--shell-rail-col) 1fr var(--shell-ai-col);
 }
-.dashboardGrid > .sidebar{ width: 100%; flex: none; }
 .dashboardGrid > .contentShell{ min-width: 0; width: 100%; margin-left: 0 !important; }
 @media (prefers-reduced-motion: reduce){
   .dashboardGrid{ transition: none; }
@@ -7909,6 +7916,67 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: 0; z-index: 40; height: 100vh; }
 }
 
+/* Expanded floating cards -- same vocabulary both sides.
+   Older cascade layers earlier in this file set `.sidebar{inset:...}`
+   (a shorthand covering top/right/bottom/left) for its pre-existing
+   navy floating-card look -- explicit top/left/right/bottom longhands
+   here override every one of those sub-values so margin-based spacing
+   below isn't doubled up with a leftover inset offset. */
+.sidebar,
+.aiPanel{
+  position: sticky;
+  top: var(--shell-margin);
+  bottom: auto;
+  align-self: start;
+  height: calc(100dvh - var(--shell-margin) * 2);
+  max-height: calc(100dvh - var(--shell-margin) * 2);
+  border-radius: 20px;
+  overflow: hidden;
+  transition: width var(--shell-transition), height var(--shell-transition), border-radius var(--shell-transition);
+}
+.sidebar{ left: 0; right: auto; width: var(--shell-sidebar-card); margin: var(--shell-margin) 0 var(--shell-margin) var(--shell-margin); }
+.aiPanel{ right: 0; left: auto; width: var(--shell-ai-card); margin: var(--shell-margin) var(--shell-margin) var(--shell-margin) 0; }
+
+/* Collapsed -- a bare 56px circle, nothing else in the DOM */
+.sidebar.collapsed,
+.aiPanel.collapsed{
+  width: var(--shell-rail); height: var(--shell-rail);
+  max-height: var(--shell-rail);
+  margin: 24px auto 0;
+  padding: 0;
+  background: transparent; border: none; box-shadow: none; backdrop-filter: none;
+  display: flex; align-items: center; justify-content: center;
+}
+@media (prefers-reduced-motion: reduce){
+  .sidebar, .aiPanel{ transition: none; }
+}
+
+.shellCircleButton{
+  position: relative;
+  width: var(--shell-rail); height: var(--shell-rail);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 1px solid var(--border-card, rgba(0,0,0,.1));
+  background: var(--surface-card, var(--surface));
+  box-shadow: 0 10px 28px rgba(15,23,42,.16), 0 2px 8px rgba(15,23,42,.08);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.shellCircleButton:hover{ transform: scale(1.05); }
+.shellCircleButton:focus-visible{
+  outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 50%;
+}
+.shellCircleBadge{
+  position: absolute; right: -2px; bottom: -2px; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; border: 2px solid var(--surface-card, var(--surface));
+}
+html[data-theme="dark"] .shellCircleButton{
+  border-color: rgba(255,255,255,.18);
+  box-shadow: 0 4px 20px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.05);
+}
+
 .sidebarTop{ display: flex; align-items: center; gap: 8px; }
 .sidebarTop .brand{ flex: 1 1 auto; min-width: 0; }
 .sidebarCollapseButton{
@@ -7916,24 +7984,16 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   width: 28px; height: 28px; border: 1px solid var(--border-card, rgba(255,255,255,.12));
   border-radius: 8px; background: transparent; color: inherit; cursor: pointer;
 }
-.sidebar.collapsed .navigationItem{ justify-content: center; padding-inline: 0; }
-.sidebar.collapsed .navigationList{ padding-inline: 6px; }
-.sidebar.collapsed .brand{ justify-content: center; }
-.sidebar.collapsed .brandLogo{ width: 32px; height: 32px; }
-.themeToggle.collapsed{ width: 38px; height: 38px; padding: 0; justify-content: center; }
 
-/* AI panel: collapsed tab + expanded chat */
-.aiPanelTab{
-  display: flex; align-items: flex-start; justify-content: center; padding-top: 20px;
-  width: 100%; height: 100%; border: none; border-left: 1px solid var(--border-card, rgba(0,0,0,.08));
-  background: var(--surface-card, #fff); cursor: pointer;
+/* §3: the theme control sits directly in sidebarFooter -- no decorative
+   wrapper box around it. sidebarFooter is layout-only (spacing), the
+   segment/trigger control itself already carries the card look. */
+.sidebar .sidebarFooter{
+  background: none !important; border: none !important; box-shadow: none !important;
+  padding: 0 !important; margin-top: 14px !important;
 }
-.aiPanel{
-  display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0;
-  border-left: 1px solid var(--border-card, rgba(0,0,0,.08));
-  background: color-mix(in srgb, var(--surface-card, #fff) 92%, transparent);
-  backdrop-filter: blur(10px);
-}
+
+/* AI panel: expanded chat shell */
 .aiPanelHeader{ display: flex; align-items: center; gap: 10px; padding: 16px; border-bottom: 1px solid var(--border-card, rgba(0,0,0,.08)); }
 .aiPanelHeaderText{ display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
 .aiPanelHeaderText strong{ font-size: 14px; font-weight: 600; }
@@ -7972,8 +8032,24 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 .aiPanelSendButton:disabled{ opacity: .4; cursor: not-allowed; }
 .aiPanelCaption{ margin: 8px 0 0; font-size: 11px; color: var(--text-secondary, #6e6e73); }
 
-html[data-theme="dark"] .aiPanelTab,
-html[data-theme="dark"] .aiPanel{ background: color-mix(in srgb, #1C1C1E 92%, transparent); border-color: rgba(255,255,255,.1); }
+/* AI panel's own floating-card material (sidebar keeps its existing navy
+   brand background from the rules earlier in this file -- only its
+   position/size/radius are shared above). */
+.aiPanel{
+  background: var(--surface-card, var(--surface));
+  border: 1px solid var(--border-card, rgba(0,0,0,.08));
+  box-shadow: 0 20px 48px rgba(15,23,42,.12);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+}
+.aiPanel.collapsed,
+.sidebar.collapsed{ background: transparent; border: none; box-shadow: none; }
+
+html[data-theme="dark"] .aiPanel{
+  background: color-mix(in srgb, #1C1C1E 94%, transparent);
+  border-color: rgba(255,255,255,.1);
+}
+html[data-theme="dark"] .aiPanel.collapsed,
+html[data-theme="dark"] .sidebar.collapsed{ background: transparent; }
 html[data-theme="dark"] .aiPanelBubble-suni{ background: #2C2C2E; border-color: rgba(255,255,255,.1); }
 
 /* Fixed interpretation-limits footnote used across the analysis tabs */
