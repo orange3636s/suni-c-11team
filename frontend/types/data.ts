@@ -459,6 +459,7 @@ export type ScreeningScatterResponse = {
   optimal_center: number | null;
   eps2: number;
   q_value: number;
+  significant: boolean;
   n: number;
   axis: { x_label: string; y_label: string };
 };

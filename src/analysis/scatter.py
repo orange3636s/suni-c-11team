@@ -71,6 +71,7 @@ class ScatterData:
     optimal_center: float | None
     eps2: float
     q_value: float
+    significant: bool
     n: int
     axis: dict[str, str]
 
@@ -130,6 +131,7 @@ def build_scatter_data(
         optimal_center=factor.optimal_center,
         eps2=factor.eps2,
         q_value=factor.q_value,
+        significant=factor.significant,
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · {_kind_label(factor.kind)})",

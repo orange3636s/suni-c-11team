@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import CorrelationHeatmap, { type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import PlotlyChart from "@/components/PlotlyChart";
@@ -87,23 +88,30 @@ function buildTraces(points: ScatterPoint[], mode: ColorMode) {
 }
 
 function buildScatterSpec(data: ScreeningScatterResponse, mode: ColorMode) {
-  const shapes: Record<string, unknown>[] = [
-    { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.y_q1, y1: data.y_q1, line: { color: "#E5484D", width: 1.5 } },
-    { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.y_q3, y1: data.y_q3, line: { color: "#E5484D", width: 1.5 } },
-  ];
-  const annotations: Record<string, unknown>[] = [
-    { xref: "paper", x: 1, yref: "y", y: data.y_q1, text: `Q1 (${data.y_q1.toFixed(2)})`, showarrow: false, xanchor: "left", font: { color: "#E5484D", size: 11 } },
-    { xref: "paper", x: 1, yref: "y", y: data.y_q3, text: `Q3 (${data.y_q3.toFixed(2)})`, showarrow: false, xanchor: "left", font: { color: "#E5484D", size: 11 } },
-  ];
-  if (data.normal_range.lo != null) {
+  // A non-significant factor gets no Q1/Q3 band, normal-range, or optimal-center
+  // lines -- those are derived thresholds and drawing them here would imply an
+  // evidence-backed range that doesn't actually exist for this factor.
+  const shapes: Record<string, unknown>[] = data.significant
+    ? [
+        { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.y_q1, y1: data.y_q1, line: { color: "#E5484D", width: 1.5 } },
+        { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.y_q3, y1: data.y_q3, line: { color: "#E5484D", width: 1.5 } },
+      ]
+    : [];
+  const annotations: Record<string, unknown>[] = data.significant
+    ? [
+        { xref: "paper", x: 1, yref: "y", y: data.y_q1, text: `Q1 (${data.y_q1.toFixed(2)})`, showarrow: false, xanchor: "left", font: { color: "#E5484D", size: 11 } },
+        { xref: "paper", x: 1, yref: "y", y: data.y_q3, text: `Q3 (${data.y_q3.toFixed(2)})`, showarrow: false, xanchor: "left", font: { color: "#E5484D", size: 11 } },
+      ]
+    : [];
+  if (data.significant && data.normal_range.lo != null) {
     shapes.push({ type: "line", x0: data.normal_range.lo, x1: data.normal_range.lo, yref: "paper", y0: 0, y1: 1, line: { color: "#6E6E73", dash: "dot", width: 1.5 } });
     annotations.push({ x: data.normal_range.lo, yref: "paper", y: 0, text: data.normal_range.lo.toFixed(1), showarrow: false, yanchor: "top", font: { size: 11, weight: 700 } });
   }
-  if (data.normal_range.hi != null) {
+  if (data.significant && data.normal_range.hi != null) {
     shapes.push({ type: "line", x0: data.normal_range.hi, x1: data.normal_range.hi, yref: "paper", y0: 0, y1: 1, line: { color: "#6E6E73", dash: "dot", width: 1.5 } });
     annotations.push({ x: data.normal_range.hi, yref: "paper", y: 0, text: data.normal_range.hi.toFixed(1), showarrow: false, yanchor: "top", font: { size: 11, weight: 700 } });
   }
-  if (data.optimal_center != null) {
+  if (data.significant && data.optimal_center != null) {
     shapes.push({ type: "line", x0: data.optimal_center, x1: data.optimal_center, yref: "paper", y0: 0, y1: 1, line: { color: "#B45309", dash: "dash", width: 1.5 } });
     annotations.push({ x: data.optimal_center, yref: "paper", y: 1, text: `최적 ${data.optimal_center.toFixed(1)}`, showarrow: false, yanchor: "bottom", font: { color: "#B45309", size: 11 } });
   }
@@ -151,6 +159,11 @@ function RootCauseContent() {
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
+  const [quickLook, setQuickLook] = useState<{ target: string; feature: string } | null>(null);
+  const [quickLookData, setQuickLookData] = useState<ScreeningScatterResponse | null>(null);
+  const [quickLookError, setQuickLookError] = useState("");
+  const initialDeepLinkHandled = useRef(false);
 
   const loadScreening = useCallback(async (id: string) => {
     setLoading(true);
@@ -198,12 +211,95 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeResult, datasetId, activeTarget]);
 
-  function selectTarget(target: string) {
-    setActiveTarget(target);
+  function updateUrl(target: string, feature?: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("target", target);
+    if (feature) params.set("feature", feature);
+    else params.delete("feature");
     router.replace(`/root-cause?${params.toString()}`, { scroll: false });
   }
+
+  function selectTarget(target: string) {
+    setActiveTarget(target);
+    updateUrl(target);
+  }
+
+  function openFactor(target: string, feature: string) {
+    setActiveTarget(target);
+    updateUrl(target, feature);
+    setQuickLook(null);
+    setQuickLookData(null);
+    setQuickLookError("");
+    // "Selected" (rendered as a regular factor card) and "FDR-significant"
+    // are not the same set -- e.g. a factor can pass FDR but still lose the
+    // 80% cumulative cutoff to a stronger factor for the same target. Only
+    // an actually-rendered card can be scrolled to; anything else opens the
+    // ad-hoc quick-look card instead (which independently reports its own
+    // significance for the banner/band-lines).
+    const targetResult = screening?.targets.find((t) => t.target === target);
+    const isSelected = Boolean(targetResult?.factors.some((f) => f.feature === feature));
+    if (isSelected) {
+      setPendingScrollFeature(feature);
+    } else {
+      setPendingScrollFeature(null);
+      setQuickLook({ target, feature });
+    }
+  }
+
+  function handleHeatmapSelect(selection: HeatmapCellSelection) {
+    openFactor(selection.target, selection.feature);
+  }
+
+  // Deep-link support: `?target=&feature=` (e.g. from a heatmap cell click
+  // in a previous visit, or a shared link) resolves once the screening
+  // result for the dataset is known.
+  useEffect(() => {
+    if (initialDeepLinkHandled.current || !screening) return;
+    initialDeepLinkHandled.current = true;
+    const featureFromUrl = searchParams.get("feature");
+    const targetFromUrl = searchParams.get("target");
+    if (!featureFromUrl || !targetFromUrl) return;
+    const timer = window.setTimeout(() => openFactor(targetFromUrl, featureFromUrl), 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screening]);
+
+  useEffect(() => {
+    if (!pendingScrollFeature || !activeResult) return;
+    const timer = window.setTimeout(() => {
+      if (activeResult.no_significant_factor || !activeResult.factors.some((f) => f.feature === pendingScrollFeature)) {
+        setPendingScrollFeature(null);
+        return;
+      }
+      const element = document.getElementById(`factor-${pendingScrollFeature}`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+        setPendingScrollFeature(null);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [pendingScrollFeature, activeResult]);
+
+  useEffect(() => {
+    if (!quickLook) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await getScreeningScatter(datasetId, quickLook.target, quickLook.feature);
+          if (!cancelled) setQuickLookData(result);
+        } catch (failure) {
+          if (!cancelled) setQuickLookError(failure instanceof Error ? failure.message : "산점도를 불러오지 못했습니다.");
+        }
+      })();
+    }, 0);
+    document.getElementById("heatmapQuickLook")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickLook]);
 
   const noConfigSelected = useMemo(
     () => screening?.targets.every((t) => t.factors.every((f) => f.kind !== "Config")) ?? true,
@@ -234,6 +330,8 @@ function RootCauseContent() {
         {error && <p className="errorMessage">{error}</p>}
       </section>
 
+      <CorrelationHeatmap datasetId={datasetId} onSelectCell={handleHeatmapSelect} />
+
       {noConfigSelected && (
         <section className="messageBox">Config(장비 설정) 30개 중 통계적으로 유의한 인자는 0개입니다.</section>
       )}
@@ -258,6 +356,39 @@ function RootCauseContent() {
 
       {loading && <p className="emptyMessage">불러오는 중…</p>}
 
+      {quickLook && (
+        <article id="heatmapQuickLook" className="resultCard factorChartCard">
+          <div className="factorChartMeta">
+            <div>
+              <span className="sectionLabel">히트맵에서 선택</span>
+              <h2>{quickLook.feature} · {quickLook.target}</h2>
+            </div>
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                setQuickLook(null);
+                setQuickLookData(null);
+              }}
+            >
+              닫기
+            </button>
+          </div>
+          {quickLookError && <p className="errorMessage">{quickLookError}</p>}
+          {!quickLookError && quickLookData && !quickLookData.significant && (
+            <p className="heatmapSignificanceBanner">
+              이 인자는 통계적으로 유의하지 않습니다 (q = {quickLookData.q_value < 0.001 ? quickLookData.q_value.toExponential(2) : quickLookData.q_value.toFixed(4)}).
+              참고용으로만 확인하고, Q1/Q3·정상범위 기준선은 근거가 없어 표시하지 않습니다.
+            </p>
+          )}
+          {quickLookData ? (
+            <PlotlyChart spec={buildScatterSpec(quickLookData, colorMode)} height={420} />
+          ) : !quickLookError ? (
+            <p className="emptyMessage">불러오는 중…</p>
+          ) : null}
+        </article>
+      )}
+
       {activeResult?.no_significant_factor && (
         <section className="resultCard">
           <p className="emptyMessage">
@@ -271,7 +402,7 @@ function RootCauseContent() {
           {activeResult.factors.map((factor, index) => {
             const data = scatterByFeature[factor.feature];
             return (
-              <article className="resultCard factorChartCard" key={factor.feature}>
+              <article className="resultCard factorChartCard" id={`factor-${factor.feature}`} key={factor.feature}>
                 <div className="factorChartMeta">
                   <div>
                     <span className="sectionLabel">{index + 1}위 · ε² {factor.eps2.toFixed(3)}</span>

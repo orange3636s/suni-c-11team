@@ -266,3 +266,42 @@ def select_pareto_factors_all_targets(
         target: select_pareto_factors(df, schema, target, cutoff=cutoff, fdr_alpha=fdr_alpha)
         for target in targets
     }
+
+
+def find_factor(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    feature: str,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> ParetoFactor | None:
+    """Score a single named factor against `target`, regardless of whether it
+    passed the Pareto 80% cutoff -- lets a heatmap cell for a
+    non-significant factor still resolve to a (clearly-labeled) scatter
+    view. `q_value`/`significant` still come from the full FDR family, so
+    they agree with what select_pareto_factors would report.
+    """
+    rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
+    row = next((r for r in rows if r["feature"] == feature), None)
+    if row is None:
+        return None
+    shape, center = _relation_shape(df, target, row["feature"], row["kind"])
+    return ParetoFactor(
+        target=target,
+        feature=row["feature"],
+        kind=row["kind"],
+        step=row["step"],
+        eps2=row["eps2"],
+        p_value=row["p_value"],
+        q_value=row["q_value"],
+        pearson_r=row["pearson_r"],
+        spearman_r=row["spearman_r"],
+        n_observed=row["n_observed"],
+        contribution_pct=0.0,
+        cumulative_pct=0.0,
+        significant=row["significant"],
+        relation_shape=shape,
+        optimal_center=center,
+    )

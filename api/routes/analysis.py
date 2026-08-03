@@ -24,7 +24,7 @@ from src.analysis.control_range import (
 from src.analysis.scatter import build_scatter_data
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import select_pareto_factors_all_targets
+from src.analysis.screening.selector import find_factor, select_pareto_factors_all_targets
 from src.ml.inference import get_latest_model_metadata
 from src.runtime.datasets import DatasetNotFoundError
 from src.runtime.store import RuntimeStore
@@ -74,6 +74,11 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         None,
     )
     if factor is None:
+        # Not among the selected/top-10-reference factors -- still resolve it
+        # so a heatmap cell for any of the 58 R/D factors can open a scatter,
+        # even when it never passed FDR (see get_screening_heatmap).
+        factor = find_factor(df, schema, target, feature)
+    if factor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}' 인자를 찾을 수 없습니다.")
 
     data = build_scatter_data(df, df, factor)
@@ -88,6 +93,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "optimal_center": data.optimal_center,
         "eps2": data.eps2,
         "q_value": data.q_value,
+        "significant": data.significant,
         "n": data.n,
         "axis": data.axis,
     }

@@ -65,6 +65,7 @@ class ScreeningScatterResponse(BaseModel):
     optimal_center: float | None
     eps2: float
     q_value: float
+    significant: bool
     n: int
     axis: dict[str, str]
 
