@@ -7872,39 +7872,64 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 
 /* ===================================================================
    Dashboard v2 shell: 3-column grid (sidebar / content / AI panel).
-   Both side columns collapse to an 88px lane (16px margin + 56px circle
-   + 16px breathing room) holding nothing but a circular SUNI-mark
-   button; expanded, both render as an Apple-style floating card inset
-   16px from the viewport edge. Collapsed content is never just hidden
-   with opacity/width:0 -- it is a completely different conditional
-   render (see Sidebar.tsx/AiPanel.tsx), so there is nothing left in the
-   DOM to leak a status dot or a scrollbar out of a squeezed rail.
+   Both panels are `position:sticky` boxes that only carry size/position
+   (`.sidebar`/`.aiPanel`, overflow:visible) wrapping an inner
+   `.sidebarSurface`/`.aiPanelSurface` that carries the actual glass
+   material (background/blur/border/shadow/border-radius:inherit,
+   overflow:hidden). Splitting these two layers is what lets the
+   edge-straddling chevron badge sit half on/half off the visible card
+   without the card's own overflow:hidden clipping it in half.
+
+   Left collapses to a 56px full-height rail (radius stays 20px, only
+   width changes); right collapses to a 48px circle (width AND height
+   shrink, radius animates 20px -> 50%). Collapsed content is a
+   completely different conditional render, never just hidden with
+   opacity/width:0 -- see Sidebar.tsx/AiPanel.tsx.
 =================================================================== */
 :root{
   --shell-margin: 16px;
-  --shell-rail: 56px;
-  --shell-rail-col: 88px;   /* 16 + 56 + 16 */
-  --shell-sidebar-card: 280px;
-  --shell-ai-card: 360px;
-  --shell-sidebar-col: 312px; /* 280 + 16*2 */
-  --shell-ai-col: 392px;      /* 360 + 16*2 */
+  --shell-radius: 20px;
+  --shell-chevron-top: 16px;
+  --shell-chevron-size: 28px;
+  --shell-sidebar-open: 240px;
+  --shell-sidebar-rail: 56px;
+  --shell-ai-open: 320px;
+  --shell-ai-circle: 48px;
+  --shell-sidebar-col-open: 272px;  /* 240 + 16*2 */
+  --shell-sidebar-col-rail: 88px;   /* 56 + 16*2 */
+  --shell-ai-col-open: 352px;       /* 320 + 16*2 */
+  --shell-ai-col-circle: 80px;      /* 48 + 16*2 */
   --shell-transition: 280ms cubic-bezier(0.32, 0.72, 0, 1);
+  --shell-panel-bg: rgba(255, 255, 255, 0.82);
+  --shell-panel-border: rgba(0, 0, 0, 0.08);
+  --shell-panel-shadow: 0 20px 48px rgba(15, 23, 42, 0.12);
+  --shell-chevron-bg: rgba(255, 255, 255, 0.55);
+  --shell-logo-hover-bg: rgba(0, 0, 0, 0.04);
+  --shell-circle-bg: rgba(255, 255, 255, 0.55);
+}
+html[data-theme="dark"]{
+  --shell-panel-bg: rgba(44, 44, 46, 0.82);
+  --shell-panel-border: rgba(255, 255, 255, 0.12);
+  --shell-panel-shadow: none; /* dark: no visible shadow -- border contrast carries the "floating" read instead */
+  --shell-chevron-bg: rgba(255, 255, 255, 0.14);
+  --shell-logo-hover-bg: rgba(255, 255, 255, 0.10);
+  --shell-circle-bg: rgba(255, 255, 255, 0.14);
 }
 .dashboardGrid{
   display: grid;
-  grid-template-columns: var(--shell-sidebar-col) 1fr var(--shell-rail-col);
+  grid-template-columns: var(--shell-sidebar-col-open) 1fr var(--shell-ai-col-circle);
   min-height: 100vh;
   width: 100%;
   transition: grid-template-columns var(--shell-transition);
 }
 .dashboardGrid[data-sidebar="collapsed"]{
-  grid-template-columns: var(--shell-rail-col) 1fr var(--shell-rail-col);
+  grid-template-columns: var(--shell-sidebar-col-rail) 1fr var(--shell-ai-col-circle);
 }
 .dashboardGrid[data-ai="open"]{
-  grid-template-columns: var(--shell-sidebar-col) 1fr var(--shell-ai-col);
+  grid-template-columns: var(--shell-sidebar-col-open) 1fr var(--shell-ai-col-open);
 }
 .dashboardGrid[data-sidebar="collapsed"][data-ai="open"]{
-  grid-template-columns: var(--shell-rail-col) 1fr var(--shell-ai-col);
+  grid-template-columns: var(--shell-sidebar-col-rail) 1fr var(--shell-ai-col-open);
 }
 .dashboardGrid > .contentShell{ min-width: 0; width: 100%; margin-left: 0 !important; }
 @media (prefers-reduced-motion: reduce){
@@ -7912,16 +7937,14 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 }
 @media (max-width: 1280px){
   .dashboardGrid{ grid-template-columns: 1fr; }
-  .dashboardGrid > .sidebar{ position: fixed; z-index: 40; height: 100vh; }
-  .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: 0; z-index: 40; height: 100vh; }
+  .dashboardGrid > .sidebar{ position: fixed; z-index: 40; }
+  .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: var(--shell-margin); z-index: 40; }
 }
 
-/* Expanded floating cards -- same vocabulary both sides.
-   Older cascade layers earlier in this file set `.sidebar{inset:...}`
-   (a shorthand covering top/right/bottom/left) for its pre-existing
-   navy floating-card look -- explicit top/left/right/bottom longhands
-   here override every one of those sub-values so margin-based spacing
-   below isn't doubled up with a leftover inset offset. */
+/* Positioning shell (no visual of its own -- overflow:visible so the
+   chevron badge can straddle the surface's edge). Explicit
+   top/left/right/bottom longhands override an older cascade layer's
+   `.sidebar{inset:...}` shorthand from its pre-existing brand look. */
 .sidebar,
 .aiPanel{
   position: sticky;
@@ -7930,64 +7953,130 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   align-self: start;
   height: calc(100dvh - var(--shell-margin) * 2);
   max-height: calc(100dvh - var(--shell-margin) * 2);
-  border-radius: 20px;
-  overflow: hidden;
+  border-radius: var(--shell-radius);
+  overflow: visible;
+  background: none; padding: 0; border: none; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
   transition: width var(--shell-transition), height var(--shell-transition), border-radius var(--shell-transition);
 }
-.sidebar{ left: 0; right: auto; width: var(--shell-sidebar-card); margin: var(--shell-margin) 0 var(--shell-margin) var(--shell-margin); }
-.aiPanel{ right: 0; left: auto; width: var(--shell-ai-card); margin: var(--shell-margin) var(--shell-margin) var(--shell-margin) 0; }
+.sidebar{ left: 0; right: auto; width: var(--shell-sidebar-open); margin: 0 0 0 var(--shell-margin); }
+.aiPanel{ right: 0; left: auto; width: var(--shell-ai-open); margin: 0 var(--shell-margin) 0 0; }
+/* An older `html[data-theme="dark"] .sidebar{background:...}` cascade
+   layer re-asserts a navy background with higher specificity than the
+   plain `.sidebar{background:none}` above -- match it here so dark mode
+   is blank too (the visible glass now lives on .sidebarSurface). */
+html[data-theme="dark"] .sidebar{ background: none; }
 
-/* Collapsed -- a bare 56px circle, nothing else in the DOM */
-.sidebar.collapsed,
+/* Left collapses to a full-height rail: width only, radius unchanged. */
+.sidebar.collapsed{ width: var(--shell-sidebar-rail); }
+
+/* Right collapses to a small circle: width AND height shrink, radius
+   animates toward 50% together with them. */
 .aiPanel.collapsed{
-  width: var(--shell-rail); height: var(--shell-rail);
-  max-height: var(--shell-rail);
-  margin: 24px auto 0;
-  padding: 0;
-  background: transparent; border: none; box-shadow: none; backdrop-filter: none;
-  display: flex; align-items: center; justify-content: center;
+  width: var(--shell-ai-circle);
+  height: var(--shell-ai-circle);
+  border-radius: 50%;
 }
 @media (prefers-reduced-motion: reduce){
   .sidebar, .aiPanel{ transition: none; }
 }
 
-.shellCircleButton{
-  position: relative;
-  width: var(--shell-rail); height: var(--shell-rail);
+/* The actual glass material -- fills the positioning shell exactly
+   (`border-radius: inherit` follows the shell's own radius transition,
+   including the right panel's 20px -> 50% morph) and clips its own
+   content/scrollbars, without clipping the sibling chevron above. */
+.sidebarSurface,
+.aiPanelSurface{
+  width: 100%; height: 100%;
+  border-radius: inherit;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--shell-panel-bg);
+  border: 1px solid var(--shell-panel-border);
+  box-shadow: var(--shell-panel-shadow);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+.sidebarSurface{ padding: 18px 14px 14px; }
+/* The 56px rail has far less usable width than the padding above assumes
+   (18/14/14 was sized for the 240px expanded card) -- a smaller padding
+   keeps the 32px logo and 40px nav icons from clipping against
+   Surface's own overflow:hidden. */
+.sidebar.collapsed .sidebarSurface{ padding: 14px 4px; align-items: center; }
+/* Collapsed AI circle uses its own lighter glass tone (--shell-circle-bg),
+   not the general panel tone -- applied once here on Surface itself, so
+   the inner logo button underneath can stay fully transparent instead of
+   stacking a second translucent layer on top. */
+.aiPanel.collapsed .aiPanelSurface{
+  align-items: center; justify-content: center;
+  background: var(--shell-circle-bg);
+}
+
+/* Edge-straddling chevron -- a sibling of Surface (not a descendant),
+   so Surface's overflow:hidden never clips it. Both panels share the
+   same `--shell-chevron-top`, so they cannot drift out of alignment. */
+.shellChevron{
+  position: absolute;
+  top: var(--shell-chevron-top);
+  z-index: 5;
+  width: var(--shell-chevron-size); height: var(--shell-chevron-size);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  padding: 0; border: 1px solid var(--border-card, rgba(0,0,0,.1));
-  background: var(--surface-card, var(--surface));
-  box-shadow: 0 10px 28px rgba(15,23,42,.16), 0 2px 8px rgba(15,23,42,.08);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  cursor: pointer;
-  transition: transform 160ms ease, box-shadow 160ms ease;
+  padding: 0; border: 1px solid var(--shell-panel-border);
+  background: var(--shell-chevron-bg);
+  backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14);
+  color: inherit; cursor: pointer;
+  transition: background-color 160ms ease, transform 160ms ease;
 }
-.shellCircleButton:hover{ transform: scale(1.05); }
-.shellCircleButton:focus-visible{
-  outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 50%;
+.shellChevron svg{ width: 16px; height: 16px; }
+.shellChevron:hover{ transform: scale(1.06); }
+.shellChevron:focus-visible{ outline: 3px solid var(--accent); outline-offset: 2px; }
+.shellChevron-sidebar{ right: calc(var(--shell-chevron-size) / -2); }
+.shellChevron-ai{ left: calc(var(--shell-chevron-size) / -2); }
+html[data-theme="dark"] .shellChevron{ box-shadow: none; }
+
+/* Logo buttons double as the collapse/expand toggle. No opaque
+   background of their own -- they sit directly on the panel's own
+   glass surface; a faint tint only appears on hover as a click
+   affordance, never a solid/opaque fill. */
+.railLogoButton,
+.brandLogoButton,
+.circleLogoButton,
+.aiPanelHeaderLogoButton{
+  border: none; background: transparent; padding: 6px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: inherit; transition: background-color 140ms ease, filter 140ms ease;
 }
-.shellCircleBadge{
-  position: absolute; right: -2px; bottom: -2px; width: 20px; height: 20px; border-radius: 50%;
+.railLogoButton:hover, .railLogoButton:focus-visible,
+.brandLogoButton:hover, .brandLogoButton:focus-visible,
+.aiPanelHeaderLogoButton:hover, .aiPanelHeaderLogoButton:focus-visible{
+  background: var(--shell-logo-hover-bg);
+}
+.railLogoButton:hover, .brandLogoButton:hover, .aiPanelHeaderLogoButton:hover{ filter: brightness(1.05); }
+.circleLogoButton{
+  width: 100%; height: 100%; border-radius: 50%; padding: 0;
+  background: transparent;
+}
+.circleLogoButton:hover{ filter: brightness(1.08); }
+.circleLogoButton:focus-visible{ outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* Left rail: logo on top, nav icons stacked below, nothing else. */
+.railLogoButton{ margin: 0 auto 14px; padding: 4px; }
+.railNav{ display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.railNavItem{
+  width: 40px; height: 40px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff; border: 2px solid var(--surface-card, var(--surface));
+  color: var(--text-secondary, currentColor); transition: background-color 140ms ease, color 140ms ease;
 }
-html[data-theme="dark"] .shellCircleButton{
-  border-color: rgba(255,255,255,.18);
-  box-shadow: 0 4px 20px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.05);
-}
+.railNavItem:hover, .railNavItem:focus-visible{ background: var(--shell-logo-hover-bg); color: var(--text-primary, currentColor); }
+.railNavItem.active{ background: var(--accent-soft, var(--shell-logo-hover-bg)); color: var(--accent, currentColor); }
+.railNavItem svg{ width: 20px; height: 20px; }
 
 .sidebarTop{ display: flex; align-items: center; gap: 8px; }
-.sidebarTop .brand{ flex: 1 1 auto; min-width: 0; }
-.sidebarCollapseButton{
-  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border: 1px solid var(--border-card, rgba(255,255,255,.12));
-  border-radius: 8px; background: transparent; color: inherit; cursor: pointer;
-}
 
-/* §3: the theme control sits directly in sidebarFooter -- no decorative
-   wrapper box around it. sidebarFooter is layout-only (spacing), the
-   segment/trigger control itself already carries the card look. */
+/* §3 (earlier pass): the theme control sits directly in sidebarFooter --
+   no decorative wrapper box around it. */
 .sidebar .sidebarFooter{
   background: none !important; border: none !important; box-shadow: none !important;
   padding: 0 !important; margin-top: 14px !important;
@@ -7998,10 +8087,6 @@ html[data-theme="dark"] .shellCircleButton{
 .aiPanelHeaderText{ display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
 .aiPanelHeaderText strong{ font-size: 14px; font-weight: 600; }
 .aiPanelHeaderText span{ font-size: 11px; color: var(--text-secondary, #6e6e73); }
-.aiPanelCollapseButton{
-  width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent;
-  color: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-}
 .aiPanelMessages{ flex: 1 1 auto; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 .aiPanelRow{ display: flex; align-items: flex-end; gap: 6px; }
 .aiPanelRow-user{ justify-content: flex-end; }
@@ -8032,25 +8117,31 @@ html[data-theme="dark"] .shellCircleButton{
 .aiPanelSendButton:disabled{ opacity: .4; cursor: not-allowed; }
 .aiPanelCaption{ margin: 8px 0 0; font-size: 11px; color: var(--text-secondary, #6e6e73); }
 
-/* AI panel's own floating-card material (sidebar keeps its existing navy
-   brand background from the rules earlier in this file -- only its
-   position/size/radius are shared above). */
-.aiPanel{
-  background: var(--surface-card, var(--surface));
-  border: 1px solid var(--border-card, rgba(0,0,0,.08));
-  box-shadow: 0 20px 48px rgba(15,23,42,.12);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-}
-.aiPanel.collapsed,
-.sidebar.collapsed{ background: transparent; border: none; box-shadow: none; }
-
-html[data-theme="dark"] .aiPanel{
-  background: color-mix(in srgb, #1C1C1E 94%, transparent);
-  border-color: rgba(255,255,255,.1);
-}
-html[data-theme="dark"] .aiPanel.collapsed,
-html[data-theme="dark"] .sidebar.collapsed{ background: transparent; }
 html[data-theme="dark"] .aiPanelBubble-suni{ background: #2C2C2E; border-color: rgba(255,255,255,.1); }
+
+/* The sidebar used to be a permanently-dark navy card (same look in both
+   site themes), so its nav/brand/theme-trigger text was hardcoded white.
+   Now that it's a theme-following glass card (light glass in light mode),
+   that white text would be unreadable -- follow --text-primary/secondary
+   like every other panel instead. */
+.sidebar .brandTitle{ color: var(--text-primary, #1d1d1f); }
+.sidebar .navigationItem{ color: var(--text-secondary, #6e6e73); }
+.sidebar .navigationItem:hover,
+.sidebar .navigationItem:focus-visible{
+  color: var(--text-primary, #1d1d1f); background: var(--shell-logo-hover-bg); border-color: transparent;
+}
+.sidebar .navigationItem.active{
+  color: var(--accent, #0e306d); background: var(--accent-soft, var(--shell-logo-hover-bg)); border-color: transparent;
+}
+.sidebar .navigationItem.active::before{ background: var(--accent, #0e306d); }
+.sidebar .themeChevron{ color: var(--text-secondary, #6e6e73); }
+.sidebar .themeTrigger{
+  color: var(--text-primary, #1d1d1f); background: var(--shell-logo-hover-bg); border-color: var(--shell-panel-border);
+}
+.sidebar .themeTrigger:hover,
+.sidebar .themeTrigger:focus-visible{ background: rgba(0, 0, 0, 0.08); }
+html[data-theme="dark"] .sidebar .themeTrigger:hover,
+html[data-theme="dark"] .sidebar .themeTrigger:focus-visible{ background: rgba(255, 255, 255, 0.18); }
 
 /* Fixed interpretation-limits footnote used across the analysis tabs */
 .analysisDisclaimers{

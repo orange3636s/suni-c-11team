@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -47,113 +46,129 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
     };
   }, [themeMenuOpen]);
 
-  if (collapsed) {
-    return (
-      <aside className="sidebar collapsed">
-        <button
-          type="button"
-          className="shellCircleButton"
-          onClick={onToggleCollapse}
-          aria-label="메뉴 열기"
-          title="메뉴"
-        >
-          <SuniAvatar size={34} />
-        </button>
-      </aside>
-    );
-  }
-
   return (
-    <aside className="sidebar">
-      <div className="sidebarTop">
-        <Link className="brand" href="/" aria-label="SK하이닉스 수율 분석 대시보드 홈">
-          <Image
-            className="brandLogo"
-            src="/sk-suni-c-5-character.png"
-            alt="SK SUNI C 5기"
-            width={150}
-            height={150}
-            unoptimized
-            priority
-          />
-          <strong className="brandTitle">써니C 11팀</strong>
-        </Link>
-        {onToggleCollapse && (
-          <button
-            type="button"
-            className="sidebarCollapseButton"
-            onClick={onToggleCollapse}
-            aria-label="사이드바 접기"
-            aria-expanded={true}
-          >
-            <ChevronDown style={{ transform: "rotate(90deg)" }} />
-          </button>
-        )}
-      </div>
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      <button
+        type="button"
+        className="shellChevron shellChevron-sidebar"
+        onClick={onToggleCollapse}
+        aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
+        aria-expanded={!collapsed}
+      >
+        <ChevronIcon direction={collapsed ? "right" : "left"} />
+      </button>
 
-      <nav aria-label="주요 메뉴">
-        <ul className="navigationList">
-          {navigationItems.map((item) => {
-            const isActive = item.label === activeItem;
-            return (
-              <li key={item.label}>
-                <Link
-                  className={`navigationItem ${isActive ? "active" : ""}`}
-                  href={item.href}
-                  aria-current={isActive ? "page" : undefined}
-                >
-                  <NavIcon name={item.icon} />
-                  <span>{item.label}</span>
-                  <i className="menuStatusDot ready" aria-label="사용 가능" />
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      <div className="sidebarFooter" ref={themeMenuRef}>
-        {themeMenuOpen && (
-          <div className="themeMenu" role="menu" aria-label="Theme 선택">
-            <strong>Theme</strong>
-            <div className="themeOptions">
-              {(
-                [
-                  ["system", "System"],
-                  ["light", "Light"],
-                  ["dark", "Dark"],
-                ] as [ThemePreference, string][]
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={theme === value ? "active" : ""}
-                  onClick={() => {
-                    setTheme(value);
-                    setThemeMenuOpen(false);
-                  }}
-                  role="menuitemradio"
-                  aria-checked={theme === value}
-                >
-                  {label}
-                </button>
-              ))}
+      <div className="sidebarSurface">
+        {collapsed ? (
+          <>
+            <button
+              type="button"
+              className="railLogoButton"
+              onClick={onToggleCollapse}
+              aria-label="메뉴 펼치기"
+              title="메뉴 펼치기"
+            >
+              <SuniAvatar size={32} />
+            </button>
+            <nav aria-label="주요 메뉴" className="railNav">
+              {navigationItems.map((item) => {
+                const isActive = item.label === activeItem;
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={`railNavItem ${isActive ? "active" : ""}`}
+                    aria-current={isActive ? "page" : undefined}
+                    aria-label={item.label}
+                    title={item.label}
+                  >
+                    <NavIcon name={item.icon} />
+                  </Link>
+                );
+              })}
+            </nav>
+          </>
+        ) : (
+          <>
+            <div className="sidebarTop">
+              <button
+                type="button"
+                className="brandLogoButton"
+                onClick={onToggleCollapse}
+                aria-label="메뉴 접기"
+                title="메뉴 접기"
+              >
+                <SuniAvatar size={28} />
+              </button>
+              <strong className="brandTitle">써니C 11팀</strong>
             </div>
-          </div>
+
+            <nav aria-label="주요 메뉴">
+              <ul className="navigationList">
+                {navigationItems.map((item) => {
+                  const isActive = item.label === activeItem;
+                  return (
+                    <li key={item.label}>
+                      <Link
+                        className={`navigationItem ${isActive ? "active" : ""}`}
+                        href={item.href}
+                        aria-current={isActive ? "page" : undefined}
+                      >
+                        <NavIcon name={item.icon} />
+                        <span>{item.label}</span>
+                        <i className="menuStatusDot ready" aria-label="사용 가능" />
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </nav>
+
+            <div className="sidebarFooter" ref={themeMenuRef}>
+              {themeMenuOpen && (
+                <div className="themeMenu" role="menu" aria-label="Theme 선택">
+                  <strong>Theme</strong>
+                  <div className="themeOptions">
+                    {(
+                      [
+                        ["system", "System"],
+                        ["light", "Light"],
+                        ["dark", "Dark"],
+                      ] as [ThemePreference, string][]
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={theme === value ? "active" : ""}
+                        onClick={() => {
+                          setTheme(value);
+                          setThemeMenuOpen(false);
+                        }}
+                        role="menuitemradio"
+                        aria-checked={theme === value}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button
+                className="themeToggle themeTrigger"
+                type="button"
+                aria-expanded={themeMenuOpen}
+                aria-label="Theme 선택"
+                aria-haspopup="menu"
+                title="Theme 선택"
+                onClick={() => setThemeMenuOpen((open) => !open)}
+              >
+                <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
+                <span className="themeTriggerLabel">Theme</span>
+                <ChevronDown />
+              </button>
+            </div>
+          </>
         )}
-        <button
-          className="themeToggle themeTrigger"
-          type="button"
-          aria-expanded={themeMenuOpen}
-          aria-label="Theme 선택"
-          aria-haspopup="menu"
-          title="Theme 선택"
-          onClick={() => setThemeMenuOpen((open) => !open)}
-        >
-          <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
-          <span className="themeTriggerLabel">Theme</span>
-          <ChevronDown />
-        </button>
       </div>
     </aside>
   );
@@ -177,6 +192,14 @@ function ThemeIcon({ theme }: { theme: ThemePreference }) {
   return <svg className="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{path}</svg>;
 }
 
-function ChevronDown({ style }: { style?: React.CSSProperties }) {
-  return <svg className="themeChevron" style={style} viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>;
+function ChevronDown() {
+  return <svg className="themeChevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>;
+}
+
+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d={direction === "left" ? "m15 6-6 6 6 6" : "m9 6 6 6-6 6"} />
+    </svg>
+  );
 }
