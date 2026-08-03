@@ -109,9 +109,9 @@ async def protect_active_operations(request: Request, call_next):
         )
 
 
-app.include_router(data_router)
-app.include_router(datasets_router)
 app.include_router(analysis_router)
+app.include_router(datasets_router)
+app.include_router(data_router)
 
 
 @app.get("/")

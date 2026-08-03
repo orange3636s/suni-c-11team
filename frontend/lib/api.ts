@@ -1,8 +1,17 @@
 import type {
+  AlarmListResponse,
+  AlarmSummaryResponse,
+  ControlRangeListResponse,
+  DatasetListResponse,
+  DatasetSchemaResponse,
+  DatasetUploadResponse,
   DeleteModelResponse,
   ModelDetail,
   ModelListResponse,
+  ModelPerformanceResponse,
   PreprocessResponse,
+  ScreeningResponse,
+  ScreeningScatterResponse,
   TrainResponse,
   TrainingJobCreateResponse,
   TrainingJobStatusResponse,
@@ -293,4 +302,71 @@ export async function deleteModel(modelId: string): Promise<DeleteModelResponse>
     );
   }
   return result;
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}${path}`, { method: "GET", cache: "no-store" });
+  } catch (error) {
+    rethrowApiConfigurationError(error);
+    throw new Error("서버에 연결할 수 없습니다.");
+  }
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json() as Promise<T>;
+}
+
+export function getDatasets(): Promise<DatasetListResponse> {
+  return getJson("/api/datasets");
+}
+
+export async function uploadDataset(file: File): Promise<DatasetUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${getApiBaseUrl()}/api/datasets`, { method: "POST", body: formData });
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json() as Promise<DatasetUploadResponse>;
+}
+
+export async function deleteDataset(datasetId: string): Promise<{ success: boolean; dataset_id: string }> {
+  const response = await fetch(`${getApiBaseUrl()}/api/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" });
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json();
+}
+
+export function getDatasetSchema(datasetId: string): Promise<DatasetSchemaResponse> {
+  return getJson(`/api/datasets/${encodeURIComponent(datasetId)}/schema`);
+}
+
+export async function downloadDatasetFile(datasetId: string, filename: string): Promise<File> {
+  const response = await fetch(`${getApiBaseUrl()}/api/datasets/${encodeURIComponent(datasetId)}/download`);
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  const blob = await response.blob();
+  return new File([blob], filename, { type: "text/csv" });
+}
+
+export function getScreening(dataset: string): Promise<ScreeningResponse> {
+  return getJson(`/api/screening?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+export function getScreeningScatter(dataset: string, target: string, feature: string): Promise<ScreeningScatterResponse> {
+  return getJson(`/api/screening/scatter?${new URLSearchParams({ dataset, target, feature }).toString()}`);
+}
+
+export function getControlRanges(dataset: string): Promise<ControlRangeListResponse> {
+  return getJson(`/api/control-ranges?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+export function getAlarms(trainDataset: string, evalDataset: string, severity?: string): Promise<AlarmListResponse> {
+  const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
+  if (severity) params.set("severity", severity);
+  return getJson(`/api/alarms?${params.toString()}`);
+}
+
+export function getAlarmSummary(trainDataset: string, evalDataset: string): Promise<AlarmSummaryResponse> {
+  return getJson(`/api/alarms/summary?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
+}
+
+export function getModelPerformance(): Promise<ModelPerformanceResponse> {
+  return getJson("/api/models/performance");
 }

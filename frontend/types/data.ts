@@ -355,3 +355,190 @@ export type ModelDetail = {
   incompatibility_reason: string | null;
 };
 
+export type DatasetSummary = {
+  dataset_id: string;
+  kind: "bundled" | "uploaded";
+  original_filename: string;
+  uploaded_at: string | null;
+  row_count: number;
+  column_count: number;
+  lot_min: string | null;
+  lot_max: string | null;
+  lot_count: number | null;
+  warnings: string[];
+  unmapped_columns: string[];
+  deletable: boolean;
+};
+
+export type DatasetListResponse = { items: DatasetSummary[] };
+
+export type DatasetUploadResponse = {
+  success: boolean;
+  dataset_id: string | null;
+  blocking_errors: string[];
+  warnings: string[];
+  unmapped_columns: string[];
+  row_count?: number | null;
+  column_count?: number | null;
+  lot_min?: string | null;
+  lot_max?: string | null;
+  lot_count?: number | null;
+};
+
+export type DatasetSchemaResponse = {
+  dataset_id: string;
+  steps_present: number[];
+  max_step: number;
+  r_columns: string[];
+  d_columns: string[];
+  config_columns: string[];
+  target_columns: string[];
+  unmapped_columns: string[];
+  missing_rates: Record<string, number>;
+};
+
+export type RelationShape = "monotonic_increasing" | "monotonic_decreasing" | "u_shape" | "unclear";
+
+export type ParetoFactor = {
+  target: string;
+  feature: string;
+  kind: "R" | "D" | "Config";
+  step: number;
+  eps2: number;
+  p_value: number;
+  q_value: number;
+  pearson_r: number | null;
+  spearman_r: number | null;
+  n_observed: number;
+  contribution_pct: number;
+  cumulative_pct: number;
+  significant: boolean;
+  relation_shape: RelationShape;
+  optimal_center: number | null;
+};
+
+export type TargetScreeningResult = {
+  target: string;
+  factors: ParetoFactor[];
+  reference_only: ParetoFactor[];
+  excluded_count: number;
+  no_significant_factor: boolean;
+};
+
+export type ScreeningResponse = {
+  dataset_id: string;
+  targets: TargetScreeningResult[];
+  schema_warnings: string[];
+};
+
+export type ScatterPoint = {
+  x: number;
+  y: number;
+  lot_wafer_id: string | null;
+  lot_id: string | null;
+  in_band: boolean;
+  in_range: boolean;
+  config: string | null;
+};
+
+export type NormalRange = {
+  lo: number | null;
+  hi: number | null;
+  one_sided: boolean;
+  fallback_applied: boolean;
+};
+
+export type ScreeningScatterResponse = {
+  points: ScatterPoint[];
+  y_q1: number;
+  y_q3: number;
+  band_x_min: number | null;
+  band_x_max: number | null;
+  normal_range: NormalRange;
+  bins: Array<{ x_mean: number; y_mean: number; y_lo: number; y_hi: number; n: number }>;
+  optimal_center: number | null;
+  eps2: number;
+  q_value: number;
+  n: number;
+  axis: { x_label: string; y_label: string };
+};
+
+export type ControlRangeItem = {
+  feature: string;
+  target: string;
+  kind: string;
+  relation_shape: RelationShape;
+  y_q1: number;
+  y_q3: number;
+  lower: number | null;
+  upper: number | null;
+  one_sided: boolean;
+  fallback_applied: boolean;
+  band_in_ratio: number;
+  n_band: number;
+  n_observed: number;
+};
+
+export type ControlRangeListResponse = {
+  train_dataset_id: string;
+  items: ControlRangeItem[];
+  no_significant_factor_targets: string[];
+};
+
+export type AlarmSeverity = "low" | "medium" | "high";
+
+export type AlarmItem = {
+  lot_wafer_id: string;
+  lot_id: string | null;
+  wafer_slot: number | null;
+  step: number;
+  feature: string;
+  kind: string;
+  target: string;
+  value: number;
+  normal_range: [number | null, number | null];
+  deviation: number;
+  direction: "above" | "below";
+  severity: AlarmSeverity;
+  actual_y: number | null;
+};
+
+export type AlarmListResponse = {
+  train_dataset_id: string;
+  eval_dataset_id: string;
+  items: AlarmItem[];
+  total: number;
+};
+
+export type AlarmSummaryResponse = {
+  train_dataset_id: string;
+  eval_dataset_id: string;
+  counts: { alarm: number; normal: number; unmeasured: number };
+  alarm_group_yield_avg: number | null;
+  no_alarm_group_yield_avg: number | null;
+  yield_gap: number | null;
+  top_lots: Array<{ lot_id: string; alarm_count: number }>;
+};
+
+export type TargetPerformance = {
+  target: string;
+  no_significant_factor: boolean;
+  feature: string | null;
+  kind: string | null;
+  eps2: number | null;
+  relation_shape: RelationShape | null;
+  optimal_center: number | null;
+  r2: number | null;
+  rmse: number | null;
+  mae: number | null;
+  n: number | null;
+};
+
+export type ModelPerformanceResponse = {
+  model_id: string | null;
+  trained_at: string | null;
+  source_filename: string | null;
+  targets: TargetPerformance[];
+  final_yield: TargetPerformance | null;
+};
+

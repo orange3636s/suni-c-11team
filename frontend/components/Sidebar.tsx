@@ -16,12 +16,21 @@ type NavigationLabel = (typeof navigationItems)[number]["label"];
 
 type SidebarProps = {
   activeItem?: NavigationLabel;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 };
 
-export default function Sidebar({ activeItem = "모델 학습" }: SidebarProps) {
+const THEME_CYCLE: ThemePreference[] = ["system", "light", "dark"];
+
+export default function Sidebar({ activeItem = "모델 학습", collapsed = false, onToggleCollapse }: SidebarProps) {
   const { theme, setTheme } = useTheme();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
+
+  function cycleTheme() {
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+    setTheme(next);
+  }
 
   useEffect(() => {
     if (!themeMenuOpen) return;
@@ -45,19 +54,32 @@ export default function Sidebar({ activeItem = "모델 학습" }: SidebarProps) 
   }, [themeMenuOpen]);
 
   return (
-    <aside className="sidebar">
-      <Link className="brand" href="/" aria-label="제조 공정 불량 예측 & 원인 분석 AI 홈">
-        <Image
-          className="brandLogo"
-          src="/sk-suni-c-5-character.png"
-          alt="SK SUNI C 5기"
-          width={150}
-          height={150}
-          unoptimized
-          priority
-        />
-        <strong className="brandTitle">써니C 11팀</strong>
-      </Link>
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      <div className="sidebarTop">
+        <Link className="brand" href="/" aria-label="SK하이닉스 수율 분석 대시보드 홈">
+          <Image
+            className="brandLogo"
+            src="/sk-suni-c-5-character.png"
+            alt="SK SUNI C 5기"
+            width={150}
+            height={150}
+            unoptimized
+            priority
+          />
+          {!collapsed && <strong className="brandTitle">써니C 11팀</strong>}
+        </Link>
+        {onToggleCollapse && (
+          <button
+            type="button"
+            className="sidebarCollapseButton"
+            onClick={onToggleCollapse}
+            aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
+            aria-expanded={!collapsed}
+          >
+            <ChevronDown style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(90deg)" }} />
+          </button>
+        )}
+      </div>
 
       <nav aria-label="주요 메뉴">
         <ul className="navigationList">
@@ -69,9 +91,10 @@ export default function Sidebar({ activeItem = "모델 학습" }: SidebarProps) 
                   className={`navigationItem ${isActive ? "active" : ""}`}
                   href={item.href}
                   aria-current={isActive ? "page" : undefined}
+                  title={collapsed ? item.label : undefined}
                 >
                   <NavIcon name={item.icon} />
-                  <span>{item.label}</span>
+                  {!collapsed && <span>{item.label}</span>}
                   <i className="menuStatusDot ready" aria-label="사용 가능" />
                 </Link>
               </li>
@@ -81,6 +104,18 @@ export default function Sidebar({ activeItem = "모델 학습" }: SidebarProps) 
       </nav>
 
       <div className="sidebarFooter" ref={themeMenuRef}>
+        {collapsed ? (
+          <button
+            type="button"
+            className="themeToggle themeTrigger collapsed"
+            aria-label={`Theme: ${theme}. 클릭하여 전환`}
+            title={`Theme: ${theme}`}
+            onClick={cycleTheme}
+          >
+            <ThemeIcon theme={theme} />
+          </button>
+        ) : (
+          <>
         {themeMenuOpen && (
           <div className="themeMenu" role="menu" aria-label="Theme 선택">
             <strong>Theme</strong>
@@ -122,6 +157,8 @@ export default function Sidebar({ activeItem = "모델 학습" }: SidebarProps) 
           <span className="themeTriggerLabel">Theme</span>
           <ChevronDown />
         </button>
+          </>
+        )}
       </div>
     </aside>
   );
@@ -145,6 +182,6 @@ function ThemeIcon({ theme }: { theme: ThemePreference }) {
   return <svg className="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{path}</svg>;
 }
 
-function ChevronDown() {
-  return <svg className="themeChevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>;
+function ChevronDown({ style }: { style?: React.CSSProperties }) {
+  return <svg className="themeChevron" style={style} viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m7 10 5 5 5-5" /></svg>;
 }

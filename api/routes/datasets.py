@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 
 from api.schemas.datasets import (
     DatasetDeleteResponse,
@@ -59,6 +60,26 @@ def delete_dataset(dataset_id: str) -> dict[str, Any]:
     except DatasetNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.") from exc
     return {"success": True, "dataset_id": dataset_id}
+
+
+@router.get("/{dataset_id}/download")
+def download_dataset(dataset_id: str) -> Response:
+    """Raw CSV bytes so the frontend can feed the selected dataset straight
+    into the existing /api/train(/jobs) file-upload contract without that
+    endpoint needing to learn about dataset_id at all.
+    """
+    registry = get_dataset_registry()
+    summary = registry.get_summary(dataset_id)
+    if summary is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.")
+    df = registry.get_dataframe(dataset_id)
+    csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+    filename = summary["original_filename"]
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{dataset_id}/schema", response_model=DatasetSchemaResponse)
