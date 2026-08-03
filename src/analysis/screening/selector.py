@@ -1,11 +1,15 @@
-"""Per-target Pareto selection: effect size -> BH-FDR -> cumulative 80% cut.
+"""Per-target Pareto selection: effect size -> BH-FDR -> select all survivors.
 
 Order matters and must not be reshuffled:
   1. compute eps2/p for every factor (R + D + Config)
   2. BH-FDR correct p-values within the target (one target = one family)
   3. drop anything with q >= fdr_alpha
-  4. sort survivors by eps2 descending, take a cumulative-contribution
-     cut at `cutoff` (first factor whose running cumulative % passes it)
+  4. every remaining (significant) factor is selected -- no further
+     cumulative-contribution cut. `contribution_pct`/`cumulative_pct` are
+     still reported on every factor (selected or not), denominated by the
+     FULL candidate pool's eps2 sum, for the Pareto chart/heatmap display.
+     Significance and contribution are different axes; neither filters
+     the other.
   5. if nothing survives FDR, return an empty list with
      no_significant_factor=True -- never backfill with insignificant factors
 """
@@ -160,6 +164,7 @@ def select_pareto_factors(
     min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
     min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
 ) -> TargetParetoResult:
+    del cutoff  # kept for API compatibility; selection no longer applies a cumulative cut (see below)
     rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
 
     if not rows:
@@ -167,8 +172,21 @@ def select_pareto_factors(
 
     rows.sort(key=lambda r: r["eps2"], reverse=True)
 
+    # contribution_pct/cumulative_pct are reported against the FULL candidate
+    # pool (every R+D+Config factor evaluated for this target, e.g. 88 for
+    # the bundled dataset) -- not just the FDR-significant subset. FDR
+    # answers "is this factor trustworthy"; contribution answers "how much
+    # of total explanatory power is this" -- these are different axes, and
+    # denominating contribution by the significant-only sum made a single
+    # significant factor read as 100% of "everything", which is never true.
+    total_eps2 = sum(r["eps2"] for r in rows)
+    cumulative = 0.0
+    for row in rows:
+        row["contribution_pct"] = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
+        cumulative += row["contribution_pct"]
+        row["cumulative_pct"] = cumulative
+
     significant_rows = [r for r in rows if r["significant"]]
-    excluded_count = len(rows) - len(significant_rows)
 
     if not significant_rows:
         reference_only = _build_reference_only(df, target, rows)
@@ -176,16 +194,17 @@ def select_pareto_factors(
             target=target,
             factors=[],
             reference_only=reference_only,
-            excluded_count=excluded_count,
+            excluded_count=len(rows),
             no_significant_factor=True,
         )
 
-    total_eps2 = sum(r["eps2"] for r in significant_rows)
+    # Every FDR-significant factor is selected here -- no further
+    # cumulative-contribution cut. Applying one would let contribution
+    # filter significance again (the same bug in the other direction): a
+    # factor can pass FDR yet still get silently dropped just because a
+    # stronger factor already accounts for most of the pool's total eps2.
     factors: list[ParetoFactor] = []
-    cumulative = 0.0
     for row in significant_rows:
-        contribution_pct = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
-        cumulative += contribution_pct
         shape, center = _relation_shape(df, target, row["feature"], row["kind"])
         factors.append(
             ParetoFactor(
@@ -199,15 +218,13 @@ def select_pareto_factors(
                 pearson_r=row["pearson_r"],
                 spearman_r=row["spearman_r"],
                 n_observed=row["n_observed"],
-                contribution_pct=contribution_pct,
-                cumulative_pct=cumulative,
+                contribution_pct=row["contribution_pct"],
+                cumulative_pct=row["cumulative_pct"],
                 significant=True,
                 relation_shape=shape,
                 optimal_center=center,
             )
         )
-        if cumulative >= cutoff * 100.0:
-            break
 
     reference_only = _build_reference_only(df, target, rows, exclude={f.feature for f in factors})
 
@@ -244,8 +261,8 @@ def _build_reference_only(
                 pearson_r=row["pearson_r"],
                 spearman_r=row["spearman_r"],
                 n_observed=row["n_observed"],
-                contribution_pct=0.0,
-                cumulative_pct=0.0,
+                contribution_pct=row.get("contribution_pct", 0.0),
+                cumulative_pct=row.get("cumulative_pct", 0.0),
                 significant=row["significant"],
                 relation_shape=shape,
                 optimal_center=center,
@@ -287,6 +304,16 @@ def find_factor(
     row = next((r for r in rows if r["feature"] == feature), None)
     if row is None:
         return None
+    total_eps2 = sum(r["eps2"] for r in rows)
+    rows_by_eps2 = sorted(rows, key=lambda r: r["eps2"], reverse=True)
+    cumulative = 0.0
+    contribution_pct = 0.0
+    for ranked_row in rows_by_eps2:
+        pct = (ranked_row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
+        cumulative += pct
+        if ranked_row["feature"] == feature:
+            contribution_pct = pct
+            break
     shape, center = _relation_shape(df, target, row["feature"], row["kind"])
     return ParetoFactor(
         target=target,
@@ -299,8 +326,8 @@ def find_factor(
         pearson_r=row["pearson_r"],
         spearman_r=row["spearman_r"],
         n_observed=row["n_observed"],
-        contribution_pct=0.0,
-        cumulative_pct=0.0,
+        contribution_pct=contribution_pct,
+        cumulative_pct=cumulative,
         significant=row["significant"],
         relation_shape=shape,
         optimal_center=center,

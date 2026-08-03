@@ -62,7 +62,16 @@ def test_golden_metrics(evaluation, target):
 def test_golden_selected_factor(evaluation, target):
     result = evaluation.target_results[target]
     assert not result.no_significant_factor
-    assert [f.feature for f in result.factors] == [GOLDEN_FACTORS[target]]
+    assert result.factors[0].feature == GOLDEN_FACTORS[target]
+
+
+def test_y2_includes_both_fdr_significant_factors(evaluation):
+    """Step24_R1 also passes FDR for Y2 (q<0.05), just with far less eps2
+    than Step16_R1 -- it must still be a training feature, not silently
+    dropped by a cumulative-contribution cut (see selector.py's fix).
+    """
+    y2_features = {f.feature for f in evaluation.target_results["Y2"].factors}
+    assert y2_features == {"Step16_R1", "Step24_R1"}
 
 
 def test_no_config_factor_used_by_any_target(evaluation):
