@@ -28,12 +28,29 @@ const SHAPE_LABEL: Record<string, string> = {
   unclear: "불명확",
 };
 const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
+const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
+function confidenceTier(p: number): "strong" | "moderate" | "weak" | "reference" {
+  if (p < 0.01) return "strong";
+  if (p < 0.05) return "moderate";
+  if (p < 0.2) return "weak";
+  return "reference";
+}
 
 const BENCHMARK_REFERENCE = [
   { name: "A. 중앙값 대체 + 클리핑 (현행)", y: 0.114 },
   { name: "B. 전체 인자 + NaN 보존", y: 0.146 },
   { name: "C. 선정 인자 + dev + 마스크", y: 0.177 },
 ];
+
+function paretoChartWidth(barCount: number, containerMax = 900): number {
+  // A Plotly bar chart auto-stretches its bars to fill whatever width its
+  // container gets, so a 1-bar result reads as one giant bar spanning the
+  // whole card. Constraining the OUTER wrapper (not the bars themselves)
+  // to roughly `count * 96px` keeps bars a sane width and centered
+  // instead of stretched, without needing to fight Plotly's own bar-width
+  // sizing model.
+  return Math.min(barCount * 96 + 120, containerMax);
+}
 
 function paretoChartSpec(result: TargetScreeningResult) {
   const factors = result.factors;
@@ -271,12 +288,30 @@ export default function TrainingPage() {
               <p className="emptyMessage">통계적으로 유의한 인자가 없습니다.</p>
             ) : (
               <>
-                <PlotlyChart spec={paretoChartSpec(result)} height={280} />
+                <div style={{ display: "flex", gap: 16, alignItems: "stretch", flexWrap: "wrap" }}>
+                  <div style={{ width: paretoChartWidth(result.factors.length), maxWidth: "100%", flex: "0 0 auto" }}>
+                    <PlotlyChart spec={paretoChartSpec(result)} height={280} />
+                  </div>
+                  {result.factors.length <= 2 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: "1 1 220px", minWidth: 200 }}>
+                      {result.factors.map((factor) => (
+                        <div key={factor.feature} className="resultCard" style={{ padding: 12 }}>
+                          <strong>{factor.feature}</strong>
+                          <div className="secomKpiGrid" style={{ marginTop: 8 }}>
+                            <div><span>ε²</span><strong>{showMetric(factor.eps2)}</strong></div>
+                            <div><span>p값</span><strong>{factor.p_value < 0.001 ? factor.p_value.toExponential(2) : showMetric(factor.p_value, 4)}</strong></div>
+                            <div><span>관측수</span><strong>{factor.n_observed}</strong></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="tableWrap">
                   <table>
                     <thead>
                       <tr>
-                        <th>인자명</th><th>종류</th><th>ε²</th><th>기여율</th><th>누적%</th><th>관측수</th><th>q값</th><th>관계형태</th>
+                        <th>인자명</th><th>종류</th><th>ε²</th><th>기여율</th><th>누적%</th><th>관측수</th><th>q값</th><th>신뢰도</th><th>관계형태</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -289,6 +324,7 @@ export default function TrainingPage() {
                           <td>{showMetric(factor.cumulative_pct, 1)}%</td>
                           <td>{factor.n_observed}</td>
                           <td>{factor.q_value < 0.001 ? factor.q_value.toExponential(2) : showMetric(factor.q_value, 4)}</td>
+                          <td><span className={`confidenceBadge tier-${confidenceTier(factor.p_value)}`} style={{ marginLeft: 0 }}>{TIER_LABEL[confidenceTier(factor.p_value)]}</span></td>
                           <td>
                             {SHAPE_LABEL[factor.relation_shape]}
                             {factor.optimal_center != null && ` (중심 ${showMetric(factor.optimal_center, 1)})`}

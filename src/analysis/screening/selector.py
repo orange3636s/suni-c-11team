@@ -30,6 +30,26 @@ DEFAULT_FDR_ALPHA = 0.05
 DEFAULT_MIN_N_NUMERIC = 100
 DEFAULT_MIN_N_CATEGORICAL = 20
 REFERENCE_ONLY_LIMIT = 10
+DEFAULT_MAX_DISPLAY = 10
+
+CONFIDENCE_TIERS = ("strong", "moderate", "weak", "reference")
+
+
+def confidence_tier(p_value: float) -> str:
+    """p-value -> a display-confidence label, independent of FDR.
+
+    The FDR gate (q < 0.05) decides what feeds the alarm engine; it does
+    NOT decide what's allowed on screen. Everything gets shown, tiered
+    by raw p-value, so a factor never simply vanishes because it missed
+    a threshold -- it just reads as less trustworthy.
+    """
+    if p_value < 0.01:
+        return "strong"
+    if p_value < 0.05:
+        return "moderate"
+    if p_value < 0.20:
+        return "weak"
+    return "reference"
 
 
 def benjamini_hochberg(p_values: list[float]) -> list[float]:
@@ -283,6 +303,81 @@ def select_pareto_factors_all_targets(
         target: select_pareto_factors(df, schema, target, cutoff=cutoff, fdr_alpha=fdr_alpha)
         for target in targets
     }
+
+
+def select_display_factors(
+    df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    kind: str = "all",
+    cutoff: float = DEFAULT_CUTOFF,
+    max_display: int = DEFAULT_MAX_DISPLAY,
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+    min_n_numeric: int = DEFAULT_MIN_N_NUMERIC,
+    min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+) -> TargetParetoResult:
+    """Kind-scoped display selection for the root-cause browsing view
+    (Pareto chart, scatter cards, heatmap) -- NOT gated by FDR
+    significance. `kind` restricts the candidate pool to "R"/"D"/"Config"
+    (or "all" for the combined pool), and the denominator for
+    contribution_pct is the eps2 sum within that pool only, not the full
+    88-factor total.
+
+    Selection rule: walk the pool in eps2-descending order until
+    cumulative contribution first reaches `cutoff`. If that takes more
+    than `max_display` factors, the signal is too diffuse to usefully
+    chart -- show only the single strongest factor instead of
+    `max_display` mostly-noise charts.
+    """
+    rows = score_all_factors(df, schema, target, fdr_alpha, min_n_numeric, min_n_categorical)
+    if kind != "all":
+        rows = [r for r in rows if r["kind"] == kind]
+    if not rows:
+        return TargetParetoResult(target=target, no_significant_factor=True)
+
+    rows.sort(key=lambda r: r["eps2"], reverse=True)
+    total_eps2 = sum(r["eps2"] for r in rows)
+    cumulative = 0.0
+    n80: int | None = None
+    for index, row in enumerate(rows):
+        row["contribution_pct"] = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
+        cumulative += row["contribution_pct"]
+        row["cumulative_pct"] = cumulative
+        if n80 is None and cumulative >= cutoff * 100.0:
+            n80 = index + 1
+
+    display_rows = rows[:n80] if (n80 is not None and n80 <= max_display) else rows[:1]
+
+    factors: list[ParetoFactor] = []
+    for row in display_rows:
+        shape, center = _relation_shape(df, target, row["feature"], row["kind"])
+        factors.append(
+            ParetoFactor(
+                target=target,
+                feature=row["feature"],
+                kind=row["kind"],
+                step=row["step"],
+                eps2=row["eps2"],
+                p_value=row["p_value"],
+                q_value=row["q_value"],
+                pearson_r=row["pearson_r"],
+                spearman_r=row["spearman_r"],
+                n_observed=row["n_observed"],
+                contribution_pct=row["contribution_pct"],
+                cumulative_pct=row["cumulative_pct"],
+                significant=row["significant"],
+                relation_shape=shape,
+                optimal_center=center,
+            )
+        )
+
+    return TargetParetoResult(
+        target=target,
+        factors=factors,
+        reference_only=[],
+        excluded_count=len(rows) - len(factors),
+        no_significant_factor=False,
+    )
 
 
 def find_factor(

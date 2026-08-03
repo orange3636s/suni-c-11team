@@ -436,7 +436,6 @@ export type ScatterPoint = {
   y: number;
   lot_wafer_id: string | null;
   lot_id: string | null;
-  in_band: boolean;
   in_range: boolean;
   config: string | null;
 };
@@ -448,18 +447,49 @@ export type NormalRange = {
   fallback_applied: boolean;
 };
 
+export type ReferenceLineKey = "mean" | "q1" | "q3" | "iqr_lo" | "iqr_hi" | "s3_lo" | "s3_hi" | "s6_lo" | "s6_hi";
+
+export type ReferenceLine = {
+  key: ReferenceLineKey;
+  value: number;
+  drawable: boolean;
+  alarm_relevant: boolean;
+  formula: string;
+  outside_count: number;
+};
+
 export type ScreeningScatterResponse = {
   points: ScatterPoint[];
-  y_q1: number;
-  y_q3: number;
-  band_x_min: number | null;
-  band_x_max: number | null;
+  reference_lines: ReferenceLine[];
   normal_range: NormalRange;
   bins: Array<{ x_mean: number; y_mean: number; y_lo: number; y_hi: number; n: number }>;
   optimal_center: number | null;
   eps2: number;
+  p_value: number;
   q_value: number;
   significant: boolean;
+  confidence_tier: ConfidenceTier;
+  n: number;
+  axis: { x_label: string; y_label: string };
+};
+
+export type CategoricalGroup = {
+  category: string;
+  n: number;
+  mean: number;
+  median: number;
+  q1: number;
+  q3: number;
+  values: number[];
+};
+
+export type CategoricalScatterResponse = {
+  groups: CategoricalGroup[];
+  eps2: number;
+  p_value: number;
+  q_value: number;
+  significant: boolean;
+  confidence_tier: ConfidenceTier;
   n: number;
   axis: { x_label: string; y_label: string };
 };
@@ -469,15 +499,17 @@ export type ControlRangeItem = {
   target: string;
   kind: string;
   relation_shape: RelationShape;
-  y_q1: number;
-  y_q3: number;
+  mean: number;
+  std: number;
+  q1: number;
+  q3: number;
   lower: number | null;
   upper: number | null;
   one_sided: boolean;
   fallback_applied: boolean;
-  band_in_ratio: number;
-  n_band: number;
+  band_width: number;
   n_observed: number;
+  reference_lines: ReferenceLine[];
 };
 
 export type ControlRangeListResponse = {
@@ -521,13 +553,17 @@ export type AlarmSummaryResponse = {
   top_lots: Array<{ lot_id: string; alarm_count: number }>;
 };
 
+export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";
+
 export type ParetoRankingItem = {
   feature: string;
   kind: string;
   step: number;
   eps2: number;
+  p_value: number;
   q_value: number;
   significant: boolean;
+  confidence_tier: ConfidenceTier;
   n_observed: number;
   contribution_pct: number;
   cumulative_pct: number;
@@ -536,6 +572,7 @@ export type ParetoRankingItem = {
 export type ParetoRankingResponse = {
   dataset_id: string;
   target: string;
+  kind: string;
   total_factor_count: number;
   items: ParetoRankingItem[];
 };
@@ -545,12 +582,14 @@ export type HeatmapMetric = "spearman" | "eps2";
 export type HeatmapResponse = {
   dataset_id: string;
   metric: HeatmapMetric;
+  kind: string;
   features: string[];
   targets: string[];
   values: Array<Array<number | null>>;
   n: number[][];
   q: Array<Array<number | null>>;
   significant: boolean[][];
+  tier: Array<Array<ConfidenceTier | null>>;
   scale: { min: number; max: number };
   excluded_configs: number;
 };

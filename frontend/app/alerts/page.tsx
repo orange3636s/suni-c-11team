@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import { getAlarmSummary, getAlarms } from "@/lib/api";
@@ -134,7 +135,7 @@ export default function AlertsPage() {
       <section className="analysisDisclaimers">
         <strong>해석 시 한계</strong>
         <ul>
-          <li>정상범위는 학습 데이터셋의 Q1~Q3 구간에서 산출되었으며, 인과관계가 아닌 통계적 이탈 판정입니다.</li>
+          <li>정상범위는 학습 데이터셋에서 해당 인자 자신의 분포로 산출한 IQR×1.5 관리한계(LCL~UCL)이며, 타깃(Y) 값과는 무관하게 계산됩니다. 인과관계가 아닌 통계적 이탈 판정입니다.</li>
           <li>판정불가 wafer는 선정 인자가 계측되지 않아 판정 자체가 불가능한 것이며, 정상을 의미하지 않습니다.</li>
         </ul>
       </section>
@@ -145,15 +146,20 @@ export default function AlertsPage() {
 function AlarmRow({ item }: { item: AlarmItem }) {
   const [lo, hi] = item.normal_range;
   const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"} ~ ${hi != null ? hi.toFixed(1) : "+∞"}`;
+  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&kind=all&feature=${encodeURIComponent(item.feature)}`;
   return (
     <tr>
-      <td>{item.lot_wafer_id}</td>
+      <td>
+        <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.lot_wafer_id}</Link>
+      </td>
       <td>{item.lot_id ?? "-"}</td>
       <td>{item.step}</td>
-      <td>{item.feature}</td>
+      <td>
+        <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.feature}</Link>
+      </td>
       <td>{item.target}</td>
       <td>{item.value.toFixed(2)}</td>
-      <td title={`train에서 ${item.target}가 Q1~Q3인 wafer들의 ${item.feature} 관측 범위`}>{rangeText}</td>
+      <td title={`train에서 ${item.feature} 자체 분포의 IQR×1.5 관리한계 (Y와 무관)`}>{rangeText}</td>
       <td>{item.deviation.toFixed(2)}</td>
       <td>{item.direction === "above" ? "높음" : "낮음"}</td>
       <td><SeverityBadge severity={item.severity} /></td>

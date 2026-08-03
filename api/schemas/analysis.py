@@ -42,8 +42,10 @@ class ParetoRankingItemSchema(BaseModel):
     kind: str
     step: int
     eps2: float
+    p_value: float
     q_value: float
     significant: bool
+    confidence_tier: str
     n_observed: int
     contribution_pct: float
     cumulative_pct: float
@@ -52,6 +54,7 @@ class ParetoRankingItemSchema(BaseModel):
 class ParetoRankingResponse(BaseModel):
     dataset_id: str
     target: str
+    kind: str
     total_factor_count: int
     items: list[ParetoRankingItemSchema]
 
@@ -61,7 +64,6 @@ class ScatterPointSchema(BaseModel):
     y: float
     lot_wafer_id: str | None
     lot_id: str | None
-    in_band: bool
     in_range: bool
     config: str | None
 
@@ -73,18 +75,47 @@ class NormalRangeSchema(BaseModel):
     fallback_applied: bool
 
 
+class ReferenceLineSchema(BaseModel):
+    key: str
+    value: float
+    drawable: bool
+    alarm_relevant: bool
+    formula: str
+    outside_count: int
+
+
 class ScreeningScatterResponse(BaseModel):
     points: list[ScatterPointSchema]
-    y_q1: float
-    y_q3: float
-    band_x_min: float | None
-    band_x_max: float | None
+    reference_lines: list[ReferenceLineSchema]
     normal_range: NormalRangeSchema
     bins: list[dict[str, float]]
     optimal_center: float | None
     eps2: float
+    p_value: float
     q_value: float
     significant: bool
+    confidence_tier: str
+    n: int
+    axis: dict[str, str]
+
+
+class CategoricalGroupSchema(BaseModel):
+    category: str
+    n: int
+    mean: float
+    median: float
+    q1: float
+    q3: float
+    values: list[float]
+
+
+class CategoricalScatterResponse(BaseModel):
+    groups: list[CategoricalGroupSchema]
+    eps2: float
+    p_value: float
+    q_value: float
+    significant: bool
+    confidence_tier: str
     n: int
     axis: dict[str, str]
 
@@ -97,12 +128,14 @@ class HeatmapScaleSchema(BaseModel):
 class HeatmapResponse(BaseModel):
     dataset_id: str
     metric: str
+    kind: str
     features: list[str]
     targets: list[str]
     values: list[list[float | None]]
     n: list[list[int]]
     q: list[list[float | None]]
     significant: list[list[bool]]
+    tier: list[list[str | None]]
     scale: HeatmapScaleSchema
     excluded_configs: int
 
@@ -112,15 +145,17 @@ class ControlRangeSchema(BaseModel):
     target: str
     kind: str
     relation_shape: str
-    y_q1: float
-    y_q3: float
+    mean: float
+    std: float
+    q1: float
+    q3: float
     lower: float | None
     upper: float | None
     one_sided: bool
     fallback_applied: bool
-    band_in_ratio: float
-    n_band: int
+    band_width: float
     n_observed: int
+    reference_lines: list[ReferenceLineSchema] = Field(default_factory=list)
 
 
 class ControlRangeListResponse(BaseModel):

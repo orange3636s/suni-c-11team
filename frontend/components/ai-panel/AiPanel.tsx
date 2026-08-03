@@ -42,46 +42,24 @@ export default function AiPanel({
   }
 
   return (
-    <aside className={`aiPanel ${open ? "" : "collapsed"}`} aria-label="SUNI 어시스턴트">
-      <button
-        type="button"
-        className="shellChevron shellChevron-ai"
-        onClick={onToggle}
-        aria-label={open ? "SUNI 패널 접기" : "SUNI 패널 펼치기"}
-        aria-expanded={open}
-      >
-        <ChevronIcon direction={open ? "right" : "left"} />
-      </button>
-
+    <aside className={`aiPanel ${open ? "" : "collapsed"}`} aria-label="SUNI AI 어시스턴트">
       <div className="aiPanelSurface">
-        {!open ? (
-          <button
-            type="button"
-            className="circleLogoButton"
-            onClick={onToggle}
-            aria-label="SUNI 펼치기"
-            title="SUNI 펼치기"
-          >
-            <SuniAvatar size={32} />
-          </button>
-        ) : (
-          <>
-            <div className="aiPanelHeader">
-              <button
-                type="button"
-                className="aiPanelHeaderLogoButton"
-                onClick={onToggle}
-                aria-label="SUNI 접기"
-                title="SUNI 접기"
-              >
-                <SuniAvatar size={28} />
-              </button>
-              <div className="aiPanelHeaderText">
-                <strong>SUNI</strong>
-                <span>어시스턴트</span>
-              </div>
-            </div>
+        <button
+          type="button"
+          className="shellLogoBlock"
+          onClick={onToggle}
+          aria-label={open ? "SUNI 접기" : "SUNI 펼치기"}
+          aria-expanded={open}
+        >
+          <SuniAvatar size={open ? 28 : 32} />
+          {open && <span className="shellLogoBlockTitle">SUNI AI 어시스턴트</span>}
+          <span className="shellLogoBlockChevron" aria-hidden="true">
+            <ChevronIcon direction={open ? "right" : "left"} />
+          </span>
+        </button>
 
+        {open && (
+          <>
             <div className="aiPanelMessages">
               {messages.map((message, index) => {
                 const showAvatar = message.from === "suni" && messages[index - 1]?.from !== "suni";

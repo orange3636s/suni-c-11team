@@ -1,6 +1,7 @@
 import type {
   AlarmListResponse,
   AlarmSummaryResponse,
+  CategoricalScatterResponse,
   ControlRangeListResponse,
   DatasetListResponse,
   DatasetSchemaResponse,
@@ -356,6 +357,10 @@ export function getScreeningScatter(dataset: string, target: string, feature: st
   return getJson(`/api/screening/scatter?${new URLSearchParams({ dataset, target, feature }).toString()}`);
 }
 
+export function getScreeningScatterCategorical(dataset: string, target: string, feature: string): Promise<CategoricalScatterResponse> {
+  return getJson(`/api/screening/scatter/categorical?${new URLSearchParams({ dataset, target, feature }).toString()}`);
+}
+
 export function getControlRanges(dataset: string): Promise<ControlRangeListResponse> {
   return getJson(`/api/control-ranges?${new URLSearchParams({ dataset }).toString()}`);
 }
@@ -374,10 +379,10 @@ export function getModelPerformance(): Promise<ModelPerformanceResponse> {
   return getJson("/api/models/performance");
 }
 
-export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric): Promise<HeatmapResponse> {
-  return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric }).toString()}`);
+export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric, kind: string = "all"): Promise<HeatmapResponse> {
+  return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric, kind }).toString()}`);
 }
 
-export function getScreeningPareto(dataset: string, target: string): Promise<ParetoRankingResponse> {
-  return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target }).toString()}`);
+export function getScreeningPareto(dataset: string, target: string, kind: string = "all"): Promise<ParetoRankingResponse> {
+  return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target, kind }).toString()}`);
 }

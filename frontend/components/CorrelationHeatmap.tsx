@@ -3,16 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getScreeningHeatmap } from "@/lib/api";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { HeatmapMetric, HeatmapResponse } from "@/types/data";
+import type { ConfidenceTier, HeatmapMetric, HeatmapResponse } from "@/types/data";
 
 const DEFAULT_ROW_LIMIT = 20;
 const METRIC_LABEL: Record<HeatmapMetric, string> = { spearman: "상관계수 (ρ)", eps2: "설명력 (ε²)" };
-type KindFilter = "all" | "r" | "d";
 type SortMode = "max_rho" | "target" | "step";
-
-function featureKind(feature: string): "r" | "d" {
-  return /_R\d+$/.test(feature) ? "r" : "d";
-}
 
 function featureStep(feature: string): number {
   const match = /^Step(\d+)_/.exec(feature);
@@ -80,13 +75,20 @@ type TooltipState = {
   n: number;
   q: number | null;
   significant: boolean;
+  tier: ConfidenceTier | null;
 };
+
+const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 
 export default function CorrelationHeatmap({
   datasetId,
+  kind,
+  enabled,
   onSelectCell,
 }: {
   datasetId: string;
+  kind: "all" | "R" | "D" | "Config";
+  enabled: boolean;
   onSelectCell: (selection: HeatmapCellSelection) => void;
 }) {
   const theme = useResolvedTheme();
@@ -94,20 +96,24 @@ export default function CorrelationHeatmap({
   const [data, setData] = useState<HeatmapResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [significantOnly, setSignificantOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("max_rho");
   const [sortTarget, setSortTarget] = useState<string>("");
   const [expanded, setExpanded] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
-  const cache = useRef<Map<HeatmapMetric, HeatmapResponse>>(new Map());
+  const cache = useRef<Map<string, HeatmapResponse>>(new Map());
+
+  // Config has no rho -- the toggle only makes sense for all/R/D.
+  const effectiveMetric: HeatmapMetric = kind === "Config" ? "eps2" : metric;
 
   useEffect(() => {
     cache.current = new Map();
   }, [datasetId]);
 
   useEffect(() => {
-    const cached = cache.current.get(metric);
+    if (!enabled) return;
+    const cacheKey = `${kind}:${effectiveMetric}`;
+    const cached = cache.current.get(cacheKey);
     if (cached) {
       setData(cached);
       return;
@@ -118,9 +124,9 @@ export default function CorrelationHeatmap({
         setLoading(true);
         setError("");
         try {
-          const response = await getScreeningHeatmap(datasetId, metric);
+          const response = await getScreeningHeatmap(datasetId, effectiveMetric, kind);
           if (cancelled) return;
-          cache.current.set(metric, response);
+          cache.current.set(cacheKey, response);
           setData(response);
           if (!sortTarget && response.targets.length > 0) setSortTarget(response.targets[0]);
         } catch (failure) {
@@ -135,14 +141,11 @@ export default function CorrelationHeatmap({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetId, metric]);
+  }, [datasetId, kind, effectiveMetric, enabled]);
 
   const rows = useMemo(() => {
     if (!data) return [];
     let indices = data.features.map((_, index) => index);
-    if (kindFilter !== "all") {
-      indices = indices.filter((index) => featureKind(data.features[index]) === kindFilter);
-    }
     if (significantOnly) {
       indices = indices.filter((index) => data.significant[index].some(Boolean));
     }
@@ -160,9 +163,23 @@ export default function CorrelationHeatmap({
     }
     // sortMode "max_rho" keeps the server's default order (already max|rho| desc)
     return indices;
-  }, [data, kindFilter, significantOnly, sortMode, sortTarget]);
+  }, [data, significantOnly, sortMode, sortTarget]);
 
   const visibleRows = expanded ? rows : rows.slice(0, DEFAULT_ROW_LIMIT);
+
+  if (!enabled) {
+    return (
+      <section className="resultCard heatmapCard">
+        <div className="heatmapHeaderRow">
+          <div>
+            <span className="sectionLabel">CORRELATION OVERVIEW</span>
+            <h2>전체 인자 조망</h2>
+          </div>
+        </div>
+        <p className="emptyMessage">원인 분석을 실행하면 상관관계 히트맵이 생성됩니다.</p>
+      </section>
+    );
+  }
 
   if (loading && !data) {
     return (
@@ -188,34 +205,28 @@ export default function CorrelationHeatmap({
       <div className="heatmapHeaderRow">
         <div>
           <span className="sectionLabel">CORRELATION OVERVIEW</span>
-          <h2>전체 인자 조망</h2>
+          <h2>{kind === "all" ? "전체" : kind} 히트맵</h2>
           <p>산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</p>
         </div>
-        <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
-          {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={metric === key}
-              className={metric === key ? "active" : ""}
-              onClick={() => setMetric(key)}
-            >
-              {METRIC_LABEL[key]}
-            </button>
-          ))}
-        </div>
+        {kind !== "Config" && (
+          <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
+            {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={metric === key}
+                className={metric === key ? "active" : ""}
+                onClick={() => setMetric(key)}
+              >
+                {METRIC_LABEL[key]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="heatmapControls">
-        <div className="fieldGroup">
-          <span>행 필터</span>
-          <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as KindFilter)}>
-            <option value="all">전체 ({data.features.length})</option>
-            <option value="r">R만</option>
-            <option value="d">D만</option>
-          </select>
-        </div>
         <div className="fieldGroup">
           <span>정렬 기준</span>
           <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
@@ -254,7 +265,7 @@ export default function CorrelationHeatmap({
                 feature={feature}
                 rowIndex={rowIndex}
                 data={data}
-                metric={metric}
+                metric={effectiveMetric}
                 theme={theme}
                 scaleMin={scaleMin}
                 scaleMax={scaleMax}
@@ -287,7 +298,12 @@ export default function CorrelationHeatmap({
       </div>
 
       <p className="heatmapCaption">
-        Config {data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 박스플롯 참조. 표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
+        {kind === "all"
+          ? `Config ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 박스플롯 참조. `
+          : kind === "Config"
+            ? "Config는 장비당 표본 278장 수준으로 검출력이 낮습니다. 아래 결과는 탐색용입니다. "
+            : ""}
+        표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
         <br />
         인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
       </p>
@@ -295,9 +311,10 @@ export default function CorrelationHeatmap({
       {tooltip && (
         <div className="heatmapTooltip" style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
           <strong>{tooltip.feature} × {tooltip.target}</strong>
-          <div className="heatmapTooltipRow"><span>{metric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
+          <div className="heatmapTooltipRow"><span>{effectiveMetric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltip.n.toLocaleString()}</b></div>
           <div className="heatmapTooltipRow"><span>q</span><b>{formatQ(tooltip.q)}</b></div>
+          <div className="heatmapTooltipRow"><span>신뢰도</span><b>{tooltip.tier ? TIER_LABEL[tooltip.tier] : "-"}</b></div>
           <div className="heatmapTooltipRow"><span>FDR 통과</span><b>{tooltip.significant ? "예" : "아니오"}</b></div>
         </div>
       )}
@@ -334,6 +351,7 @@ function FragmentRow({
         const n = data.n[rowIndex][colIndex];
         const q = data.q[rowIndex][colIndex];
         const significant = data.significant[rowIndex][colIndex];
+        const tier = data.tier[rowIndex][colIndex];
         const masked = value == null;
         const style: React.CSSProperties = {};
         if (!masked) {
@@ -357,6 +375,7 @@ function FragmentRow({
                 n,
                 q,
                 significant,
+                tier,
               })
             }
             onMouseMove={(event) =>
@@ -369,6 +388,7 @@ function FragmentRow({
                 n,
                 q,
                 significant,
+                tier,
               })
             }
             onMouseLeave={() => onHover(null)}

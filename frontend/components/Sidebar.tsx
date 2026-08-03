@@ -48,61 +48,41 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      <button
-        type="button"
-        className="shellChevron shellChevron-sidebar"
-        onClick={onToggleCollapse}
-        aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
-        aria-expanded={!collapsed}
-      >
-        <ChevronIcon direction={collapsed ? "right" : "left"} />
-      </button>
-
       <div className="sidebarSurface">
+        <button
+          type="button"
+          className="shellLogoBlock"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
+          aria-expanded={!collapsed}
+        >
+          <SuniAvatar size={collapsed ? 32 : 28} />
+          {!collapsed && <span className="shellLogoBlockTitle">써니C 11팀</span>}
+          <span className="shellLogoBlockChevron" aria-hidden="true">
+            <ChevronIcon direction={collapsed ? "right" : "left"} />
+          </span>
+        </button>
+
         {collapsed ? (
-          <>
-            <button
-              type="button"
-              className="railLogoButton"
-              onClick={onToggleCollapse}
-              aria-label="메뉴 펼치기"
-              title="메뉴 펼치기"
-            >
-              <SuniAvatar size={32} />
-            </button>
-            <nav aria-label="주요 메뉴" className="railNav">
-              {navigationItems.map((item) => {
-                const isActive = item.label === activeItem;
-                return (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    className={`railNavItem ${isActive ? "active" : ""}`}
-                    aria-current={isActive ? "page" : undefined}
-                    aria-label={item.label}
-                    title={item.label}
-                  >
-                    <NavIcon name={item.icon} />
-                  </Link>
-                );
-              })}
-            </nav>
-          </>
+          <nav aria-label="주요 메뉴" className="railNav">
+            {navigationItems.map((item) => {
+              const isActive = item.label === activeItem;
+              return (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className={`railNavItem ${isActive ? "active" : ""}`}
+                  aria-current={isActive ? "page" : undefined}
+                  aria-label={item.label}
+                  title={item.label}
+                >
+                  <NavIcon name={item.icon} />
+                </Link>
+              );
+            })}
+          </nav>
         ) : (
           <>
-            <div className="sidebarTop">
-              <button
-                type="button"
-                className="brandLogoButton"
-                onClick={onToggleCollapse}
-                aria-label="메뉴 접기"
-                title="메뉴 접기"
-              >
-                <SuniAvatar size={28} />
-              </button>
-              <strong className="brandTitle">써니C 11팀</strong>
-            </div>
-
             <nav aria-label="주요 메뉴">
               <ul className="navigationList">
                 {navigationItems.map((item) => {
