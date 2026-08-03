@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -9,6 +10,7 @@ from api.routes.datasets import get_dataset_registry
 from api.schemas.analysis import (
     AlarmListResponse,
     AlarmSummaryResponse,
+    AnalysisReportResponse,
     CategoricalScatterResponse,
     ControlRangeListResponse,
     HeatmapResponse,
@@ -17,12 +19,13 @@ from api.schemas.analysis import (
     ScreeningResponse,
     ScreeningScatterResponse,
 )
-from api.settings import settings
+from api.settings import APP_VERSION, settings
 from src.analysis.control_range import (
     compute_control_range,
     evaluate_alarms,
     summarize_wafer_status,
 )
+from src.analysis.report import build_analysis_report
 from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
@@ -37,6 +40,12 @@ from src.runtime.datasets import DatasetNotFoundError
 from src.runtime.store import RuntimeStore
 
 router = APIRouter(prefix="/api", tags=["analysis"])
+
+# The report always evaluates alarms/eval_result against the bundled "test"
+# set -- the root-cause tab (the report button's only caller) has a single
+# dataset selector (train only), the same convention /api/alarms already
+# defaults to.
+REPORT_EVAL_DATASET_ID = "test"
 
 
 def _dataframe_or_404(dataset_id: str):
@@ -351,6 +360,31 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
         "yield_gap": (alarm_avg - no_alarm_avg) if alarm_avg is not None and no_alarm_avg is not None else None,
         "top_lots": top_lots,
     }
+
+
+@router.get("/analysis/report", response_model=AnalysisReportResponse)
+def get_analysis_report(dataset: str = "train") -> dict[str, Any]:
+    """Full JSON analysis report -- always denominated by the full
+    R+D+Config pool and always "전체" kind, regardless of which kind tab
+    the caller happens to be viewing (see build_analysis_report's
+    docstring for why the factor list and the alarm list use different,
+    deliberately non-interchangeable factor sets).
+    """
+    registry = get_dataset_registry()
+    train_df = _dataframe_or_404(dataset)
+    eval_df = _dataframe_or_404(REPORT_EVAL_DATASET_ID)
+    train_meta = registry.get_summary(dataset) or {}
+    eval_meta = registry.get_summary(REPORT_EVAL_DATASET_ID) or {}
+    return build_analysis_report(
+        train_df,
+        eval_df,
+        train_dataset_id=dataset,
+        eval_dataset_id=REPORT_EVAL_DATASET_ID,
+        train_meta=train_meta,
+        eval_meta=eval_meta,
+        app_version=APP_VERSION,
+        generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+    )
 
 
 @router.get("/models/performance", response_model=ModelPerformanceResponse)

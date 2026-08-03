@@ -7896,6 +7896,11 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 =================================================================== */
 :root{
   --shell-margin: 16px;
+  --header-height: 60px;
+  /* Both panels' top edge, collapsed or open -- one variable so left rail
+     and right circle can never drift apart, with 24px clearance below the
+     header (Current Time row) instead of sitting flush against it. */
+  --panel-top-offset: calc(var(--header-height) + 24px);
   --shell-radius: 20px;
   --shell-block-radius: 14px;
   --shell-block-height: 48px;
@@ -7947,7 +7952,7 @@ html[data-theme="dark"]{
 @media (max-width: 1280px){
   .dashboardGrid{ grid-template-columns: 1fr; }
   .dashboardGrid > .sidebar{ position: fixed; z-index: 40; }
-  .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: var(--shell-margin); z-index: 40; }
+  .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: var(--panel-top-offset); z-index: 40; }
 }
 
 /* Positioning shell (no visual of its own). Explicit top/left/right/bottom
@@ -7956,11 +7961,11 @@ html[data-theme="dark"]{
 .sidebar,
 .aiPanel{
   position: sticky;
-  top: var(--shell-margin);
+  top: var(--panel-top-offset);
   bottom: auto;
   align-self: start;
-  height: calc(100dvh - var(--shell-margin) * 2);
-  max-height: calc(100dvh - var(--shell-margin) * 2);
+  height: calc(100dvh - var(--panel-top-offset) - var(--shell-margin));
+  max-height: calc(100dvh - var(--panel-top-offset) - var(--shell-margin));
   border-radius: var(--shell-radius);
   overflow: visible;
   background: none; padding: 0; border: none; box-shadow: none;
@@ -8447,3 +8452,87 @@ html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c
 .scatterLegendItem.active{ opacity: 1; background: var(--surface-secondary, var(--surface-muted)); color: var(--text-primary); }
 .scatterLegendItem.disabled{ opacity: 0.3; cursor: not-allowed; text-decoration: line-through; }
 .scatterLegendSwatch{ display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+
+/* Alarm-log summary cards: 6-up grid, Apple-round 16px card + low-elevation
+   shadow (same visual language as .resultCard/.uploadCard), label-on-top /
+   big-number-below layout. */
+.alarmSummaryGrid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 16px 0;
+}
+@media (max-width: 760px){
+  .alarmSummaryGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.alarmSummaryCard{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.035);
+}
+html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
+.alarmSummaryLabel{ font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.alarmSummaryValueRow{ display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.alarmSummaryValue{ font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.alarmSummaryAux{ font-size: 12px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.alarmSummaryCard.tone-highlight .alarmSummaryValue,
+.alarmSummaryCard.tone-highlight .alarmSummaryAux{ color: var(--danger); }
+.alarmSummaryCard.tone-muted{ background: var(--surface-secondary, var(--surface-muted)); }
+.alarmSummaryCard.tone-muted .alarmSummaryValue{ color: var(--text-secondary); }
+.alarmSummaryCard.tone-muted .alarmSummaryLabel{ color: var(--text-secondary); }
+.alarmSummaryCard[title]{ cursor: help; }
+.alarmSummaryCard.skeleton{ gap: 10px; }
+.alarmSummaryCard.skeleton .alarmSkeletonLine{
+  height: 10px; border-radius: 6px;
+  background: var(--surface-secondary, var(--surface-muted));
+  animation: alarmSkeletonPulse 1.4s ease-in-out infinite;
+}
+.alarmSummaryCard.skeleton .alarmSkeletonLine.label{ width: 56%; }
+.alarmSummaryCard.skeleton .alarmSkeletonLine.value{ width: 72%; height: 22px; margin-top: 2px; }
+@keyframes alarmSkeletonPulse{
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce){
+  .alarmSummaryCard.skeleton .alarmSkeletonLine{ animation: none; }
+}
+.alarmSummaryNote{ margin: -6px 0 4px; font-size: 13px; color: var(--text-secondary); }
+
+/* JSON report button, next to the root-cause "실행" button. */
+.reportButton{
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 16px; height: 40px; border-radius: 10px;
+  font-size: 13px; font-weight: 600;
+  border: 1px solid var(--border);
+  background: transparent; color: var(--text-primary);
+  cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease;
+}
+.reportButton:hover:not(:disabled){ background: var(--surface-secondary, var(--surface-muted)); border-color: var(--brand-navy-text); }
+.reportButton:disabled{
+  cursor: not-allowed;
+  color: var(--text-secondary);
+  background: var(--surface-secondary, var(--surface-muted));
+  border-color: var(--border);
+  opacity: 0.7;
+}
+.reportButtonCaption{ font-size: 12px; color: var(--text-secondary); margin: 6px 0 0; }
+
+.jsonReportToast{
+  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+  padding: 12px 20px; border-radius: 12px;
+  background: var(--brand-navy, #0e306d); color: rgba(255, 255, 255, 0.95);
+  font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
+  z-index: 200; animation: jsonReportToastIn 180ms ease;
+}
+@keyframes jsonReportToastIn{
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce){
+  .jsonReportToast{ animation: none; }
+}

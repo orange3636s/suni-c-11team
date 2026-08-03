@@ -1,6 +1,7 @@
 import type {
   AlarmListResponse,
   AlarmSummaryResponse,
+  AnalysisReportResponse,
   CategoricalScatterResponse,
   ControlRangeListResponse,
   DatasetListResponse,
@@ -385,4 +386,8 @@ export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric, kind
 
 export function getScreeningPareto(dataset: string, target: string, kind: string = "all"): Promise<ParetoRankingResponse> {
   return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target, kind }).toString()}`);
+}
+
+export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {
+  return getJson(`/api/analysis/report?${new URLSearchParams({ dataset }).toString()}`);
 }

@@ -616,3 +616,86 @@ export type ModelPerformanceResponse = {
   final_yield: TargetPerformance | null;
 };
 
+export type ReportFactorEntry = {
+  feature: string;
+  kind: string;
+  step: number;
+  rank: number;
+  eps2: number;
+  contribution_pct: number;
+  cumulative_pct: number;
+  spearman_rho: number | null;
+  p_value: number;
+  q_value: number;
+  grade: string;
+  n_observed: number;
+  n_missing_pct: number;
+  relation: { shape: string; optimal_center: number | null; interpretation: string };
+  binned_profile: { x_center: number; y_mean: number; n: number }[];
+  control_limits: {
+    lcl: number | null;
+    ucl: number | null;
+    one_sided: boolean;
+    mean: number;
+    std: number;
+    q1: number;
+    q3: number;
+    sigma3: (number | null)[];
+    sigma6: (number | null)[];
+    sigma6_drawn: boolean;
+  };
+  eval_result: { alarms: number; observed: number; mean_y_alarm: number | null; mean_y_normal: number | null };
+};
+
+export type ReportTargetEntry = {
+  target: string;
+  target_stats: { mean: number; std: number; q1: number; q3: number };
+  factors: ReportFactorEntry[];
+};
+
+export type ReportAlarmRecord = {
+  lot_wafer_id: string;
+  lot_id: string | null;
+  wafer_slot: number | null;
+  step: number;
+  feature: string;
+  kind: string;
+  target: string;
+  value: number;
+  normal_range: (number | null)[];
+  deviation: number;
+  direction: string;
+  severity: string;
+  actual_y_target: number | null;
+  actual_y_final: number | null;
+};
+
+export type AnalysisReportResponse = {
+  meta: {
+    generated_at: string;
+    app_version: string;
+    dataset: Record<string, { name: string | null; rows: number | null; lots: number | null; lot_range: string | null }>;
+  };
+  method: {
+    screening: string;
+    contribution_denominator: string;
+    control_limit: string;
+    inclusion_rule: string;
+    missing_policy: string;
+  };
+  summary: {
+    targets_analyzed: number;
+    factors_included: number;
+    excluded_low_significance: number;
+    alarm_wafers: number;
+    normal_wafers: number;
+    undecidable_wafers: number;
+    mean_yield_alarm: number | null;
+    mean_yield_normal: number | null;
+    yield_gap_pp: number | null;
+  };
+  targets: ReportTargetEntry[];
+  alarms: ReportAlarmRecord[];
+  limitations: string[];
+};
+

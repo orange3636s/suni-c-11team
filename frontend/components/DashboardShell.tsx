@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import AiPanel from "@/components/ai-panel/AiPanel";
 import Header from "@/components/Header";
+import { usePanelState } from "@/components/PanelStateProvider";
 import Sidebar from "@/components/Sidebar";
 
 type NavigationLabel = "모델 학습" | "원인 분석" | "사전 알람 로그";
@@ -14,8 +15,7 @@ export default function DashboardShell({
   activeItem: NavigationLabel;
   children: ReactNode;
 }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const { sidebarCollapsed, setSidebarCollapsed, aiPanelOpen, setAiPanelOpen } = usePanelState();
 
   return (
     <div

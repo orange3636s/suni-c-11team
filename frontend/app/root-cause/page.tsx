@@ -9,6 +9,7 @@ import ParetoChart, { type ParetoCountMode } from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode } from "@/components/ScatterChart";
 import {
+  getAnalysisReport,
   getScreeningHeatmap,
   getScreeningPareto,
   getScreeningScatter,
@@ -106,6 +107,8 @@ function RootCauseContent() {
   const [runState, setRunState] = useState<RunState>("idle");
   const [runStageIndex, setRunStageIndex] = useState(0);
   const [runError, setRunError] = useState("");
+  const [reportSaving, setReportSaving] = useState(false);
+  const [reportToast, setReportToast] = useState("");
 
   const [paretoByKey, setParetoByKey] = useState<Record<string, ParetoRankingResponse>>({});
   const [scatterByKey, setScatterByKey] = useState<Record<string, ScreeningScatterResponse>>({});
@@ -191,6 +194,36 @@ function RootCauseContent() {
       setHeatmapEnabled(false);
       setRunError(failure instanceof Error ? failure.message : "원인 분석 실행에 실패했습니다.");
       setRunState("error");
+    }
+  }
+
+  async function saveJsonReport() {
+    setReportSaving(true);
+    try {
+      const report = await getAnalysisReport(datasetId);
+      const now = new Date();
+      const stamp = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      ].join("") + "_" + [String(now.getHours()).padStart(2, "0"), String(now.getMinutes()).padStart(2, "0")].join("");
+      const filename = `suni_analysis_${datasetId}_${stamp}.json`;
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setReportToast("보고서를 저장했습니다");
+      window.setTimeout(() => setReportToast(""), 2500);
+    } catch (failure) {
+      setReportToast(failure instanceof Error ? failure.message : "보고서 저장에 실패했습니다.");
+      window.setTimeout(() => setReportToast(""), 3500);
+    } finally {
+      setReportSaving(false);
     }
   }
 
@@ -313,7 +346,7 @@ function RootCauseContent() {
           <div className="fieldGroup">
             <span>Color By</span>
             <select value={colorMode} onChange={(event) => setColorMode(event.target.value as ColorMode)}>
-              <option value="default">기본 (파랑 2단계)</option>
+              <option value="default">기본</option>
               <option value="config_model">Config 모델별</option>
               <option value="lot">LOT별</option>
               <option value="alarm">알람 여부</option>
@@ -332,10 +365,24 @@ function RootCauseContent() {
                 : "타깃 5개 × 종류 4개(전체/R/D/Config) — 20개 조합을 한 번에 계산합니다."}
             </p>
           </div>
-          <button type="button" className="button" disabled={runState === "running"} onClick={() => void runAnalysis()}>
-            {runState === "running" ? "원인 분석 중..." : runState === "done" ? "다시 실행" : runState === "error" ? "다시 시도" : "원인 분석 실행"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button type="button" className="button" disabled={runState === "running"} onClick={() => void runAnalysis()}>
+              {runState === "running" ? "원인 분석 중..." : runState === "done" ? "다시 실행" : runState === "error" ? "다시 시도" : "원인 분석 실행"}
+            </button>
+            <button
+              type="button"
+              className="reportButton"
+              disabled={runState !== "done" || reportSaving}
+              title={runState !== "done" ? "원인 분석을 먼저 실행하세요" : "보고서는 전체 인자 기준으로 생성됩니다"}
+              onClick={() => void saveJsonReport()}
+            >
+              {reportSaving ? "저장 중..." : "JSON 보고서 저장"}
+            </button>
+          </div>
         </div>
+        {runState === "done" && (
+          <p className="reportButtonCaption">보고서는 전체 인자 기준으로 생성됩니다 (현재 화면의 R/D/Config 선택과 무관).</p>
+        )}
         {runState === "running" && (
           <div className="paretoRunProgress" style={{ marginTop: 12 }}>
             <div className="paretoRunProgressTrack">
@@ -501,6 +548,7 @@ function RootCauseContent() {
       {selectedWafer && (
         <WaferDetailPopover point={selectedWafer} target={activeTarget} onClose={() => setSelectedWafer(null)} />
       )}
+      {reportToast && <div className="jsonReportToast" role="status">{reportToast}</div>}
     </DashboardShell>
   );
 }

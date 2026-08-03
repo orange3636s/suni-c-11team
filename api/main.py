@@ -12,7 +12,7 @@ from api.routes.data import (
 )
 from api.routes.analysis import router as analysis_router
 from api.routes.datasets import router as datasets_router
-from api.settings import settings
+from api.settings import APP_VERSION, settings
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
     ActiveOperationError,
@@ -23,7 +23,6 @@ from src.runtime.migrations import run_startup_migrations
 from src.runtime.store import RuntimeStore
 
 
-APP_VERSION = "1.0.0"
 SERVICE_NAME = "manufacturing-ai-api"
 
 logging.basicConfig(

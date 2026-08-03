@@ -228,3 +228,108 @@ class ModelPerformanceResponse(BaseModel):
     source_filename: str | None
     targets: list[TargetPerformanceSchema]
     final_yield: TargetPerformanceSchema | None
+
+
+class ReportMethodSchema(BaseModel):
+    screening: str
+    contribution_denominator: str
+    control_limit: str
+    inclusion_rule: str
+    missing_policy: str
+
+
+class ReportSummarySchema(BaseModel):
+    targets_analyzed: int
+    factors_included: int
+    excluded_low_significance: int
+    alarm_wafers: int
+    normal_wafers: int
+    undecidable_wafers: int
+    mean_yield_alarm: float | None
+    mean_yield_normal: float | None
+    yield_gap_pp: float | None
+
+
+class ReportRelationSchema(BaseModel):
+    shape: str
+    optimal_center: float | None
+    interpretation: str
+
+
+class ReportControlLimitsSchema(BaseModel):
+    lcl: float | None
+    ucl: float | None
+    one_sided: bool
+    mean: float
+    std: float
+    q1: float
+    q3: float
+    sigma3: list[float | None]
+    sigma6: list[float | None]
+    sigma6_drawn: bool
+
+
+class ReportEvalResultSchema(BaseModel):
+    alarms: int
+    observed: int
+    mean_y_alarm: float | None
+    mean_y_normal: float | None
+
+
+class ReportFactorSchema(BaseModel):
+    feature: str
+    kind: str
+    step: int
+    rank: int
+    eps2: float
+    contribution_pct: float
+    cumulative_pct: float
+    spearman_rho: float | None
+    p_value: float
+    q_value: float
+    grade: str
+    n_observed: int
+    n_missing_pct: float
+    relation: ReportRelationSchema
+    binned_profile: list[dict[str, float]]
+    control_limits: ReportControlLimitsSchema
+    eval_result: ReportEvalResultSchema
+
+
+class ReportTargetStatsSchema(BaseModel):
+    mean: float
+    std: float
+    q1: float
+    q3: float
+
+
+class ReportTargetEntrySchema(BaseModel):
+    target: str
+    target_stats: ReportTargetStatsSchema
+    factors: list[ReportFactorSchema] = Field(default_factory=list)
+
+
+class ReportAlarmRecordSchema(BaseModel):
+    lot_wafer_id: str
+    lot_id: str | None
+    wafer_slot: int | None
+    step: int
+    feature: str
+    kind: str
+    target: str
+    value: float
+    normal_range: list[float | None]
+    deviation: float
+    direction: str
+    severity: str
+    actual_y_target: float | None
+    actual_y_final: float | None
+
+
+class AnalysisReportResponse(BaseModel):
+    meta: dict[str, Any]
+    method: ReportMethodSchema
+    summary: ReportSummarySchema
+    targets: list[ReportTargetEntrySchema]
+    alarms: list[ReportAlarmRecordSchema]
+    limitations: list[str]

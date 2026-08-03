@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 
+import PanelStateProvider from "@/components/PanelStateProvider";
 import ThemeProvider from "@/components/ThemeProvider";
 
 import "./globals.css";
@@ -17,11 +19,19 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Panel open/collapsed defaults are decided here, at server-render time,
+  // from cookies (not localStorage) precisely so the first HTML the
+  // browser paints already matches the saved state -- no client-side
+  // useEffect correction, no collapsed->open flash on load.
+  const cookieStore = await cookies();
+  const initialSidebarCollapsed = cookieStore.get("sidebar-collapsed")?.value === "true";
+  const initialAiPanelOpen = cookieStore.get("ai-panel-open")?.value !== "false";
+
   return (
     <html lang="ko" suppressHydrationWarning>
       <head>
@@ -32,7 +42,14 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <PanelStateProvider
+            initialSidebarCollapsed={initialSidebarCollapsed}
+            initialAiPanelOpen={initialAiPanelOpen}
+          >
+            {children}
+          </PanelStateProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

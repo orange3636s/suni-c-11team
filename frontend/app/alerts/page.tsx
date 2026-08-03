@@ -45,6 +45,9 @@ export default function AlertsPage() {
   }, [load]);
 
   const yieldGap = summary?.yield_gap;
+  const totalWafers = summary
+    ? summary.counts.alarm + summary.counts.normal + summary.counts.unmeasured
+    : 0;
 
   return (
     <DashboardShell activeItem="사전 알람 로그">
@@ -71,14 +74,47 @@ export default function AlertsPage() {
         {error && <p className="errorMessage">{error}</p>}
       </section>
 
-      <section className="secomKpiGrid">
-        <div><span>알람 wafer</span><strong>{summary?.counts.alarm ?? "-"}</strong></div>
-        <div><span>정상</span><strong>{summary?.counts.normal ?? "-"}</strong></div>
-        <div><span>판정불가 (미계측)</span><strong>{summary?.counts.unmeasured ?? "-"}</strong></div>
-        <div><span>알람군 평균수율</span><strong>{summary?.alarm_group_yield_avg?.toFixed(2) ?? "-"}</strong></div>
-        <div><span>무알람군 평균수율</span><strong>{summary?.no_alarm_group_yield_avg?.toFixed(2) ?? "-"}</strong></div>
-        <div><span>격차</span><strong>{yieldGap != null ? `${yieldGap.toFixed(2)}%p` : "-"}</strong></div>
-      </section>
+      {summary ? (
+        <section className="alarmSummaryGrid">
+          <AlarmSummaryCard
+            label="알람 wafer"
+            value={`${summary.counts.alarm}장`}
+            aux={pct(summary.counts.alarm, totalWafers)}
+            tone="highlight"
+          />
+          <AlarmSummaryCard label="정상" value={`${summary.counts.normal}장`} />
+          <AlarmSummaryCard
+            label="판정불가 (미계측)"
+            value={`${summary.counts.unmeasured}장`}
+            aux={pct(summary.counts.unmeasured, totalWafers)}
+            tone="muted"
+            title="선정 인자가 하나도 계측되지 않아 판정할 수 없는 wafer"
+          />
+          <AlarmSummaryCard
+            label="알람군 평균수율"
+            value={summary.alarm_group_yield_avg != null ? summary.alarm_group_yield_avg.toFixed(2) : "-"}
+          />
+          <AlarmSummaryCard
+            label="무알람군 평균수율"
+            value={summary.no_alarm_group_yield_avg != null ? summary.no_alarm_group_yield_avg.toFixed(2) : "-"}
+          />
+          <AlarmSummaryCard
+            label="격차"
+            value={yieldGap != null ? `${yieldGap > 0 ? "+" : ""}${yieldGap.toFixed(2)}%p` : "-"}
+            tone={yieldGap != null && yieldGap < 0 ? "highlight" : "default"}
+          />
+        </section>
+      ) : (
+        <section className="alarmSummaryGrid">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div className="alarmSummaryCard skeleton" key={index}>
+              <div className="alarmSkeletonLine label" />
+              <div className="alarmSkeletonLine value" />
+            </div>
+          ))}
+        </section>
+      )}
+      {!summary && <p className="alarmSummaryNote">원인 분석을 실행하면 집계됩니다</p>}
 
       <section className="resultCard">
         <div className="sectionHeading compact">
@@ -140,6 +176,35 @@ export default function AlertsPage() {
         </ul>
       </section>
     </DashboardShell>
+  );
+}
+
+function pct(count: number, total: number): string {
+  if (total <= 0) return "0.0%";
+  return `${((count / total) * 100).toFixed(1)}%`;
+}
+
+function AlarmSummaryCard({
+  label,
+  value,
+  aux,
+  tone = "default",
+  title,
+}: {
+  label: string;
+  value: string;
+  aux?: string;
+  tone?: "default" | "highlight" | "muted";
+  title?: string;
+}) {
+  return (
+    <div className={`alarmSummaryCard ${tone !== "default" ? `tone-${tone}` : ""}`} title={title}>
+      <span className="alarmSummaryLabel">{label}</span>
+      <div className="alarmSummaryValueRow">
+        <strong className="alarmSummaryValue">{value}</strong>
+        {aux && <span className="alarmSummaryAux">{aux}</span>}
+      </div>
+    </div>
   );
 }
 
