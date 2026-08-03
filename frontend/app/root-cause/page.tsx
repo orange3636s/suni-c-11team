@@ -1,13 +1,20 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import CorrelationHeatmap, { type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
+import ParetoChart, { type ParetoCountMode } from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
-import { getScreening, getScreeningScatter } from "@/lib/api";
-import type { ScatterPoint, ScreeningResponse, ScreeningScatterResponse } from "@/types/data";
+import { getScreening, getScreeningPareto, getScreeningScatter } from "@/lib/api";
+import type {
+  ParetoRankingItem,
+  ParetoRankingResponse,
+  ScatterPoint,
+  ScreeningResponse,
+  ScreeningScatterResponse,
+} from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
@@ -17,7 +24,9 @@ const SHAPE_LABEL: Record<string, string> = {
   u_shape: "U자형",
   unclear: "불명확",
 };
+const RUN_STAGES = ["인자 스크리닝 중 (88개 검정)", "Pareto 집계 중", "산점도 준비 중 (Y1~Y5)"];
 type ColorMode = "default" | "config_model" | "lot" | "alarm";
+type RunState = "idle" | "running" | "done" | "error";
 
 function modelOf(config: string | null): string {
   if (!config) return "미계측";
@@ -153,63 +162,85 @@ function RootCauseContent() {
   const searchParams = useSearchParams();
   const [datasetId, setDatasetId] = useState("train");
   const [screening, setScreening] = useState<ScreeningResponse | null>(null);
+  const [paretoByTarget, setParetoByTarget] = useState<Record<string, ParetoRankingResponse>>({});
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [scatterByFeature, setScatterByFeature] = useState<Record<string, ScreeningScatterResponse>>({});
   const [colorMode, setColorMode] = useState<ColorMode>("default");
+  const [countMode, setCountMode] = useState<ParetoCountMode>("10");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [runState, setRunState] = useState<RunState>("idle");
+  const [runStageIndex, setRunStageIndex] = useState(0);
+  const [runError, setRunError] = useState("");
   const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string } | null>(null);
   const [quickLookData, setQuickLookData] = useState<ScreeningScatterResponse | null>(null);
   const [quickLookError, setQuickLookError] = useState("");
   const initialDeepLinkHandled = useRef(false);
 
-  const loadScreening = useCallback(async (id: string) => {
-    setLoading(true);
-    setError("");
-    setScatterByFeature({});
-    try {
-      const response = await getScreening(id);
-      setScreening(response);
-      const firstWithFactors = response.targets.find((t) => !t.no_significant_factor)?.target;
-      if (firstWithFactors && !response.targets.find((t) => t.target === activeTarget && !t.no_significant_factor)) {
-        setActiveTarget(firstWithFactors);
-      }
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "스크리닝 결과를 불러오지 못했습니다.");
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // A dataset change invalidates every cached result -- the run button
+  // goes back to "not yet run" rather than silently keeping stale data
+  // from the previous dataset around.
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadScreening(datasetId), 0);
+    const timer = window.setTimeout(() => {
+      setScreening(null);
+      setParetoByTarget({});
+      setScatterByFeature({});
+      setQuickLook(null);
+      setQuickLookData(null);
+      setRunState("idle");
+      setRunError("");
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [datasetId, loadScreening]);
+  }, [datasetId]);
+
+  async function runAnalysis() {
+    setRunState("running");
+    setRunError("");
+    setRunStageIndex(0);
+    try {
+      const screeningResult = await getScreening(datasetId);
+
+      setRunStageIndex(1);
+      const paretoResults = await Promise.all(TARGETS.map((target) => getScreeningPareto(datasetId, target)));
+      const paretoMap: Record<string, ParetoRankingResponse> = {};
+      TARGETS.forEach((target, index) => {
+        paretoMap[target] = paretoResults[index];
+      });
+
+      setRunStageIndex(2);
+      const scatterEntries: Array<[string, ScreeningScatterResponse]> = [];
+      for (const target of TARGETS) {
+        const targetResult = screeningResult.targets.find((result) => result.target === target);
+        if (!targetResult || targetResult.no_significant_factor) continue;
+        const fetched: Array<[string, ScreeningScatterResponse]> = await Promise.all(
+          targetResult.factors.map(async (factor) => {
+            const data = await getScreeningScatter(datasetId, target, factor.feature);
+            return [`${target}::${factor.feature}`, data];
+          }),
+        );
+        scatterEntries.push(...fetched);
+      }
+
+      // Every Y1-Y5 fetch (screening + Pareto + scatter) must succeed before
+      // anything is revealed -- flip all the caches over in one go, not
+      // progressively, so a partial result is never visible.
+      setScreening(screeningResult);
+      setParetoByTarget(paretoMap);
+      setScatterByFeature(Object.fromEntries(scatterEntries));
+      const firstWithFactors = screeningResult.targets.find((t) => !t.no_significant_factor)?.target;
+      if (firstWithFactors) setActiveTarget(firstWithFactors);
+      setRunState("done");
+    } catch (failure) {
+      setScreening(null);
+      setParetoByTarget({});
+      setScatterByFeature({});
+      setRunError(failure instanceof Error ? failure.message : "원인 분석 실행에 실패했습니다.");
+      setRunState("error");
+    }
+  }
 
   const activeResult = screening?.targets.find((t) => t.target === activeTarget) ?? null;
-
-  useEffect(() => {
-    if (!activeResult || activeResult.no_significant_factor) return;
-    let cancelled = false;
-    (async () => {
-      for (const factor of activeResult.factors) {
-        if (scatterByFeature[factor.feature]) continue;
-        try {
-          const data = await getScreeningScatter(datasetId, activeTarget, factor.feature);
-          if (!cancelled) setScatterByFeature((current) => ({ ...current, [factor.feature]: data }));
-        } catch {
-          // Skip a single failed factor rather than blocking the whole tab.
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeResult, datasetId, activeTarget]);
+  const activeParetoItems: ParetoRankingItem[] = paretoByTarget[activeTarget]?.items ?? [];
 
   function updateUrl(target: string, feature?: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -250,9 +281,13 @@ function RootCauseContent() {
     openFactor(selection.target, selection.feature);
   }
 
-  // Deep-link support: `?target=&feature=` (e.g. from a heatmap cell click
-  // in a previous visit, or a shared link) resolves once the screening
-  // result for the dataset is known.
+  function handleParetoBarClick(item: ParetoRankingItem) {
+    openFactor(activeTarget, item.feature);
+  }
+
+  // Deep-link support: `?target=&feature=` (e.g. from a heatmap/Pareto-bar
+  // click in a previous visit, or a shared link) resolves once the
+  // screening result for the dataset is known -- i.e. after "실행".
   useEffect(() => {
     if (initialDeepLinkHandled.current || !screening) return;
     initialDeepLinkHandled.current = true;
@@ -327,108 +362,145 @@ function RootCauseContent() {
             </select>
           </div>
         </div>
-        {error && <p className="errorMessage">{error}</p>}
+      </section>
+
+      <section className="uploadCard">
+        <div className="paretoRunBar">
+          <div>
+            <h2 style={{ margin: 0, fontSize: "var(--text-section, 17px)" }}>원인 분석 실행</h2>
+            <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
+              {runState === "done"
+                ? "완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다."
+                : "인자 스크리닝(88개 검정) → Pareto 집계 → Y1~Y5 산점도 준비를 한 번에 실행합니다."}
+            </p>
+          </div>
+          <button type="button" className="button" disabled={runState === "running"} onClick={() => void runAnalysis()}>
+            {runState === "running" ? "원인 분석 중..." : runState === "done" ? "다시 실행" : runState === "error" ? "다시 시도" : "원인 분석 실행"}
+          </button>
+        </div>
+        {runState === "running" && (
+          <div className="paretoRunProgress" style={{ marginTop: 12 }}>
+            <div className="paretoRunProgressTrack">
+              <span style={{ width: `${((runStageIndex + 1) / RUN_STAGES.length) * 100}%` }} />
+            </div>
+            <span className="paretoRunStage">{RUN_STAGES[runStageIndex]}</span>
+          </div>
+        )}
+        {runState === "error" && <p className="errorMessage">{runError}</p>}
       </section>
 
       <CorrelationHeatmap datasetId={datasetId} onSelectCell={handleHeatmapSelect} />
 
-      {noConfigSelected && (
-        <section className="messageBox">Config(장비 설정) 30개 중 통계적으로 유의한 인자는 0개입니다.</section>
-      )}
-
-      <div className="targetSegmentBar">
-        {TARGETS.map((target) => {
-          const result = screening?.targets.find((t) => t.target === target);
-          const count = result?.factors.length ?? 0;
-          return (
-            <button
-              key={target}
-              type="button"
-              className={`targetSegment ${activeTarget === target ? "active" : ""} ${count === 0 ? "empty" : ""}`}
-              onClick={() => selectTarget(target)}
-            >
-              {target}
-              <span className="countBadge">{count}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {loading && <p className="emptyMessage">불러오는 중…</p>}
-
-      {quickLook && (
-        <article id="heatmapQuickLook" className="resultCard factorChartCard">
-          <div className="factorChartMeta">
-            <div>
-              <span className="sectionLabel">히트맵에서 선택</span>
-              <h2>{quickLook.feature} · {quickLook.target}</h2>
-            </div>
-            <button
-              className="button"
-              type="button"
-              onClick={() => {
-                setQuickLook(null);
-                setQuickLookData(null);
-              }}
-            >
-              닫기
-            </button>
-          </div>
-          {quickLookError && <p className="errorMessage">{quickLookError}</p>}
-          {!quickLookError && quickLookData && !quickLookData.significant && (
-            <p className="heatmapSignificanceBanner">
-              이 인자는 통계적으로 유의하지 않습니다 (q = {quickLookData.q_value < 0.001 ? quickLookData.q_value.toExponential(2) : quickLookData.q_value.toFixed(4)}).
-              참고용으로만 확인하고, Q1/Q3·정상범위 기준선은 근거가 없어 표시하지 않습니다.
-            </p>
+      {runState === "done" && (
+        <>
+          {noConfigSelected && (
+            <section className="messageBox">Config(장비 설정) 30개 중 통계적으로 유의한 인자는 0개입니다.</section>
           )}
-          {quickLookData ? (
-            <PlotlyChart spec={buildScatterSpec(quickLookData, colorMode)} height={420} />
-          ) : !quickLookError ? (
-            <p className="emptyMessage">불러오는 중…</p>
-          ) : null}
-        </article>
-      )}
 
-      {activeResult?.no_significant_factor && (
-        <section className="resultCard">
-          <p className="emptyMessage">
-            {activeTarget}에 대해 BH-FDR을 통과한 인자가 없어 정상범위를 산출할 수 없습니다. 아래 참고용 인자는 통계적으로 유의하지 않으므로 원인으로 해석하지 마세요.
-          </p>
-        </section>
-      )}
+          <div className="targetSegmentBar">
+            {TARGETS.map((target) => {
+              const result = screening?.targets.find((t) => t.target === target);
+              const count = result?.factors.length ?? 0;
+              return (
+                <button
+                  key={target}
+                  type="button"
+                  className={`targetSegment ${activeTarget === target ? "active" : ""} ${count === 0 ? "empty" : ""}`}
+                  onClick={() => selectTarget(target)}
+                >
+                  {target}
+                  <span className="countBadge">{count}</span>
+                </button>
+              );
+            })}
+          </div>
 
-      {activeResult && !activeResult.no_significant_factor && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {activeResult.factors.map((factor, index) => {
-            const data = scatterByFeature[factor.feature];
-            return (
-              <article className="resultCard factorChartCard" id={`factor-${factor.feature}`} key={factor.feature}>
-                <div className="factorChartMeta">
-                  <div>
-                    <span className="sectionLabel">{index + 1}위 · ε² {factor.eps2.toFixed(3)}</span>
-                    <h2>{factor.feature} ({KIND_LABEL[factor.kind]})</h2>
-                  </div>
-                  {data && (
-                    <small>
-                      n={data.n} · ε²={factor.eps2.toFixed(3)} · q={factor.q_value < 0.001 ? factor.q_value.toExponential(2) : factor.q_value.toFixed(4)} · {SHAPE_LABEL[factor.relation_shape]}
-                      {factor.optimal_center != null && ` (최적 ${factor.optimal_center.toFixed(1)})`}
-                    </small>
-                  )}
+          {activeParetoItems.length > 0 && (
+            <ParetoChart
+              target={activeTarget}
+              items={activeParetoItems}
+              countMode={countMode}
+              onCountModeChange={setCountMode}
+              onBarClick={handleParetoBarClick}
+              activeFeature={quickLook?.target === activeTarget ? quickLook.feature : pendingScrollFeature}
+            />
+          )}
+
+          {quickLook && (
+            <article id="heatmapQuickLook" className="resultCard factorChartCard">
+              <div className="factorChartMeta">
+                <div>
+                  <span className="sectionLabel">선택한 인자</span>
+                  <h2>{quickLook.feature} · {quickLook.target}</h2>
                 </div>
-                {factor.kind === "Config" ? (
-                  <p className="emptyMessage">범주형 인자는 박스플롯 뷰가 준비 중입니다.</p>
-                ) : data ? (
-                  <PlotlyChart spec={buildScatterSpec(data, colorMode)} height={480} />
-                ) : (
-                  <p className="emptyMessage">불러오는 중…</p>
-                )}
-                {data && (
-                  <ScatterClickCapture points={data.points} onSelect={setSelectedWafer} />
-                )}
-              </article>
-            );
-          })}
-        </div>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => {
+                    setQuickLook(null);
+                    setQuickLookData(null);
+                  }}
+                >
+                  닫기
+                </button>
+              </div>
+              {quickLookError && <p className="errorMessage">{quickLookError}</p>}
+              {!quickLookError && quickLookData && !quickLookData.significant && (
+                <p className="heatmapSignificanceBanner">
+                  이 인자는 통계적으로 유의하지 않습니다 (q = {quickLookData.q_value < 0.001 ? quickLookData.q_value.toExponential(2) : quickLookData.q_value.toFixed(4)}).
+                  참고용으로만 확인하고, Q1/Q3·정상범위 기준선은 근거가 없어 표시하지 않습니다.
+                </p>
+              )}
+              {quickLookData ? (
+                <PlotlyChart spec={buildScatterSpec(quickLookData, colorMode)} height={420} />
+              ) : !quickLookError ? (
+                <p className="emptyMessage">불러오는 중…</p>
+              ) : null}
+            </article>
+          )}
+
+          {activeResult?.no_significant_factor && (
+            <section className="resultCard">
+              <p className="emptyMessage">
+                {activeTarget}에 대해 BH-FDR을 통과한 인자가 없어 정상범위를 산출할 수 없습니다. 아래 참고용 인자는 통계적으로 유의하지 않으므로 원인으로 해석하지 마세요.
+              </p>
+            </section>
+          )}
+
+          {activeResult && !activeResult.no_significant_factor && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {activeResult.factors.map((factor, index) => {
+                const data = scatterByFeature[`${activeTarget}::${factor.feature}`];
+                return (
+                  <article className="resultCard factorChartCard" id={`factor-${factor.feature}`} key={factor.feature}>
+                    <div className="factorChartMeta">
+                      <div>
+                        <span className="sectionLabel">{index + 1}위 · ε² {factor.eps2.toFixed(3)}</span>
+                        <h2>{factor.feature} ({KIND_LABEL[factor.kind]})</h2>
+                      </div>
+                      {data && (
+                        <small>
+                          n={data.n} · ε²={factor.eps2.toFixed(3)} · q={factor.q_value < 0.001 ? factor.q_value.toExponential(2) : factor.q_value.toFixed(4)} · {SHAPE_LABEL[factor.relation_shape]}
+                          {factor.optimal_center != null && ` (최적 ${factor.optimal_center.toFixed(1)})`}
+                        </small>
+                      )}
+                    </div>
+                    {factor.kind === "Config" ? (
+                      <p className="emptyMessage">범주형 인자는 박스플롯 뷰가 준비 중입니다.</p>
+                    ) : data ? (
+                      <PlotlyChart spec={buildScatterSpec(data, colorMode)} height={480} />
+                    ) : (
+                      <p className="emptyMessage">불러오는 중…</p>
+                    )}
+                    {data && (
+                      <ScatterClickCapture points={data.points} onSelect={setSelectedWafer} />
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       <section className="analysisDisclaimers">

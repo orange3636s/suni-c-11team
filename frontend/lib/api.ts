@@ -11,6 +11,7 @@ import type {
   ModelDetail,
   ModelListResponse,
   ModelPerformanceResponse,
+  ParetoRankingResponse,
   PreprocessResponse,
   ScreeningResponse,
   ScreeningScatterResponse,
@@ -375,4 +376,8 @@ export function getModelPerformance(): Promise<ModelPerformanceResponse> {
 
 export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric): Promise<HeatmapResponse> {
   return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric }).toString()}`);
+}
+
+export function getScreeningPareto(dataset: string, target: string): Promise<ParetoRankingResponse> {
+  return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target }).toString()}`);
 }

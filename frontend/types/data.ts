@@ -521,6 +521,25 @@ export type AlarmSummaryResponse = {
   top_lots: Array<{ lot_id: string; alarm_count: number }>;
 };
 
+export type ParetoRankingItem = {
+  feature: string;
+  kind: string;
+  step: number;
+  eps2: number;
+  q_value: number;
+  significant: boolean;
+  n_observed: number;
+  contribution_pct: number;
+  cumulative_pct: number;
+};
+
+export type ParetoRankingResponse = {
+  dataset_id: string;
+  target: string;
+  total_factor_count: number;
+  items: ParetoRankingItem[];
+};
+
 export type HeatmapMetric = "spearman" | "eps2";
 
 export type HeatmapResponse = {

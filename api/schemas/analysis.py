@@ -37,6 +37,25 @@ class ScreeningResponse(BaseModel):
     schema_warnings: list[str] = Field(default_factory=list)
 
 
+class ParetoRankingItemSchema(BaseModel):
+    feature: str
+    kind: str
+    step: int
+    eps2: float
+    q_value: float
+    significant: bool
+    n_observed: int
+    contribution_pct: float
+    cumulative_pct: float
+
+
+class ParetoRankingResponse(BaseModel):
+    dataset_id: str
+    target: str
+    total_factor_count: int
+    items: list[ParetoRankingItemSchema]
+
+
 class ScatterPointSchema(BaseModel):
     x: float
     y: float

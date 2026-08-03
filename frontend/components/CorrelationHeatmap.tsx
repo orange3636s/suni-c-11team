@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getScreeningHeatmap } from "@/lib/api";
+import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { HeatmapMetric, HeatmapResponse } from "@/types/data";
 
 const DEFAULT_ROW_LIMIT = 20;
@@ -16,19 +17,6 @@ function featureKind(feature: string): "r" | "d" {
 function featureStep(feature: string): number {
   const match = /^Step(\d+)_/.exec(feature);
   return match ? Number(match[1]) : 0;
-}
-
-function useResolvedTheme(): "light" | "dark" {
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  useEffect(() => {
-    const root = document.documentElement;
-    const read = () => setTheme(root.dataset.theme === "dark" ? "dark" : "light");
-    read();
-    const observer = new MutationObserver(read);
-    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
-  }, []);
-  return theme;
 }
 
 function hexToRgb(hex: string): [number, number, number] {

@@ -8215,3 +8215,73 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
   background: color-mix(in srgb, var(--warning, #a96208) 10%, transparent); padding: 12px 14px; font-size: 13px; line-height: 1.5;
 }
 .waferDetailPopover dd{ margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+/* Pareto chart (원인분석 tab, above each target's scatter list) */
+.paretoChartCard{ display: flex; flex-direction: column; gap: 4px; }
+.paretoChartHeader{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.paretoChartHeader h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
+.paretoCountToggle{ display: inline-flex; border: 1px solid var(--border-card, var(--border)); border-radius: 999px; padding: 3px; gap: 2px; flex: 0 0 auto; }
+.paretoCountToggle button{
+  border: none; background: transparent; padding: 6px 12px; border-radius: 999px; font: 600 12.5px/1 var(--font-ui);
+  color: var(--text-secondary); cursor: pointer; white-space: nowrap;
+}
+.paretoCountToggle button.active{ background: var(--accent); color: #fff; }
+
+.paretoChartBody{ display: grid; grid-template-columns: auto 1fr auto; align-items: stretch; gap: 8px; }
+.paretoAxisLabel{
+  writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; color: var(--text-secondary);
+  white-space: nowrap; display: flex; align-items: center; justify-content: center;
+}
+.paretoPlotArea{
+  position: relative; height: 280px; border-bottom: 1px solid var(--heatmap-cell-border, var(--border));
+  border-left: 1px solid var(--heatmap-cell-border, var(--border));
+}
+.paretoBar{
+  position: absolute; bottom: 0; min-width: 6px; border: none; cursor: pointer; padding: 0;
+  background: var(--pareto-bar, #0072c6); box-sizing: border-box;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.paretoBar > .paretoBarInset{ position: absolute; inset: 2px; }
+.paretoBar.muted{ opacity: .32; }
+.paretoBar.emphasized{ opacity: .95; }
+.paretoBar.significant{ border: 2px solid var(--heatmap-fdr-border, #1d1d1f); border-bottom: none; }
+.paretoBar.significant::after{
+  content: ""; position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  width: 6px; height: 6px; border-radius: 50%; background: var(--heatmap-fdr-border, #1d1d1f);
+}
+.paretoBar.insignificant{
+  background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 4px, transparent 4px 8px);
+}
+.paretoBar:hover{ transform: scaleX(1.08); }
+.paretoBar.active{ outline: 2px solid var(--accent); outline-offset: 2px; }
+.paretoBar:focus-visible{ outline: 3px solid var(--accent); outline-offset: 2px; }
+.paretoOverlay{ position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.paretoThresholdLine{ stroke-width: .6; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.paretoDividerLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: .5; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+.paretoCumulativeLine{ stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+.paretoFeatureLabels{ display: flex; margin-top: 4px; }
+.paretoFeatureLabel{
+  font-size: 10px; color: var(--text-secondary); text-align: center; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; box-sizing: border-box;
+}
+.paretoAxisTitle{ margin: 2px 0 0; text-align: center; font-size: 11px; color: var(--text-secondary); }
+.paretoCaption{ margin: 6px 0 0; font-size: 12.5px; color: var(--text-secondary); text-align: right; }
+.paretoLegend{ display: flex; gap: 16px; margin-top: 8px; font-size: 11.5px; color: var(--text-secondary); }
+.paretoLegend span{ display: inline-flex; align-items: center; gap: 6px; }
+.paretoLegendSwatch{ display: inline-block; width: 14px; height: 14px; border-radius: 3px; background: var(--pareto-bar, #0072c6); }
+.paretoLegendSwatch.significant{ border: 2px solid var(--heatmap-fdr-border, #1d1d1f); }
+.paretoLegendSwatch.insignificant{
+  background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 4px, transparent 4px 8px);
+}
+
+.paretoRunBar{
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.paretoRunProgress{ display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 220px; }
+.paretoRunProgressTrack{ height: 6px; border-radius: 999px; background: var(--heatmap-cell-border, var(--border)); overflow: hidden; }
+.paretoRunProgressTrack > span{
+  display: block; height: 100%; background: var(--accent); border-radius: 999px;
+  transition: width 240ms ease;
+}
+.paretoRunStage{ font-size: 12.5px; color: var(--text-secondary); }

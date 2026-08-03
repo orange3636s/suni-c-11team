@@ -12,6 +12,7 @@ from api.schemas.analysis import (
     ControlRangeListResponse,
     HeatmapResponse,
     ModelPerformanceResponse,
+    ParetoRankingResponse,
     ScreeningResponse,
     ScreeningScatterResponse,
 )
@@ -24,7 +25,11 @@ from src.analysis.control_range import (
 from src.analysis.scatter import build_scatter_data
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
-from src.analysis.screening.selector import find_factor, select_pareto_factors_all_targets
+from src.analysis.screening.selector import (
+    find_factor,
+    score_all_factors,
+    select_pareto_factors_all_targets,
+)
 from src.ml.inference import get_latest_model_metadata
 from src.runtime.datasets import DatasetNotFoundError
 from src.runtime.store import RuntimeStore
@@ -123,6 +128,49 @@ def get_screening_heatmap(dataset: str = "train", metric: Literal["spearman", "e
         "significant": heatmap.significant,
         "scale": {"min": heatmap.scale["min"], "max": heatmap.scale["max"]},
         "excluded_configs": heatmap.excluded_configs,
+    }
+
+
+@router.get("/screening/pareto", response_model=ParetoRankingResponse)
+def get_screening_pareto(dataset: str = "train", target: str = "Y1") -> dict[str, Any]:
+    """Every R+D+Config factor for one target, ranked by eps2, with
+    contribution/cumulative denominated by the full pool -- the data
+    behind the root-cause tab's Pareto chart (top-10/20/all is a client
+    slice of this one list, so switching that toggle needs no refetch).
+    """
+    df = _dataframe_or_404(dataset)
+    schema = parse_schema(df)
+    if target not in schema.target_cols:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
+    rows = score_all_factors(df, schema, target)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃 결과가 없습니다.")
+
+    rows.sort(key=lambda r: r["eps2"], reverse=True)
+    total_eps2 = sum(r["eps2"] for r in rows)
+    cumulative = 0.0
+    items = []
+    for row in rows:
+        pct = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
+        cumulative += pct
+        items.append(
+            {
+                "feature": row["feature"],
+                "kind": row["kind"],
+                "step": row["step"],
+                "eps2": row["eps2"],
+                "q_value": row["q_value"],
+                "significant": row["significant"],
+                "n_observed": row["n_observed"],
+                "contribution_pct": pct,
+                "cumulative_pct": cumulative,
+            }
+        )
+    return {
+        "dataset_id": dataset,
+        "target": target,
+        "total_factor_count": len(rows),
+        "items": items,
     }
 
 
