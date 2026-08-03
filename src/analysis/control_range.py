@@ -6,10 +6,15 @@ within that subset. That factor range becomes the "normal range" -- a wafer
 outside it, on an unseen dataset, is flagged.
 
 Monotonic factors only get a one-sided bound (see `compute_control_range`
-docstring for why the other side is intentionally left open). A too-wide
-range (>=98% coverage of ALL observed values) is a sign the IQR-derived
-bound isn't discriminating anything, so it falls back to the band's own
-1st/99th percentile.
+docstring for why the other side is intentionally left open). The boundary
+itself is the band's 2nd/98th percentile, not its raw min/max: the min/max
+of a subset is set by its two most extreme points, which makes the drawn
+line follow whatever happens to be the single furthest-out observation
+rather than where the data actually clusters. 2-98% was chosen empirically
+over 0-100/1-99/5-95/10-90 by comparing resulting alarm rate, yield gap,
+and bootstrap stability of the boundary itself; see the module's golden
+test for the comparison table. There is no coverage-based fallback --
+2-98% already keeps the range from degenerating to the full spread.
 """
 
 from __future__ import annotations
@@ -18,15 +23,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import yaml
 
 from src.analysis.screening.selector import ParetoFactor
 
-FALLBACK_COVERAGE_THRESHOLD = 0.98
-FALLBACK_LOWER_QUANTILE = 0.01
-FALLBACK_UPPER_QUANTILE = 0.99
+BAND_LOWER_QUANTILE = 0.02
+BAND_UPPER_QUANTILE = 0.98
 
 SEVERITY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "alarm_severity.yaml"
 DEFAULT_SEVERITY_THRESHOLDS = {"low_max_ratio": 0.5, "medium_max_ratio": 1.5}
@@ -100,35 +103,18 @@ def compute_control_range(train_df: pd.DataFrame, factor: ParetoFactor) -> Contr
     n_band = len(band)
 
     shape = factor.relation_shape
+    p_low = float(band["x"].quantile(BAND_LOWER_QUANTILE))
+    p_high = float(band["x"].quantile(BAND_UPPER_QUANTILE))
     if shape == "monotonic_increasing":
-        lower, upper = None, float(band["x"].max())
+        lower, upper = None, p_high
     elif shape == "monotonic_decreasing":
-        lower, upper = float(band["x"].min()), None
+        lower, upper = p_low, None
     else:
-        lower, upper = float(band["x"].min()), float(band["x"].max())
+        lower, upper = p_low, p_high
     one_sided = shape in ("monotonic_increasing", "monotonic_decreasing")
 
-    def _coverage(lo: float | None, hi: float | None) -> float:
-        within = pd.Series(True, index=frame.index)
-        if lo is not None:
-            within &= frame["x"] >= lo
-        if hi is not None:
-            within &= frame["x"] <= hi
-        return float(within.mean())
-
-    fallback_applied = False
-    if _coverage(lower, upper) >= FALLBACK_COVERAGE_THRESHOLD:
-        fallback_applied = True
-        if shape == "monotonic_increasing":
-            upper = float(band["x"].quantile(FALLBACK_UPPER_QUANTILE))
-        elif shape == "monotonic_decreasing":
-            lower = float(band["x"].quantile(FALLBACK_LOWER_QUANTILE))
-        else:
-            lower = float(band["x"].quantile(FALLBACK_LOWER_QUANTILE))
-            upper = float(band["x"].quantile(FALLBACK_UPPER_QUANTILE))
-
     band_in_ratio = n_band / n_observed if n_observed else 0.0
-    band_width = float(band["x"].max() - band["x"].min()) if n_band else 0.0
+    band_width = p_high - p_low
 
     return ControlRange(
         feature=feature,
@@ -140,7 +126,7 @@ def compute_control_range(train_df: pd.DataFrame, factor: ParetoFactor) -> Contr
         lower=lower,
         upper=upper,
         one_sided=one_sided,
-        fallback_applied=fallback_applied,
+        fallback_applied=False,
         band_in_ratio=band_in_ratio,
         n_band=n_band,
         n_observed=n_observed,

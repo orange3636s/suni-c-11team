@@ -412,7 +412,6 @@ function RootCauseContent() {
                     <small>
                       n={data.n} · ε²={factor.eps2.toFixed(3)} · q={factor.q_value < 0.001 ? factor.q_value.toExponential(2) : factor.q_value.toFixed(4)} · {SHAPE_LABEL[factor.relation_shape]}
                       {factor.optimal_center != null && ` (최적 ${factor.optimal_center.toFixed(1)})`}
-                      {data.normal_range.fallback_applied && <span className="referenceOnlyBadge" style={{ marginLeft: 8 }}>축소 적용 (1~99%)</span>}
                     </small>
                   )}
                 </div>

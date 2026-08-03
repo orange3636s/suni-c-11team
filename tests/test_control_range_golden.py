@@ -1,8 +1,12 @@
 """Golden-value regression tests for src/analysis/control_range.py.
 
 Skips gracefully when data/raw/train.CSV or test.CSV are absent. Run
-locally with the real files in place to verify against the 3-3 reference
+locally with the real files in place to verify against the reference
 table (train-derived normal ranges applied to test.CSV).
+
+Boundary is the Q1..Q3 band's 2nd/98th percentile (not raw min/max, and
+no coverage-based fallback -- both were replaced; see control_range.py's
+module docstring for why 2-98% was chosen).
 """
 
 from __future__ import annotations
@@ -24,18 +28,18 @@ TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.C
 TEST_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "test.CSV"
 
 GOLDEN_RANGES = {
-    "Y1": {"feature": "Step28_R1", "y_q1": 1.80, "y_q3": 3.90, "lower": 42.9, "upper": 68.6, "band_in_ratio": 0.517, "fallback": False},
-    "Y2": {"feature": "Step16_R1", "y_q1": 2.30, "y_q3": 5.90, "lower": 51.4, "upper": 67.8, "band_in_ratio": 0.508, "fallback": False},
-    "Y3": {"feature": "Step1_D1", "y_q1": 5.70, "y_q3": 8.70, "lower": None, "upper": 14.0, "band_in_ratio": 0.524, "fallback": False},
-    "Y4": {"feature": "Step24_R1", "y_q1": 1.90, "y_q3": 3.70, "lower": 44.5, "upper": 67.5, "band_in_ratio": 0.513, "fallback": True},
-    "Y5": {"feature": "Step18_R1", "y_q1": 0.40, "y_q3": 1.00, "lower": 46.8, "upper": 66.2, "band_in_ratio": 0.558, "fallback": False},
+    "Y1": {"feature": "Step28_R1", "y_q1": 1.80, "y_q3": 3.90, "lower": 51.0, "upper": 66.6},
+    "Y2": {"feature": "Step16_R1", "y_q1": 2.30, "y_q3": 5.90, "lower": 53.5, "upper": 65.5},
+    "Y3": {"feature": "Step1_D1", "y_q1": 5.70, "y_q3": 8.70, "lower": None, "upper": 13.0},
+    "Y4": {"feature": "Step24_R1", "y_q1": 1.90, "y_q3": 3.70, "lower": 49.4, "upper": 66.9},
+    "Y5": {"feature": "Step18_R1", "y_q1": 0.40, "y_q3": 1.00, "lower": 50.6, "upper": 64.4},
 }
 GOLDEN_ALARMS = {
-    "Y1": {"count": 2, "observed": 155, "alarm_avg": 6.45, "normal_avg": 2.94},
-    "Y2": {"count": 7, "observed": 145, "alarm_avg": 11.61, "normal_avg": 4.29},
-    "Y3": {"count": 11, "observed": 71, "alarm_avg": 11.15, "normal_avg": 7.39},
-    "Y4": {"count": 4, "observed": 155, "alarm_avg": 4.12, "normal_avg": 2.86},
-    "Y5": {"count": 8, "observed": 147, "alarm_avg": 2.02, "normal_avg": 0.77},
+    "Y1": {"count": 11, "observed": 155, "alarm_avg": 5.05, "normal_avg": 2.83},
+    "Y2": {"count": 14, "observed": 145, "alarm_avg": 9.84, "normal_avg": 4.09},
+    "Y3": {"count": 16, "observed": 71, "alarm_avg": 10.63, "normal_avg": 7.20},
+    "Y4": {"count": 7, "observed": 155, "alarm_avg": 4.06, "normal_avg": 2.84},
+    "Y5": {"count": 12, "observed": 147, "alarm_avg": 1.77, "normal_avg": 0.75},
 }
 TOLERANCE = 0.5
 
@@ -82,8 +86,7 @@ def test_golden_control_range(control_ranges, target):
     else:
         assert cr.lower == pytest.approx(expected["lower"], abs=TOLERANCE)
     assert cr.upper == pytest.approx(expected["upper"], abs=TOLERANCE)
-    assert cr.fallback_applied == expected["fallback"]
-    assert cr.band_in_ratio == pytest.approx(expected["band_in_ratio"], abs=0.01)
+    assert cr.fallback_applied is False
 
 
 @pytest.mark.parametrize("target", list(GOLDEN_ALARMS))
@@ -114,19 +117,19 @@ def test_golden_wafer_status_summary(control_ranges, alarms_by_target, test_df):
     normal_ids = [v.lot_wafer_id for v in verdicts if v.status == "normal"]
     unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
 
-    assert len(alarm_ids) == 30
+    assert len(alarm_ids) == 58
     assert len(unmeasured_ids) == 489
     assert len(alarm_ids) + len(normal_ids) + len(unmeasured_ids) == len(test_df)
 
     indexed = test_df.set_index("Lot_Wafer_ID")
     alarm_yield_avg = indexed.loc[alarm_ids, "Y"].mean()
     no_alarm_yield_avg = indexed.loc[normal_ids + unmeasured_ids, "Y"].mean()
-    assert alarm_yield_avg == pytest.approx(83.11, abs=0.05)
-    assert no_alarm_yield_avg == pytest.approx(89.36, abs=0.05)
+    assert alarm_yield_avg == pytest.approx(84.23, abs=0.05)
+    assert no_alarm_yield_avg == pytest.approx(89.48, abs=0.05)
 
     lot_alarm_counts: dict[str, int] = {}
     for v in verdicts:
         if v.status == "alarm":
             lot_alarm_counts[v.lot_id] = lot_alarm_counts.get(v.lot_id, 0) + 1
-    assert sum(1 for count in lot_alarm_counts.values() if count >= 2) == 8
-    assert max(lot_alarm_counts.values()) == 3
+    assert sum(1 for count in lot_alarm_counts.values() if count >= 2) == 16
+    assert max(lot_alarm_counts.values()) == 5
