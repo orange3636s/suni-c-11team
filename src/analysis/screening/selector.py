@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from src.analysis.pareto.effect_size import eps2_categorical, eps2_numeric
-from src.analysis.pareto.schema import Schema
-from src.analysis.pareto.shape import classify_shape
+from src.analysis.screening.effect_size import eps2_categorical, eps2_numeric
+from src.analysis.screening.schema import Schema
+from src.analysis.screening.shape import classify_shape
 
 DEFAULT_CUTOFF = 0.8
 DEFAULT_FDR_ALPHA = 0.05

@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.analysis.pareto.plots import build_pareto_chart
-from src.analysis.pareto.schema import Schema, parse_schema
-from src.analysis.pareto.selector import (
+from src.analysis.screening.plots import build_pareto_chart
+from src.analysis.screening.schema import Schema, parse_schema
+from src.analysis.screening.selector import (
     DEFAULT_CUTOFF,
     DEFAULT_FDR_ALPHA,
     TargetParetoResult,
@@ -130,6 +130,6 @@ def load_cached_dataframe(cache_key: str) -> pd.DataFrame | None:
 
 
 def factor_dict_to_object(factor_dict: dict):
-    from src.analysis.pareto.selector import ParetoFactor
+    from src.analysis.screening.selector import ParetoFactor
 
     return ParetoFactor(**factor_dict)

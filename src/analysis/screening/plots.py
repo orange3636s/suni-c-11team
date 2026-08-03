@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from scipy import stats
 
-from src.analysis.pareto.selector import ParetoFactor, TargetParetoResult
+from src.analysis.screening.selector import ParetoFactor, TargetParetoResult
 
 LOW_SAMPLE_THRESHOLD = 20
 

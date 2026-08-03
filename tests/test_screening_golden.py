@@ -14,8 +14,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.analysis.pareto.schema import parse_schema
-from src.analysis.pareto.selector import select_pareto_factors_all_targets
+from src.analysis.screening.schema import parse_schema
+from src.analysis.screening.selector import select_pareto_factors_all_targets
 
 TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 

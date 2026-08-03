@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.analysis.pareto.schema import parse_schema
-from src.analysis.pareto.selector import select_pareto_factors
+from src.analysis.screening.schema import parse_schema
+from src.analysis.screening.selector import select_pareto_factors
 
 
 def _rng(seed: int) -> np.random.Generator:
