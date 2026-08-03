@@ -1,0 +1,264 @@
+"""Dataset registry: the 2 bundled CSVs (train/test) plus user uploads.
+
+Bundled datasets are read straight from data/bundled/ and are never
+deletable. Uploads are validated immediately (blocking errors reject the
+upload outright; warnings are informational and still let the file
+through) and persisted as a raw CSV file plus a `datasets` row in
+RuntimeStore. Deleting an upload removes both.
+"""
+
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import pandas as pd
+
+from src.analysis.screening.schema import Schema, parse_schema
+from src.runtime.store import RuntimeStore
+
+MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
+LOW_ROW_COUNT_THRESHOLD = 1000
+UNSTABLE_ROW_COUNT_THRESHOLD = 2000
+MIN_FACTOR_OBSERVATIONS = 100
+ID_COLUMN = "Lot_Wafer_ID"
+LOT_COLUMN = "Lot_ID"
+
+BUNDLED_DATASET_FILES = {
+    "train": "train.CSV",
+    "test": "test.CSV",
+}
+
+
+class DatasetValidationError(Exception):
+    def __init__(self, blocking_errors: list[str]) -> None:
+        super().__init__("; ".join(blocking_errors))
+        self.blocking_errors = blocking_errors
+
+
+class DatasetNotFoundError(Exception):
+    pass
+
+
+class BundledDatasetDeleteError(Exception):
+    pass
+
+
+@dataclass
+class DatasetValidation:
+    blocking_errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    unmapped_columns: list[str] = field(default_factory=list)
+    low_observation_factors: list[str] = field(default_factory=list)
+    schema: Schema | None = None
+
+    @property
+    def is_valid(self) -> bool:
+        return not self.blocking_errors
+
+
+def _lot_summary(df: pd.DataFrame) -> tuple[str | None, str | None, int | None]:
+    if LOT_COLUMN not in df.columns:
+        return None, None, None
+    lots = df[LOT_COLUMN].dropna().astype(str)
+    if lots.empty:
+        return None, None, None
+    return str(lots.min()), str(lots.max()), int(lots.nunique())
+
+
+def parse_uploaded_csv(content: bytes) -> pd.DataFrame:
+    if len(content) > MAX_UPLOAD_SIZE_BYTES:
+        raise DatasetValidationError(["파일 크기는 50MB 이하여야 합니다."])
+    try:
+        df = pd.read_csv(io.BytesIO(content))
+    except Exception as exc:
+        raise DatasetValidationError([f"CSV 파싱에 실패했습니다: {exc}"]) from exc
+    if df.shape[1] == 0:
+        raise DatasetValidationError(["컬럼이 없는 CSV입니다."])
+    return df
+
+
+def validate_dataset(df: pd.DataFrame, *, baseline_schema: Schema | None = None) -> DatasetValidation:
+    blocking_errors: list[str] = []
+    warnings: list[str] = []
+
+    schema = parse_schema(df)
+    if not (schema.r_cols or schema.d_cols or schema.config_cols):
+        blocking_errors.append(
+            "Step{n}_R{m} / Step{n}_D{m} / Step{n}_Config 패턴에 맞는 컬럼이 하나도 없습니다."
+        )
+    if not schema.target_cols:
+        blocking_errors.append("이 파일에는 타깃 열이 없어 원인 분석에 사용할 수 없습니다.")
+
+    if blocking_errors:
+        return DatasetValidation(blocking_errors=blocking_errors, schema=schema)
+
+    row_count = len(df)
+    if row_count < LOW_ROW_COUNT_THRESHOLD:
+        warnings.append("표본이 부족해 인자 선정 결과를 신뢰하기 어렵습니다.")
+    elif row_count < UNSTABLE_ROW_COUNT_THRESHOLD:
+        warnings.append("인자 선정이 불안정할 수 있습니다.")
+
+    if LOT_COLUMN not in df.columns:
+        warnings.append(
+            "LOT 열이 없어 GroupKFold를 적용할 수 없습니다. 단순 KFold로 대체하며 "
+            "결과가 낙관적으로 나올 수 있습니다."
+        )
+
+    if baseline_schema is not None:
+        diffs: list[str] = []
+        if len(schema.r_cols) != len(baseline_schema.r_cols):
+            diffs.append(f"R 컬럼 {len(schema.r_cols)}개 (기준 {len(baseline_schema.r_cols)}개)")
+        if len(schema.d_cols) != len(baseline_schema.d_cols):
+            diffs.append(f"D 컬럼 {len(schema.d_cols)}개 (기준 {len(baseline_schema.d_cols)}개)")
+        if schema.max_step != baseline_schema.max_step:
+            diffs.append(f"step 최대 {schema.max_step}개 (기준 {baseline_schema.max_step}개)")
+        if diffs:
+            warnings.append("내장 train.CSV와 step 구성이 다릅니다: " + ", ".join(diffs))
+
+    low_observation_factors = [
+        column
+        for column in [*schema.r_cols, *schema.d_cols]
+        if df[column].notna().sum() < MIN_FACTOR_OBSERVATIONS
+    ]
+    if low_observation_factors:
+        preview = ", ".join(low_observation_factors[:10])
+        suffix = " 외 %d개" % (len(low_observation_factors) - 10) if len(low_observation_factors) > 10 else ""
+        warnings.append(f"관측 행이 {MIN_FACTOR_OBSERVATIONS}개 미만인 인자는 스크리닝에서 자동 제외됩니다: {preview}{suffix}")
+
+    return DatasetValidation(
+        warnings=warnings,
+        unmapped_columns=schema.unmapped,
+        low_observation_factors=low_observation_factors,
+        schema=schema,
+    )
+
+
+class DatasetRegistry:
+    def __init__(self, store: RuntimeStore, upload_root: Path, bundled_root: Path) -> None:
+        self.store = store
+        self.upload_root = Path(upload_root)
+        self.upload_root.mkdir(parents=True, exist_ok=True)
+        self.bundled_root = Path(bundled_root)
+        self._bundled_cache: dict[str, pd.DataFrame] = {}
+
+    def _bundled_path(self, dataset_id: str) -> Path:
+        return self.bundled_root / BUNDLED_DATASET_FILES[dataset_id]
+
+    def _load_bundled(self, dataset_id: str) -> pd.DataFrame:
+        if dataset_id not in self._bundled_cache:
+            self._bundled_cache[dataset_id] = pd.read_csv(self._bundled_path(dataset_id))
+        return self._bundled_cache[dataset_id]
+
+    def bundled_schema(self, dataset_id: str = "train") -> Schema:
+        return parse_schema(self._load_bundled(dataset_id))
+
+    def _bundled_summary(self, dataset_id: str) -> dict[str, Any]:
+        df = self._load_bundled(dataset_id)
+        lot_min, lot_max, lot_count = _lot_summary(df)
+        return {
+            "dataset_id": dataset_id,
+            "kind": "bundled",
+            "original_filename": BUNDLED_DATASET_FILES[dataset_id],
+            "uploaded_at": None,
+            "row_count": len(df),
+            "column_count": df.shape[1],
+            "lot_min": lot_min,
+            "lot_max": lot_max,
+            "lot_count": lot_count,
+            "warnings": [],
+            "unmapped_columns": [],
+            "schema_diff": {},
+            "deletable": False,
+        }
+
+    def list_datasets(self) -> list[dict[str, Any]]:
+        bundled = [self._bundled_summary(dataset_id) for dataset_id in BUNDLED_DATASET_FILES]
+        uploaded = [
+            {**record, "kind": "uploaded", "deletable": True}
+            for record in self.store.list_datasets()
+        ]
+        return [*bundled, *uploaded]
+
+    def get_summary(self, dataset_id: str) -> dict[str, Any] | None:
+        if dataset_id in BUNDLED_DATASET_FILES:
+            return self._bundled_summary(dataset_id)
+        record = self.store.get_dataset(dataset_id)
+        if record is None:
+            return None
+        return {**record, "kind": "uploaded", "deletable": True}
+
+    def get_dataframe(self, dataset_id: str) -> pd.DataFrame:
+        if dataset_id in BUNDLED_DATASET_FILES:
+            return self._load_bundled(dataset_id)
+        record = self.store.get_dataset(dataset_id)
+        if record is None:
+            raise DatasetNotFoundError(dataset_id)
+        return pd.read_csv(self.upload_root / record["stored_path"])
+
+    def upload(self, filename: str, content: bytes) -> dict[str, Any]:
+        try:
+            df = parse_uploaded_csv(content)
+        except DatasetValidationError as exc:
+            return {
+                "success": False,
+                "dataset_id": None,
+                "blocking_errors": exc.blocking_errors,
+                "warnings": [],
+                "unmapped_columns": [],
+            }
+
+        baseline_schema = self.bundled_schema("train")
+        validation = validate_dataset(df, baseline_schema=baseline_schema)
+        if not validation.is_valid:
+            return {
+                "success": False,
+                "dataset_id": None,
+                "blocking_errors": validation.blocking_errors,
+                "warnings": [],
+                "unmapped_columns": [],
+            }
+
+        dataset_id = uuid4().hex
+        stored_name = f"{dataset_id}.csv"
+        (self.upload_root / stored_name).write_bytes(content)
+        lot_min, lot_max, lot_count = _lot_summary(df)
+        self.store.create_dataset(
+            dataset_id=dataset_id,
+            original_filename=filename,
+            stored_path=stored_name,
+            row_count=len(df),
+            column_count=df.shape[1],
+            lot_min=lot_min,
+            lot_max=lot_max,
+            lot_count=lot_count,
+            warnings=validation.warnings,
+            unmapped_columns=validation.unmapped_columns,
+            schema_diff={},
+        )
+        return {
+            "success": True,
+            "dataset_id": dataset_id,
+            "blocking_errors": [],
+            "warnings": validation.warnings,
+            "unmapped_columns": validation.unmapped_columns,
+            "row_count": len(df),
+            "column_count": df.shape[1],
+            "lot_min": lot_min,
+            "lot_max": lot_max,
+            "lot_count": lot_count,
+        }
+
+    def delete(self, dataset_id: str) -> None:
+        if dataset_id in BUNDLED_DATASET_FILES:
+            raise BundledDatasetDeleteError(dataset_id)
+        record = self.store.get_dataset(dataset_id)
+        if record is None:
+            raise DatasetNotFoundError(dataset_id)
+        path = self.upload_root / record["stored_path"]
+        if path.is_file():
+            path.unlink()
+        self.store.delete_dataset(dataset_id)

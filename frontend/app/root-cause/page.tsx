@@ -1,291 +1,370 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import DashboardShell from "@/components/DashboardShell";
+import DatasetSelector from "@/components/DatasetSelector";
+import PlotlyChart from "@/components/PlotlyChart";
+import { getScreening, getScreeningScatter } from "@/lib/api";
+import type { ScatterPoint, ScreeningResponse, ScreeningScatterResponse } from "@/types/data";
 
-import Header from "@/components/Header";
-import Sidebar from "@/components/Sidebar";
-import StatusBadge from "@/components/StatusBadge";
-import CsvUploadPanel from "@/components/CsvUploadPanel";
-import {
-  analyzeRelationships,
-} from "@/lib/api";
-import type {
-  CategoricalStatistic,
-  LotCauseItem,
-  LotFeatureImportanceItem,
-  LotWaferItem,
-  RelationshipAnalysisResponse,
-  RelationshipFeature,
-} from "@/types/data";
+const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
+const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
+const SHAPE_LABEL: Record<string, string> = {
+  monotonic_increasing: "단조 증가",
+  monotonic_decreasing: "단조 감소",
+  u_shape: "U자형",
+  unclear: "불명확",
+};
+type ColorMode = "default" | "config_model" | "lot" | "alarm";
 
-type WorkspaceTab = "yield" | "lot" | "wafer" | "relationships";
-type LotFeatureGroup = "all" | "r" | "d" | "config";
-
-const TABS: Array<[WorkspaceTab, string]> = [
-  ["yield", "Y 수율 분석"],
-  ["lot", "Lot별 원인"],
-  ["wafer", "Wafer 상세"],
-  ["relationships", "공정 관계"],
-];
-const ANALYSIS_OPTIONS = { max_rows: 500, top_n: 20, per_wafer_top_n: 8 };
-
-function formatNumber(value: number | null | undefined, digits = 2): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value.toLocaleString("ko-KR", { maximumFractionDigits: digits })
-    : "-";
+function modelOf(config: string | null): string {
+  if (!config) return "미계측";
+  const match = /Model(\d+)/.exec(config);
+  return match ? `Model${match[1]}` : config;
 }
 
-function waferKey(wafer: LotWaferItem): string {
-  return String(wafer.identifier ?? wafer.wafer_id ?? wafer.wafer_slot ?? "");
+const MODEL_COLORS = ["#1D4ED8", "#059669", "#B45309"];
+const LOT_PALETTE = ["#1D4ED8", "#059669", "#B45309", "#7C3AED", "#DB2777", "#0891B2", "#65A30D", "#DC2626"];
+
+function buildTraces(points: ScatterPoint[], mode: ColorMode) {
+  if (mode === "default") {
+    const inBand = points.filter((p) => p.in_band);
+    const outBand = points.filter((p) => !p.in_band);
+    return [
+      { x: outBand.map((p) => p.x), y: outBand.map((p) => p.y), mode: "markers", type: "scatter", name: "밴드 밖", marker: { color: "#93C5FD", size: 7, opacity: 0.45 }, customdata: outBand.map((p) => p.lot_wafer_id) },
+      { x: inBand.map((p) => p.x), y: inBand.map((p) => p.y), mode: "markers", type: "scatter", name: "밴드 안 (Q1~Q3)", marker: { color: "#1D4ED8", size: 9, opacity: 0.85 }, customdata: inBand.map((p) => p.lot_wafer_id) },
+    ];
+  }
+  if (mode === "alarm") {
+    const normal = points.filter((p) => p.in_range);
+    const alarm = points.filter((p) => !p.in_range);
+    return [
+      { x: normal.map((p) => p.x), y: normal.map((p) => p.y), mode: "markers", type: "scatter", name: "정상범위 내", marker: { color: "#1D4ED8", size: 7, opacity: 0.7 }, customdata: normal.map((p) => p.lot_wafer_id) },
+      { x: alarm.map((p) => p.x), y: alarm.map((p) => p.y), mode: "markers", type: "scatter", name: "정상범위 밖", marker: { color: "#F59E0B", size: 8, opacity: 0.85, line: { color: "#B45309", width: 1 } }, customdata: alarm.map((p) => p.lot_wafer_id) },
+    ];
+  }
+  if (mode === "config_model") {
+    const groups = new Map<string, ScatterPoint[]>();
+    for (const point of points) {
+      const key = modelOf(point.config);
+      groups.set(key, [...(groups.get(key) ?? []), point]);
+    }
+    return [...groups.entries()].map(([key, group], index) => ({
+      x: group.map((p) => p.x),
+      y: group.map((p) => p.y),
+      mode: "markers",
+      type: "scatter",
+      name: key,
+      marker: {
+        color: MODEL_COLORS[index % MODEL_COLORS.length],
+        size: group.map((p) => (p.in_band ? 8 : 3.5)),
+        opacity: group.map((p) => (p.in_band ? 0.85 : 0.3)),
+      },
+      customdata: group.map((p) => p.lot_wafer_id),
+    }));
+  }
+  // lot
+  const groups = new Map<string, ScatterPoint[]>();
+  for (const point of points) {
+    const key = point.lot_id ?? "미상";
+    groups.set(key, [...(groups.get(key) ?? []), point]);
+  }
+  return [...groups.entries()].map(([key, group], index) => ({
+    x: group.map((p) => p.x),
+    y: group.map((p) => p.y),
+    mode: "markers",
+    type: "scatter",
+    name: key,
+    showlegend: false,
+    marker: {
+      color: LOT_PALETTE[index % LOT_PALETTE.length],
+      size: group.map((p) => (p.in_band ? 8 : 3.5)),
+      opacity: group.map((p) => (p.in_band ? 0.85 : 0.3)),
+    },
+    customdata: group.map((p) => p.lot_wafer_id),
+  }));
 }
 
-function compactFeatureName(feature: string | null | undefined): string {
-  if (!feature) return "데이터 없음";
-  return feature.replace(/_frequency$/i, "").replace(/_freq$/i, "");
+function buildScatterSpec(data: ScreeningScatterResponse, mode: ColorMode) {
+  const shapes: Record<string, unknown>[] = [
+    { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.y_q1, y1: data.y_q1, line: { color: "#E5484D", width: 1.5 } },
+    { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.y_q3, y1: data.y_q3, line: { color: "#E5484D", width: 1.5 } },
+  ];
+  const annotations: Record<string, unknown>[] = [
+    { xref: "paper", x: 1, yref: "y", y: data.y_q1, text: `Q1 (${data.y_q1.toFixed(2)})`, showarrow: false, xanchor: "left", font: { color: "#E5484D", size: 11 } },
+    { xref: "paper", x: 1, yref: "y", y: data.y_q3, text: `Q3 (${data.y_q3.toFixed(2)})`, showarrow: false, xanchor: "left", font: { color: "#E5484D", size: 11 } },
+  ];
+  if (data.normal_range.lo != null) {
+    shapes.push({ type: "line", x0: data.normal_range.lo, x1: data.normal_range.lo, yref: "paper", y0: 0, y1: 1, line: { color: "#6E6E73", dash: "dot", width: 1.5 } });
+    annotations.push({ x: data.normal_range.lo, yref: "paper", y: 0, text: data.normal_range.lo.toFixed(1), showarrow: false, yanchor: "top", font: { size: 11, weight: 700 } });
+  }
+  if (data.normal_range.hi != null) {
+    shapes.push({ type: "line", x0: data.normal_range.hi, x1: data.normal_range.hi, yref: "paper", y0: 0, y1: 1, line: { color: "#6E6E73", dash: "dot", width: 1.5 } });
+    annotations.push({ x: data.normal_range.hi, yref: "paper", y: 0, text: data.normal_range.hi.toFixed(1), showarrow: false, yanchor: "top", font: { size: 11, weight: 700 } });
+  }
+  if (data.optimal_center != null) {
+    shapes.push({ type: "line", x0: data.optimal_center, x1: data.optimal_center, yref: "paper", y0: 0, y1: 1, line: { color: "#B45309", dash: "dash", width: 1.5 } });
+    annotations.push({ x: data.optimal_center, yref: "paper", y: 1, text: `최적 ${data.optimal_center.toFixed(1)}`, showarrow: false, yanchor: "bottom", font: { color: "#B45309", size: 11 } });
+  }
+
+  const profileTrace = data.bins.length
+    ? [{
+        x: data.bins.map((b) => b.x_mean),
+        y: data.bins.map((b) => b.y_mean),
+        mode: "lines+markers",
+        type: "scatter",
+        name: "분위구간 평균",
+        line: { color: "#1D1D1F", width: 2 },
+      }]
+    : [];
+
+  return {
+    data: [...buildTraces(data.points, mode), ...profileTrace],
+    layout: {
+      shapes,
+      annotations,
+      xaxis: { title: { text: data.axis.x_label } },
+      yaxis: { title: { text: data.axis.y_label } },
+      margin: { t: 20 },
+      dragmode: "select",
+    },
+  };
 }
 
 export default function RootCausePage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [correlation, setCorrelation] = useState<"pearson" | "spearman">("spearman");
-  const [result, setResult] = useState<RelationshipAnalysisResponse | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<WorkspaceTab>("yield");
-  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
-  const [selectedWaferId, setSelectedWaferId] = useState<string | null>(null);
-  const [lotGroup, setLotGroup] = useState<LotFeatureGroup>("all");
-  const [lotSearch, setLotSearch] = useState("");
-  const [stepFilter, setStepFilter] = useState<number | "all">("all");
-
-  const lots = useMemo(() => result?.lot_analysis?.lots ?? [], [result]);
-  const riskLots = useMemo(
-    () => [...lots]
-      .sort((a, b) => (a.ranking_yield ?? Number.POSITIVE_INFINITY) - (b.ranking_yield ?? Number.POSITIVE_INFINITY))
-      .slice(0, 20),
-    [lots],
+  return (
+    <Suspense fallback={null}>
+      <RootCauseContent />
+    </Suspense>
   );
-  const selectedLot = useMemo(
-    () => lots.find((lot) => lot.lot_id === selectedLotId) ?? riskLots[0] ?? lots[0] ?? null,
-    [lots, riskLots, selectedLotId],
-  );
-  const selectedWafer = useMemo(
-    () => selectedLot?.wafer_list.find((wafer) => waferKey(wafer) === selectedWaferId) ?? null,
-    [selectedLot, selectedWaferId],
-  );
-  const dangerWafers = useMemo(
-    () => lots.flatMap((lot) => lot.wafer_list.map((wafer) => ({ lot, wafer })))
-      .filter(({ wafer }) => wafer.risk_level === "danger")
-      .sort((a, b) => (a.wafer.predicted_yield ?? a.wafer.predicted_value ?? 100) - (b.wafer.predicted_yield ?? b.wafer.predicted_value ?? 100)),
-    [lots],
-  );
-  const shownLots = useMemo(() => {
-    const query = lotSearch.trim().toLowerCase();
-    return query ? lots.filter((lot) => lot.lot_id.toLowerCase().includes(query)) : lots;
-  }, [lots, lotSearch]);
+}
 
-  function setQuerySelection(lotId: string, waferId?: string) {
-    const params = new URLSearchParams(window.location.search);
-    params.set("lot_id", lotId);
-    if (waferId) params.set("wafer_id", waferId);
-    else params.delete("wafer_id");
-    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-  }
+function RootCauseContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [datasetId, setDatasetId] = useState("train");
+  const [screening, setScreening] = useState<ScreeningResponse | null>(null);
+  const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
+  const [scatterByFeature, setScatterByFeature] = useState<Record<string, ScreeningScatterResponse>>({});
+  const [colorMode, setColorMode] = useState<ColorMode>("default");
+  const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  function selectLot(lotId: string) {
-    setSelectedLotId(lotId);
-    setSelectedWaferId(null);
-    setQuerySelection(lotId);
-  }
-
-  function openWafer(lot: LotCauseItem, wafer: LotWaferItem) {
-    const key = waferKey(wafer);
-    setSelectedLotId(lot.lot_id);
-    setSelectedWaferId(key);
-    setTab("wafer");
-    setQuerySelection(lot.lot_id, key);
-  }
-
-  async function runAnalysis() {
-    if (!file) return;
-    setRunning(true);
-    setError(null);
+  const loadScreening = useCallback(async (id: string) => {
+    setLoading(true);
+    setError("");
+    setScatterByFeature({});
     try {
-      const response = await analyzeRelationships(
-        file,
-        ANALYSIS_OPTIONS,
-        correlation,
-        "wafer_observed_only",
-        { warning_threshold: 90, danger_threshold: 85 },
-      );
-      setResult(response);
-      setSelectedLotId(null);
-      setSelectedWaferId(null);
-      setTab("yield");
-      window.history.replaceState({}, "", window.location.pathname);
-    } catch (analysisError) {
-      setError(analysisError instanceof Error ? analysisError.message : "원인 분석 중 오류가 발생했습니다.");
+      const response = await getScreening(id);
+      setScreening(response);
+      const firstWithFactors = response.targets.find((t) => !t.no_significant_factor)?.target;
+      if (firstWithFactors && !response.targets.find((t) => t.target === activeTarget && !t.no_significant_factor)) {
+        setActiveTarget(firstWithFactors);
+      }
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "스크리닝 결과를 불러오지 못했습니다.");
     } finally {
-      setRunning(false);
+      setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadScreening(datasetId), 0);
+    return () => window.clearTimeout(timer);
+  }, [datasetId, loadScreening]);
+
+  const activeResult = screening?.targets.find((t) => t.target === activeTarget) ?? null;
+
+  useEffect(() => {
+    if (!activeResult || activeResult.no_significant_factor) return;
+    let cancelled = false;
+    (async () => {
+      for (const factor of activeResult.factors) {
+        if (scatterByFeature[factor.feature]) continue;
+        try {
+          const data = await getScreeningScatter(datasetId, activeTarget, factor.feature);
+          if (!cancelled) setScatterByFeature((current) => ({ ...current, [factor.feature]: data }));
+        } catch {
+          // Skip a single failed factor rather than blocking the whole tab.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeResult, datasetId, activeTarget]);
+
+  function selectTarget(target: string) {
+    setActiveTarget(target);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("target", target);
+    router.replace(`/root-cause?${params.toString()}`, { scroll: false });
   }
+
+  const noConfigSelected = useMemo(
+    () => screening?.targets.every((t) => t.factors.every((f) => f.kind !== "Config")) ?? true,
+    [screening],
+  );
 
   return (
-    <div className="appShell">
-      <Sidebar activeItem="원인 분석" />
-      <div className="mainArea">
-        <Header />
-        <main className="mainContent uploadPage rcPage">
-          <section className="uploadIntro pageHeading">
-            <div><span className="eyebrow">ROOT CAUSE WORKSPACE</span><h1>원인 분석</h1><p>최신 Y 모델로 Lot 위험, Wafer 기여도와 공정 관계를 추적합니다.</p></div>
-            {result && <StatusBadge label={`${result.target} · ${lots.length} Lots`} tone="success" />}
-          </section>
+    <DashboardShell activeItem="원인 분석">
+      <section className="uploadIntro pageHeading">
+        <span className="eyebrow">ROOT CAUSE</span>
+        <h1>원인 분석</h1>
+        <p>선정 인자별 산점도로 정상범위가 어떻게 도출됐는지 확인합니다.</p>
+      </section>
 
-          <section className="resultCard rcControlBar" aria-label="분석 조건">
-            <CsvUploadPanel id="root-cause-file" file={file} onFileSelect={(selected) => setFile(selected ?? null)} compact title="CSV 파일을 선택해 주세요." description="활성 Y 모델로 원인 분석을 실행합니다." />
-            <label className="fieldGroup rcSmallField"><span>상관</span><select value={correlation} onChange={(event) => setCorrelation(event.target.value as typeof correlation)}><option value="spearman">Spearman</option><option value="pearson">Pearson</option></select></label>
-            <button className="button primary" type="button" disabled={!file || running} onClick={() => void runAnalysis()}>{running ? "분석 중…" : "원인 분석 실행"}</button>
-          </section>
+      <section className="uploadCard">
+        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr) minmax(180px,1fr)" }}>
+          <DatasetSelector label="분석 데이터셋" value={datasetId} onChange={setDatasetId} />
+          <div className="fieldGroup">
+            <span>Color By</span>
+            <select value={colorMode} onChange={(event) => setColorMode(event.target.value as ColorMode)}>
+              <option value="default">기본 (파랑 2단계)</option>
+              <option value="config_model">Config 모델별</option>
+              <option value="lot">LOT별</option>
+              <option value="alarm">알람 여부</option>
+            </select>
+          </div>
+        </div>
+        {error && <p className="errorMessage">{error}</p>}
+      </section>
 
-          {error && <div className="errorMessage" role="alert">{error}</div>}
+      {noConfigSelected && (
+        <section className="messageBox">Config(장비 설정) 30개 중 통계적으로 유의한 인자는 0개입니다.</section>
+      )}
 
-          <nav className="workspaceTabs rcTabs" aria-label="원인 분석 워크스페이스">
-            {TABS.map(([value, label]) => <button key={value} type="button" className={tab === value ? "active" : ""} onClick={() => setTab(value)}>{label}</button>)}
-          </nav>
-
-          {!result ? (
-            <section className="resultCard rcEmpty"><h2>분석할 데이터를 선택해 주세요</h2><p>서버에 저장된 최신 Y 모델로 공정 원인을 분석합니다.</p></section>
-          ) : tab === "yield" ? (
-            <TargetView result={result} dangerWafers={dangerWafers} onWaferClick={openWafer} />
-          ) : tab === "lot" ? (
-            <LotView lots={shownLots} riskLots={riskLots} selectedLot={selectedLot} search={lotSearch} onSearch={setLotSearch} onSelect={selectLot} group={lotGroup} onGroup={setLotGroup} onWaferClick={openWafer} />
-          ) : tab === "wafer" ? (
-            <WaferView lots={lots} selectedLot={selectedLot} selectedWafer={selectedWafer} onSelectLot={selectLot} onSelectWafer={openWafer} />
-          ) : (
-            <RelationshipsView result={result} stepFilter={stepFilter} onStepFilter={setStepFilter} />
-          )}
-
-        </main>
+      <div className="targetSegmentBar">
+        {TARGETS.map((target) => {
+          const result = screening?.targets.find((t) => t.target === target);
+          const count = result?.factors.length ?? 0;
+          return (
+            <button
+              key={target}
+              type="button"
+              className={`targetSegment ${activeTarget === target ? "active" : ""} ${count === 0 ? "empty" : ""}`}
+              onClick={() => selectTarget(target)}
+            >
+              {target}
+              <span className="countBadge">{count}</span>
+            </button>
+          );
+        })}
       </div>
+
+      {loading && <p className="emptyMessage">불러오는 중…</p>}
+
+      {activeResult?.no_significant_factor && (
+        <section className="resultCard">
+          <p className="emptyMessage">
+            {activeTarget}에 대해 BH-FDR을 통과한 인자가 없어 정상범위를 산출할 수 없습니다. 아래 참고용 인자는 통계적으로 유의하지 않으므로 원인으로 해석하지 마세요.
+          </p>
+        </section>
+      )}
+
+      {activeResult && !activeResult.no_significant_factor && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {activeResult.factors.map((factor, index) => {
+            const data = scatterByFeature[factor.feature];
+            return (
+              <article className="resultCard factorChartCard" key={factor.feature}>
+                <div className="factorChartMeta">
+                  <div>
+                    <span className="sectionLabel">{index + 1}위 · ε² {factor.eps2.toFixed(3)}</span>
+                    <h2>{factor.feature} ({KIND_LABEL[factor.kind]})</h2>
+                  </div>
+                  {data && (
+                    <small>
+                      n={data.n} · ε²={factor.eps2.toFixed(3)} · q={factor.q_value < 0.001 ? factor.q_value.toExponential(2) : factor.q_value.toFixed(4)} · {SHAPE_LABEL[factor.relation_shape]}
+                      {factor.optimal_center != null && ` (최적 ${factor.optimal_center.toFixed(1)})`}
+                      {data.normal_range.fallback_applied && <span className="referenceOnlyBadge" style={{ marginLeft: 8 }}>축소 적용 (1~99%)</span>}
+                    </small>
+                  )}
+                </div>
+                {factor.kind === "Config" ? (
+                  <p className="emptyMessage">범주형 인자는 박스플롯 뷰가 준비 중입니다.</p>
+                ) : data ? (
+                  <PlotlyChart spec={buildScatterSpec(data, colorMode)} height={480} />
+                ) : (
+                  <p className="emptyMessage">불러오는 중…</p>
+                )}
+                {data && (
+                  <ScatterClickCapture points={data.points} onSelect={setSelectedWafer} />
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      <section className="analysisDisclaimers">
+        <strong>해석 시 한계</strong>
+        <ul>
+          <li>이 분석은 해당 인자가 계측된 wafer만 대상으로 합니다. R은 전체의 15%, D는 5%입니다. 미계측 wafer로의 일반화는 보장되지 않습니다.</li>
+          <li>ε²는 통계적 연관성이지 인과가 아닙니다. 공정 순서상 선행/후행 관계나 교락 인자는 반영되지 않았습니다.</li>
+          <li>U자 인자는 값이 높아서/낮아서 나쁜 게 아니라 최적 중심에서 이탈한 만큼 나쁩니다. 조치 방향은 현재 값이 중심보다 높은지 낮은지에 따라 달라집니다.</li>
+        </ul>
+      </section>
+
+      {selectedWafer && (
+        <WaferDetailPopover point={selectedWafer} target={activeTarget} onClose={() => setSelectedWafer(null)} />
+      )}
+    </DashboardShell>
+  );
+}
+
+// PlotlyChart doesn't currently forward click events; this lightweight list
+// lets users pick a wafer by id without waiting on deeper Plotly wiring.
+function ScatterClickCapture({ points, onSelect }: { points: ScatterPoint[]; onSelect: (point: ScatterPoint) => void }) {
+  const outliers = points.filter((p) => !p.in_range).slice(0, 12);
+  if (outliers.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <small style={{ color: "var(--text-secondary)" }}>정상범위 밖 wafer (클릭하여 상세 확인): </small>
+      {outliers.map((point) => (
+        <button
+          key={point.lot_wafer_id}
+          type="button"
+          className="referenceOnlyToggle"
+          style={{ marginRight: 6, marginTop: 6 }}
+          onClick={() => onSelect(point)}
+        >
+          {point.lot_wafer_id}
+        </button>
+      ))}
     </div>
   );
 }
 
-function TargetView({ result, dangerWafers, onWaferClick }: { result: RelationshipAnalysisResponse; dangerWafers: Array<{ lot: LotCauseItem; wafer: LotWaferItem }>; onWaferClick: (lot: LotCauseItem, wafer: LotWaferItem) => void }) {
-  const explanation = result.explanation;
-  const risk = result.analysis_result?.risk;
-  return <div className="rcGrid">
-    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Final yield</span><h2>최종 수율 Y 원인 분석</h2></div><StatusBadge label="정답 레이블: Y" tone="neutral" /></div><p className="microcopy">활성 Y 모델의 기여도를 직접 사용합니다. 음수 기여는 수율 악화, 양수 기여는 수율 개선을 뜻합니다.</p></section>
-    <section className="resultCard"><span className="sectionLabel">Risk mix</span><h2>Wafer 위험 분포</h2><div className="rcRiskCounts"><span className="normal">정상 <strong>{risk?.normal_count ?? 0}</strong></span><span className="warning">주의 <strong>{risk?.warning_count ?? 0}</strong></span><span className="danger">위험 <strong>{risk?.critical_count ?? 0}</strong></span></div></section>
-    <section className="resultCard"><span className="sectionLabel">SHAP coverage</span><h2>설명 범위</h2><strong className="rcHeroNumber">{formatNumber(explanation?.analysis_summary.analyzed_rows, 0)}</strong><p>전체 {formatNumber(explanation?.analysis_summary.total_rows, 0)} Wafer · {explanation?.explanation_method ?? "-"}</p></section>
-    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">Global importance</span><h2>상위 영향 Feature</h2></div></div><FeatureTable features={(explanation?.global_importance ?? []).slice(0, 12).map((item) => ({ feature: item.feature, display_name: compactFeatureName(item.feature), group: item.parameter_type, score: item.mean_abs_shap, direction: item.direction, valid_count: null } as RelationshipFeature))} /></section>
-    <section className="resultCard rcSpan2"><span className="sectionLabel">Danger wafers</span><h2>위험 Wafer Top 5</h2>{dangerWafers.length ? <div className="rcChipList">{dangerWafers.slice(0, 5).map(({ lot, wafer }) => <button type="button" key={`${lot.lot_id}-${waferKey(wafer)}`} onClick={() => onWaferClick(lot, wafer)}><strong>{lot.lot_id}</strong><span>{waferKey(wafer)} · {formatNumber(wafer.predicted_yield ?? wafer.predicted_value)}%</span></button>)}</div> : <p className="emptyMessage">위험 Wafer가 없습니다.</p>}</section>
-  </div>;
-}
-
-function LotView({ lots, riskLots, selectedLot, search, onSearch, onSelect, group, onGroup, onWaferClick }: { lots: LotCauseItem[]; riskLots: LotCauseItem[]; selectedLot: LotCauseItem | null; search: string; onSearch: (value: string) => void; onSelect: (lotId: string) => void; group: LotFeatureGroup; onGroup: (group: LotFeatureGroup) => void; onWaferClick: (lot: LotCauseItem, wafer: LotWaferItem) => void }) {
-  const lowSampleConfigs = selectedLot?.low_sample_config ?? [];
-  const ranked = selectedLot?.feature_importance[group] ?? [];
-  const pareto = selectedLot?.pareto[group] ?? [];
-  const stepTotals = Object.entries(ranked.reduce<Record<string, number>>((accumulator, item) => {
-    const step = item.step || "unknown";
-    accumulator[step] = (accumulator[step] ?? 0) + Math.max(item.adverse_contribution ?? 0, 0);
-    return accumulator;
-  }, {})).sort((left, right) => right[1] - left[1]).slice(0, 10);
-  const riskWafers = [...(selectedLot?.wafer_list ?? [])]
-    .filter((wafer) => wafer.risk_level === "danger" || wafer.risk_level === "warning")
-    .sort((left, right) => (left.ranking_yield ?? left.predicted_yield ?? left.predicted_value ?? 100) - (right.ranking_yield ?? right.predicted_yield ?? right.predicted_value ?? 100))
-    .slice(0, 5);
-  const failBits = Object.entries(selectedLot?.fail_bit_count_averages ?? {});
-  return <div className="rcLotLayout">
-    <aside className="resultCard rcLotList"><div className="sectionHeader"><div><span className="sectionLabel">Lots · 수율 오름차순</span><h2>Lot 선택</h2></div><span>{lots.length}</span></div><input className="rcSearch" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Lot 검색" aria-label="Lot 검색" /><div className="rcLotScroll">{lots.map((lot) => <button type="button" key={lot.lot_id} className={selectedLot?.lot_id === lot.lot_id ? "active" : ""} onClick={() => onSelect(lot.lot_id)}><span><strong>{lot.lot_id}</strong><small>{lot.wafer_count ?? 0} wafers · {lot.ranking_basis === "actual_y" ? "실제" : "예측"}</small></span><b>{formatNumber(lot.ranking_yield)}%</b></button>)}</div></aside>
-    <div className="rcLotMain">
-      <section className="resultCard"><div className="sectionHeader"><div><span className="sectionLabel">Bottom 20 risk lots + selection</span><h2>위험 Lot 수율 분포</h2></div>{selectedLot && <StatusBadge label={`${selectedLot.lot_id} · ${selectedLot.ranking_basis === "actual_y" ? "실제 Y 기준" : "예측 Y 기준"}`} tone="warning" />}</div><LotBoxPlot lots={riskLots} selectedLot={selectedLot} onSelect={onSelect} /></section>
-      {selectedLot ? <>
-        <section className="resultCard"><div className="rcMetricStrip"><div><span>실제 평균 Y</span><strong>{formatNumber(selectedLot.average_actual_yield)}%</strong></div><div><span>예측 평균 Y</span><strong>{formatNumber(selectedLot.average_predicted_yield)}%</strong></div><div><span>전체 대비</span><strong>{formatNumber(selectedLot.difference_from_overall)}%p</strong></div><div><span>수율 손실</span><strong>{formatNumber(selectedLot.yield_loss)}%p</strong></div><div><span>최소 / 최대</span><strong>{formatNumber(selectedLot.minimum_yield)} / {formatNumber(selectedLot.maximum_yield)}</strong></div><div><span>표준편차</span><strong>{formatNumber(selectedLot.yield_standard_deviation)}</strong></div><div><span>Critical / Warning</span><strong>{selectedLot.critical_wafer_count ?? 0} / {selectedLot.warning_wafer_count ?? 0}</strong></div><div><span>주요 Fail</span><strong>{selectedLot.top_failure_target ?? "-"}</strong></div></div>{failBits.length > 0 && <div className="rcChipList rcBitSummary">{failBits.map(([name, value]) => <span key={name}><strong>{name}</strong> 평균 {formatNumber(value)}</span>)}</div>}</section>
-        <section className="resultCard"><div className="sectionHeader"><div><span className="sectionLabel">Lot diagnosis</span><h2>{selectedLot.lot_id} 원인 순위</h2></div><div className="rcSegmented">{(["all", "r", "d", "config"] as LotFeatureGroup[]).map((value) => <button key={value} type="button" className={group === value ? "active" : ""} onClick={() => onGroup(value)}>{value === "config" ? "Config" : value.toUpperCase()}</button>)}</div></div>{lowSampleConfigs.length > 0 && <div className="rcLowSample"><StatusBadge label={`표본 부족 Config ${lowSampleConfigs.length}개`} tone="warning" /><span>sample_count &lt; 5는 공식 순위·Pareto·유의성 결론에서 제외했습니다.</span><div className="tableWrap"><table><thead><tr><th>Step</th><th>Config</th><th>Lot 평균 Y</th><th>동일 Config 평균 Y</th><th>전체 평균 Y</th><th>수율 차이</th><th>평균 / 합계 기여</th><th>판정</th></tr></thead><tbody>{lowSampleConfigs.map((item) => <tr key={item.feature}><td>{item.step}</td><td>{compactFeatureName(item.display_name || item.feature)}</td><td>{formatNumber(item.lot_mean_value)}</td><td>{formatNumber(item.overall_mean_value)}</td><td>{formatNumber(item.overall_yield)}</td><td>{formatNumber(item.mean_difference)}%p</td><td>{formatNumber(item.adverse_contribution, 4)} / {formatNumber(item.total_adverse_contribution, 4)}</td><td><StatusBadge label="표본 부족" tone="warning" /></td></tr>)}</tbody></table></div></div>}<ContributionBars features={ranked} /><LotFeatureTable features={ranked} /><ParetoBars items={pareto} />{stepTotals.length > 0 && <div className="rcPareto"><h3>주요 Step Top 10</h3>{stepTotals.map(([step, value]) => <div key={step}><span>{step}</span><i><b style={{ width: `${Math.max(2, (value / stepTotals[0][1]) * 100)}%` }} /></i><em>{formatNumber(value, 4)}</em></div>)}</div>}</section>
-        <section className="resultCard"><span className="sectionLabel">Wafer drill-down</span><h2>위험 Wafer Top 5</h2>{riskWafers.length ? <div className="rcWaferRows">{riskWafers.map((wafer) => <button type="button" key={waferKey(wafer)} onClick={() => onWaferClick(selectedLot, wafer)}><StatusBadge label={wafer.risk_level ?? "unknown"} tone={wafer.risk_level === "danger" ? "danger" : "warning"} /><strong>{waferKey(wafer)}</strong><span>{formatNumber(wafer.predicted_yield ?? wafer.predicted_value)}%</span><small>{compactFeatureName(wafer.top_feature)}</small></button>)}</div> : <p className="emptyMessage">위험 또는 주의 Wafer가 없습니다.</p>}</section>
-      </> : <section className="resultCard"><p className="emptyMessage">Lot을 선택해 주세요.</p></section>}
+function WaferDetailPopover({
+  point,
+  target,
+  onClose,
+}: {
+  point: ScatterPoint;
+  target: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="waferDetailPopover" style={{ right: 24, bottom: 24 }} role="dialog" aria-label="wafer 상세">
+      <div className="sectionHeading compact">
+        <div>
+          <span className="sectionLabel">WAFER</span>
+          <h2>{point.lot_wafer_id ?? "미상"}</h2>
+        </div>
+        <button className="button" type="button" onClick={onClose}>닫기</button>
+      </div>
+      <dl>
+        <dt>LOT</dt><dd>{point.lot_id ?? "-"}</dd>
+        <dt>{target}</dt><dd>{point.y.toFixed(2)}</dd>
+        <dt>인자값</dt><dd>{point.x.toFixed(2)}</dd>
+        <dt>정상범위 내</dt><dd>{point.in_range ? "예" : "아니오 (알람)"}</dd>
+        <dt>Config</dt><dd>{point.config ?? "미계측"}</dd>
+      </dl>
     </div>
-  </div>;
-}
-
-function WaferView({ lots, selectedLot, selectedWafer, onSelectLot, onSelectWafer }: { lots: LotCauseItem[]; selectedLot: LotCauseItem | null; selectedWafer: LotWaferItem | null; onSelectLot: (lotId: string) => void; onSelectWafer: (lot: LotCauseItem, wafer: LotWaferItem) => void }) {
-  return <div className="rcGrid"><section className="resultCard"><label className="fieldGroup"><span>Lot</span><select value={selectedLot?.lot_id ?? ""} onChange={(event) => onSelectLot(event.target.value)}>{lots.map((lot) => <option key={lot.lot_id}>{lot.lot_id}</option>)}</select></label>{selectedLot && <div className="rcWaferNav">{selectedLot.wafer_list.map((wafer) => <button key={waferKey(wafer)} className={selectedWafer && waferKey(selectedWafer) === waferKey(wafer) ? "active" : ""} type="button" onClick={() => onSelectWafer(selectedLot, wafer)}>{waferKey(wafer)}<span>{formatNumber(wafer.predicted_yield ?? wafer.predicted_value)}%</span></button>)}</div>}</section><section className="resultCard rcSpan3">{selectedWafer ? <><div className="sectionHeader"><div><span className="sectionLabel">Wafer detail</span><h2>{waferKey(selectedWafer)}</h2></div><StatusBadge label={selectedWafer.risk_level ?? "unknown"} tone={selectedWafer.risk_level === "danger" ? "danger" : selectedWafer.risk_level === "warning" ? "warning" : "success"} /></div><div className="rcMetricStrip"><div><span>예측 수율</span><strong>{formatNumber(selectedWafer.predicted_yield ?? selectedWafer.predicted_value)}%</strong></div><div><span>신뢰도</span><strong>{formatNumber(selectedWafer.confidence)}</strong></div><div><span>Top Step</span><strong>{selectedWafer.top_step ?? "-"}</strong></div><div><span>Top Config</span><strong>{compactFeatureName(selectedWafer.top_config)}</strong></div></div><div className="rcCauseCallout"><span>가장 큰 불리 기여</span><strong>{compactFeatureName(selectedWafer.top_feature)}</strong><p>이 항목은 선택 Wafer의 국소 SHAP 기여를 요약합니다. 인과관계로 단정하지 않습니다.</p></div></> : <p className="emptyMessage">왼쪽에서 Wafer를 선택하거나 위험 Wafer 바로가기를 눌러 주세요.</p>}</section></div>;
-}
-
-function RelationshipsView({ result, stepFilter, onStepFilter }: { result: RelationshipAnalysisResponse; stepFilter: number | "all"; onStepFilter: (value: number | "all") => void }) {
-  const paths = result.relationship_paths.filter((path) => stepFilter === "all" || path.step === stepFilter);
-  const rankings = result.rankings.shap.all.length ? result.rankings.shap.all : result.rankings.correlation.all;
-  const configStatistics = result.statistics.categorical.filter((item) => {
-    if (stepFilter === "all") return true;
-    return Number(item.feature.match(/^Step(\d+)/i)?.[1]) === stepFilter;
-  });
-  return <div className="rcGrid">
-    <section className="resultCard rcSpan2"><div className="sectionHeader"><div><span className="sectionLabel">R · D · Config</span><h2>공정 영향 순위</h2></div><select value={stepFilter} onChange={(event) => onStepFilter(event.target.value === "all" ? "all" : Number(event.target.value))}><option value="all">전체 Step</option>{result.available_steps.map((step) => <option key={step} value={step}>Step {step}</option>)}</select></div><FeatureTable features={rankings.filter((item) => stepFilter === "all" || item.step === stepFilter).slice(0, 20)} /></section>
-    <section className="resultCard rcSpan2"><span className="sectionLabel">Relationship paths</span><h2>공정 관계 경로</h2>{paths.length ? <div className="rcPathList">{paths.slice(0, 20).map((path) => <article key={`${path.rank}-${path.step}-${path.defect}`}><span>Step {path.step}</span><strong>{path.response ?? "R"} → {path.defect} → {result.target}</strong><small>{path.equipment ? `Config ${path.equipment} · ` : ""}{path.interpretation}</small><StatusBadge label={path.confidence} tone={path.confidence === "sufficient" ? "success" : path.confidence === "caution" ? "warning" : "neutral"} /></article>)}</div> : <p className="emptyMessage">선택 조건의 관계 경로가 없습니다.</p>}</section>
-    <section className="resultCard rcSpan4"><div className="sectionHeader"><div><span className="sectionLabel">Categorical statistics</span><h2>Config 관계·통계</h2></div><StatusBadge label="최소 표본 n=5" tone="neutral" /></div><p className="microcopy">원본 Config Category에 범주형 검정을 적용합니다. Frequency Encoding 숫자에는 Pearson/Spearman을 적용하지 않습니다.</p><ConfigStatistics items={configStatistics} methods={result.statistics.methods} /></section>
-    {result.caveats.length > 0 && <section className="resultCard rcSpan4"><span className="sectionLabel">Caveats</span><h2>해석 주의사항</h2><ul className="rcNotes">{result.caveats.map((note) => <li key={note}>{note}</li>)}</ul></section>}
-  </div>;
-}
-
-function ConfigStatistics({ items, methods }: { items: CategoricalStatistic[]; methods: string[] }) {
-  if (!items.length) return <p className="emptyMessage">선택 조건에서 분석 가능한 Config 컬럼이 없습니다.</p>;
-  return <div className="rcConfigStats">{items.map((item) => <article key={item.feature}>
-    <div className="sectionHeader"><div><h3>{item.feature}</h3><p>사용 분석법: {methods.filter((method) => ["anova", "welch_anova", "kruskal", "fdr", "effect_size"].includes(method)).join(" · ")}</p></div><div className="rcChipList"><span>Category {item.category_count}</span><span>유효 {item.eligible_category_count ?? 0}</span>{Boolean(item.insufficient_category_count) && <StatusBadge label={`표본 부족 ${item.insufficient_category_count}`} tone="warning" />}</div></div>
-    <div className="tableWrap"><table><thead><tr><th>검정</th><th>Statistic</th><th>p-value</th><th>FDR</th><th>Effect size</th><th>사용 표본</th><th>제외 표본</th></tr></thead><tbody>{([['ANOVA', item.anova], ['Welch ANOVA', item.welch_anova], ['Kruskal', item.kruskal]] as const).map(([name, test]) => <tr key={name}><th>{name}</th><td>{formatNumber(test.statistic, 5)}</td><td>{formatNumber(test.p_value, 5)}</td><td>{formatNumber(test.fdr_p_value, 5)}</td><td>{formatNumber(item.effect_size, 5)}</td><td>{item.valid_count}</td><td>{item.excluded_low_sample_count ?? 0}</td></tr>)}</tbody></table></div>
-    <div className="tableWrap"><table><thead><tr><th>Config Category</th><th>n</th><th>평균</th><th>중앙값</th><th>Q1 / Q3</th><th>전체 대비</th><th>판정</th></tr></thead><tbody>{(item.category_summary ?? []).map((category) => <tr key={category.category}><td>{category.category}</td><td>{category.count}</td><td>{formatNumber(category.mean)}</td><td>{formatNumber(category.median)}</td><td>{formatNumber(category.q1)} / {formatNumber(category.q3)}</td><td>{formatNumber(category.difference_from_overall)}%p</td><td>{category.sample_warning ? <StatusBadge label="표본 부족" tone="warning" /> : <StatusBadge label="통계 포함" tone="success" />}</td></tr>)}</tbody></table></div>
-  </article>)}</div>;
-}
-
-function FeatureTable({ features }: { features: RelationshipFeature[] }) {
-  return features.length ? <div className="tableWrap"><table><thead><tr><th>#</th><th>Feature</th><th>그룹</th><th>점수</th><th>방향</th><th>n</th></tr></thead><tbody>{features.map((item, index) => <tr key={`${item.feature}-${index}`}><td>{item.rank ?? index + 1}</td><td>{item.display_name || compactFeatureName(item.feature)}</td><td>{item.group === "EQ" ? "Config" : item.group}</td><td>{formatNumber(item.score ?? item.mean_abs_shap, 4)}</td><td>{item.direction}</td><td>{formatNumber(item.valid_count, 0)}</td></tr>)}</tbody></table></div> : <p className="emptyMessage">표시할 Feature가 없습니다.</p>;
-}
-
-function LotFeatureTable({ features }: { features: LotFeatureImportanceItem[] }) {
-  return features.length ? <div className="tableWrap"><table><thead><tr><th>#</th><th>Step</th><th>Feature / Config</th><th>Lot / 비교 평균</th><th>평균 불리 기여</th><th>합계 불리 기여</th><th>개선 기여</th><th>표본 / Coverage</th><th>관련 Target</th></tr></thead><tbody>{features.slice(0, 20).map((item, index) => <tr key={item.feature}><td>{index + 1}</td><td>{item.step}</td><td>{compactFeatureName(item.display_name || item.feature)}</td><td>{formatNumber(item.lot_mean_value)} / {formatNumber(item.overall_mean_value)}<small className="rcCellMeta">{item.group === "Config" ? `전체 Y ${formatNumber(item.overall_yield)} · 수율차 ${formatNumber(item.mean_difference)}%p` : `Δ ${formatNumber(item.mean_difference)}`}</small></td><td>{formatNumber(item.adverse_contribution, 4)}</td><td title="선택 Lot 내 Wafer 기여 합계">{formatNumber(item.total_adverse_contribution, 4)}</td><td>{formatNumber(item.improvement_contribution, 4)}<small className="rcCellMeta">합계 {formatNumber(item.total_improvement_contribution, 4)}</small></td><td>{item.sample_count}<small className="rcCellMeta">{formatNumber(item.coverage * 100, 1)}%</small></td><td>{item.related_failure_target ?? "-"}<small className="rcCellMeta">{item.related_fail_bit_count_target ? `${item.related_fail_bit_count_target} ${formatNumber(item.related_fail_bit_count_average)}` : ""}</small></td></tr>)}</tbody></table></div> : <p className="emptyMessage">공식 순위에 포함할 Feature가 없습니다.</p>;
-}
-
-function ContributionBars({ features }: { features: LotFeatureImportanceItem[] }) {
-  const items = features.slice(0, 12);
-  const maximum = Math.max(...items.map((item) => Math.max(item.adverse_contribution ?? 0, 0)), 0);
-  if (!items.length || maximum <= 0) return null;
-  return <div className="rcPareto"><h3>평균 수율 악화 기여</h3>{items.map((item) => <div key={item.feature}><span>{compactFeatureName(item.display_name || item.feature)}</span><i><b style={{ width: `${Math.max(2, (Math.max(item.adverse_contribution, 0) / maximum) * 100)}%` }} /></i><em>{formatNumber(item.adverse_contribution, 4)}</em></div>)}</div>;
-}
-
-function ParetoBars({ items }: { items: LotCauseItem["pareto"]["all"] }) {
-  if (!items.length) return null;
-  return <div className="rcPareto"><h3>Pareto 기여</h3>{items.slice(0, 12).map((item) => <div key={item.feature}><span>{compactFeatureName(item.display_name || item.feature)}</span><i><b style={{ width: `${Math.max(2, Math.min(100, item.share * 100))}%` }} /></i><em>{formatNumber(item.cumulative_share * 100, 1)}%</em></div>)}</div>;
-}
-
-function quartiles(values: number[]): [number, number, number] {
-  if (!values.length) return [0, 0, 0];
-  const sorted = [...values].sort((a, b) => a - b);
-  const at = (p: number) => { const position = (sorted.length - 1) * p; const low = Math.floor(position); const high = Math.ceil(position); return sorted[low] + (sorted[high] - sorted[low]) * (position - low); };
-  return [at(0.25), at(0.5), at(0.75)];
-}
-
-function LotBoxPlot({ lots, selectedLot, onSelect }: { lots: LotCauseItem[]; selectedLot: LotCauseItem | null; onSelect: (lotId: string) => void }) {
-  const plotLots = selectedLot && !lots.some((lot) => lot.lot_id === selectedLot.lot_id) ? [...lots, selectedLot] : lots;
-  if (!plotLots.length) return <p className="emptyMessage">Lot 분포 데이터가 없습니다.</p>;
-  const width = Math.max(720, plotLots.length * 42 + 80);
-  const y = (value: number) => 20 + (100 - Math.max(0, Math.min(100, value))) * 2.2;
-  return <div className="rcPlotScroll"><svg className="rcBoxPlot" viewBox={`0 0 ${width} 275`} role="img" aria-label="위험 Lot 수율 박스 플롯">
-    {[0, 25, 50, 75, 100].map((tick) => <g key={tick}><line x1="52" x2={width - 10} y1={y(tick)} y2={y(tick)} /><text x="45" y={y(tick) + 4}>{tick}</text></g>)}
-    {plotLots.map((lot, index) => {
-      const values = lot.wafer_list.map((wafer) => wafer.ranking_yield ?? wafer.actual_yield ?? wafer.predicted_yield ?? wafer.predicted_value).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-      const fallback = lot.ranking_yield ?? lot.average_predicted_yield ?? 0;
-      const samples = values.length ? values : [fallback];
-      const [q1, median, q3] = quartiles(samples);
-      const iqr = q3 - q1;
-      const lowerFence = q1 - 1.5 * iqr;
-      const upperFence = q3 + 1.5 * iqr;
-      const inliers = samples.filter((value) => value >= lowerFence && value <= upperFence);
-      const whiskerMin = Math.min(...(inliers.length ? inliers : samples));
-      const whiskerMax = Math.max(...(inliers.length ? inliers : samples));
-      const outliers = samples.filter((value) => value < lowerFence || value > upperFence);
-      const x = 72 + index * 42;
-      const active = selectedLot?.lot_id === lot.lot_id;
-      return <g key={lot.lot_id} className={active ? "active" : ""} onClick={() => onSelect(lot.lot_id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(lot.lot_id); }} role="button" tabIndex={0}><line className="whisker" x1={x} x2={x} y1={y(whiskerMax)} y2={y(whiskerMin)} /><rect x={x - 10} y={y(q3)} width="20" height={Math.max(2, y(q1) - y(q3))} rx="3" /><line className="median" x1={x - 10} x2={x + 10} y1={y(median)} y2={y(median)} />{outliers.map((value, outlierIndex) => <circle className="outlier" key={`${value}-${outlierIndex}`} cx={x} cy={y(value)} r="2.5" />)}<text className="lotLabel" transform={`translate(${x + 3} 266) rotate(-55)`}>{lot.lot_id}</text></g>;
-    })}
-  </svg></div>;
+  );
 }

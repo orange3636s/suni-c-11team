@@ -94,9 +94,9 @@ def _resolve_training_jobs(raw_value: str | None) -> Path:
     return (PROJECT_ROOT / configured_path).resolve()
 
 
-def _resolve_process_data_dir(raw_value: str | None) -> Path:
+def _resolve_dataset_upload_dir(raw_value: str | None) -> Path:
     configured_path = Path(
-        raw_value or _storage_default("data/process-data", "process-data")
+        raw_value or _storage_default("data/uploaded-datasets", "datasets")
     ).expanduser()
     if configured_path.is_absolute():
         return configured_path.resolve()
@@ -134,10 +134,13 @@ class Settings:
             os.environ.get("TRAINING_JOB_ARTIFACT_DIR")
         )
     )
-    process_data_dir: Path = field(
-        default_factory=lambda: _resolve_process_data_dir(
-            os.environ.get("PROCESS_DATA_DIR")
+    dataset_upload_dir: Path = field(
+        default_factory=lambda: _resolve_dataset_upload_dir(
+            os.environ.get("DATASET_UPLOAD_DIR")
         )
+    )
+    bundled_dataset_dir: Path = field(
+        default_factory=lambda: (PROJECT_ROOT / "data" / "bundled").resolve()
     )
     max_prediction_history: int = field(
         default_factory=lambda: _parse_positive_int("MAX_PREDICTION_HISTORY", 100)

@@ -1,82 +1,163 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import DashboardShell from "@/components/DashboardShell";
+import DatasetSelector from "@/components/DatasetSelector";
+import { getAlarmSummary, getAlarms } from "@/lib/api";
+import type { AlarmItem, AlarmListResponse, AlarmSummaryResponse } from "@/types/data";
 
-import Header from "@/components/Header";
-import Sidebar from "@/components/Sidebar";
-import { getAlerts, getAlertSummary, updateAlertStatus } from "@/lib/api";
-import type { AlertLogItem, AlertStatus, AlertSummary } from "@/types/data";
+const SEVERITY_LABEL: Record<string, string> = { low: "낮음", medium: "중간", high: "높음" };
 
-const EMPTY_SUMMARY: AlertSummary = { total: 0, new_count: 0, acknowledged_count: 0, resolved_count: 0, critical_count: 0, warning_count: 0, external_not_configured_count: 0 };
-
-function display(value: number | null, suffix = ""): string {
-  return value === null ? "-" : `${value.toFixed(2)}${suffix}`;
+function SeverityBadge({ severity }: { severity: string }) {
+  return <span className={`severityBadge severityBadge-${severity}`}>{SEVERITY_LABEL[severity] ?? severity}</span>;
 }
 
 export default function AlertsPage() {
-  const [summary, setSummary] = useState(EMPTY_SUMMARY);
-  const [items, setItems] = useState<AlertLogItem[]>([]);
-  const [selected, setSelected] = useState<AlertLogItem | null>(null);
-  const [risk, setRisk] = useState("");
-  const [status, setStatus] = useState("");
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("date");
-  const [loading, setLoading] = useState(true);
+  const [trainDataset, setTrainDataset] = useState("train");
+  const [evalDataset, setEvalDataset] = useState("test");
+  const [summary, setSummary] = useState<AlarmSummaryResponse | null>(null);
+  const [alarms, setAlarms] = useState<AlarmListResponse | null>(null);
+  const [severityFilter, setSeverityFilter] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true); setError("");
-    const query = new URLSearchParams({ limit: "100", sort });
-    if (risk) query.set("risk_level", risk);
-    if (status) query.set("status", status);
-    if (search) query.set("wafer_id", search);
+    setLoading(true);
+    setError("");
     try {
-      const [list, nextSummary] = await Promise.all([getAlerts(query.toString()), getAlertSummary()]);
-      setItems(list.items); setSummary(nextSummary);
-      setSelected((current) => list.items.find((item) => item.alert_id === current?.alert_id) ?? list.items[0] ?? null);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "알람 로그를 불러오지 못했습니다.");
-    } finally { setLoading(false); }
-  }, [risk, search, sort, status]);
+      const [summaryResponse, alarmsResponse] = await Promise.all([
+        getAlarmSummary(trainDataset, evalDataset),
+        getAlarms(trainDataset, evalDataset, severityFilter || undefined),
+      ]);
+      setSummary(summaryResponse);
+      setAlarms(alarmsResponse);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "알람 로그를 불러오지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [trainDataset, evalDataset, severityFilter]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  async function changeStatus(nextStatus: AlertStatus) {
-    if (!selected) return;
-    try { await updateAlertStatus(selected.alert_id, nextStatus); await load(); }
-    catch (requestError) { setError(requestError instanceof Error ? requestError.message : "알람 상태를 변경하지 못했습니다."); }
-  }
+  const yieldGap = summary?.yield_gap;
 
-  return <div className="appShell">
-    <Sidebar activeItem="사전 알람 로그" />
-    <div className="contentShell"><Header />
-      <main className="mainContent dashboardPage">
-        <section className="intro"><div><span className="eyebrow">Early Warning</span><h1>사전 알람 로그</h1><p>실제 수율 예측에서 발생한 Critical·Warning 이벤트만 기록합니다.</p></div></section>
-        <div className="runtimeNotice">외부 자동화 미연결 · Dashboard 내부 로그만 기록 중</div>
-        <section className="dashboardKpis">
-          {[["전체",summary.total],["신규",summary.new_count],["Critical",summary.critical_count],["Warning",summary.warning_count],["해결",summary.resolved_count]].map(([label,value]) => <article className="statusCard" key={label}><span>{label}</span><strong>{value}</strong></article>)}
-        </section>
-        <section className="resultCard dashboardFilters" aria-label="알람 필터">
-          <select aria-label="위험도" value={risk} onChange={(event) => setRisk(event.target.value)}><option value="">전체 위험도</option><option value="danger">Critical</option><option value="warning">Warning</option></select>
-          <select aria-label="상태" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">전체 상태</option><option>New</option><option>Acknowledged</option><option>Resolved</option></select>
-          <input aria-label="LOT 또는 Wafer 검색" placeholder="LOT_WAFER_ID 검색" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <select aria-label="정렬" value={sort} onChange={(event) => setSort(event.target.value)}><option value="date">최신순</option><option value="risk">위험도순</option></select>
-          <button className="button secondary" type="button" onClick={() => void load()}>새로고침</button>
-        </section>
-        {error && <div className="messageBox error retryMessage" role="alert"><span><strong>사전 알람 로그를 불러오지 못했습니다.</strong><small>{error}</small></span><button className="button secondary compact" onClick={() => void load()}>다시 시도</button></div>}
-        <section className="dashboardSplit">
-          <div className="resultCard dashboardTableWrap">
-            {loading ? <p>사전 알람 로그를 불러오는 중입니다.</p> : !items.length ? <p>기록된 사전 알람이 없습니다.</p> : <table><thead><tr><th>발생 시각</th><th>Lot / Wafer</th><th>예측 수율</th><th>Critical 확률</th><th>위험도</th><th>신뢰도</th><th>주요 Target</th><th>상태</th><th>외부 전송</th></tr></thead><tbody>{items.map((item) => <tr key={item.alert_id} className={selected?.alert_id === item.alert_id ? "selected" : ""} onClick={() => setSelected(item)}><td>{new Date(item.created_at).toLocaleString("ko-KR")}</td><td>{item.lot_wafer_id}</td><td>{display(item.predicted_y,"%")}</td><td>{display(item.critical_probability === null ? null : item.critical_probability * 100,"%")}</td><td>{item.risk_level === "danger" ? "Critical" : "Warning"}</td><td>{item.confidence ?? "-"}</td><td>{item.top_failure_target ?? "-"}</td><td>{item.status}</td><td>{item.external_delivery_status}</td></tr>)}</tbody></table>}
+  return (
+    <DashboardShell activeItem="사전 알람 로그">
+      <section className="uploadIntro pageHeading">
+        <span className="eyebrow">PRE-ALERT LOG</span>
+        <h1>사전 알람 로그</h1>
+        <p>학습 데이터셋에서 산출한 정상범위를 평가 데이터셋에 적용해 이탈 여부를 판정합니다.</p>
+      </section>
+
+      <section className="uploadCard">
+        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(200px,1fr) minmax(200px,1fr) minmax(140px,.6fr)" }}>
+          <DatasetSelector label="정상범위 산출 (train)" value={trainDataset} onChange={setTrainDataset} />
+          <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
+          <div className="fieldGroup">
+            <span>Severity</span>
+            <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+              <option value="">전체</option>
+              <option value="low">낮음</option>
+              <option value="medium">중간</option>
+              <option value="high">높음</option>
+            </select>
           </div>
-          <aside className="resultCard dashboardDetail">
-            {!selected ? <p>알람을 선택하면 상세 정보가 표시됩니다.</p> : <><span className="sectionLabel">Alert Detail</span><h2>{selected.lot_wafer_id}</h2><dl>{Object.entries({"Analysis ID":selected.analysis_id,"Model ID":selected.model_id,"예측 Y":display(selected.predicted_y,"%"),"Top Feature":selected.top_feature ?? "-","Top Step":selected.top_step ?? "-","Config":selected.top_equipment ?? "-","Acknowledged":selected.acknowledged_at ?? "-","Resolved":selected.resolved_at ?? "-"}).map(([label,value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><div className="dashboardActions"><button className="button secondary" disabled={selected.status !== "New"} onClick={() => void changeStatus("Acknowledged")}>Acknowledge</button><button className="button primary" disabled={selected.status === "Resolved"} onClick={() => void changeStatus("Resolved")}>Resolve</button></div></>}
-          </aside>
-        </section>
-        <p className="metricNotice">현재 로그는 배포 인스턴스의 임시 저장소에 보관되며 재배포 시 초기화될 수 있습니다.</p>
-      </main>
-    </div>
-  </div>;
+        </div>
+        {error && <p className="errorMessage">{error}</p>}
+      </section>
+
+      <section className="secomKpiGrid">
+        <div><span>알람 wafer</span><strong>{summary?.counts.alarm ?? "-"}</strong></div>
+        <div><span>정상</span><strong>{summary?.counts.normal ?? "-"}</strong></div>
+        <div><span>판정불가 (미계측)</span><strong>{summary?.counts.unmeasured ?? "-"}</strong></div>
+        <div><span>알람군 평균수율</span><strong>{summary?.alarm_group_yield_avg?.toFixed(2) ?? "-"}</strong></div>
+        <div><span>무알람군 평균수율</span><strong>{summary?.no_alarm_group_yield_avg?.toFixed(2) ?? "-"}</strong></div>
+        <div><span>격차</span><strong>{yieldGap != null ? `${yieldGap.toFixed(2)}%p` : "-"}</strong></div>
+      </section>
+
+      <section className="resultCard">
+        <div className="sectionHeading compact">
+          <div>
+            <span className="sectionLabel">ALARMS</span>
+            <h2>알람 목록 ({alarms?.total ?? 0}건)</h2>
+          </div>
+        </div>
+        {loading && <p className="emptyMessage">불러오는 중…</p>}
+        {!loading && alarms && alarms.items.length === 0 && (
+          <p className="emptyMessage">조건에 맞는 알람이 없습니다.</p>
+        )}
+        {!loading && alarms && alarms.items.length > 0 && (
+          <div className="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Wafer</th><th>LOT</th><th>Step</th><th>인자</th><th>타깃</th><th>값</th><th>정상범위</th><th>이탈량</th><th>방향</th><th>심각도</th><th>실측값</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alarms.items.map((item, index) => (
+                  <AlarmRow key={`${item.lot_wafer_id}-${item.feature}-${index}`} item={item} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="resultCard">
+        <div className="sectionHeading compact">
+          <div>
+            <span className="sectionLabel">LOT</span>
+            <h2>LOT별 알람 집계 (상위)</h2>
+          </div>
+        </div>
+        {summary && summary.top_lots.length > 0 ? (
+          <div className="tableWrap">
+            <table>
+              <thead><tr><th>LOT</th><th>알람 건수</th></tr></thead>
+              <tbody>
+                {summary.top_lots.slice(0, 10).map((lot) => (
+                  <tr key={lot.lot_id}><td>{lot.lot_id}</td><td>{lot.alarm_count}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="emptyMessage">알람이 발생한 LOT이 없습니다.</p>
+        )}
+      </section>
+
+      <section className="analysisDisclaimers">
+        <strong>해석 시 한계</strong>
+        <ul>
+          <li>정상범위는 학습 데이터셋의 Q1~Q3 구간에서 산출되었으며, 인과관계가 아닌 통계적 이탈 판정입니다.</li>
+          <li>판정불가 wafer는 선정 인자가 계측되지 않아 판정 자체가 불가능한 것이며, 정상을 의미하지 않습니다.</li>
+        </ul>
+      </section>
+    </DashboardShell>
+  );
+}
+
+function AlarmRow({ item }: { item: AlarmItem }) {
+  const [lo, hi] = item.normal_range;
+  const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"} ~ ${hi != null ? hi.toFixed(1) : "+∞"}`;
+  return (
+    <tr>
+      <td>{item.lot_wafer_id}</td>
+      <td>{item.lot_id ?? "-"}</td>
+      <td>{item.step}</td>
+      <td>{item.feature}</td>
+      <td>{item.target}</td>
+      <td>{item.value.toFixed(2)}</td>
+      <td title={`train에서 ${item.target}가 Q1~Q3인 wafer들의 ${item.feature} 관측 범위`}>{rangeText}</td>
+      <td>{item.deviation.toFixed(2)}</td>
+      <td>{item.direction === "above" ? "높음" : "낮음"}</td>
+      <td><SeverityBadge severity={item.severity} /></td>
+      <td>{item.actual_y != null ? item.actual_y.toFixed(2) : "-"}</td>
+    </tr>
+  );
 }

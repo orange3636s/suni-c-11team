@@ -318,8 +318,8 @@ def test_train_job_api_runs_real_training_and_saves_model(
         result = row["result"]
         assert result is not None
         assert result["model_id"]
-        assert (model_dir / f'{result["model_id"]}.joblib').is_file()
-        assert (model_dir / f'{result["model_id"]}.json').is_file()
+        assert (model_dir / result["model_id"] / "bundle.joblib").is_file()
+        assert (model_dir / result["model_id"] / "metadata.json").is_file()
         assert result["test_metrics"]["rmse"] is not None
     finally:
         manager.shutdown()
@@ -356,7 +356,7 @@ def test_health_is_independent_from_heavy_operation_gate() -> None:
 def test_http_health_stays_200_and_second_heavy_request_gets_exact_409() -> None:
     with operation_coordinator.job("training"):
         health_status, health_body = _asgi_request("GET", "/health")
-        conflict_status, conflict_body = _asgi_request("POST", "/api/predict")
+        conflict_status, conflict_body = _asgi_request("POST", "/api/train")
 
     assert health_status == 200
     assert health_body == {"status": "ok"}
@@ -396,138 +396,3 @@ def test_missing_training_job_returns_404(
         assert missing.value.status_code == 404
     finally:
         manager.shutdown()
-
-
-def test_predict_response_is_preview_but_history_artifact_keeps_all_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    rows = [
-        {
-            "Lot_Wafer_ID": f"LOT_{index}",
-            "Lot_ID": "LOT",
-            "predicted_Y": float(90 - index / 10),
-            "risk_level": "normal",
-            "confidence": "high",
-        }
-        for index in range(25)
-    ]
-    result = SimpleNamespace(
-        model_id="model_1",
-        target="Y",
-        model_name="HGBR",
-        total_rows=25,
-        average_prediction=88.8,
-        normal_count=25,
-        warning_count=0,
-        danger_count=0,
-        evaluation=None,
-        identifier_column="Lot_Wafer_ID",
-        predictions=rows,
-        warnings=[],
-        truncated=False,
-        preprocessing_summary={},
-    )
-    loaded = SimpleNamespace(metadata={"model_version": "1", "model_type": "HGBR"})
-    captured: dict[str, Any] = {}
-
-    async def fake_run(*_args, **_kwargs):
-        return "prediction.csv", pd.DataFrame({"Y": range(25)}), loaded, result
-
-    def fake_runtime(method: str, **values: Any):
-        if method == "start_prediction":
-            return values["prediction_id"]
-        if method == "complete_prediction":
-            captured.update(values)
-            return True
-        return True
-
-    monkeypatch.setattr(data_routes, "_run_prediction", fake_run)
-    monkeypatch.setattr(
-        data_routes,
-        "_latest_model",
-        lambda: SimpleNamespace(model_id="model_1"),
-    )
-    monkeypatch.setattr(data_routes, "safe_runtime_call", fake_runtime)
-    upload = UploadFile(file=BytesIO(b"Y\n90\n"), filename="prediction.csv")
-
-    response = asyncio.run(data_routes.predict_csv(upload))
-
-    assert len(response.predictions) == 10
-    assert response.preview_row_count == 10
-    assert response.truncated is True
-    assert response.artifact_available is False
-    assert captured == {}
-
-
-def test_relationship_browser_snapshot_is_compact_without_mutating_artifact() -> None:
-    wafer_rows = [
-        {
-            "identifier": f"W{index}",
-            "direct_y": float(index),
-            "derived_y": float(index),
-            "ensemble_y": float(index),
-            "direct_derived_gap": 0.0,
-            "failure_rates": {},
-            "fail_bit_counts": {},
-        }
-        for index in range(600)
-    ]
-    lots = [
-        {
-            "lot_id": f"L{lot_index}",
-            "wafer_list": [
-                {"identifier": f"L{lot_index}_W{wafer_index}"}
-                for wafer_index in range(60)
-            ],
-        }
-        for lot_index in range(7)
-    ]
-    full_lot = {"total_lot_count": 7, "lots": lots}
-    full = {
-        "analysis_id": "analysis_1",
-        "multi_y": {
-            "direct_y": list(range(600)),
-            "derived_y": list(range(600)),
-            "ensemble_y": list(range(600)),
-            "failure_rates": {"Y1": list(range(600))},
-            "fail_bit_counts": {"Y6": list(range(600))},
-            "average_direct_y": 90.0,
-            "average_derived_y": 89.0,
-            "average_ensemble_y": 89.5,
-            "ensemble_weight": 0.5,
-            "failure_rate_averages": {"Y1": 1.0},
-            "fail_bit_count_averages": {"Y6": 2.0},
-            "wafer_results": wafer_rows,
-        },
-        "lot_analysis": full_lot,
-        "lot_summary": [{"lot_id": f"L{index}"} for index in range(7)],
-    }
-    explanation = SimpleNamespace(
-        wafer_explanations=[
-            SimpleNamespace(identifier=f"W{index}")
-            for index in range(0, 600, 2)
-        ]
-    )
-
-    compact_lot = data_routes._compact_lot_analysis(full_lot)
-    compact = data_routes._compact_analysis_result(
-        full,
-        explanation,
-        compact_lot,
-    )
-
-    assert "direct_y" not in compact["multi_y"]
-    assert len(compact["multi_y"]["wafer_results"]) == 300
-    assert compact["multi_y"]["wafer_results_truncated"] is True
-    assert len(compact["lot_analysis"]["lots"]) == 7
-    assert all(
-        len(lot["wafer_list"]) == 60
-        for lot in compact["lot_analysis"]["lots"]
-    )
-    assert compact["lot_analysis"]["lot_list_truncated"] is False
-    assert len(compact["lot_summary"]) == 5
-    assert len(full["multi_y"]["direct_y"]) == 600
-    assert len(full["multi_y"]["wafer_results"]) == 600
-    assert len(full["lot_analysis"]["lots"]) == 7
-    assert len(full["lot_analysis"]["lots"][0]["wafer_list"]) == 60
-    assert len(full["lot_summary"]) == 7

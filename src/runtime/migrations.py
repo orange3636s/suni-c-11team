@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import gzip
 import json
 import logging
-import os
 from pathlib import Path
-import re
 from typing import Any, Callable
 
 from src.ml.hybrid import PIPELINE_VERSION
@@ -15,11 +12,6 @@ from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
 LEGACY_MODEL_MIGRATION_ID = "cleanup_legacy_models_v2"
-REPORT_MIGRATION_ID = "cleanup_report_artifacts_v2"
-REPORT_FILE_PATTERN = re.compile(
-    r"^(?:report|analysis_report)_[A-Za-z0-9_.-]+\.(?:json|html|pdf)$",
-    re.IGNORECASE,
-)
 
 
 def _metadata_candidates(root: Path) -> list[tuple[str, Path]]:
@@ -104,83 +96,6 @@ def cleanup_legacy_models(model_dir: str | Path) -> dict[str, Any]:
     }
 
 
-def _strip_report_fields(value: Any) -> tuple[Any, int]:
-    if isinstance(value, dict):
-        output: dict[str, Any] = {}
-        removed = 0
-        for key, item in value.items():
-            if key in {"report", "report_snapshot", "report_id", "report_version"}:
-                removed += 1
-                continue
-            cleaned, nested_removed = _strip_report_fields(item)
-            output[key] = cleaned
-            removed += nested_removed
-        return output, removed
-    if isinstance(value, list):
-        output_list = []
-        removed = 0
-        for item in value:
-            cleaned, nested_removed = _strip_report_fields(item)
-            output_list.append(cleaned)
-            removed += nested_removed
-        return output_list, removed
-    return value, 0
-
-
-def _clean_analysis_artifact(path: Path, analysis_root: Path) -> int:
-    resolved = path.resolve()
-    if resolved.parent != analysis_root or path.is_symlink() or not path.is_file():
-        raise ValueError("Report Migration 대상 분석 Artifact 경로가 안전하지 않습니다.")
-    with gzip.open(path, "rt", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    cleaned, removed = _strip_report_fields(payload)
-    if not removed:
-        return 0
-    temporary = path.with_suffix(path.suffix + ".migration.tmp")
-    try:
-        with gzip.open(temporary, "wt", encoding="utf-8") as handle:
-            json.dump(cleaned, handle, ensure_ascii=False)
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-    return removed
-
-
-def cleanup_report_artifacts(store: RuntimeStore) -> dict[str, Any]:
-    artifact_root = Path(store.artifact_root).resolve()
-    analysis_root = artifact_root / "analyses"
-    cleaned_artifacts = 0
-    removed_fields = 0
-    if analysis_root.is_dir() and not analysis_root.is_symlink() and analysis_root.resolve().parent == artifact_root:
-        for path in analysis_root.iterdir():
-            if not re.fullmatch(r"analysis_[A-Za-z0-9_-]+\.json\.gz", path.name):
-                continue
-            count = _clean_analysis_artifact(path, analysis_root.resolve())
-            removed_fields += count
-            cleaned_artifacts += int(count > 0)
-
-    deleted_files: list[str] = []
-    report_root = artifact_root / "reports"
-    if report_root.is_dir() and not report_root.is_symlink() and report_root.resolve().parent == artifact_root:
-        for path in report_root.iterdir():
-            if path.is_file() and not path.is_symlink() and REPORT_FILE_PATTERN.fullmatch(path.name):
-                path.unlink()
-                deleted_files.append(path.name)
-        try:
-            report_root.rmdir()
-        except OSError:
-            pass
-    database_markers = store.clear_report_snapshot_markers()
-    return {
-        "analysis_artifacts_cleaned": cleaned_artifacts,
-        "report_fields_removed": removed_fields,
-        "report_files_deleted": deleted_files,
-        "report_db_markers_cleared": database_markers,
-        "analysis_history_preserved": True,
-    }
-
-
 def _run_once(
     store: RuntimeStore,
     migration_id: str,
@@ -210,10 +125,5 @@ def run_startup_migrations(
             store,
             LEGACY_MODEL_MIGRATION_ID,
             lambda: cleanup_legacy_models(model_dir),
-        ),
-        _run_once(
-            store,
-            REPORT_MIGRATION_ID,
-            lambda: cleanup_report_artifacts(store),
         ),
     ]

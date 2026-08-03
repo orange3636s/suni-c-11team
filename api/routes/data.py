@@ -15,7 +15,6 @@ from datetime import datetime
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated, Any
-from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -27,17 +26,14 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import Response
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from starlette.concurrency import run_in_threadpool
 
 from api.schemas.data import (
-    AnalyzeResponse,
     ColumnDetectionResult,
     DataSummary,
     DatasetSplit,
-    ExplainAnalysisSummary,
-    ExplainModelInfo,
-    ExplainResponse,
+    EvaluationSummary,
     ModelArtifacts,
     ModelComparisonItem,
     ModelDeleteResponse,
@@ -46,71 +42,42 @@ from api.schemas.data import (
     ModelListResponse,
     ModelMetrics,
     ModelSummary,
-    PredictionModelInfo,
-    PredictionResponse,
-    PredictionSummary,
     PreprocessChanges,
     PreprocessResponse,
-    RelationshipAnalysisResponse,
     TrainResponse,
     ValidationResponse,
     ValidationResult,
 )
 from api.schemas.jobs import TrainJobAccepted, TrainJobResult, TrainJobStatus
 from api.settings import settings
-from src.analytics.relationships import analyze_relationships
-from src.analytics.lot_analysis import build_lot_cause_analysis
-from src.analytics.analysis_result import (
-    build_analysis_result,
-    compose_multi_y_predictions,
-    dataset_fingerprint,
-)
+from src.analysis.screening.schema import parse_schema
 from src.data_validation import load_data_schema, validate_dataframe
 from src.ml.dataset import (
-    ALLOWED_TARGETS,
     RANDOM_STATE,
     TARGET_COLUMN,
-    prepare_dataset,
-    split_dataset,
 )
-from src.config_parser import CONFIG_PARSER_VERSION
-from src.schema_compatibility import schema_fingerprint
-from src.ml.model_io import save_model_bundle
-from src.ml.hybrid import save_hybrid_bundle, train_hybrid_multi_y
-from src.ml.ensemble import EnsembleOptions
+from src.ml.hybrid import save_hybrid_bundle
+from src.ml.pipeline import (
+    FINAL_YIELD_COLUMN,
+    build_hybrid_training_result,
+    target_metrics_summary,
+    train_and_evaluate,
+)
+from src.ml.evaluation import evaluate_regression
 from src.ml.inference import (
-    DEFAULT_DANGER_THRESHOLD,
-    DEFAULT_WARNING_THRESHOLD,
     InferenceInputError,
     InvalidModelIdError,
     ModelDeletionError,
     ModelNotFoundError,
-    PredictionResult,
     ModelLoadError,
     get_prediction_model_detail,
     delete_model_bundle,
     list_prediction_models,
-    load_prediction_model,
     load_latest_model_bundle,
     get_latest_model_metadata,
-    load_prediction_model_target,
-    predict_dataframe,
 )
-from src.ml.explainability import (
-    DEFAULT_MAX_EXPLAIN_ROWS,
-    DEFAULT_TOP_N,
-    DEFAULT_WAFER_TOP_N,
-    MAX_TOP_N,
-    ExplainResult,
-    compose_final_y_explanation,
-    explain_dataframe,
-)
-from src.ml.training import train_regression_models
-from src.ml.evaluation import evaluate_regression
 from src.preprocessing import preprocess_dataframe
-from src.runtime.store import RuntimeStore, safe_runtime_call
-from src.runtime.cumulative_data import CumulativeDataStore
-from src.runtime.model_updates import ModelUpdateManager
+from src.runtime.store import RuntimeStore
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
     ActiveOperationError,
@@ -129,8 +96,6 @@ router = APIRouter(prefix="/api", tags=["data"])
 MAX_FILE_SIZE = settings.max_upload_size_bytes
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
 MODEL_DIR = settings.model_dir
-TRAINABLE_TARGETS = ("Y",)
-PREDICTION_PREVIEW_ROWS = 10
 _TRAINING_LOCK = threading.Lock()
 _TRAINING_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar(
     "training_progress",
@@ -138,33 +103,6 @@ _TRAINING_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar(
 )
 _TRAINING_JOB_MANAGER: TrainingJobManager | None = None
 _TRAINING_JOB_MANAGER_LOCK = threading.Lock()
-_MODEL_UPDATE_MANAGER: ModelUpdateManager | None = None
-_MODEL_UPDATE_MANAGER_LOCK = threading.Lock()
-
-
-def get_cumulative_store() -> CumulativeDataStore:
-    return CumulativeDataStore(settings.runtime_db_path)
-
-
-def get_model_update_manager() -> ModelUpdateManager:
-    global _MODEL_UPDATE_MANAGER
-    with _MODEL_UPDATE_MANAGER_LOCK:
-        if _MODEL_UPDATE_MANAGER is None:
-            _MODEL_UPDATE_MANAGER = ModelUpdateManager(
-                store=RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir),
-                data=get_cumulative_store(), model_dir=MODEL_DIR,
-            )
-        return _MODEL_UPDATE_MANAGER
-
-
-def _active_model_id() -> str:
-    active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
-    if not active or not active.get("active_model_id"):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="현재 사용할 수 있는 활성 모델이 없습니다. 먼저 누적 데이터를 등록하고 모델 갱신을 실행해 주세요.",
-        )
-    return str(active["active_model_id"])
 
 
 def _runtime_store() -> RuntimeStore:
@@ -480,58 +418,6 @@ def _preview_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
-async def ingest_process_data(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upsert a process batch; this endpoint never replaces cumulative data."""
-    filename, dataframe = await _read_csv_upload(file)
-    try:
-        runtime = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
-        active = runtime.active_model()
-        result = get_cumulative_store().ingest(dataframe, source_batch_id=f"upload_{uuid4().hex}")
-        current = get_cumulative_store().status(
-            active_dataset_version=active.get("dataset_version") if active else None,
-            active_promoted_at=active.get("promoted_at") if active else None,
-        )
-        runtime.mark_analysis_snapshot_stale("dataset_updated")
-        result.update(current)
-        result["filename"] = filename
-        result["retraining_required"] = bool(
-            current["new_labeled_rows_since_active_model"] >= 2000
-            or current["new_lots_since_active_model"] >= 50
-        )
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-
-def get_cumulative_data_status() -> dict[str, Any]:
-    active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model()
-    result = get_cumulative_store().status(
-        active_dataset_version=active.get("dataset_version") if active else None,
-        active_promoted_at=active.get("promoted_at") if active else None,
-    )
-    result["retraining_required"] = bool(result["new_labeled_rows_since_active_model"] >= 2000 or result["new_lots_since_active_model"] >= 50)
-    return result
-
-
-def create_model_update() -> dict[str, Any]:
-    try:
-        return get_model_update_manager().submit()
-    except ActiveOperationError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc) or HEAVY_JOB_MESSAGE) from exc
-
-
-def get_model_update(job_id: str) -> dict[str, Any]:
-    row = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).get_training_job(job_id)
-    if row is None or not job_id.startswith("model_update_"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="모델 갱신 Job을 찾을 수 없습니다.")
-    raw_start, raw_end = row.get("started_at") or row.get("created_at"), row.get("completed_at")
-    try:
-        started = datetime.fromisoformat(raw_start); ended = datetime.fromisoformat(raw_end) if raw_end else datetime.now(started.tzinfo)
-        elapsed = max((ended - started).total_seconds(), 0.0)
-    except (TypeError, ValueError): elapsed = 0.0
-    return {"job_id": job_id, "status": row["status"], "stage": row["stage"], "progress": row["progress"], "elapsed_seconds": elapsed, "result": row.get("result"), "promotion_result": (row.get("result") or {}).get("promotion_result"), "error": row.get("error_message")}
-
-
 @router.get("/model/latest")
 def get_latest_model() -> dict[str, Any]:
     return {"latest_model": get_latest_model_metadata(_runtime_store())}
@@ -702,364 +588,69 @@ async def train_model(
         gc.collect()
     _report_training_progress("학습 데이터 전처리", 30)
 
-    if target is None:
-        if not _TRAINING_LOCK.acquire(blocking=False):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="다른 모델 학습이 진행 중입니다. 완료 후 다시 시도해 주세요.",
-            )
-        try:
-            try:
-                _report_training_progress("Multi-Y 모델 학습", 40)
-                hybrid = await run_in_threadpool(
-                    partial(
-                        train_hybrid_multi_y,
-                        dataframe,
-                        train_ratio=0.70,
-                        validation_ratio=0.15,
-                        test_ratio=0.15,
-                        progress_callback=_report_training_progress,
-                    )
-                )
-            finally:
-                _TRAINING_LOCK.release()
-            _report_training_progress("Multi-Y 모델 저장", 90)
-            created_at = datetime.now().astimezone()
-            model_id = f"AUTO_Y1_Y5_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
-            raw_features = list(hybrid.metadata["raw_feature_columns"])
-            hybrid_processing_summary = {
-                **preprocessing_report.get("processing_summary", {}),
-                **hybrid.metadata.get("preprocessing_summary", {}),
-            }
-            hybrid.metadata.update({
-                "model_id": model_id,
-                "created_at": created_at.isoformat(),
-                "schema_version": "semicon_yield_v2",
-                "schema_fingerprint": schema_fingerprint(raw_features),
-                "raw_feature_columns": raw_features,
-                "categorical_columns": list(dataset.categorical_columns),
-                "numeric_columns": list(dataset.numeric_columns),
-                "target_column": "Y",
-                "excluded_target_columns": [f"Y{index}" for index in range(1, 11)],
-                "model_structure": "Direct Y model",
-                "config_parser_version": CONFIG_PARSER_VERSION,
-                "preprocessing_config": {
-                    "missing_strategy": hybrid.metadata.get("missing_strategy"),
-                    "outlier_strategy": hybrid.metadata.get("outlier_strategy"),
-                    "missing_indicator": False,
-                    "outlier_indicator": False,
-                    "statistics_scope": "train_for_selection_and_train_validation_for_final_refit",
-                    "fallback_used": hybrid.metadata.get("fallback_used", False),
-                },
-                "preprocessing_summary": hybrid_processing_summary,
-                "measurement_coverage": {
-                    "r": validation.get("r_measurement_coverage", 0.0),
-                    "d": validation.get("d_measurement_coverage", 0.0),
-                },
-                "source_filename": filename,
-                "training_time_seconds": time.perf_counter() - training_started_at,
-            })
-            bundle_path, metadata_path = save_hybrid_bundle(hybrid, MODEL_DIR, model_id)
-            _report_training_progress("학습 결과 정리", 98)
-            selected = hybrid.metadata["selected_final_output"]
-            selected_metrics = hybrid.metadata["final_y_metrics"][selected]
-            rows = hybrid.metadata["dataset_rows"]
-            response = TrainResponse(
-                target="Y1~Y5",
-                best_model="Y1~Y5 자동 모델",
-                split=DatasetSplit(
-                    train_rows=rows["train"],
-                    validation_rows=rows["validation"],
-                    test_rows=rows["test"],
-                    group_split_used=True,
-                    split_method=hybrid.metadata["split_method"],
-                ),
-                metrics={name: ModelMetrics(**values) for name, values in selected_metrics.items()},
-                model_comparison=[],
-                feature_count=len(hybrid.bundle.feature_columns),
-                warnings=hybrid.warnings,
-                artifacts=ModelArtifacts(
-                    model_file=str(bundle_path.relative_to(MODEL_DIR)),
-                    metadata_file=str(metadata_path.relative_to(MODEL_DIR)),
-                ),
-                missingness_sensitivity=None,
-                evaluation_summary=hybrid.metadata["cv_protocol"],
-                model_id=model_id,
-                model_type="hybrid_multi_y",
-                selected_final_output=selected,
-                final_y_metrics=hybrid.metadata["final_y_metrics"],
-                target_metrics=hybrid.metadata["target_metrics"],
-                risk_metrics=hybrid.metadata["risk_metrics"],
-                preprocessing={
-                    "schema_version": "semicon_yield_v2",
-                    "config_parser_version": CONFIG_PARSER_VERSION,
-                    "measurement_coverage": hybrid.metadata["measurement_coverage"],
-                    "policy": hybrid.metadata["preprocessing_config"],
-                    **hybrid_processing_summary,
-                },
-                ensemble=None,
-            )
-            response.model_dump_json()
-            return response
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("Hybrid Multi-Y 학습 또는 Bundle 저장 실패")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Hybrid Multi-Y 모델 학습 또는 저장 중 서버 오류가 발생했습니다.",
-            ) from exc
-
-    try:
-        dataset = prepare_dataset(
-            dataframe,
-            target=target,
-            add_missing_indicators=missing_indicator,
-        )
-    except ValueError as exc:
-        logger.warning("학습 데이터 준비 실패: %s", exc)
+    schema = parse_schema(dataframe)
+    if not schema.target_cols:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("학습 feature 탐지 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="학습 feature를 준비하는 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-    logger.info(
-        "학습 feature 탐지 완료: target=%s, features=%d",
-        target,
-        len(dataset.feature_columns),
+            detail="Y1~Y5 타깃 열이 없어 학습할 수 없습니다.",
+        )
+
+    lot_column = "Lot_ID"
+    has_groups = lot_column in dataframe.columns and dataframe[lot_column].nunique(dropna=True) >= 10
+    if has_groups:
+        groups = dataframe[lot_column].astype(str)
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=RANDOM_STATE)
+        train_indices, test_indices = next(splitter.split(dataframe, groups=groups))
+        split_method = "group_shuffle_lot_85_15"
+        group_split_used = True
+    else:
+        all_indices = np.arange(len(dataframe))
+        train_indices, test_indices = train_test_split(
+            all_indices, test_size=0.15, random_state=RANDOM_STATE
+        )
+        split_method = "random_shuffle_85_15"
+        group_split_used = False
+
+    internal_train = dataframe.iloc[train_indices].reset_index(drop=True)
+    internal_test = dataframe.iloc[test_indices].reset_index(drop=True)
+    train_lots = (
+        sorted(internal_train[lot_column].astype(str).unique().tolist())
+        if lot_column in dataframe.columns
+        else []
     )
-    _report_training_progress(f"{target} Feature 준비", 38)
-
-    try:
-        split = split_dataset(
-            dataset,
-            random_state=RANDOM_STATE,
-            train_ratio=train_ratio / 100,
-            validation_ratio=validation_ratio / 100,
-            test_ratio=test_ratio / 100,
-        )
-    except ValueError as exc:
-        logger.warning("학습 데이터 분할 실패: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("학습 데이터 분할 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="학습 데이터를 분할하는 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-    logger.info(
-        "학습 데이터 분할 완료: method=%s, train=%d, validation=%d, test=%d",
-        split.split_method,
-        split.row_counts["train_rows"],
-        split.row_counts["validation_rows"],
-        split.row_counts["test_rows"],
+    test_lots = (
+        sorted(internal_test[lot_column].astype(str).unique().tolist())
+        if lot_column in dataframe.columns
+        else []
     )
-    _report_training_progress(f"{target} 학습 데이터 분할", 45)
 
+    _report_training_progress("인자 스크리닝 및 모델 학습", 40)
     try:
-        _report_training_progress(f"{target} 모델 학습", 50)
-        training = train_regression_models(
-            dataset,
-            split,
-            random_state=RANDOM_STATE,
+        evaluation = await run_in_threadpool(
+            partial(train_and_evaluate, internal_train, internal_test, schema)
         )
-    except ValueError as exc:
-        logger.warning("모델 학습 실패: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
     except Exception as exc:
-        logger.exception("모델 학습 중 내부 오류")
+        logger.exception("스크리닝 기반 파이프라인 학습 실패")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="모델 학습 중 서버 내부 오류가 발생했습니다.",
         ) from exc
-    logger.info("최적 모델 선정 완료: %s", training.best_model_name)
-    _report_training_progress(f"{target} 모델 평가", 82)
+    _report_training_progress("모델 저장", 90)
 
-    missingness_sensitivity: dict[str, Any] | None = None
-    if compare_missingness:
-        try:
-            alternate_dataset = prepare_dataset(
-                dataframe,
-                target=target,
-                add_missing_indicators=not missing_indicator,
-            )
-            alternate_split = split_dataset(
-                alternate_dataset,
-                random_state=RANDOM_STATE,
-                train_ratio=train_ratio / 100,
-                validation_ratio=validation_ratio / 100,
-                test_ratio=test_ratio / 100,
-            )
-            alternate_training = train_regression_models(
-                alternate_dataset,
-                alternate_split,
-                random_state=RANDOM_STATE,
-            )
-            primary_test = training.metrics["test"]
-            alternate_test = alternate_training.metrics["test"]
-            with_indicator = primary_test if missing_indicator else alternate_test
-            without_indicator = alternate_test if missing_indicator else primary_test
-            r2_difference = (
-                (with_indicator.r2 - without_indicator.r2)
-                if with_indicator.r2 is not None and without_indicator.r2 is not None
-                else None
-            )
-            sensitivity_warnings: list[str] = []
-            if r2_difference is not None and abs(r2_difference) >= 0.15:
-                sensitivity_warnings.append(
-                    "모델이 공정값뿐 아니라 측정 대상 선정 규칙을 학습했을 가능성이 있습니다."
-                )
-            missingness_sensitivity = {
-                "with_indicator_test_r2": with_indicator.r2,
-                "without_indicator_test_r2": without_indicator.r2,
-                "r2_difference": r2_difference,
-                "rmse_difference": (
-                    with_indicator.rmse - without_indicator.rmse
-                    if with_indicator.rmse is not None and without_indicator.rmse is not None
-                    else None
-                ),
-                "mae_difference": (
-                    with_indicator.mae - without_indicator.mae
-                    if with_indicator.mae is not None and without_indicator.mae is not None
-                    else None
-                ),
-                "indicator_in_feature_set": any(
-                    column.endswith("_missing") for column in dataset.feature_columns
-                ),
-                "warnings": sensitivity_warnings,
-            }
-        except Exception as exc:
-            logger.exception("측정 여부 Indicator 민감도 비교 실패")
-            missingness_sensitivity = {
-                "status": "failed",
-                "warnings": ["측정 여부 Indicator 민감도 비교를 완료하지 못했습니다."],
-            }
-
-    metrics = {
-        name: values.as_dict()
-        for name, values in training.metrics.items()
-    }
-    for name, values in training.metrics.items():
-        metrics[name]["mse"] = values.mse
-    dummy_test = evaluate_regression(
-        split.y_test,
-        np.full(len(split.y_test), float(split.y_train.mean())),
+    created_at = datetime.now().astimezone()
+    model_id = f"SCREENING_GBDT_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
+    hybrid_result = build_hybrid_training_result(
+        evaluation,
+        source_filename=filename,
+        dataset_rows={"train": len(internal_train), "test": len(internal_test)},
+        train_lots=train_lots,
+        test_lots=test_lots,
+        split_method=split_method,
     )
-    train_r2 = training.metrics["train"].r2
-    test_r2 = training.metrics["test"].r2
-    evaluation_summary = {
-        "generalization_gap": (
-            train_r2 - test_r2 if train_r2 is not None and test_r2 is not None else None
-        ),
-        "dummy_test_r2": dummy_test.r2,
-        "dummy_test_rmse": dummy_test.rmse,
-        "dummy_rmse_improvement": (
-            dummy_test.rmse - training.metrics["test"].rmse
-            if dummy_test.rmse is not None and training.metrics["test"].rmse is not None
-            else None
-        ),
-    }
+
     try:
-        try:
-            transformed_feature_columns = [
-                str(name).split("__", 1)[-1]
-                for name in training.best_model.named_steps["features"].get_feature_names_out()
-            ]
-        except Exception:
-            transformed_feature_columns = list(dataset.feature_columns)
-        raw_features = dataset.raw_feature_columns or dataset.feature_columns
-        _report_training_progress(f"{target} 모델 저장", 92)
-        model_path, metadata_path, saved_metadata = save_model_bundle(
-            training.best_model,
-            target=target,
-            model_name=training.best_model_name,
-            feature_columns=dataset.feature_columns,
-            metrics=metrics,
-            random_state=RANDOM_STATE,
-            split_method=split.split_method,
-            dataset_split={
-                "train": train_ratio / 100,
-                "validation": validation_ratio / 100,
-                "test": test_ratio / 100,
-            },
-            dataset_rows={
-                "train": split.row_counts["train_rows"],
-                "validation": split.row_counts["validation_rows"],
-                "test": split.row_counts["test_rows"],
-            },
-            training_time_seconds=(
-                time.perf_counter() - training_started_at
-            ),
-            source_filename=filename,
-            preprocessing_config={
-                **preprocessing_report.get("preprocessing_policy", {}),
-                "missing_strategy": training.missing_strategy,
-                "outlier_strategy": training.outlier_strategy,
-                "model_strategies": training.model_strategies,
-                "model_outlier_strategies": training.model_outlier_strategies,
-                "fallback_used": training.fallback_used,
-            },
-            metadata_extensions={
-                "schema_version": "semicon_yield_v2",
-                "schema_fingerprint": schema_fingerprint(raw_features),
-                "raw_feature_columns": raw_features,
-                "transformed_feature_columns": transformed_feature_columns,
-                "config_parser_version": CONFIG_PARSER_VERSION,
-                "preprocessing_strategy": f"{training.missing_strategy}_{training.outlier_strategy}_train_only",
-                "missing_strategy": training.missing_strategy,
-                "outlier_strategy": training.outlier_strategy,
-                "missing_indicator_used": training.missing_indicator,
-                "outlier_indicator_used": training.outlier_indicator,
-                "outlier_policy": training.outlier_strategy,
-                "fallback_used": training.fallback_used,
-                "preprocessing_summary": {
-                    **preprocessing_report.get("processing_summary", {}),
-                    "missing_strategy": training.missing_strategy,
-                    "outlier_strategy": training.outlier_strategy,
-                    "missing_indicator": training.missing_indicator,
-                    "outlier_indicator": training.outlier_indicator,
-                    "model_strategies": training.model_strategies,
-                    "model_outlier_strategies": training.model_outlier_strategies,
-                    "fallback_used": training.fallback_used,
-                },
-                "split_strategy": split.split_method,
-                "group_column": "Lot_ID" if "Lot_ID" in dataframe.columns else "Lot_Wafer_ID (legacy parsed)",
-                "train_lot_count": int(split.train_groups.nunique(dropna=True)),
-                "validation_lot_count": int(split.validation_groups.nunique(dropna=True)),
-                "test_lot_count": int(split.test_groups.nunique(dropna=True)),
-                "train_row_count": split.row_counts["train_rows"],
-                "validation_row_count": split.row_counts["validation_rows"],
-                "test_row_count": split.row_counts["test_rows"],
-                "target_leakage_check": dataset.target_leakage_check,
-                "data_summary": {
-                    "row_count": int(dataframe.shape[0]),
-                    "column_count": int(dataframe.shape[1]),
-                    "lot_count": validation.get("lot_count", 0),
-                },
-                "measurement_coverage": {
-                    "r": validation.get("r_measurement_coverage", 0.0),
-                    "d": validation.get("d_measurement_coverage", 0.0),
-                },
-                "threshold_policy": {
-                    "warning": 90.0,
-                    "critical": 85.0,
-                    "source": "data_distribution_reference_not_official_spec",
-                },
-                "missingness_sensitivity": missingness_sensitivity,
-                "evaluation_summary": evaluation_summary,
-            },
-            model_dir=MODEL_DIR,
+        bundle_path, metadata_path = await run_in_threadpool(
+            partial(save_hybrid_bundle, hybrid_result, MODEL_DIR, model_id)
         )
     except Exception as exc:
         logger.exception("학습 모델 또는 메타데이터 저장 실패")
@@ -1076,83 +667,104 @@ async def train_model(
         settings.runtime_db_path,
         settings.runtime_artifact_dir,
     ).promote_model(
-        model_id=str(saved_metadata["model_id"]),
-        pipeline_version="direct_y_v1",
+        model_id=model_id,
+        pipeline_version=str(hybrid_result.metadata["pipeline_version"]),
         dataset_version=0,
         metadata={
-            "model_id": str(saved_metadata["model_id"]),
-            "target": "Y",
-            "model_name": training.best_model_name,
+            "model_id": model_id,
+            "target": TARGET_COLUMN,
+            "model_name": hybrid_result.metadata["model_name"],
             "source_filename": filename,
-            "metrics": metrics,
-            "row_count": int(len(dataset.features)),
-            "feature_columns": list(dataset.feature_columns),
-            "categorical_columns": list(dataset.categorical_columns),
+            "metrics": hybrid_result.metadata["metrics"],
+            "row_count": int(len(dataframe)),
+            "feature_columns": hybrid_result.metadata["feature_columns"],
         },
     )
+
+    final_metrics = evaluation.metrics[FINAL_YIELD_COLUMN]
+    per_target_metrics = target_metrics_summary(evaluation)
+    dummy_baseline = float(pd.to_numeric(internal_train[TARGET_COLUMN], errors="coerce").mean())
+    dummy_actual = pd.to_numeric(internal_test[TARGET_COLUMN], errors="coerce").to_numpy()
+    dummy_predicted = np.full(len(dummy_actual), dummy_baseline, dtype=np.float32)
+    dummy_valid = np.isfinite(dummy_actual)
+    dummy_test = evaluate_regression(
+        pd.Series(dummy_actual[dummy_valid]),
+        dummy_predicted[dummy_valid],
+    )
+    evaluation_summary = {
+        "dummy_test_r2": dummy_test.r2,
+        "dummy_test_rmse": dummy_test.rmse,
+        "dummy_rmse_improvement": (
+            dummy_test.rmse - final_metrics["rmse"]
+            if dummy_test.rmse is not None
+            else None
+        ),
+        "no_significant_factor_targets": [
+            target for target, detail in per_target_metrics.items() if detail["no_significant_factor"]
+        ],
+    }
 
     warnings = list(
         dict.fromkeys(
             [
                 *preprocessing_report["warnings"],
-                *dataset.warnings,
-                *split.warnings,
-                *training.warnings,
             ]
         )
     )
     try:
         response = TrainResponse(
-            target=target,
-            best_model=training.best_model_name,
+            target=TARGET_COLUMN,
+            best_model="HistGradientBoostingRegressor",
             split=DatasetSplit(
-                **split.row_counts,
-                group_split_used=split.group_split_used,
-                split_method=split.split_method,
+                train_rows=len(internal_train),
+                validation_rows=0,
+                test_rows=len(internal_test),
+                group_split_used=group_split_used,
+                split_method=split_method,
             ),
             metrics={
-                name: ModelMetrics(**values)
-                for name, values in metrics.items()
+                "test": ModelMetrics(
+                    r2=final_metrics["r2"],
+                    rmse=final_metrics["rmse"],
+                    mae=final_metrics["mae"],
+                    mse=final_metrics["mse"],
+                ),
             },
             model_comparison=[
                 ModelComparisonItem(
-                    model_name=item.model_name,
-                    status=item.status,
+                    model_name=f"{target}_HistGradientBoostingRegressor",
+                    status="no_significant_factor" if detail["no_significant_factor"] else "trained",
                     validation=(
-                        ModelMetrics(**item.validation.as_dict())
-                        if item.validation is not None
-                        else None
+                        None
+                        if detail["no_significant_factor"]
+                        else ModelMetrics(r2=detail["r2"], rmse=detail["rmse"], mae=detail["mae"])
                     ),
-                    selected=item.selected,
-                    error_message=item.error_message,
+                    selected=not detail["no_significant_factor"],
+                    error_message=None,
                 )
-                for item in training.model_comparison
+                for target, detail in per_target_metrics.items()
             ],
-            feature_count=len(dataset.feature_columns),
+            feature_count=len(hybrid_result.metadata["feature_columns"]),
             warnings=warnings,
             artifacts=ModelArtifacts(
-                model_file=model_path.name,
-                metadata_file=metadata_path.name,
+                model_file=f"{model_id}/bundle.joblib",
+                metadata_file=f"{model_id}/metadata.json",
             ),
-            missingness_sensitivity=missingness_sensitivity,
-            evaluation_summary=evaluation_summary,
-            model_id=str(saved_metadata["model_id"]),
-            model_type=str(saved_metadata.get("model_type") or training.best_model_name),
+            evaluation_summary=EvaluationSummary(**evaluation_summary),
+            model_id=model_id,
+            model_type=str(hybrid_result.metadata["model_type"]),
+            selected_final_output="derived",
+            final_y_metrics={"test": final_metrics},
+            target_metrics=per_target_metrics,
             preprocessing={
                 "schema_version": "semicon_yield_v2",
-                "config_parser_version": CONFIG_PARSER_VERSION,
+                "strategy": "screening_selected_factors_raw_miss_dev",
+                "missing_strategy": "native_nan_preserved",
+                "outlier_strategy": "none",
                 "measurement_coverage": {
                     "r": validation.get("r_measurement_coverage", 0.0),
                     "d": validation.get("d_measurement_coverage", 0.0),
                 },
-                **preprocessing_report.get("processing_summary", {}),
-                "missing_strategy": training.missing_strategy,
-                "outlier_strategy": training.outlier_strategy,
-                "missing_indicator": training.missing_indicator,
-                "outlier_indicator": training.outlier_indicator,
-                "model_strategies": training.model_strategies,
-                "model_outlier_strategies": training.model_outlier_strategies,
-                "fallback_used": training.fallback_used,
             },
         )
         response.model_dump_json()
@@ -1163,6 +775,8 @@ async def train_model(
             detail="학습 결과 응답을 생성하는 중 서버 내부 오류가 발생했습니다.",
         ) from exc
     logger.info("학습 API 응답 직렬화 완료")
+    return response
+
     return response
 
 
@@ -1351,818 +965,3 @@ def delete_model(model_id: str) -> ModelDeleteResponse:
         ) from exc
 
 
-def _prediction_response(
-    filename: str,
-    result: PredictionResult,
-    *,
-    prediction_id: str | None = None,
-    history_saved: bool = False,
-    history_warning: str | None = None,
-    artifact_available: bool | None = None,
-) -> PredictionResponse:
-    evaluation = (
-        ModelMetrics(**result.evaluation.as_dict())
-        if result.evaluation is not None
-        else None
-    )
-    latest = get_latest_model_metadata(_runtime_store()) or {}
-    response = PredictionResponse(
-        filename=filename,
-        model=PredictionModelInfo(
-            model_id=result.model_id,
-            target=result.target,
-            model_name=result.model_name,
-            version=str(latest.get("version") or "") or None,
-            trained_at=str(latest.get("trained_at") or "") or None,
-        ),
-        summary=PredictionSummary(
-            total_rows=result.total_rows,
-            average_prediction=result.average_prediction,
-            normal_count=result.normal_count,
-            warning_count=result.warning_count,
-            danger_count=result.danger_count,
-            evaluation=evaluation,
-        ),
-        identifier_column=result.identifier_column,
-        predictions=result.predictions[:PREDICTION_PREVIEW_ROWS],
-        warnings=result.warnings,
-        truncated=(
-            result.truncated
-            or len(result.predictions) > PREDICTION_PREVIEW_ROWS
-        ),
-        preprocessing=result.preprocessing_summary,
-        prediction_id=prediction_id,
-        history_saved=history_saved,
-        history_warning=history_warning,
-        artifact_available=artifact_available,
-        preview_row_count=min(
-            len(result.predictions),
-            PREDICTION_PREVIEW_ROWS,
-        ),
-        executed_at=datetime.now().astimezone().isoformat(),
-    )
-    response.model_dump_json()
-    return response
-
-
-def _prediction_history_summary(result: PredictionResult) -> dict[str, Any]:
-    prediction_key = f"predicted_{result.target}"
-    values = [
-        float(row[prediction_key]) for row in result.predictions
-        if row.get(prediction_key) is not None
-    ]
-    failure_rates: dict[str, list[float]] = {}
-    fail_counts: dict[str, list[float]] = {}
-    for row in result.predictions:
-        for target, value in (row.get("failure_rates") or {}).items():
-            failure_rates.setdefault(target, []).append(float(value))
-        for target, value in (row.get("fail_bit_counts") or {}).items():
-            fail_counts.setdefault(target, []).append(float(value))
-    combined_targets = {**failure_rates, **fail_counts}
-    target_totals = {key: float(np.mean(entries)) for key, entries in combined_targets.items() if entries}
-    evaluation = result.evaluation.as_dict() if result.evaluation is not None else {}
-    lots = {str(row.get("Lot_ID")) for row in result.predictions if row.get("Lot_ID")}
-    risk_lots = {
-        str(row.get("Lot_ID")) for row in result.predictions
-        if row.get("Lot_ID") and row.get("risk_level") in {"danger", "warning"}
-    }
-    return {
-        "average_predicted_yield": float(np.mean(values)) if values else None,
-        "minimum_predicted_yield": min(values) if values else None,
-        "maximum_predicted_yield": max(values) if values else None,
-        "median_predicted_yield": float(np.median(values)) if values else None,
-        "predicted_y_mean": float(np.mean(values)) if values else None,
-        "critical_count": result.danger_count, "warning_count": result.warning_count,
-        "normal_count": result.normal_count,
-        "low_confidence_count": sum(row.get("confidence") == "low" for row in result.predictions),
-        "top_failure_target": max(target_totals, key=target_totals.get) if target_totals else None,
-        "failure_rates": {key: float(np.mean(entries)) for key, entries in failure_rates.items()},
-        "fail_bit_counts": {key: float(np.mean(entries)) for key, entries in fail_counts.items()},
-        "actual_y_available": result.evaluation is not None,
-        "r2": evaluation.get("r2"), "rmse": evaluation.get("rmse"), "mae": evaluation.get("mae"),
-        "lot_count": len(lots), "risk_lot_count": len(risk_lots),
-    }
-
-
-def _collect_multi_y_predictions(
-    dataframe: pd.DataFrame,
-    selected_model: Any,
-    selected_prediction: PredictionResult,
-) -> tuple[dict[str, Any], list[str]]:
-    """Load only actually stored compatible target models for Hybrid Multi-Y."""
-    if selected_model.metadata.get("model_type") == "hybrid_multi_y":
-        try:
-            bundle_model = load_prediction_model(selected_prediction.model_id, MODEL_DIR)
-            bundle_prediction = predict_dataframe(dataframe, bundle_model, max_rows=None)
-            if len(bundle_prediction.predictions) != len(selected_prediction.predictions):
-                raise InferenceInputError(
-                    "Hybrid Multi-Y Bundle과 선택 Target의 예측 행 수가 일치하지 않습니다."
-                )
-            auxiliary_fields = (
-                "failure_rates",
-                "fail_bit_counts",
-                "critical_probability",
-                "warning_probability",
-                "confidence",
-            )
-            for selected_row, bundle_row in zip(
-                selected_prediction.predictions,
-                bundle_prediction.predictions,
-                strict=True,
-            ):
-                selected_identifier = selected_row.get(
-                    selected_prediction.identifier_column
-                )
-                bundle_identifier = bundle_row.get(
-                    bundle_prediction.identifier_column
-                )
-                if (
-                    selected_identifier is not None
-                    and bundle_identifier is not None
-                    and str(selected_identifier) != str(bundle_identifier)
-                ):
-                    raise InferenceInputError(
-                        "Hybrid Multi-Y Bundle과 선택 Target의 예측 행 순서가 일치하지 않습니다."
-                    )
-                for field in auxiliary_fields:
-                    if field in bundle_row:
-                        selected_row[field] = bundle_row[field]
-            failure_rates = {
-                target_name: [
-                    float(row["failure_rates"][target_name])
-                    for row in bundle_prediction.predictions
-                ]
-                for target_name in [f"Y{index}" for index in range(1, 6)]
-            }
-            fail_bit_counts = {
-                target_name: [
-                    float(row["fail_bit_counts"][target_name])
-                    for row in bundle_prediction.predictions
-                    if target_name in row.get("fail_bit_counts", {})
-                ]
-                for target_name in [f"Y{index}" for index in range(6, 11)]
-            }
-            fail_bit_counts = {
-                key: values
-                for key, values in fail_bit_counts.items()
-                if len(values) == len(bundle_prediction.predictions)
-            }
-            result = {
-                "predicted_y": [
-                    float(row["predicted_Y"]) for row in bundle_prediction.predictions
-                ],
-                "failure_rates": failure_rates,
-                "fail_bit_counts": fail_bit_counts,
-            }
-            return result, []
-        except (InferenceInputError, ModelLoadError, KeyError, TypeError, ValueError) as exc:
-            return compose_multi_y_predictions({}, None), [
-                f"Hybrid Multi-Y Bundle 결과를 펼치지 못했습니다: {exc}"
-            ]
-    targets = ["Y", *[f"Y{index}" for index in range(1, 11)]]
-    values_by_target: dict[str, list[float]] = {
-        selected_prediction.target: [
-            float(row[f"predicted_{selected_prediction.target}"])
-            for row in selected_prediction.predictions
-        ]
-    }
-    warnings: list[str] = []
-    ensemble_weight = None
-    if selected_prediction.target == "Y":
-        ensemble_weight = selected_model.metadata.get("ensemble_weight")
-    try:
-        available, _ = list_prediction_models(MODEL_DIR)
-    except ModelLoadError:
-        available = []
-    for target in targets:
-        if target in values_by_target:
-            continue
-        candidate = next(
-            (
-                item for item in available
-                if item.get("target") == target
-                and item.get("compatibility") == "compatible"
-            ),
-            None,
-        )
-        if candidate is None:
-            continue
-        try:
-            loaded = load_prediction_model(str(candidate["model_id"]), MODEL_DIR)
-            predicted = predict_dataframe(dataframe, loaded, max_rows=None)
-            values_by_target[target] = [
-                float(row[f"predicted_{target}"])
-                for row in predicted.predictions
-            ]
-            if target == "Y":
-                ensemble_weight = loaded.metadata.get("ensemble_weight")
-        except (InferenceInputError, ModelLoadError) as exc:
-            warnings.append(f"{target} 모델을 Multi-Y 분석에서 제외했습니다: {exc}")
-    return compose_multi_y_predictions(values_by_target, ensemble_weight), warnings
-
-
-async def _run_prediction(
-    file: UploadFile,
-    model_id: str,
-    warning_threshold: float,
-    danger_threshold: float,
-    *,
-    max_rows: int | None,
-    runtime_id: str | None = None,
-) -> tuple[str, pd.DataFrame, Any, PredictionResult]:
-    filename, dataframe = await _read_csv_upload(file)
-    try:
-        loaded = load_prediction_model(model_id, MODEL_DIR)
-        result = predict_dataframe(
-            dataframe,
-            loaded,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            max_rows=max_rows,
-        )
-        analysis_id = runtime_id or f"prediction_{uuid4().hex}"
-        safe_runtime_call(
-            "record_prediction_alerts",
-            analysis_id=analysis_id,
-            model_id=model_id,
-            model_version=loaded.metadata.get("model_version"),
-            predictions=result.predictions,
-            identifier_column=result.identifier_column,
-        )
-        return filename, dataframe, loaded, result
-    except InferenceInputError as exc:
-        logger.warning("예측 입력 오류: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except ModelLoadError as exc:
-        logger.exception("예측 모델 처리 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("예측 처리 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="예측 처리 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-
-
-@router.post("/predict", response_model=PredictionResponse)
-async def predict_csv(
-    file: UploadFile = File(...),
-    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
-    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-) -> PredictionResponse:
-    # Every operation is pinned to the persisted latest-model pointer.
-    model_id = _latest_model().model_id
-    try:
-        filename, dataframe, loaded, result = await _run_prediction(
-            file, model_id, warning_threshold, danger_threshold,
-            max_rows=None,
-        )
-        return _prediction_response(filename, result, artifact_available=False)
-    except Exception as exc:
-        logger.exception("예측 응답 직렬화 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="예측 결과 응답을 생성하지 못했습니다.",
-        ) from exc
-
-
-@router.post("/predict/download")
-async def download_predictions(
-    file: UploadFile = File(...),
-    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
-    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-) -> Response:
-    model_id = _latest_model().model_id
-    _, _, _, result = await _run_prediction(
-        file,
-        model_id,
-        warning_threshold,
-        danger_threshold,
-        max_rows=None,
-    )
-    output = pd.DataFrame(result.predictions)
-    csv_content = output.to_csv(index=False).encode("utf-8-sig")
-    filename = f"predictions_{result.model_id}.csv"
-    return Response(
-        content=csv_content,
-        media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
-    )
-
-
-def _explain_response(
-    filename: str,
-    result: ExplainResult,
-) -> ExplainResponse:
-    latest = get_latest_model_metadata(_runtime_store()) or {}
-    response = ExplainResponse(
-        filename=filename,
-        model=ExplainModelInfo(
-            model_id=result.model_id,
-            target=result.target,
-            model_name=result.model_name,
-            version=str(latest.get("version") or "") or None,
-            trained_at=str(latest.get("trained_at") or "") or None,
-        ),
-        analysis_summary=ExplainAnalysisSummary(
-            total_rows=result.total_rows,
-            analyzed_rows=result.analyzed_rows,
-            sampling_used=result.sampling_used,
-            sampling_strategy=result.sampling_strategy,
-            explanation_method=result.explanation_method,
-            is_fallback=result.is_fallback,
-        ),
-        explanation_method=result.explanation_method,
-        is_fallback=result.is_fallback,
-        identifier_column=result.identifier_column,
-        global_importance=result.global_importance,
-        step_summary=result.step_summary,
-        parameter_type_summary=result.parameter_type_summary,
-        equipment_summary=result.equipment_summary,
-        wafer_explanations=result.wafer_explanations,
-        model_quality_warnings=result.model_quality_warnings,
-        warnings=result.warnings,
-    )
-    response.model_dump_json()
-    return response
-
-
-def _compact_lot_analysis(
-    value: dict[str, Any] | None,
-    *,
-    lot_limit: int | None = None,
-    wafer_limit: int | None = None,
-) -> dict[str, Any]:
-    source = value or {}
-    lots = source.get("lots")
-    if not isinstance(lots, list):
-        lots = []
-    compact_lots: list[dict[str, Any]] = []
-    selected_lots = lots if lot_limit is None else lots[:lot_limit]
-    for raw_lot in selected_lots:
-        if not isinstance(raw_lot, dict):
-            continue
-        lot = dict(raw_lot)
-        wafers = raw_lot.get("wafer_list")
-        wafer_rows = wafers if isinstance(wafers, list) else []
-        lot["wafer_list"] = (
-            wafer_rows if wafer_limit is None else wafer_rows[:wafer_limit]
-        )
-        lot["returned_wafer_count"] = len(lot["wafer_list"])
-        lot["wafer_list_truncated"] = (
-            wafer_limit is not None and len(wafer_rows) > wafer_limit
-        )
-        compact_lots.append(lot)
-    return {
-        **source,
-        "lots": compact_lots,
-        "returned_lot_count": len(compact_lots),
-        "lot_list_truncated": lot_limit is not None and len(lots) > lot_limit,
-    }
-
-
-def _compact_analysis_result(
-    value: dict[str, Any],
-    explanation: ExplainResult,
-    compact_lot_analysis: dict[str, Any],
-) -> dict[str, Any]:
-    source_multi_y = value.get("multi_y")
-    multi_y = source_multi_y if isinstance(source_multi_y, dict) else {}
-    sampled_identifiers = {
-        str(
-            item.get("identifier")
-            if isinstance(item, dict)
-            else getattr(item, "identifier", None)
-        )
-        for item in explanation.wafer_explanations[:DEFAULT_MAX_EXPLAIN_ROWS]
-    }
-    wafer_results = multi_y.get("wafer_results")
-    wafer_rows = wafer_results if isinstance(wafer_results, list) else []
-    compact_wafers = [
-        row
-        for row in wafer_rows
-        if isinstance(row, dict)
-        and str(row.get("identifier")) in sampled_identifiers
-    ][:DEFAULT_MAX_EXPLAIN_ROWS]
-    compact_multi_y = {
-        key: multi_y.get(key)
-        for key in (
-            "average_predicted_y",
-            "failure_rate_averages",
-            "fail_bit_count_averages",
-        )
-    }
-    compact_multi_y["wafer_results"] = compact_wafers
-    compact_multi_y["returned_wafer_count"] = len(compact_wafers)
-    compact_multi_y["wafer_results_truncated"] = (
-        len(compact_wafers) < len(wafer_rows)
-    )
-    return {
-        **value,
-        "multi_y": compact_multi_y,
-        "lot_analysis": compact_lot_analysis,
-        "lot_summary": (
-            value.get("lot_summary", [])[:5]
-            if isinstance(value.get("lot_summary"), list)
-            else []
-        ),
-    }
-
-
-async def _run_explanation(
-    file: UploadFile,
-    model_id: str,
-    max_rows: int,
-    top_n: int,
-    per_wafer_top_n: int,
-) -> tuple[str, ExplainResult]:
-    filename, dataframe = await _read_csv_upload(file)
-    try:
-        bundle = load_prediction_model(model_id, MODEL_DIR)
-        loaded = bundle
-        result = explain_dataframe(
-            dataframe,
-            loaded,
-            max_rows=max_rows,
-            top_n=top_n,
-            per_wafer_top_n=per_wafer_top_n,
-        )
-        return filename, result
-    except InferenceInputError as exc:
-        logger.warning("설명 입력 오류: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except ModelLoadError as exc:
-        logger.exception("설명 모델 처리 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("원인 분석 처리 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="원인 분석 처리 중 서버 내부 오류가 발생했습니다.",
-        ) from exc
-
-
-@router.post("/explain", response_model=ExplainResponse)
-async def explain_csv(
-    file: UploadFile = File(...),
-    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
-    top_n: int = Form(DEFAULT_TOP_N),
-    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
-) -> ExplainResponse:
-    filename, result = await _run_explanation(
-        file,
-        _latest_model().model_id,
-        max_rows,
-        top_n,
-        per_wafer_top_n,
-    )
-    try:
-        return _explain_response(filename, result)
-    except Exception as exc:
-        logger.exception("원인 분석 응답 직렬화 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="원인 분석 결과 응답을 생성하지 못했습니다.",
-        ) from exc
-
-
-@router.post(
-    "/relationships",
-    response_model=RelationshipAnalysisResponse,
-)
-async def analyze_feature_relationships(
-    file: UploadFile = File(...),
-    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
-    top_n: int = Form(10),
-    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
-    correlation_method: str = Form("pearson"),
-    analysis_unit: str = Form("wafer_observed_only"),
-    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
-    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-    prediction_id: str | None = Form(None),
-) -> RelationshipAnalysisResponse:
-    analysis_id = f"analysis_{uuid4().hex}"
-    resolved_prediction_id = prediction_id if isinstance(prediction_id, str) else None
-    # Analysis is pinned to the Champion at its start; model selection is not
-    # exposed to callers.
-    resolved_model_id = _latest_model().model_id
-    started_clock = time.perf_counter()
-    history_started = False
-    filename, dataframe = await _read_csv_upload(file)
-    try:
-        history_started = False
-        bundle_loaded = load_prediction_model(resolved_model_id, MODEL_DIR)
-        # The active direct model is the only analysis target.
-        effective_target = "Y"
-        prediction = predict_dataframe(
-            dataframe,
-            bundle_loaded,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            max_rows=None,
-        )
-        multi_y = {
-            "predicted_y": [float(row["predicted_Y"]) for row in prediction.predictions],
-            "failure_rates": {},
-            "fail_bit_counts": {},
-        }
-        multi_y_warnings: list[str] = []
-        loaded = bundle_loaded
-        explanation = explain_dataframe(
-            dataframe,
-            loaded,
-            max_rows=max_rows,
-            top_n=MAX_TOP_N,
-            per_wafer_top_n=per_wafer_top_n,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            prediction_result=prediction,
-        )
-        analysis = analyze_relationships(
-            dataframe,
-            target=explanation.target,
-            correlation_method=correlation_method,
-            top_n=top_n,
-            shap_importance=explanation.global_importance,
-            analysis_unit=analysis_unit,
-        )
-        lot_analysis = build_lot_cause_analysis(prediction, explanation)
-        common = build_analysis_result(
-            filename=filename,
-            dataframe=dataframe,
-            loaded=loaded,
-            prediction=prediction,
-            explanation=explanation,
-            relationships=analysis,
-            multi_y=multi_y,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            analysis_unit=analysis_unit,
-            analysis_id=analysis_id,
-            lot_analysis=lot_analysis,
-        )
-        common["warnings"] = list(dict.fromkeys([*common["warnings"], *multi_y_warnings]))
-        compact_lot_analysis = _compact_lot_analysis(lot_analysis)
-        compact_common = _compact_analysis_result(
-            common,
-            explanation,
-            compact_lot_analysis,
-        )
-        response = RelationshipAnalysisResponse(
-            filename=filename,
-            explanation=_explain_response(filename, explanation),
-            analysis_result=compact_common,
-            lot_analysis=compact_lot_analysis,
-            analysis_id=analysis_id,
-            prediction_id=resolved_prediction_id,
-            artifact_available=history_started,
-            **analysis,
-        )
-        summary = _prediction_history_summary(prediction)
-        failure_rate_averages = common["multi_y"].get("failure_rate_averages", {})
-        if failure_rate_averages:
-            summary["top_failure_target"] = max(
-                failure_rate_averages,
-                key=failure_rate_averages.get,
-            )
-        lots = {str(row.get("Lot_ID")) for row in prediction.predictions if row.get("Lot_ID")}
-        history_warning = None
-        history_saved = False
-        if history_started:
-            stored_response = response.model_copy(
-                update={
-                    "history_saved": True,
-                    "history_warning": None,
-                    "artifact_available": True,
-                }
-            )
-            completed = safe_runtime_call(
-                "complete_analysis", analysis_id=analysis_id,
-                metadata={
-                    "duration_ms": (time.perf_counter() - started_clock) * 1000,
-                    "dataset_fingerprint": common["dataset"]["fingerprint"],
-                    "model_name_snapshot": loaded.metadata.get("model_name"),
-                    "model_version_snapshot": loaded.metadata.get("model_version"),
-                    "model_type_snapshot": loaded.metadata.get("model_type"),
-                    "schema_version": loaded.metadata.get("schema_version"),
-                    "row_count": len(dataframe), "lot_count": len(lots),
-                    "available_targets_json": RuntimeStore._json([f"Y{i}" for i in range(1, 6)]),
-                    "default_target": explanation.target,
-                },
-                summary=summary, methodology=common.get("methodology") or {},
-                artifact={
-                    "metadata": {"analysis_id": analysis_id, "prediction_id": resolved_prediction_id},
-                    "analysis_result": common,
-                    "response": stored_response.model_dump(mode="json"),
-                },
-                warnings=common["warnings"],
-            )
-            history_saved = completed is True
-            if not history_saved:
-                response.artifact_available = False
-                history_warning = "원인 분석 결과는 생성했지만 이력 저장에 실패했습니다."
-                safe_runtime_call("fail_analysis", analysis_id=analysis_id, message=history_warning)
-        else:
-            response.artifact_available = False
-            active = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).active_model() or {}
-            snapshot = {
-                "snapshot_version": "v1", "analyzed_at": datetime.now().astimezone().isoformat(),
-                "active_model_id": resolved_model_id, "model_promoted_at": active.get("promoted_at"),
-                "dataset_version": active.get("dataset_version"), "source_batch_id": None,
-                "row_count": len(dataframe), "lot_count": len(lots), "wafer_count": len(dataframe),
-                "mean_actual_yield": common.get("dataset", {}).get("mean_actual_yield"),
-                "mean_predicted_yield": summary.get("average_predicted_yield"),
-                "critical_wafer_count": prediction.danger_count, "warning_wafer_count": prediction.warning_count,
-                "critical_lot_count": summary.get("risk_lot_count"),
-                "top_yield_loss_causes": explanation.global_importance if explanation.target == "Y" else [],
-                "top_r_causes": common.get("top_r_causes", []), "top_d_causes": common.get("top_d_causes", []),
-                "top_config_causes": common.get("top_config_causes", []), "lot_ranking": common.get("lot_summary", [])[:20],
-                "risky_wafers": compact_common.get("multi_y", {}).get("wafer_results", []),
-                "target_summaries": common.get("multi_y", {}).get("failure_rate_averages", {}),
-                "relationship_summaries": analysis, "chart_summaries": {}, "stale": False, "stale_reason": None,
-            }
-            RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).save_latest_analysis_snapshot(snapshot)
-        response.history_saved = history_saved
-        response.history_warning = history_warning
-        if history_warning:
-            response.caveats = list(dict.fromkeys([*response.caveats, history_warning]))
-        response.model_dump_json()
-        return response
-    except (InferenceInputError, ValueError) as exc:
-        if history_started:
-            safe_runtime_call("fail_analysis", analysis_id=analysis_id, message=str(exc))
-        logger.warning("연관 분석 입력 오류: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except ModelLoadError as exc:
-        if history_started:
-            safe_runtime_call("fail_analysis", analysis_id=analysis_id, message=str(exc))
-        logger.exception("연관 분석 모델 처리 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        if history_started:
-            safe_runtime_call("fail_analysis", analysis_id=analysis_id, message=str(exc))
-        logger.exception("연관 분석 처리 중 내부 오류")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="연관 분석 결과를 생성하지 못했습니다.",
-        ) from exc
-
-
-@router.post("/explain/download")
-async def download_explanation(
-    file: UploadFile = File(...),
-    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
-    top_n: int = Form(DEFAULT_TOP_N),
-    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
-) -> Response:
-    _, result = await _run_explanation(
-        file,
-        _latest_model().model_id,
-        max_rows,
-        top_n,
-        per_wafer_top_n,
-    )
-    output = pd.DataFrame(result.global_importance)
-    csv_content = output.to_csv(index=False).encode("utf-8-sig")
-    filename = f"explanation_{result.model_id}.csv"
-    return Response(
-        content=csv_content,
-        media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
-    )
-
-
-@router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_csv(
-    file: UploadFile = File(...),
-    warning_threshold: float = Form(DEFAULT_WARNING_THRESHOLD),
-    danger_threshold: float = Form(DEFAULT_DANGER_THRESHOLD),
-    max_rows: int = Form(DEFAULT_MAX_EXPLAIN_ROWS),
-    top_n: int = Form(DEFAULT_TOP_N),
-    per_wafer_top_n: int = Form(DEFAULT_WAFER_TOP_N),
-) -> AnalyzeResponse:
-    try:
-        model_id = _latest_model().model_id
-        filename, dataframe = await _read_csv_upload(file)
-        loaded = load_prediction_model(model_id, MODEL_DIR)
-        prediction = predict_dataframe(
-            dataframe,
-            loaded,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-            max_rows=None,
-        )
-        explanation = explain_dataframe(
-            dataframe,
-            loaded,
-            max_rows=max_rows,
-            top_n=top_n,
-            per_wafer_top_n=per_wafer_top_n,
-            warning_threshold=warning_threshold,
-            danger_threshold=danger_threshold,
-        )
-        risk_rows = sorted(
-            (
-                row
-                for row in prediction.predictions
-                if row.get("risk_level") in {"danger", "warning"}
-            ),
-            key=lambda row: float(row.get("predicted_Y", 100.0)),
-        )[:10]
-        risk_count = prediction.danger_count + prediction.warning_count
-        risk_ratio = risk_count / prediction.total_rows if prediction.total_rows else 0.0
-        top_feature = (
-            explanation.global_importance[0].get("feature")
-            if explanation.global_importance
-            else None
-        )
-        severity = "danger" if prediction.danger_count else "warning" if prediction.warning_count else "normal"
-        response = AnalyzeResponse(
-            analysis_id=f"analysis_{uuid4().hex}",
-            created_at=datetime.now().astimezone().isoformat(),
-            filename=filename,
-            model={
-                "model_id": model_id,
-                "target": "Y",
-                "model_name": loaded.metadata.get("model_name") or "Y1~Y5 자동 수율 모델",
-                "test_r2": (loaded.metadata.get("metrics", {}).get("test", {}) or {}).get("r2"),
-                "test_rmse": (loaded.metadata.get("metrics", {}).get("test", {}) or {}).get("rmse"),
-            },
-            summary={
-                "total_wafers": prediction.total_rows,
-                "average_predicted_yield": prediction.average_prediction,
-                "normal_count": prediction.normal_count,
-                "warning_count": prediction.warning_count,
-                "danger_count": prediction.danger_count,
-                "risk_count": risk_count,
-                "risk_ratio": risk_ratio,
-                "minimum_predicted_yield": min(
-                    (float(row["predicted_Y"]) for row in prediction.predictions),
-                    default=None,
-                ),
-            },
-            alert={
-                "required": risk_count > 0,
-                "severity": severity,
-                "reason": "위험/주의 Wafer가 탐지되었습니다." if risk_count else "위험 기준 Wafer가 없습니다.",
-                "danger_count": prediction.danger_count,
-                "warning_count": prediction.warning_count,
-            },
-            automation_message={
-                "title": "제조 공정 수율 분석",
-                "summary": f"위험 {prediction.danger_count}개 · 주의 {prediction.warning_count}개",
-                "detail": f"평균 예측 수율 {prediction.average_prediction:.2f}%",
-                "top_cause": top_feature or "확인 가능한 원인 후보 없음",
-            },
-            top_findings=(
-                [{
-                    "severity": severity,
-                    "title": "수율 위험 요약",
-                    "description": f"전체 {prediction.total_rows}개 중 위험/주의 {risk_count}개입니다.",
-                    "evidence": f"위험 비율 {risk_ratio:.1%}",
-                }]
-            ),
-            top_risk_wafers=risk_rows,
-            top_features=explanation.global_importance,
-            top_steps=explanation.step_summary,
-            parameter_type_summary=explanation.parameter_type_summary,
-            model_quality_warnings=explanation.model_quality_warnings,
-            warnings=list(dict.fromkeys([*prediction.warnings, *explanation.warnings])),
-        )
-        response.model_dump_json()
-        return response
-    except HTTPException:
-        raise
-    except (InferenceInputError, ModelLoadError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("통합 분석 응답 생성 실패")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="통합 분석 결과 응답을 생성하지 못했습니다.",
-        ) from exc

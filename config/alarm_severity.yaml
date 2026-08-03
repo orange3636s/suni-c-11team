@@ -1,0 +1,6 @@
+# Alarm severity tiers, based on how far a wafer's factor value sits outside
+# its normal range, normalized by the width of the Q1..Q3 band that range
+# was derived from (deviation_ratio = deviation / band_width).
+low_max_ratio: 0.5
+medium_max_ratio: 1.5
+# deviation_ratio > medium_max_ratio -> "high"

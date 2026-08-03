@@ -14,7 +14,6 @@ from sklearn.linear_model import Ridge
 
 from api.main import app
 from api.routes import data as data_routes
-from api.routes import runtime as runtime_routes
 from src.ml.inference import (
     ModelDeletionError,
     ModelNotFoundError,
@@ -112,59 +111,9 @@ def test_model_deletion_preserves_runtime_history(real_ridge_model: Ridge) -> No
     root.parent.rmdir()
 
 
-def _record_history(store: RuntimeStore, model_id: str) -> tuple[str, str]:
-    prediction_id = f"prediction_{uuid4().hex}"
-    analysis_id = f"analysis_{uuid4().hex}"
-    store.start_prediction(
-        prediction_id=prediction_id,
-        source_filename="delete-test.csv",
-        model_id=model_id,
-    )
-    store.complete_prediction(
-        prediction_id,
-        metadata={
-            "duration_ms": 1.0,
-            "dataset_fingerprint": "delete-test",
-            "model_name_snapshot": "Deletion Test",
-            "model_version_snapshot": "v1",
-            "model_type_snapshot": "hybrid_multi_y",
-            "schema_version": "semicon_yield_v2",
-            "row_count": 1,
-            "lot_count": 1,
-            "final_strategy": "direct",
-        },
-        summary={"average_predicted_yield": 91.0},
-        preprocessing={},
-        artifact={"rows": [{"Lot_Wafer_ID": "LOT01_W01"}]},
-        warnings=[],
-    )
-    store.start_analysis(
-        analysis_id=analysis_id,
-        prediction_id=prediction_id,
-        source_filename="delete-test.csv",
-        model_id=model_id,
-    )
-    store.complete_analysis(
-        analysis_id,
-        metadata={
-            "duration_ms": 1.0,
-            "dataset_fingerprint": "delete-test",
-            "model_name_snapshot": "Deletion Test",
-            "model_version_snapshot": "v1",
-            "model_type_snapshot": "hybrid_multi_y",
-            "schema_version": "semicon_yield_v2",
-            "row_count": 1,
-            "lot_count": 1,
-            "available_targets_json": '["Y"]',
-            "default_target": "Y",
-            "report_snapshot_available": 1,
-        },
-        summary={"average_predicted_yield": 91.0},
-        methodology={},
-        artifact={"analysis_result": {"risk": {"normal": 1}}},
-        warnings=[],
-    )
-    return prediction_id, analysis_id
+def _record_history(store: RuntimeStore, model_id: str) -> None:
+    store.record_run(event_type="predict", model_id=model_id, status="success")
+    store.record_run(event_type="analyze", model_id=model_id, status="success")
 
 
 @pytest.fixture
@@ -229,7 +178,7 @@ def test_delete_api_uses_model_id_and_preserves_history(
     runtime_db = deletion_root / "runtime" / "dashboard.db"
     artifact_root = deletion_root / "runtime"
     store = RuntimeStore(runtime_db, artifact_root)
-    prediction_id, analysis_id = _record_history(store, model_id)
+    _record_history(store, model_id)
     test_settings = SimpleNamespace(
         runtime_db_path=runtime_db,
         runtime_artifact_dir=artifact_root,
@@ -239,7 +188,6 @@ def test_delete_api_uses_model_id_and_preserves_history(
     )
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_root)
     monkeypatch.setattr(data_routes, "settings", test_settings)
-    monkeypatch.setattr(runtime_routes, "settings", test_settings)
 
     listed_before = data_routes.get_models()
     assert model_id in {item.model_id for item in listed_before.models}
@@ -277,11 +225,6 @@ def test_delete_api_uses_model_id_and_preserves_history(
     with pytest.raises(HTTPException) as already_deleted:
         data_routes.delete_model(model_id)
     assert already_deleted.value.status_code == 404
-
-    prediction = runtime_routes.get_prediction_history_detail(prediction_id)
-    analysis = runtime_routes.get_analysis_history_detail(analysis_id)
-    assert prediction["artifact"]["rows"][0]["Lot_Wafer_ID"] == "LOT01_W01"
-    assert analysis["artifact"]["analysis_result"]["risk"]["normal"] == 1
 
 
 @pytest.mark.parametrize("remaining_kind", ["metadata", "bundle"])
@@ -406,7 +349,7 @@ def test_delete_http_endpoint_returns_200_and_detail_becomes_404(
     runtime_root = deletion_root / "runtime"
     runtime_db = runtime_root / "dashboard.db"
     store = RuntimeStore(runtime_db, runtime_root)
-    prediction_id, analysis_id = _record_history(store, metadata["model_id"])
+    _record_history(store, metadata["model_id"])
     test_settings = SimpleNamespace(
         runtime_db_path=runtime_db,
         runtime_artifact_dir=runtime_root,
@@ -416,7 +359,6 @@ def test_delete_http_endpoint_returns_200_and_detail_becomes_404(
     )
     monkeypatch.setattr(data_routes, "MODEL_DIR", model_root)
     monkeypatch.setattr(data_routes, "settings", test_settings)
-    monkeypatch.setattr(runtime_routes, "settings", test_settings)
 
     path = f"/api/models/{metadata['model_id']}"
     list_before_status, list_before_body = _asgi_request("GET", "/api/models")
@@ -424,12 +366,6 @@ def test_delete_http_endpoint_returns_200_and_detail_becomes_404(
     list_after_status, list_after_body = _asgi_request("GET", "/api/models")
     detail_status, _ = _asgi_request("GET", path)
     duplicate_status, _ = _asgi_request("DELETE", path)
-    prediction_status, prediction_body = _asgi_request(
-        "GET", f"/api/predictions/history/{prediction_id}"
-    )
-    analysis_status, analysis_body = _asgi_request(
-        "GET", f"/api/analyses/history/{analysis_id}"
-    )
 
     assert list_before_status == 200
     assert metadata["model_id"] in {
@@ -451,12 +387,6 @@ def test_delete_http_endpoint_returns_200_and_detail_becomes_404(
     }
     assert detail_status == 404
     assert duplicate_status == 404
-    assert prediction_status == 200
-    assert analysis_status == 200
-    prediction_payload = json.loads(prediction_body)
-    analysis_payload = json.loads(analysis_body)
-    assert prediction_payload["artifact"]["rows"][0]["Lot_Wafer_ID"] == "LOT01_W01"
-    assert analysis_payload["artifact"]["analysis_result"]["risk"]["normal"] == 1
 
 
 def test_delete_rejects_flat_symlink_without_touching_target(
