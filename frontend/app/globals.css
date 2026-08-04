@@ -8209,7 +8209,36 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 .datasetWarningBanner ul{ margin: 4px 0 0; padding-left: 18px; }
 
 /* Target segmented control with factor-count badges (원인분석 tab) */
-.targetSegmentBar{ display: flex; gap: 6px; flex-wrap: wrap; }
+/* Shared by 모델 학습 and 원인 분석 (spec §2): centered between the heatmap
+   and Pareto cards with equal margin on both sides -- a single margin
+   value on this element so top/bottom can't drift apart, since adjacent
+   block margins collapse against the cards above/below it. Sticky (not
+   fixed+IntersectionObserver) so it can never "jump": its horizontal
+   position stays tied to .mainContent's own box, which already shifts
+   correctly when the sidebar/AI panel toggle. Padding is identical
+   stuck or not, so engaging the sticky state changes only the
+   background/border, never the box's size. */
+.targetSegmentBar{
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin: var(--target-segment-gap, 24px) 0;
+  padding: 6px 4px;
+  position: sticky;
+  top: calc(var(--header-height, 60px) + 1px);
+  z-index: 10;
+  border-radius: 12px;
+  border-bottom: 1px solid transparent;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+.targetSegmentBar.stuck{
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border-bottom-color: var(--border-card, rgba(0, 0, 0, 0.08));
+}
+html[data-theme="dark"] .targetSegmentBar.stuck{
+  background: rgba(28, 28, 30, 0.72);
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
 .targetSegment{
   display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px;
   border: 1px solid var(--border-card, rgba(0,0,0,.1)); background: var(--surface, transparent);
@@ -8224,8 +8253,31 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 .targetSegment.empty{ opacity: .5; }
 
 /* Factor chart card + wafer detail popover */
-.factorChartCard{ min-height: 480px; }
+.factorChartCard{ min-height: 480px; container-type: inline-size; container-name: factorCard; }
 .factorChartMeta{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.factorChartTitleBlock{ min-width: 0; }
+/* Title -> tier badge -> compare button: same gap between every pair
+   (spec §4-4). Button/badge visual style is untouched, only position. */
+.factorChartTitleRow{ display: flex; align-items: center; gap: var(--factor-title-gap, 8px); flex-wrap: wrap; }
+.factorChartTitleRow h2{ margin: 0; }
+.factorChartStats{
+  display: flex; align-items: baseline; gap: 0; flex: 0 0 auto;
+  font-size: 13px; color: var(--text-secondary); white-space: nowrap;
+}
+.factorChartStats span:not(:first-child)::before{ content: "·"; margin: 0 6px; opacity: .6; }
+/* Meta must never overflow the card (spec §4-4): shrink, then drop the
+   least-critical figure (누적) first, evaluated against the card's own
+   width so it reacts the same whether the sidebar/AI panel toggles or the
+   viewport resizes. */
+@container factorCard (max-width: 640px){
+  .factorChartStats{ font-size: 12px; }
+}
+@container factorCard (max-width: 520px){
+  .factorChartStats .metaCumulative{ display: none; }
+}
+@container factorCard (max-width: 420px){
+  .factorChartMeta{ flex-direction: column; align-items: flex-start; }
+}
 .waferDetailPopover{
   position: fixed; z-index: 50; width: 320px; max-width: calc(100vw - 24px); border-radius: 16px;
   border: 1px solid var(--border-card, rgba(0,0,0,.1)); background: var(--surface-card, #fff);
@@ -8315,9 +8367,17 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 
 .paretoChartBody{ display: flex; align-items: stretch; gap: 6px; }
 .paretoAxisCol{ display: flex; align-items: stretch; gap: 2px; flex: 0 0 auto; }
+/* Rotated as a single plain-text run (not writing-mode: vertical-rl --
+   that rotates Latin/symbol glyphs but keeps Hangul upright per
+   text-orientation:mixed, so a Korean+"(%)" label came out inconsistently
+   flipped). -90deg reads correctly with a left head-tilt, unified for both
+   the left and right axis titles. */
 .paretoAxisLabel{
-  writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; color: var(--text-secondary);
-  white-space: nowrap; display: flex; align-items: center; justify-content: center;
+  width: 18px; flex: 0 0 auto; font-size: 11px; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+}
+.paretoAxisLabelText{
+  display: inline-block; white-space: nowrap; transform: rotate(-90deg);
 }
 .paretoTickCol{ position: relative; width: 30px; flex: 0 0 auto; }
 .paretoTick{
@@ -8410,6 +8470,41 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
   border: 1px solid var(--border-card, var(--border)); color: var(--text-secondary);
   background-image: repeating-linear-gradient(45deg, var(--border-card, var(--border)) 0 4px, transparent 4px 8px);
 }
+/* Same component/size/radius as the tier badges, green instead (spec §1-5). */
+.confidenceBadge.adopted{ background: #059669; color: #fff; }
+html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #052e1f; }
+
+/* 모델 학습 -- 요약바 + 통합 테이블 (spec §1) */
+.trainingSummaryBar{
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px;
+  min-height: 48px; padding: 14px 20px; border-radius: 12px;
+  border: 1px solid var(--border-card, rgba(0,0,0,.08)); background: var(--surface-card, #fff);
+}
+.trainingSummaryLabel{ font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.trainingSummaryMetrics{ display: flex; flex-wrap: wrap; font-size: 14px; font-variant-numeric: tabular-nums; }
+.trainingSummaryMetrics span:not(:first-child)::before{ content: "·"; margin: 0 10px; opacity: .6; }
+.trainingSummarySkeleton{
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  min-height: 48px; padding: 14px 20px; border-radius: 12px;
+  border: 1px solid var(--border-card, rgba(0,0,0,.08)); background: var(--surface-card, #fff);
+}
+.trainingSummarySkeletonBar{
+  height: 14px; border-radius: 6px; background: var(--surface-secondary, var(--surface-muted));
+  animation: alarmSkeletonPulse 1.4s ease-in-out infinite;
+}
+.trainingSummarySkeletonBar.label{ width: 90px; }
+.trainingSummarySkeletonBar.metrics{ width: 260px; }
+@media (prefers-reduced-motion: reduce){
+  .trainingSummarySkeletonBar{ animation: none; }
+}
+.trainingResultError{
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 14px 20px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border-card, rgba(0,0,0,.08)));
+  background: var(--danger-soft, color-mix(in srgb, var(--danger) 8%, transparent));
+  color: var(--danger);
+}
+.numCol{ text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Unified SPC scatter chart -- every scatter entry point (root-cause per
    target/kind, Pareto bar click, heatmap cell click, alert-log deep link)
@@ -8546,10 +8641,20 @@ html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
 }
 .compareModalHeader h2{ margin: 0; font-size: 16px; font-weight: 700; }
 .compareModalMeta{ margin: 4px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+/* Plain-language read of the 5 charts (spec §5-2): one step smaller than
+   the meta line above it, secondary color, always 2 lines. */
+.compareModalInterpretation{
+  margin: 6px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary);
+  display: flex; flex-direction: column;
+}
 .compareModalClose{
   border: none; background: var(--surface-secondary, var(--surface-muted)); border-radius: 8px;
-  width: 30px; height: 30px; cursor: pointer; font-size: 14px; color: var(--text-secondary); flex: 0 0 auto;
+  width: 30px; height: 30px; cursor: pointer; font-size: 14px; flex: 0 0 auto;
+  color: #DC2626; /* icon only -- background/size/position stay as-is (spec §5-4) */
 }
+.compareModalClose:hover{ background: color-mix(in srgb, var(--surface-secondary, var(--surface-muted)) 80%, black 12%); }
+html[data-theme="dark"] .compareModalClose{ color: #F87171; }
+html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb, var(--surface-secondary, var(--surface-muted)) 75%, white 12%); }
 .compareModalScroll{
   display: flex; gap: 24px; padding: 18px 22px; overflow-x: auto; flex: 1 1 auto;
   background:
@@ -8577,7 +8682,6 @@ html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
 .compareModalLegend{ display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
 .compareModalLegend span{ display: inline-flex; align-items: center; gap: 6px; }
 .compareLegendSwatch{ display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
-.compareModalLink{ font-size: 13px; font-weight: 600; color: var(--brand-navy-text, #0E306D); white-space: nowrap; }
 
 /* "Y1~Y5 비교" button on each scatter card header. */
 .compareTriggerButton{

@@ -23,8 +23,8 @@ type LineMeta = {
 
 const LINE_META: Record<ReferenceLineKey, LineMeta> = {
   mean: { legendId: "mean", shortLabel: "평균", legendLabel: "평균", legendDesc: "중심", defaultVisible: true, priority: 50, dash: "6 4", strokeWidth: 1.5 },
-  iqr_lo: { legendId: "iqr", shortLabel: "LCL", legendLabel: "UCL/LCL (IQR 1.5배)", legendDesc: "관리한계, 알람 판정 기준", defaultVisible: true, priority: 40, dash: "10 5", strokeWidth: 2 },
-  iqr_hi: { legendId: "iqr", shortLabel: "UCL", legendLabel: "UCL/LCL (IQR 1.5배)", legendDesc: "관리한계, 알람 판정 기준", defaultVisible: true, priority: 40, dash: "10 5", strokeWidth: 2 },
+  iqr_lo: { legendId: "iqr", shortLabel: "LCL", legendLabel: "LCL/UCL (IQR 1.5배)", legendDesc: "관리한계, 알람 판정 기준", defaultVisible: true, priority: 40, dash: "10 5", strokeWidth: 2 },
+  iqr_hi: { legendId: "iqr", shortLabel: "UCL", legendLabel: "LCL/UCL (IQR 1.5배)", legendDesc: "관리한계, 알람 판정 기준", defaultVisible: true, priority: 40, dash: "10 5", strokeWidth: 2 },
   q1: { legendId: "q1q3", shortLabel: "Q1", legendLabel: "Q1 / Q3", legendDesc: "사분위", defaultVisible: false, priority: 20, dash: "none", strokeWidth: 1.2 },
   q3: { legendId: "q1q3", shortLabel: "Q3", legendLabel: "Q1 / Q3", legendDesc: "사분위", defaultVisible: false, priority: 20, dash: "none", strokeWidth: 1.2 },
   s3_lo: { legendId: "s3", shortLabel: "−3σ", legendLabel: "±3σ", legendDesc: "참조선", defaultVisible: false, priority: 30, dash: "8 3 2 3", strokeWidth: 1.3 },
@@ -33,7 +33,48 @@ const LINE_META: Record<ReferenceLineKey, LineMeta> = {
   s6_hi: { legendId: "s6", shortLabel: "+6σ", legendLabel: "±6σ", legendDesc: "참조선", defaultVisible: false, priority: 10, dash: "6 3 1 3 1 3", strokeWidth: 1.1 },
 };
 
-const LEGEND_ORDER = ["mean", "iqr", "s3", "s6", "q1q3"];
+// Button order follows the spec's worked example: LCL/UCL, ±3σ, ±6σ, 평균, Q1/Q3.
+const LEGEND_ORDER = ["iqr", "s3", "s6", "mean", "q1q3"];
+const QUARTILE_SIGMA_KEYS = new Set<ReferenceLineKey>(["q1", "q3", "s3_lo", "s3_hi", "s6_lo", "s6_hi"]);
+
+function formatNum1(value: number): string {
+  return value.toFixed(1);
+}
+
+/** Legend button text with the actual computed values baked in (spec §4-6) --
+ * separate from LINE_META.legendLabel, which stays a static category name used
+ * by the per-line hover tooltip. */
+function buildLegendLabel(groupId: string, lines: ReferenceLine[]): string {
+  const find = (key: ReferenceLineKey) => lines.find((l) => l.key === key);
+  if (groupId === "mean") {
+    const mean = find("mean");
+    return mean ? `평균 (${formatNum1(mean.value)})` : "평균";
+  }
+  if (groupId === "iqr") {
+    const lo = find("iqr_lo");
+    const hi = find("iqr_hi");
+    if (lo?.drawable && hi?.drawable) return `LCL/UCL (IQR 1.5배 · ${formatNum1(lo.value)} / ${formatNum1(hi.value)})`;
+    if (hi?.drawable) return `UCL (${formatNum1(hi.value)})`;
+    if (lo?.drawable) return `LCL (${formatNum1(lo.value)})`;
+    return "LCL/UCL";
+  }
+  if (groupId === "q1q3") {
+    const q1 = find("q1");
+    const q3 = find("q3");
+    return q1 && q3 ? `Q1 / Q3 (${formatNum1(q1.value)} / ${formatNum1(q3.value)})` : "Q1 / Q3";
+  }
+  if (groupId === "s3" || groupId === "s6") {
+    const lo = find(groupId === "s3" ? "s3_lo" : "s6_lo");
+    const hi = find(groupId === "s3" ? "s3_hi" : "s6_hi");
+    const label = groupId === "s3" ? "±3σ" : "±6σ";
+    if (lo && hi) {
+      const deviation = (hi.value - lo.value) / 2;
+      return `${label} (${formatNum1(lo.value)} / ${formatNum1(hi.value)}, ±${formatNum1(deviation)})`;
+    }
+    return label;
+  }
+  return "";
+}
 
 const LINE_COLOR: Record<string, { light: string; dark: string }> = {
   mean: { light: "#059669", dark: "#34D399" },
@@ -282,12 +323,54 @@ export default function ScatterChart({
       (data.normal_range.hi == null || trendHover.dataX <= data.normal_range.hi)
     : null;
 
+  function renderLineBody(line: ReferenceLine) {
+    const meta = LINE_META[line.key];
+    if (!visibleGroups.has(meta.legendId)) return null;
+    const x = xScale(line.value);
+    const greyedOut = (line.key === "iqr_lo" || line.key === "iqr_hi") && !line.alarm_relevant;
+    const color = greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? LINE_COLOR[meta.legendId].dark : LINE_COLOR[meta.legendId].light);
+    return (
+      <g key={line.key}>
+        <line
+          x1={x} x2={x} y1={0} y2={plotHeight}
+          stroke={color}
+          strokeWidth={meta.strokeWidth}
+          strokeDasharray={meta.dash === "none" ? undefined : meta.dash}
+          opacity={greyedOut ? 0.55 : 0.9}
+        />
+        {/* widened invisible hit area */}
+        <rect
+          x={x - 6} y={0} width={12} height={plotHeight}
+          fill="transparent" style={{ cursor: "help" }}
+          onMouseEnter={(event) => setLineHover({ key: line.key, x: event.clientX, y: event.clientY })}
+          onMouseMove={(event) => setLineHover({ key: line.key, x: event.clientX, y: event.clientY })}
+          onMouseLeave={() => setLineHover(null)}
+        />
+      </g>
+    );
+  }
+
+  function renderLineLabel(line: ReferenceLine) {
+    const meta = LINE_META[line.key];
+    if (!visibleGroups.has(meta.legendId)) return null;
+    const layout = labelLayout.find((l) => l.line.key === line.key);
+    if (!layout || layout.hidden) return null;
+    const greyedOut = (line.key === "iqr_lo" || line.key === "iqr_hi") && !line.alarm_relevant;
+    const color = greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? LINE_COLOR[meta.legendId].dark : LINE_COLOR[meta.legendId].light);
+    const x = xScale(line.value);
+    return (
+      <foreignObject key={line.key} x={x - 20} y={layout.row * 16} width={40} height={14} style={{ overflow: "visible", pointerEvents: "none" }}>
+        <div className="scatterLineLabel" style={{ color }}>{meta.shortLabel}</div>
+      </foreignObject>
+    );
+  }
+
   return (
     <div className="scatterChart" ref={containerRef}>
       <div className="scatterChartMeta">
         <span>n={data.n.toLocaleString()}</span>
         <span>ε²={data.eps2.toFixed(3)}</span>
-        <span>{data.p_value < 0.001 ? "p<0.001" : `p=${data.p_value.toFixed(4)}`}</span>
+        <span>p-value {data.p_value.toFixed(3)}</span>
         <span>등급 {{ strong: "강함", moderate: "보통", weak: "약함", reference: "참고" }[data.confidence_tier]}</span>
       </div>
 
@@ -327,49 +410,9 @@ export default function ScatterChart({
             return <rect x={Math.min(x1, x2)} y={0} width={Math.abs(x2 - x1)} height={plotHeight} className="scatterQuartileShade" />;
           })()}
 
-          {/* confidence band + trend curve */}
-          {trendVisible && data.bins.length > 0 && (
-            <>
-              <path d={trendPath.band} className="scatterTrendBand" style={{ fill: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} />
-              <path d={trendPath.line} className="scatterTrendLine" style={{ stroke: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} fill="none" />
-            </>
-          )}
-
-          {/* reference lines */}
-          {drawableLines.map((line) => {
-            const meta = LINE_META[line.key];
-            if (!visibleGroups.has(meta.legendId)) return null;
-            const x = xScale(line.value);
-            const greyedOut = (line.key === "iqr_lo" || line.key === "iqr_hi") && !line.alarm_relevant;
-            const color = greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? LINE_COLOR[meta.legendId].dark : LINE_COLOR[meta.legendId].light);
-            const layout = labelLayout.find((l) => l.line.key === line.key);
-            return (
-              <g key={line.key}>
-                <line
-                  x1={x} x2={x} y1={0} y2={plotHeight}
-                  stroke={color}
-                  strokeWidth={meta.strokeWidth}
-                  strokeDasharray={meta.dash === "none" ? undefined : meta.dash}
-                  opacity={greyedOut ? 0.55 : 0.9}
-                />
-                {/* widened invisible hit area */}
-                <rect
-                  x={x - 6} y={0} width={12} height={plotHeight}
-                  fill="transparent" style={{ cursor: "help" }}
-                  onMouseEnter={(event) => setLineHover({ key: line.key, x: event.clientX, y: event.clientY })}
-                  onMouseMove={(event) => setLineHover({ key: line.key, x: event.clientX, y: event.clientY })}
-                  onMouseLeave={() => setLineHover(null)}
-                />
-                {layout && !layout.hidden && (
-                  <foreignObject x={x - 20} y={layout.row * 16} width={40} height={14} style={{ overflow: "visible", pointerEvents: "none" }}>
-                    <div className="scatterLineLabel" style={{ color }}>{meta.shortLabel}</div>
-                  </foreignObject>
-                )}
-              </g>
-            );
-          })}
-
-          {/* data points */}
+          {/* data points -- painted before every reference line/curve (spec
+              §4-1: lines and the trend curve must sit above the points,
+              never hidden behind them). */}
           {data.points.map((point, index) => {
             const style = colorForPoint(point, colorMode, lotIndex);
             const isHovered = pointHover?.point === point;
@@ -388,6 +431,26 @@ export default function ScatterChart({
               />
             );
           })}
+
+          {/* reference line bodies, stacked bottom-to-top per spec §4-1:
+              Q1/Q3 + ±3σ/±6σ, then 평균, then LCL/UCL last (closest to the
+              trend curve/labels above them). Labels are a separate,
+              always-topmost pass below so they never sit under a
+              later-drawn line. */}
+          {drawableLines.filter((line) => QUARTILE_SIGMA_KEYS.has(line.key)).map((line) => renderLineBody(line))}
+          {drawableLines.filter((line) => line.key === "mean").map((line) => renderLineBody(line))}
+          {drawableLines.filter((line) => line.key === "iqr_lo" || line.key === "iqr_hi").map((line) => renderLineBody(line))}
+
+          {/* confidence band + trend curve -- above every reference line */}
+          {trendVisible && data.bins.length > 0 && (
+            <>
+              <path d={trendPath.band} className="scatterTrendBand" style={{ fill: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} />
+              <path d={trendPath.line} className="scatterTrendLine" style={{ stroke: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} fill="none" />
+            </>
+          )}
+
+          {/* line name labels -- topmost of all */}
+          {drawableLines.map((line) => renderLineLabel(line))}
 
           {/* continuous point+trend hover overlay -- nearest-point search,
               not per-point listeners (see findNearestPoint's comment). */}
@@ -431,7 +494,7 @@ export default function ScatterChart({
               title={disabled ? "데이터 범위 밖" : meta.legendDesc}
             >
               <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR[groupId].dark : LINE_COLOR[groupId].light }} />
-              {meta.legendLabel}
+              {buildLegendLabel(groupId, data.reference_lines)}
             </button>
           );
         })}
@@ -442,7 +505,7 @@ export default function ScatterChart({
           title="구간 평균 불량률"
         >
           <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} />
-          E[Y|x]
+          구간 평균 불량률
         </button>
       </div>
 

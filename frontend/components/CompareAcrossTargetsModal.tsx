@@ -111,16 +111,46 @@ export default function CompareAcrossTargetsModal({
   const ucl = originData?.reference_lines.find((l) => l.key === "iqr_hi");
   const mean = originData?.reference_lines.find((l) => l.key === "mean");
 
+  // Plain-language read of the 5 mini-charts: which target the factor
+  // actually moves the needle on, in wording that doesn't require knowing
+  // what rho/eps2/p-value mean (spec §5-2).
+  const interpretation = useMemo(() => {
+    if (loading) return null;
+    const known = TARGETS.map((t) => ({ target: t, rho: dataByTarget[t]?.spearman_r ?? null })).filter(
+      (entry): entry is { target: (typeof TARGETS)[number]; rho: number } => entry.rho != null,
+    );
+    if (known.length === 0) return null;
+    const main = known.reduce((best, entry) => (Math.abs(entry.rho) > Math.abs(best.rho) ? entry : best));
+    const others = TARGETS.filter((t) => t !== main.target);
+    if (Math.abs(main.rho) >= STRONG_RHO) {
+      return [
+        `${others.join(", ")}에서는 값이 변해도 불량률이 거의 일정합니다.`,
+        `${main.target}에서만 곡선이 뚜렷하게 휘어, ${feature}이(가) ${main.target} 불량에 선택적으로 작용함을 뜻합니다.`,
+      ];
+    }
+    return [
+      "다섯 유형 모두에서 곡선이 거의 평평합니다.",
+      "이 인자만으로는 특정 불량 유형을 설명하기 어렵다는 뜻입니다.",
+    ];
+  }, [loading, dataByTarget, feature]);
+
   return (
     <div className="compareModalBackdrop" onClick={onClose} role="presentation">
       <div className="compareModal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${feature} 불량 유형별 영향 비교`}>
         <div className="compareModalHeader">
           <div>
-            <h2>{feature} — 불량 유형별 영향 비교</h2>
+            <h2>{feature} vs Y1 ~ Y5 — 불량 유형별 영향 비교</h2>
             {originData && (
               <p className="compareModalMeta">
                 n={originData.n.toLocaleString()} 계측
                 {lcl?.drawable && ucl?.drawable && ` · 관리한계 ${formatNum(lcl.value)} ~ ${formatNum(ucl.value)}`}
+              </p>
+            )}
+            {interpretation && (
+              <p className="compareModalInterpretation">
+                {interpretation.map((line) => (
+                  <span key={line}>{line}</span>
+                ))}
               </p>
             )}
           </div>
@@ -153,12 +183,9 @@ export default function CompareAcrossTargetsModal({
             {lcl && ucl && (
               <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? NAVY.dark : NAVY.light }} /> 관리한계 LCL/UCL ({formatNum(lcl.value)} / {formatNum(ucl.value)})</span>
             )}
-            {mean && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GREEN.dark : GREEN.light }} /> 평균 {formatNum(mean.value)}</span>}
-            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? RED.dark : RED.light }} /> 구간 평균 불량률 E[Y|x]</span>
+            {mean && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GREEN.dark : GREEN.light }} /> 평균 ({formatNum(mean.value)})</span>}
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? RED.dark : RED.light }} /> 구간 평균 불량률</span>
           </div>
-          <a className="compareModalLink" href={`/root-cause?target=${encodeURIComponent(originTarget)}&feature=${encodeURIComponent(feature)}`}>
-            이 인자 산점도로 이동
-          </a>
         </div>
       </div>
     </div>
@@ -267,15 +294,11 @@ function MiniChart({
               <rect x={xScale(iqrHi.value)} y={0} width={Math.max(plotWidth - xScale(iqrHi.value), 0)} height={plotHeight} className="compareMiniOutsideShade" />
             )}
 
-            {data.bins.length > 0 && (
-              <path
-                d={data.bins.map((b, i) => `${i === 0 ? "M" : "L"}${xScale(b.x_mean)},${yScale(b.y_mean)}`).join(" ")}
-                fill="none"
-                stroke={redColor}
-                strokeWidth={2}
-                opacity={trendOpacity}
-              />
-            )}
+            {/* points painted before every reference line/curve so lines
+                stay visible on top (spec §4-1, applies to this mini chart too) */}
+            {data.points.map((p, i) => (
+              <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={2.4} fill={pointColor} opacity={pointOpacity} />
+            ))}
 
             {mean?.drawable && (
               <line x1={xScale(mean.value)} x2={xScale(mean.value)} y1={0} y2={plotHeight} stroke={greenColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
@@ -287,9 +310,15 @@ function MiniChart({
               <line x1={xScale(iqrHi.value)} x2={xScale(iqrHi.value)} y1={0} y2={plotHeight} stroke={navyColor} strokeWidth={1.6} strokeDasharray="7 4" opacity={lineOpacity} />
             )}
 
-            {data.points.map((p, i) => (
-              <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={2.4} fill={pointColor} opacity={pointOpacity} />
-            ))}
+            {data.bins.length > 0 && (
+              <path
+                d={data.bins.map((b, i) => `${i === 0 ? "M" : "L"}${xScale(b.x_mean)},${yScale(b.y_mean)}`).join(" ")}
+                fill="none"
+                stroke={redColor}
+                strokeWidth={2}
+                opacity={trendOpacity}
+              />
+            )}
 
             {hover && (
               <>

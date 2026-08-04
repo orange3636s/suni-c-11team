@@ -26,7 +26,6 @@ import type {
 } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
-const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
 const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중"];
 
@@ -34,7 +33,7 @@ type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
 
 function formatP(p: number): string {
-  return p < 0.001 ? p.toExponential(2) : p.toFixed(4);
+  return p.toFixed(3);
 }
 
 function hasReliableEvidence(tier: ConfidenceTier): boolean {
@@ -369,7 +368,7 @@ function RootCauseContent() {
               <div className="factorChartMeta">
                 <div>
                   <span className="sectionLabel">선택한 인자</span>
-                  <h2>{quickLook.feature} · {quickLook.target}</h2>
+                  <h2>{quickLook.feature} vs {quickLook.target}</h2>
                 </div>
                 <button
                   className="button"
@@ -414,27 +413,31 @@ function RootCauseContent() {
               return (
                 <article className="resultCard factorChartCard" id={`factor-${item.feature}`} key={item.feature}>
                   <div className="factorChartMeta">
-                    <div>
+                    <div className="factorChartTitleBlock">
                       <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
-                      <h2>{item.feature} ({KIND_LABEL[item.kind]}) <ConfidenceBadge tier={item.confidence_tier} /></h2>
+                      <div className="factorChartTitleRow">
+                        <h2>{item.feature} vs {activeTarget}</h2>
+                        <ConfidenceBadge tier={item.confidence_tier} />
+                        {!isConfig && (
+                          <button
+                            type="button"
+                            className="compareTriggerButton"
+                            title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
+                            onClick={() => setCompareFeature(item.feature)}
+                          >
+                            ⊞ Y1~Y5 비교
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      {n != null && (
-                        <small>
-                          n={n} · 기여율={item.contribution_pct.toFixed(1)}% · 누적={item.cumulative_pct.toFixed(1)}% · p={formatP(item.p_value)}
-                        </small>
-                      )}
-                      {!isConfig && (
-                        <button
-                          type="button"
-                          className="compareTriggerButton"
-                          title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
-                          onClick={() => setCompareFeature(item.feature)}
-                        >
-                          ⊞ Y1~Y5 비교
-                        </button>
-                      )}
-                    </div>
+                    {n != null && (
+                      <small className="factorChartStats">
+                        <span>n={n}</span>
+                        <span>기여율={item.contribution_pct.toFixed(1)}%</span>
+                        <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
+                        <span>p-value {formatP(item.p_value)}</span>
+                      </small>
+                    )}
                   </div>
                   {!hasReliableEvidence(item.confidence_tier) && (
                     <p className="heatmapSignificanceBanner">

@@ -21,22 +21,29 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 
 const showMetric = (value?: number | null, digits = 3) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "-";
-const showDate = (value?: string | null) =>
-  value ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 
-const SHAPE_LABEL: Record<string, string> = {
-  monotonic_increasing: "단조 증가",
-  monotonic_decreasing: "단조 감소",
-  u_shape: "U자형",
-  unclear: "불명확",
-};
+function formatTrainedAt(value?: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** A completed job with no usable payload is an error, not "not yet run" --
+ * silently falling back to the empty state would hide a real failure
+ * (spec §1-4). */
+function hasUsableResult(performance: ModelPerformanceResponse | null): boolean {
+  return Boolean(performance && performance.model_id && performance.targets.length > 0);
+}
+
 const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 
 const BENCHMARK_REFERENCE = [
-  { name: "A. 중앙값 대체 + 클리핑 (현행)", y: 0.114 },
-  { name: "B. 전체 인자 + NaN 보존", y: 0.146 },
-  { name: "C. 선정 인자 + dev + 마스크", y: 0.177 },
+  { name: "A. 중앙값 대체 + 클리핑 (현행)", y: 0.114, adopted: false },
+  { name: "B. 전체 인자 + NaN 보존", y: 0.146, adopted: false },
+  { name: "C. 선정 인자 + dev + 마스크", y: 0.177, adopted: true },
 ];
 
 export default function TrainingPage() {
@@ -49,16 +56,34 @@ export default function TrainingPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [performance, setPerformance] = useState<ModelPerformanceResponse | null>(null);
+  const [performanceLoading, setPerformanceLoading] = useState(true);
+  const [performanceError, setPerformanceError] = useState("");
 
   const [activeTarget, setActiveTarget] = useState<string>("Y1");
   const [paretoByTarget, setParetoByTarget] = useState<Record<string, ParetoRankingResponse>>({});
   const [analysisReady, setAnalysisReady] = useState(false);
 
-  const loadPerformance = useCallback(async () => {
+  // `requireResult` marks a load that follows a job the UI itself just
+  // watched finish -- only then do we know for certain a result *should*
+  // exist, so only then does an empty/missing payload count as an error
+  // instead of the plain "not run yet" empty state.
+  const loadPerformance = useCallback(async (options?: { requireResult?: boolean }) => {
+    setPerformanceLoading(true);
     try {
-      setPerformance(await getModelPerformance());
-    } catch {
+      const result = await getModelPerformance();
+      setPerformance(result);
+      if (options?.requireResult && !hasUsableResult(result)) {
+        setPerformanceError("학습은 완료되었지만 결과를 불러오지 못했습니다.");
+      } else {
+        setPerformanceError("");
+      }
+    } catch (loadError) {
       setPerformance(null);
+      if (options?.requireResult) {
+        setPerformanceError(loadError instanceof Error ? loadError.message : "결과를 불러오지 못했습니다.");
+      }
+    } finally {
+      setPerformanceLoading(false);
     }
   }, []);
 
@@ -100,7 +125,7 @@ export default function TrainingPage() {
             setAnalysisReady(false);
           }
           setMessage("스크리닝 기반 Y1~Y5 GBDT 학습이 완료되었습니다.");
-          await loadPerformance();
+          await loadPerformance({ requireResult: true });
         } else if (job.status === "failed" || job.status === "interrupted") {
           window.clearInterval(timer);
           setJobId(null);
@@ -143,6 +168,9 @@ export default function TrainingPage() {
   const selectedDataset = datasets.find((item) => item.dataset_id === datasetId);
   const isBundledTrain = datasetId === BUNDLED_TRAIN_ID;
 
+  const isRunning = Boolean(jobId);
+  const hasResult = hasUsableResult(performance);
+
   return (
     <DashboardShell activeItem="모델 학습">
       <section className="uploadIntro pageHeading">
@@ -170,74 +198,100 @@ export default function TrainingPage() {
           </div>
         )}
         <div className="uploadActions">
-          <button className="button primary" type="button" disabled={Boolean(jobId)} onClick={() => void train()}>
-            {jobId ? "모델 학습 중…" : "학습 실행"}
+          <button className="button primary" type="button" disabled={isRunning} onClick={() => void train()}>
+            {isRunning ? "모델 학습 중…" : "학습 실행"}
           </button>
         </div>
-        {jobId && (
+        {isRunning && (
           <p className="trainingProgress" role="status">
             {stage} · {progress}%
           </p>
         )}
-        {!jobId && stage === "히트맵 집계 중" && !analysisReady && (
+        {!isRunning && stage === "히트맵 집계 중" && !analysisReady && (
           <p className="trainingProgress" role="status">히트맵 집계 중 · {progress}%</p>
         )}
         {message && <p className="messageBox success" role="status">{message}</p>}
-        {error && <p className="errorMessage" role="alert">{error}</p>}
+        {error && (
+          <p className="errorMessage" role="alert">
+            {error}{" "}
+            <button type="button" className="button" style={{ marginLeft: 8 }} onClick={() => void train()}>
+              재시도
+            </button>
+          </p>
+        )}
       </section>
 
       {!isBundledTrain && (
         <section className="messageBox">기준값은 내장 데이터셋(train.CSV → test.CSV)에만 적용됩니다.</section>
       )}
 
-      <section className="rcGrid">
-        {TARGETS.map((target) => {
-          const detail = performance?.targets.find((t) => t.target === target);
-          return (
-            <article className="resultCard" key={target}>
-              <div className="sectionHeading compact">
-                <div>
-                  <span className="sectionLabel">{target}</span>
-                  <h2>
-                    {detail?.no_factor_available ? "분석 불가" : detail?.feature ?? "-"}
-                    {detail && !detail.no_factor_available && detail.confidence_tier && (
-                      <span className={`confidenceBadge tier-${detail.confidence_tier}`} style={{ marginLeft: 8 }}>
-                        {TIER_LABEL[detail.confidence_tier]}
-                      </span>
-                    )}
-                  </h2>
-                </div>
-              </div>
-              {detail && !detail.no_factor_available ? (
-                <div className="secomKpiGrid">
-                  <div><span>ε²</span><strong>{showMetric(detail.eps2)}</strong></div>
-                  <div><span>기여율</span><strong>{detail.contribution_pct != null ? `${detail.contribution_pct.toFixed(1)}%` : "-"}</strong></div>
-                  <div><span>R²</span><strong>{showMetric(detail.r2)}</strong></div>
-                  <div><span>MAE</span><strong>{showMetric(detail.mae)}</strong></div>
-                  <div><span>관계형태</span><strong>{SHAPE_LABEL[detail.relation_shape ?? ""] ?? "-"}</strong></div>
-                </div>
-              ) : detail ? (
-                <p className="emptyMessage">계측 표본이 부족해 분석할 수 없습니다.</p>
-              ) : (
-                <p className="emptyMessage">학습을 실행하면 표시됩니다.</p>
-              )}
-            </article>
-          );
-        })}
-        <article className="resultCard">
+      {/* 학습 모델 요약바 (§1-2) + 타깃별 통합 테이블 (§1-3) */}
+      {isRunning || performanceLoading ? (
+        <section className="trainingSummarySkeleton" role="status" aria-label="학습 결과 불러오는 중">
+          <span className="trainingSummarySkeletonBar label" />
+          <span className="trainingSummarySkeletonBar metrics" />
+        </section>
+      ) : performanceError ? (
+        <section className="trainingResultError" role="alert">
+          <span>{performanceError}</span>
+          <button type="button" className="button" onClick={() => void loadPerformance({ requireResult: true })}>
+            재시도
+          </button>
+        </section>
+      ) : hasResult ? (
+        <section className="trainingSummaryBar">
+          <span className="trainingSummaryLabel">학습 모델</span>
+          <span className="trainingSummaryMetrics">
+            <span>R² {showMetric(performance?.final_yield?.r2)}</span>
+            <span>MAE {showMetric(performance?.final_yield?.mae)}</span>
+            <span>학습 시각 {formatTrainedAt(performance?.trained_at)}</span>
+          </span>
+        </section>
+      ) : (
+        <section className="trainingSummarySkeleton">
+          <span className="trainingSummaryLabel">학습 모델</span>
+          <p className="emptyMessage" style={{ margin: 0 }}>학습을 실행하면 표시됩니다.</p>
+        </section>
+      )}
+
+      {hasResult && !isRunning && !performanceError && (
+        <section className="resultCard">
           <div className="sectionHeading compact">
             <div>
-              <span className="sectionLabel">Y (최종)</span>
-              <h2>최종 수율</h2>
+              <span className="sectionLabel">TARGETS</span>
+              <h2>타깃별 성능</h2>
             </div>
           </div>
-          <div className="secomKpiGrid">
-            <div><span>R²</span><strong>{showMetric(performance?.final_yield?.r2)}</strong></div>
-            <div><span>MAE</span><strong>{showMetric(performance?.final_yield?.mae)}</strong></div>
-            <div><span>학습 시각</span><strong>{showDate(performance?.trained_at)}</strong></div>
+          <div className="tableWrap">
+            <table className="trainingTargetTable">
+              <thead>
+                <tr>
+                  <th>타깃</th><th>1위 인자</th><th className="numCol">ε²</th><th className="numCol">기여율</th><th>등급</th><th className="numCol">R²</th><th className="numCol">MAE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(performance?.targets ?? []).map((detail) => (
+                  <tr key={detail.target}>
+                    <td>{detail.target}</td>
+                    <td>{detail.no_factor_available ? "분석 불가" : detail.feature ?? "-"}</td>
+                    <td className="numCol">{showMetric(detail.eps2)}</td>
+                    <td className="numCol">{detail.contribution_pct != null ? `${detail.contribution_pct.toFixed(1)}%` : "-"}</td>
+                    <td>
+                      {!detail.no_factor_available && detail.confidence_tier ? (
+                        <span className={`confidenceBadge tier-${detail.confidence_tier}`} style={{ marginLeft: 0 }}>
+                          {TIER_LABEL[detail.confidence_tier]}
+                        </span>
+                      ) : "-"}
+                    </td>
+                    <td className="numCol">{showMetric(detail.r2)}</td>
+                    <td className="numCol">{showMetric(detail.mae)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </article>
-      </section>
+        </section>
+      )}
 
       <section className="resultCard">
         <div className="sectionHeading compact">
@@ -248,10 +302,16 @@ export default function TrainingPage() {
         </div>
         <div className="tableWrap">
           <table>
-            <thead><tr><th>방식</th><th>Y R²</th></tr></thead>
+            <thead><tr><th>방식</th><th className="numCol">R²</th></tr></thead>
             <tbody>
               {BENCHMARK_REFERENCE.map((row) => (
-                <tr key={row.name}><td>{row.name}</td><td>{row.y.toFixed(3)}</td></tr>
+                <tr key={row.name}>
+                  <td>{row.name}</td>
+                  <td className="numCol">
+                    {row.y.toFixed(3)}
+                    {row.adopted && <span className="confidenceBadge adopted" style={{ marginLeft: 8 }}>채택</span>}
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>

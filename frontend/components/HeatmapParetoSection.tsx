@@ -1,10 +1,16 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import CorrelationHeatmap, { type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import ParetoChart from "@/components/ParetoChart";
 import type { ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
+
+// Matches --header-height (60px) + its 1px bottom border, i.e. the same
+// `top` offset the sticky segment bar docks at in globals.css -- keeps the
+// "stuck" class flipping at exactly the moment position:sticky engages.
+const STICKY_OFFSET_PX = 61;
 
 /** The one shared "전체 히트맵 → 타깃 세그먼트 → Pareto" block used
  * identically by the 모델 학습 tab and the 원인 분석 tab (see the
@@ -35,6 +41,23 @@ export default function HeatmapParetoSection({
   onHeatmapCellSelect: (selection: HeatmapCellSelection) => void;
 }) {
   const activeResponse = paretoByTarget[activeTarget];
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
+
+  // Purely a visual toggle (glass background on/off) -- position:sticky
+  // itself never changes, so there is no jump. The sentinel sits right
+  // where the bar's normal-flow position is; once it scrolls past the
+  // header, the bar is sticking.
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setStuck(!entry.isIntersecting),
+      { rootMargin: `-${STICKY_OFFSET_PX}px 0px 0px 0px`, threshold: 0 },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [enabled]);
 
   return (
     <>
@@ -42,7 +65,8 @@ export default function HeatmapParetoSection({
 
       {enabled && (
         <>
-          <div className="targetSegmentBar">
+          <div ref={sentinelRef} aria-hidden="true" style={{ height: 0 }} />
+          <div className={`targetSegmentBar ${stuck ? "stuck" : ""}`}>
             {TARGETS.map((t) => (
               <button
                 key={t}

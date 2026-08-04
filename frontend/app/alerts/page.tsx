@@ -62,7 +62,7 @@ export default function AlertsPage() {
           <DatasetSelector label="정상범위 산출 (train)" value={trainDataset} onChange={setTrainDataset} />
           <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
           <div className="fieldGroup">
-            <span>Severity</span>
+            <span>심각성</span>
             <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
               <option value="">전체</option>
               <option value="low">낮음</option>
@@ -132,7 +132,7 @@ export default function AlertsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Wafer</th><th>LOT</th><th>Step</th><th>인자</th><th>타깃</th><th>값</th><th>정상범위</th><th>이탈량</th><th>방향</th><th>심각도</th><th>실측값</th>
+                  <th>Wafer</th><th>LOT</th><th>Step</th><th>인자</th><th>타깃</th><th>값</th><th>정상범위</th><th>이탈량</th><th>방향</th><th>심각성</th><th>실측값</th>
                 </tr>
               </thead>
               <tbody>

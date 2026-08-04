@@ -674,6 +674,9 @@ async def train_model(
             "metrics": hybrid_result.metadata["metrics"],
             "row_count": int(len(dataframe)),
             "feature_columns": hybrid_result.metadata["feature_columns"],
+            "created_at": hybrid_result.metadata["created_at"],
+            "target_metrics": hybrid_result.metadata["target_metrics"],
+            "final_y_metrics": hybrid_result.metadata["final_y_metrics"],
         },
     )
 

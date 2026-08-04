@@ -19,7 +19,7 @@ const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통
 type TooltipState = { x: number; y: number; index: number } | null;
 
 function formatP(p: number): string {
-  return p < 0.001 ? p.toExponential(2) : p.toFixed(4);
+  return p.toFixed(3);
 }
 
 function shortenFeatureName(feature: string, maxLength = 11): string {
@@ -134,7 +134,7 @@ export default function ParetoChart({
 
       <div className="paretoChartBody" ref={containerRef}>
         <div className="paretoAxisCol paretoAxisCol-left" style={{ height: PLOT_HEIGHT }}>
-          <span className="paretoAxisLabel">기여율 (%)</span>
+          <span className="paretoAxisLabel"><span className="paretoAxisLabelText">기여율 (%)</span></span>
           <div className="paretoTickCol" style={{ height: PLOT_HEIGHT }}>
             {LEFT_TICKS.map((tick) => (
               <span key={tick} className="paretoTick" style={{ bottom: `${tick}%` }}>{tick}</span>
@@ -249,7 +249,7 @@ export default function ParetoChart({
               <span key={tick} className="paretoTick" style={{ bottom: `${tick}%`, color: rightAxisColor }}>{tick}</span>
             ))}
           </div>
-          <span className="paretoAxisLabel paretoAxisLabel-right" style={{ color: rightAxisColor }}>누적 기여율 (%)</span>
+          <span className="paretoAxisLabel paretoAxisLabel-right" style={{ color: rightAxisColor }}><span className="paretoAxisLabelText">누적 기여율 (%)</span></span>
         </div>
       </div>
 
