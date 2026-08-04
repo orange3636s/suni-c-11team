@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, status
@@ -12,8 +14,9 @@ from api.routes.data import (
 )
 from api.routes.analysis import router as analysis_router
 from api.routes.chat import router as chat_router
-from api.routes.datasets import router as datasets_router
+from api.routes.datasets import get_dataset_registry, router as datasets_router
 from api.settings import APP_VERSION, settings
+from src.runtime.datasets import BUNDLED_DATASET_FILES
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
     ActiveOperationError,
@@ -49,12 +52,40 @@ if (
         "origins are allowed."
     )
 
+def _warm_bundled_dataset_cache() -> None:
+    """Pre-populates the module-level bundled-CSV cache (see
+    src/runtime/datasets.py) so the first real request doesn't pay the
+    full read+normalize cost for all bundled datasets. Runs in a
+    threadpool from a fire-and-forget background task -- it must never
+    delay startup or the Railway health check would fail and roll back
+    the deploy.
+    """
+    registry = get_dataset_registry()
+    for dataset_id in BUNDLED_DATASET_FILES:
+        t0 = time.perf_counter()
+        registry.get_dataframe(dataset_id)
+        logger.info(
+            "dataset warmup: %s ready in %.1fms", dataset_id, (time.perf_counter() - t0) * 1000
+        )
+
+
+async def _warmup_datasets_background() -> None:
+    t0 = time.perf_counter()
+    try:
+        await asyncio.to_thread(_warm_bundled_dataset_cache)
+    except Exception:
+        logger.exception("데이터셋 워밍업 실패")
+        return
+    logger.info("dataset warmup complete in %.1fms", (time.perf_counter() - t0) * 1000)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
         recover_interrupted_training_jobs()
     except Exception:
         logger.exception("중단된 학습 Job 시작 복구 실패")
+    asyncio.create_task(_warmup_datasets_background())
     if _is_deployment_environment():
         try:
             results = run_startup_migrations(

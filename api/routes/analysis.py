@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, Literal
@@ -46,6 +48,7 @@ from src.ml.inference import get_latest_model_metadata
 from src.runtime.datasets import DatasetNotFoundError
 from src.runtime.store import RuntimeStore
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["analysis"])
 
 # The report always evaluates alarms/eval_result against the bundled "test"
@@ -159,7 +162,14 @@ def get_screening_heatmap(
     rho isn't defined for a category) used identically by both the
     training tab and the root-cause tab.
     """
+    t0 = time.perf_counter()
+    hits_before = _cached_heatmap.cache_info().hits
     heatmap = _cached_heatmap(dataset, metric)
+    cached = _cached_heatmap.cache_info().hits > hits_before
+    logger.info(
+        "screening_heatmap %.1fms (cached=%s, dataset=%s, metric=%s)",
+        (time.perf_counter() - t0) * 1000, cached, dataset, metric,
+    )
     return {
         "dataset_id": dataset,
         "metric": metric,
@@ -194,7 +204,14 @@ def _cached_ranked_rows(dataset_id: str, target: str) -> tuple[dict, ...]:
 
 
 def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    hits_before = _cached_ranked_rows.cache_info().hits
     ranked = list(_cached_ranked_rows(dataset_id, target))
+    cached = _cached_ranked_rows.cache_info().hits > hits_before
+    logger.info(
+        "screening_pareto %.1fms (cached=%s, dataset=%s, target=%s)",
+        (time.perf_counter() - t0) * 1000, cached, dataset_id, target,
+    )
     top = ranked[: DEFAULT_TOP_N]
     items = [
         {

@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from openai import APIError, APITimeoutError, AsyncOpenAI
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from api.routes.analysis import _build_report_payload
 from api.routes.datasets import get_dataset_registry
@@ -170,7 +171,10 @@ async def post_chat(request: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="원인 분석을 먼저 실행해 주세요.") from exc
 
     mode = _resolve_mode(request)
-    messages = _build_messages(request, mode)
+    # Building the grounding context runs the full screening/report pipeline
+    # (CPU-bound pandas work) -- off the event loop so a chat request
+    # doesn't stall every other request on this single-worker process.
+    messages = await run_in_threadpool(_build_messages, request, mode)
 
     return StreamingResponse(
         _stream_completion(messages),

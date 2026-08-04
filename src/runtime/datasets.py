@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -161,23 +162,47 @@ def validate_dataset(
     )
 
 
+# Both caches below are keyed at module level, not on `self`, because a
+# fresh DatasetRegistry is constructed on every request (see
+# get_dataset_registry() in api/routes/datasets.py) -- a per-instance dict
+# cache would never survive past the request that built it. Bundled files
+# are re-read only if their mtime/size changes (handles a redeployed CSV);
+# uploaded datasets are immutable for the life of their uuid dataset_id
+# (see analysis.py's heatmap-cache docstring for why that's safe), so no
+# invalidation key is needed there.
+_BUNDLED_CACHE_SIZE = len(BUNDLED_DATASET_FILES)
+_UPLOADED_CACHE_SIZE = 8  # small LRU; bounds memory across a long-running process
+
+
+@lru_cache(maxsize=_BUNDLED_CACHE_SIZE)
+def _read_bundled_csv(path_str: str, mtime_ns: int, size: int) -> pd.DataFrame:
+    del mtime_ns, size  # part of the cache key only, invalidates on file replacement
+    raw = pd.read_csv(path_str)
+    normalized, _ = normalize_dataset(raw)
+    return normalized
+
+
+@lru_cache(maxsize=_UPLOADED_CACHE_SIZE)
+def _read_uploaded_csv(path_str: str) -> pd.DataFrame:
+    raw = pd.read_csv(path_str)
+    normalized, _ = normalize_dataset(raw)
+    return normalized
+
+
 class DatasetRegistry:
     def __init__(self, store: RuntimeStore, upload_root: Path, bundled_root: Path) -> None:
         self.store = store
         self.upload_root = Path(upload_root)
         self.upload_root.mkdir(parents=True, exist_ok=True)
         self.bundled_root = Path(bundled_root)
-        self._bundled_cache: dict[str, pd.DataFrame] = {}
 
     def _bundled_path(self, dataset_id: str) -> Path:
         return self.bundled_root / BUNDLED_DATASET_FILES[dataset_id]
 
     def _load_bundled(self, dataset_id: str) -> pd.DataFrame:
-        if dataset_id not in self._bundled_cache:
-            raw = pd.read_csv(self._bundled_path(dataset_id))
-            normalized, _ = normalize_dataset(raw)
-            self._bundled_cache[dataset_id] = normalized
-        return self._bundled_cache[dataset_id]
+        path = self._bundled_path(dataset_id)
+        stat = path.stat()
+        return _read_bundled_csv(str(path), stat.st_mtime_ns, stat.st_size)
 
     def bundled_schema(self, dataset_id: str = "train") -> Schema:
         return parse_schema(self._load_bundled(dataset_id))
@@ -223,9 +248,7 @@ class DatasetRegistry:
         record = self.store.get_dataset(dataset_id)
         if record is None:
             raise DatasetNotFoundError(dataset_id)
-        raw = pd.read_csv(self.upload_root / record["stored_path"])
-        normalized, _ = normalize_dataset(raw)
-        return normalized
+        return _read_uploaded_csv(str(self.upload_root / record["stored_path"]))
 
     def upload(self, filename: str, content: bytes) -> dict[str, Any]:
         import gc

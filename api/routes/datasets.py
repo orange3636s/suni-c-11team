@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from api.schemas.datasets import (
     DatasetDeleteResponse,
@@ -20,6 +23,7 @@ from src.runtime.datasets import (
 from src.runtime.store import RuntimeStore
 from src.upload_limits import max_upload_size_bytes, max_upload_size_mb
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 
@@ -30,7 +34,10 @@ def get_dataset_registry() -> DatasetRegistry:
 
 @router.get("", response_model=DatasetListResponse)
 def list_datasets() -> dict[str, Any]:
-    return {"items": get_dataset_registry().list_datasets()}
+    t0 = time.perf_counter()
+    items = get_dataset_registry().list_datasets()
+    logger.info("list_datasets %.1fms (n=%d)", (time.perf_counter() - t0) * 1000, len(items))
+    return {"items": items}
 
 
 @router.post("", response_model=DatasetUploadResponse)
@@ -46,7 +53,10 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"파일이 너무 큽니다 (최대 {max_upload_size_mb()}MB). 현재 {actual_mb:.1f}MB",
         )
-    return get_dataset_registry().upload(filename, content)
+    # CSV parsing + full-dataframe validation is CPU-bound; run off the
+    # event loop so a large upload doesn't stall every other request on
+    # this single-worker process.
+    return await run_in_threadpool(get_dataset_registry().upload, filename, content)
 
 
 @router.delete("/{dataset_id}", response_model=DatasetDeleteResponse)

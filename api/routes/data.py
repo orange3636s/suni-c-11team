@@ -433,7 +433,9 @@ async def validate_csv(
     validation_mode: Annotated[str, Form()] = "training",
 ) -> ValidationResponse:
     filename, dataframe = await _read_csv_upload(file)
-    validation = validate_dataframe(dataframe, validation_mode=validation_mode)
+    validation = await run_in_threadpool(
+        partial(validate_dataframe, dataframe, validation_mode=validation_mode)
+    )
     return ValidationResponse(
         filename=filename,
         row_count=int(dataframe.shape[0]),
@@ -447,7 +449,7 @@ async def preprocess_csv(
     file: UploadFile = File(...),
 ) -> PreprocessResponse:
     filename, dataframe = await _read_csv_upload(file)
-    validation = validate_dataframe(dataframe)
+    validation = await run_in_threadpool(partial(validate_dataframe, dataframe))
     if not validation["is_valid"]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -457,7 +459,7 @@ async def preprocess_csv(
             },
         )
 
-    processed, report = preprocess_dataframe(dataframe)
+    processed, report = await run_in_threadpool(preprocess_dataframe, dataframe)
     filled_missing_values = sum(
         int(count) for count in report["imputed_counts"].values()
     )
@@ -795,6 +797,7 @@ async def train_model(
 async def create_training_job(
     file: UploadFile = File(...),
 ) -> TrainJobAccepted:
+    t0 = time.perf_counter()
     manager = get_training_job_manager()
     job_id = new_training_job_id()
     try:
@@ -836,12 +839,15 @@ async def create_training_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="학습 Job을 등록하지 못했습니다.",
         ) from exc
+    logger.info("create_training_job %.1fms (job_id=%s)", (time.perf_counter() - t0) * 1000, job_id)
     return TrainJobAccepted(job_id=job_id)
 
 
 @router.get("/train/jobs/{job_id}", response_model=TrainJobStatus)
 def get_training_job(job_id: str) -> TrainJobStatus:
+    t0 = time.perf_counter()
     row = get_training_job_manager().get(job_id)
+    logger.info("get_training_job %.1fms (job_id=%s)", (time.perf_counter() - t0) * 1000, job_id)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

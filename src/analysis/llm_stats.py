@@ -12,9 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import statsmodels.formula.api as smf
 from scipy import stats
-from statsmodels.stats.power import FTestAnovaPower
 
 from src.analysis.recommendations import _recommended_range_raw
 from src.analysis.screening.effect_size import eps2_categorical
@@ -61,6 +59,8 @@ def chamber_interaction_p(df: pd.DataFrame, feature: str, target: str, config_co
     d = d.assign(CH=_chamber_column(d, config_col))
     if d["CH"].nunique() < 2:
         return None
+    import statsmodels.formula.api as smf  # deferred: ~1s import cost, only paid when this factor actually needs it
+
     try:
         model = smf.ols("yv ~ x * C(CH)", data=d).fit()
         param_index = list(model.params.index)
@@ -159,6 +159,8 @@ def config_main_effect_screening(
 
     mde_eps2: float | None = None
     if median_k and median_k >= 2 and median_n > median_k:
+        from statsmodels.stats.power import FTestAnovaPower  # deferred: see chamber_interaction_p
+
         try:
             f_req = FTestAnovaPower().solve_power(
                 effect_size=None, nobs=median_n, alpha=0.05, power=0.8, k_groups=median_k
