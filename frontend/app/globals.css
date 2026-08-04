@@ -8113,8 +8113,10 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
      to the scrollable box itself, not to dead space inside it).
      --chip-float-height is measured live via ResizeObserver (see
      AiPanel.tsx); 60px is only the first-paint fallback before that
-     measurement lands. */
-  height: calc(100% - var(--chip-float-height, 60px) - 20px);
+     measurement lands. The trailing 24px, combined with the chip block's
+     own bottom:12px, is what puts exactly 12px between the conversation
+     area and row 1 (spec: "대화 영역 하단과 1행 사이 12px"). */
+  height: calc(100% - var(--chip-float-height, 60px) - 24px);
   /* Bottom of the (now-shortened) message list fades out instead of
      ending on a hard edge -- non-linear stops so the fade itself doesn't
      read as a visible band (spec: "선이 보이면 안 된다"). Applies
@@ -8137,31 +8139,17 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
     transparent 100%
   );
 }
-/* Floating example-chip block -- a card hovering over the conversation,
-   not a fixed bar (spec A-3). 12px inset on both sides is what reads as
-   "floating" rather than "docked"; shadow only downward, no top border
-   (a divider would make it look like a section boundary instead of a
-   card sitting above the content). Opacity is always 1 -- overlap with
-   scrolled content is solved structurally (the message list's own height
-   + fade above), not by dimming this block (spec: "블록 불투명도를 조절하는
-   로직은 만들지 마라"). */
+/* Floating example-chip block -- layout only, no visual container (spec
+   재지시: "흰색 카드 컨테이너 제거"). The chips themselves (opaque
+   background + border, see .aiPanelMarqueeChip) are what stays legible
+   over the conversation; this element only positions the two rows
+   (position:absolute, 12px side inset, 12px above the input area) and
+   spaces them apart. */
 .aiPanelChipFloat{
   position: absolute;
   left: 12px; right: 12px; bottom: 12px;
   z-index: 5;
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 10px 12px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
-}
-html[data-theme="dark"] .aiPanelChipFloat{
-  background: rgba(44, 44, 46, 0.78);
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  display: flex; flex-direction: column; gap: 8px;
 }
 .aiPanelChipFloat .aiPanelMarquee{ margin: 0; }
 .aiPanelRow{ display: flex; align-items: flex-end; gap: 6px; }
@@ -8260,8 +8248,8 @@ html[data-theme="dark"] .aiPanelChip:hover{ background: rgba(255, 255, 255, 0.08
   overflow: hidden;
   position: relative;
   margin: 6px 0;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
 }
 .aiPanelMarqueeTrack{
   display: flex;
@@ -8287,17 +8275,22 @@ html[data-theme="dark"] .aiPanelChip:hover{ background: rgba(255, 255, 255, 0.08
   from{ transform: translateX(-50%); }
   to{ transform: translateX(0); }
 }
+/* Background is a solid off-white/off-black, not var(--surface-card) --
+   now that the chips sit directly on the conversation background with no
+   card behind them, an exact page-color match would make them blend in
+   and the mask fade wouldn't read against the page (spec: "칩 배경이
+   불투명해 뒤 메시지가 비치지 않아야"). */
 .aiPanelMarqueeChip{
   display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
   padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer; white-space: nowrap;
-  border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: var(--surface-card, #fff); color: inherit;
+  border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: #F6F7F9; color: inherit;
 }
 .aiPanelMarqueeChip:hover{ background: rgba(0, 0, 0, 0.05); }
 .aiPanelMarqueeChip:disabled{ opacity: .45; cursor: not-allowed; }
 /* Icon reads as part of the label, not a separate accent -- same muted
    tone as the chip text, never louder than it. */
 .aiPanelMarqueeChip svg{ flex: 0 0 auto; color: var(--text-secondary, currentColor); opacity: .7; }
-html[data-theme="dark"] .aiPanelMarqueeChip{ background: #2C2C2E; border-color: rgba(255,255,255,.12); }
+html[data-theme="dark"] .aiPanelMarqueeChip{ background: #2F2F31; border-color: rgba(255,255,255,.12); }
 html[data-theme="dark"] .aiPanelMarqueeChip:hover{ background: rgba(255, 255, 255, 0.08); }
 
 @media (prefers-reduced-motion: reduce){
