@@ -7898,9 +7898,12 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   --shell-margin: 16px;
   --header-height: 60px;
   /* Both panels' top edge, collapsed or open -- one variable so left rail
-     and right circle can never drift apart, with 24px clearance below the
-     header (Current Time row) instead of sitting flush against it. */
-  --panel-top-offset: calc(var(--header-height) + 24px);
+     and right circle can never drift apart. --panel-top-gap (16px, spec
+     재지시: 좌우 사이드바 높이 확장) is its own named variable rather than
+     inlined here so both this offset and anything else that needs "the
+     same gap the panels use" can reference one source. */
+  --panel-top-gap: 16px;
+  --panel-top-offset: calc(var(--header-height) + var(--panel-top-gap));
   --shell-radius: 20px;
   --shell-block-radius: 14px;
   --shell-block-height: 48px;
@@ -8096,8 +8099,71 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
   padding: 0 !important; margin-top: 14px !important;
 }
 
-/* AI panel: expanded chat shell */
-.aiPanelMessages{ flex: 1 1 auto; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+/* AI panel: expanded chat shell.
+   .aiPanelBody is the flex-grow slot that used to belong to
+   .aiPanelMessages directly -- it's now split in two so the floating chip
+   block (position:absolute, spec 재지시 A-3) can anchor to its bottom edge
+   (== the input area's top edge, since they're adjacent flex siblings)
+   without needing a separately-measured "composer height" variable. */
+.aiPanelBody{ flex: 1 1 auto; min-height: 0; position: relative; }
+.aiPanelMessages{
+  overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px;
+  /* Reserves room for the floating block (spec: "padding-bottom 방식이
+     아니다" -- an explicit height, not padding, so the mask below applies
+     to the scrollable box itself, not to dead space inside it).
+     --chip-float-height is measured live via ResizeObserver (see
+     AiPanel.tsx); 60px is only the first-paint fallback before that
+     measurement lands. */
+  height: calc(100% - var(--chip-float-height, 60px) - 20px);
+  /* Bottom of the (now-shortened) message list fades out instead of
+     ending on a hard edge -- non-linear stops so the fade itself doesn't
+     read as a visible band (spec: "선이 보이면 안 된다"). Applies
+     unconditionally, including when there's nothing to scroll -- a mask
+     with nothing under the fade zone is simply invisible. */
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 48px),
+    rgba(0, 0, 0, 0.85) calc(100% - 34px),
+    rgba(0, 0, 0, 0.45) calc(100% - 18px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 48px),
+    rgba(0, 0, 0, 0.85) calc(100% - 34px),
+    rgba(0, 0, 0, 0.45) calc(100% - 18px),
+    transparent 100%
+  );
+}
+/* Floating example-chip block -- a card hovering over the conversation,
+   not a fixed bar (spec A-3). 12px inset on both sides is what reads as
+   "floating" rather than "docked"; shadow only downward, no top border
+   (a divider would make it look like a section boundary instead of a
+   card sitting above the content). Opacity is always 1 -- overlap with
+   scrolled content is solved structurally (the message list's own height
+   + fade above), not by dimming this block (spec: "블록 불투명도를 조절하는
+   로직은 만들지 마라"). */
+.aiPanelChipFloat{
+  position: absolute;
+  left: 12px; right: 12px; bottom: 12px;
+  z-index: 5;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+html[data-theme="dark"] .aiPanelChipFloat{
+  background: rgba(44, 44, 46, 0.78);
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.aiPanelChipFloat .aiPanelMarquee{ margin: 0; }
 .aiPanelRow{ display: flex; align-items: flex-end; gap: 6px; }
 .aiPanelRow-user{ justify-content: flex-end; }
 .aiPanelBubbleAvatar{ width: 28px; flex: 0 0 28px; }

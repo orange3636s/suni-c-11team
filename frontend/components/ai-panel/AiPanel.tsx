@@ -55,6 +55,10 @@ const REPORT_KEYWORD_PATTERN = /보고서|리포트|report|요약해줘|정리�
 const TYPEWRITER_INTERVAL_MS = 14;
 const AUTO_SCROLL_THRESHOLD_PX = 40;
 const HISTORY_MESSAGES = 4; // last 2 user/suni turns
+// Trailing spacer so the last real message always lands in the mask's fully
+// opaque zone, never the fade -- must be >= the fade band's own length
+// (48px) or the last line would still dim on auto-scroll.
+const MESSAGE_LIST_BOTTOM_SPACER_PX = 56;
 
 export default function AiPanel({
   open,
@@ -72,6 +76,8 @@ export default function AiPanel({
   const [lastRequest, setLastRequest] = useState<{ message: string; mode: ChatMode } | null>(null);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const chipFloatRef = useRef<HTMLDivElement | null>(null);
   const cancelRef = useRef<{ cancel: () => void } | null>(null);
   const queueRef = useRef<string[]>([]);
   const doneRef = useRef(false);
@@ -81,6 +87,22 @@ export default function AiPanel({
   useEffect(() => {
     messagesStateRef.current = messages;
   }, [messages]);
+
+  // Measures the floating chip block's real rendered height so the message
+  // list can reserve exactly that much room (spec: "하드코딩하지 마라") --
+  // a fixed guess would drift the moment the block's own content wraps
+  // differently (font scaling, browser zoom, translation-length changes).
+  useEffect(() => {
+    const el = chipFloatRef.current;
+    const body = bodyRef.current;
+    if (!el || !body) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height != null) body.style.setProperty("--chip-float-height", `${height}px`);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -258,7 +280,8 @@ export default function AiPanel({
 
         {open && (
           <>
-            <div className="aiPanelMessages" ref={messagesRef} onScroll={handleMessagesScroll}>
+            <div className="aiPanelBody" ref={bodyRef}>
+              <div className="aiPanelMessages" ref={messagesRef} onScroll={handleMessagesScroll}>
               {messages.map((message, index) => {
                 const showAvatar = message.from === "suni" && messages[index - 1]?.from !== "suni";
                 const isReport = message.from === "suni" && message.kind === "report";
@@ -325,27 +348,36 @@ export default function AiPanel({
                         </button>
                       </div>
                     )}
-                    {message.id === WELCOME_ID && (
-                      <>
-                        <MarqueeRow
-                          chips={MARQUEE_ROW_1}
-                          direction="left"
-                          disabled={streaming}
-                          reducedMotion={reducedMotion}
-                          onSend={(text) => send(text)}
-                        />
-                        <MarqueeRow
-                          chips={MARQUEE_ROW_2}
-                          direction="right"
-                          disabled={streaming}
-                          reducedMotion={reducedMotion}
-                          onSend={(text) => send(text)}
-                        />
-                      </>
-                    )}
                   </div>
                 );
               })}
+              {/* Keeps the last real message out of the mask's fade band
+                  (spec §8-5) -- without this, scrollTop=scrollHeight lands
+                  the final line exactly in the fully-transparent zone. */}
+              <div aria-hidden="true" style={{ height: MESSAGE_LIST_BOTTOM_SPACER_PX, flex: "0 0 auto" }} />
+              </div>
+
+              {/* Floating block: marquee rows only -- "분석 보고서 생성" stays
+                  attached to the welcome bubble above and scrolls with the
+                  conversation (spec A-1/A-2). Rendered unconditionally
+                  (never tied to message count or a collapse toggle) so it
+                  can never disappear as the conversation grows. */}
+              <div className="aiPanelChipFloat" ref={chipFloatRef}>
+                <MarqueeRow
+                  chips={MARQUEE_ROW_1}
+                  direction="left"
+                  disabled={streaming}
+                  reducedMotion={reducedMotion}
+                  onSend={(text) => send(text)}
+                />
+                <MarqueeRow
+                  chips={MARQUEE_ROW_2}
+                  direction="right"
+                  disabled={streaming}
+                  reducedMotion={reducedMotion}
+                  onSend={(text) => send(text)}
+                />
+              </div>
             </div>
 
             <div className="aiPanelInputArea">
