@@ -8406,14 +8406,14 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    clamped 28~48px with the plot centered when the container is wider
    than the bars need, horizontal-scrolling only when it's narrower than
    the 28px-bar floor allows. */
-.paretoChartCard{ display: flex; flex-direction: column; gap: 4px; padding: 24px; }
-.paretoChartHeader{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.paretoChartCard{ display: flex; flex-direction: column; gap: 4px; padding: 24px 24px 20px; }
+.paretoChartHeader{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .paretoChartHeader h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
 
 /* This 6px gap (axisCol <-> plotScroll) plus the tick text sitting flush
    against its own tickCol edge is the "눈금 숫자 <-> 축선 6px" leg of the
    spec §1 budget below -- already correct, not touched here. */
-.paretoChartBody{ display: flex; align-items: stretch; gap: 6px; }
+.paretoChartBody{ display: flex; align-items: stretch; justify-content: center; gap: 6px; }
 /* A prior pass misread this bug as "title crowds the ticks" and widened
    the gap to 10px -- backwards. The actual bug (spec §1 re-instruction):
    the title sits at the outer card edge, far from the ticks, because
@@ -8441,19 +8441,25 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .paretoAxisCol-left .paretoTick{ right: 0; text-align: right; }
 .paretoAxisCol-right .paretoTick{ left: 0; text-align: left; }
 
-.paretoPlotScroll{ flex: 1 1 auto; min-width: 0; overflow-x: auto; }
-/* `margin: 0 auto` here (spec §3 재지시's actual root cause, candidate #2/#3
-   combined) was centering the bars inside .paretoPlotScroll -- which is a
-   flex:1 sibling that grows to fill whatever width is left over, so
-   whenever the bar count is small enough that the plot is narrower than
-   that leftover space (the common case), the axis line drifted right by
-   the centering offset while the axis-title columns (fixed-width flex
-   siblings, not inside this centered box) stayed put. The title's real
-   on-screen distance from the axis grew with that drift instead of
-   staying pinned to the small constant set on .paretoAxisCol -- that's
-   why the previous gap tuning never actually closed the visual distance.
-   Left-aligning removes the drift entirely: the axis line now always
-   sits immediately after the tick column, regardless of bar count. */
+/* flex-grow:0 (not 1) is the actual fix for "right axis stuck at the card
+   edge with a gap before it": with grow:1 this box filled all leftover
+   row space and the plot (sized to content, left-aligned inside it) sat
+   flush left, so .paretoAxisCol-right -- the next fixed-width flex
+   sibling -- got pushed all the way to the far edge of the row. Sizing
+   this box to its own content instead means the whole row (left axis +
+   plot + right axis) is only as wide as the 5 bars actually need, so the
+   right axis now sits immediately after the plot with just the row's 6px
+   gap, symmetric with the left side.
+   A prior attempt centered content *inside* this box via margin:auto on
+   .paretoPlotCenterer while leaving flex:1 here -- that only recentered
+   the bars within the oversized box; the axis columns, being separate
+   siblings sized independently, didn't move with them and drifted out
+   of sync. Centering the row as a whole (see .paretoChartBody's
+   justify-content:center) avoids that: every item in the row, axes
+   included, is sized to content, so centering the row centers everything
+   together. flex-shrink stays 1 with min-width:0 so narrow cards still
+   shrink this box below content size and hand off to overflow-x:auto. */
+.paretoPlotScroll{ flex: 0 1 auto; min-width: 0; overflow-x: auto; }
 .paretoPlotCenterer{ display: flex; flex-direction: column; align-items: center; width: fit-content; max-width: 100%; }
 .paretoPlotArea{
   position: relative;
@@ -8493,8 +8499,12 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   transform: rotate(-90deg); transform-origin: right center; white-space: nowrap; max-width: none;
   position: relative; right: 0; text-align: right;
 }
-.paretoAxisTitle{ margin: 2px 0 0; text-align: center; font-size: 11px; color: var(--text-secondary); }
-.paretoCaption{ margin: 6px 0 0; font-size: 12.5px; color: var(--text-secondary); text-align: right; }
+/* 12px from the feature-name labels to this title: the labels' own box
+   (.paretoFeatureLabels, sized in ParetoChart.tsx) is trimmed to the
+   flat-label case's actual text height, so this margin is the whole gap
+   -- not fighting a tall fixed box sized for the rotated case. */
+.paretoAxisTitle{ margin: 12px 0 0; text-align: center; font-size: 11px; color: var(--text-secondary); }
+.paretoCaption{ margin: 16px 0 0; font-size: 12.5px; color: var(--text-secondary); text-align: center; }
 .paretoLegend{ display: flex; gap: 16px; font-size: 11.5px; color: var(--text-secondary); flex-wrap: wrap; }
 .paretoLegend span{ display: inline-flex; align-items: center; gap: 6px; }
 .paretoLegendInline{ margin-top: 2px; }

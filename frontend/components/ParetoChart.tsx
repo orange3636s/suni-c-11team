@@ -8,8 +8,14 @@ const MAX_BAR = 48;
 const MIN_BAR = 28;
 const PADDING = 56;
 const PLOT_HEIGHT = 360;
-const LABEL_HEIGHT = 84;
+const FLAT_LABEL_HEIGHT = 18; // one horizontal line of label text, tightly boxed
+const ROTATED_LABEL_HEIGHT = 84; // -90deg labels need room to run vertically
 const LABEL_MIN_GAP = 4; // px of breathing room required between adjacent horizontal labels
+// Fixed widths from .paretoAxisCol (label 14 + gap 8 + tickCol 22 = 44) on
+// each side, plus the two 6px gaps in .paretoChartBody -- the space the
+// axis columns always take up and that computeBarLayout must not offer to
+// the plot, or the plot claims width the flex row can't actually give it.
+const AXIS_RESERVED_WIDTH = 44 * 2 + 6 * 2;
 const LEFT_TICKS = [0, 25, 50, 75, 100];
 const RIGHT_TICKS = [0, 20, 40, 60, 80, 100];
 const LABEL_FONT = "10px var(--font-ui, system-ui, sans-serif)";
@@ -88,7 +94,8 @@ export default function ParetoChart({
   const reached80 = items.length > 0 && items[items.length - 1].cumulative_pct >= 80;
   const lastPct = items.length > 0 ? items[items.length - 1].cumulative_pct : 0;
 
-  const layout = useMemo(() => computeBarLayout(Math.max(n, 1), containerWidth), [n, containerWidth]);
+  const plotAvailableWidth = Math.max(containerWidth - AXIS_RESERVED_WIDTH, MIN_BAR);
+  const layout = useMemo(() => computeBarLayout(Math.max(n, 1), plotAvailableWidth), [n, plotAvailableWidth]);
 
   const rotateLabels = useMemo(() => {
     if (n < 2) return false;
@@ -226,7 +233,7 @@ export default function ParetoChart({
 
             <div
               className={`paretoFeatureLabels ${rotateLabels ? "rotated" : ""}`}
-              style={{ width: layout.plotWidth, height: LABEL_HEIGHT }}
+              style={{ width: layout.plotWidth, height: rotateLabels ? ROTATED_LABEL_HEIGHT : FLAT_LABEL_HEIGHT }}
             >
               {items.map((item, i) => (
                 <span
