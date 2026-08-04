@@ -269,6 +269,22 @@ class ReportEvalResultSchema(BaseModel):
     mean_y_normal: float | None
 
 
+class ReportWindowSchema(BaseModel):
+    lo: float
+    hi: float
+    mean_in_window: float | None
+    mean_overall: float
+    ratio: float | None
+    n_in_window: int
+
+
+class ReportPerChamberWindowSchema(BaseModel):
+    lo: float
+    hi: float
+    ratio: float | None
+    n: int
+
+
 class ReportFactorSchema(BaseModel):
     feature: str
     kind: str
@@ -281,11 +297,19 @@ class ReportFactorSchema(BaseModel):
     p_value: float
     q_value: float
     grade: str
+    report_confidence: str
     n_observed: int
     n_missing_pct: float
     relation: ReportRelationSchema
     binned_profile: list[dict[str, float]]
     control_limits: ReportControlLimitsSchema
+    band_stability: float
+    band_width: float | None
+    window: ReportWindowSchema | None
+    chamber_interaction: bool
+    chamber_interaction_p: float | None
+    chamber_interaction_q: float | None
+    per_chamber_window: dict[str, ReportPerChamberWindowSchema] | None
     eval_result: ReportEvalResultSchema
 
 
@@ -300,6 +324,43 @@ class ReportTargetEntrySchema(BaseModel):
     target: str
     target_stats: ReportTargetStatsSchema
     factors: list[ReportFactorSchema] = Field(default_factory=list)
+
+
+# ContextFactorSchema mirrors ReportFactorSchema minus `binned_profile` --
+# build_chat_context drops that field (chart-plotting data no chatbot
+# prompt reads) to make room in the context's size budget for individual
+# alarm/recommendation records instead.
+class ContextFactorSchema(BaseModel):
+    feature: str
+    kind: str
+    step: int
+    rank: int
+    eps2: float
+    contribution_pct: float
+    cumulative_pct: float
+    spearman_rho: float | None
+    p_value: float
+    q_value: float
+    grade: str
+    report_confidence: str
+    n_observed: int
+    n_missing_pct: float
+    relation: ReportRelationSchema
+    control_limits: ReportControlLimitsSchema
+    band_stability: float
+    band_width: float | None
+    window: ReportWindowSchema | None
+    chamber_interaction: bool
+    chamber_interaction_p: float | None
+    chamber_interaction_q: float | None
+    per_chamber_window: dict[str, ReportPerChamberWindowSchema] | None
+    eval_result: ReportEvalResultSchema
+
+
+class ContextTargetEntrySchema(BaseModel):
+    target: str
+    target_stats: ReportTargetStatsSchema
+    factors: list[ContextFactorSchema] = Field(default_factory=list)
 
 
 class ReportAlarmRecordSchema(BaseModel):
@@ -319,6 +380,16 @@ class ReportAlarmRecordSchema(BaseModel):
     actual_y_final: float | None
 
 
+class ReportConfigScreeningSchema(BaseModel):
+    n_tested: int
+    n_significant_fdr: int
+    max_observed_eps2: float | None
+    max_observed_feature: str | None
+    max_observed_target: str | None
+    mde_eps2: float | None
+    median_n_per_group: int | None
+
+
 class AnalysisReportResponse(BaseModel):
     meta: dict[str, Any]
     method: ReportMethodSchema
@@ -326,4 +397,83 @@ class AnalysisReportResponse(BaseModel):
     targets: list[ReportTargetEntrySchema]
     alarms: list[ReportAlarmRecordSchema]
     recommendations: list[RecommendationItemSchema] = Field(default_factory=list)
+    config_screening: ReportConfigScreeningSchema
+    limitations: list[str]
+
+
+# ---------------------------------------------------------------------------
+# SUNI chatbot context (/api/analysis/context): same report, but `alarms`/
+# `recommendations` are grouped into {summary, records[, records_truncated,
+# records_total]} instead of a flat list, so the LLM can cite an individual
+# wafer's alarm/recommendation record, not just the aggregate counts.
+# ---------------------------------------------------------------------------
+
+
+class ContextAlarmRecordSchema(BaseModel):
+    lot_wafer_id: str
+    lot_id: str | None
+    wafer_slot: int | None
+    step: int
+    feature: str
+    kind: str
+    target: str
+    value: float
+    control_band: list[float | None]
+    deviation: float
+    direction: str
+    severity: str
+    actual_y_target: float | None
+    actual_y_final: float | None
+    config: str | None
+
+
+class ContextAlarmsSummarySchema(BaseModel):
+    n_wafers: int
+    n_records: int
+    mean_yield_alarm: float | None
+    mean_yield_normal: float | None
+    normal_wafers: int
+    undecidable_wafers: int
+
+
+class ContextAlarmsSchema(BaseModel):
+    summary: ContextAlarmsSummarySchema
+    records: list[ContextAlarmRecordSchema]
+    records_truncated: bool
+    records_total: int
+
+
+class ContextRecommendationRecordSchema(BaseModel):
+    lot_wafer_id: str
+    lot_id: str | None
+    step: int
+    feature: str
+    kind: str
+    target: str
+    value: float
+    recommended_range: list[float]
+    direction: str
+    expected_reduction_pct: float | None
+    tag: str
+
+
+class ContextRecommendationsSummarySchema(BaseModel):
+    n_records: int
+
+
+class ContextRecommendationsSchema(BaseModel):
+    summary: ContextRecommendationsSummarySchema
+    records: list[ContextRecommendationRecordSchema]
+    records_truncated: bool
+    records_total: int
+
+
+class AnalysisContextResponse(BaseModel):
+    meta: dict[str, Any]
+    method: ReportMethodSchema
+    summary: ReportSummarySchema
+    targets: list[ContextTargetEntrySchema]
+    alarms: ContextAlarmsSchema
+    recommendations: ContextRecommendationsSchema
+    config_screening: ReportConfigScreeningSchema
     limitations: list[str]

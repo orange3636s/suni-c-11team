@@ -5,12 +5,13 @@ from functools import lru_cache
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from api.routes.datasets import get_dataset_registry
 from api.schemas.analysis import (
     AlarmListResponse,
     AlarmSummaryResponse,
+    AnalysisContextResponse,
     AnalysisReportResponse,
     CategoricalScatterResponse,
     ControlRangeListResponse,
@@ -27,7 +28,7 @@ from src.analysis.control_range import (
     summarize_wafer_status,
 )
 from src.analysis.recommendations import compute_recommendations
-from src.analysis.report import build_analysis_report
+from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
@@ -415,13 +416,10 @@ def get_recommendations(train: str = "train", eval: str = "test") -> dict[str, A
     }
 
 
-@router.get("/analysis/report", response_model=AnalysisReportResponse)
-def get_analysis_report(dataset: str = "train") -> dict[str, Any]:
-    """Full JSON analysis report -- always denominated by the full
-    R+D+Config pool, matching the screen now that the R/D/Config split
-    view has been removed entirely (see build_analysis_report's
-    docstring for why the factor list and the alarm list use different,
-    deliberately non-interchangeable factor sets).
+def _build_report_payload(dataset: str) -> dict[str, Any]:
+    """The one function backing both /api/analysis/report (JSON download)
+    and /api/analysis/context (SUNI chatbot context) -- same dict, so the
+    chatbot never narrates a number the download button wouldn't also show.
     """
     registry = get_dataset_registry()
     train_df = _dataframe_or_404(dataset)
@@ -438,6 +436,31 @@ def get_analysis_report(dataset: str = "train") -> dict[str, Any]:
         app_version=APP_VERSION,
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
     )
+
+
+@router.get("/analysis/report", response_model=AnalysisReportResponse)
+def get_analysis_report(dataset: str = "train", *, response: Response) -> dict[str, Any]:
+    """Full JSON analysis report -- always denominated by the full
+    R+D+Config pool, matching the screen now that the R/D/Config split
+    view has been removed entirely (see build_analysis_report's
+    docstring for why the factor list and the alarm list use different,
+    deliberately non-interchangeable factor sets).
+    """
+    response.headers["Content-Disposition"] = f'attachment; filename="analysis_report_{dataset}.json"'
+    return _build_report_payload(dataset)
+
+
+@router.get("/analysis/context", response_model=AnalysisContextResponse)
+def get_analysis_context(dataset: str = "train", *, response: Response) -> dict[str, Any]:
+    """The SUNI chatbot's grounding context -- same underlying report as
+    /api/analysis/report, but `alarms`/`recommendations` are reshaped into
+    `{summary, records}` (see build_chat_context's docstring) so the
+    chatbot can answer a question about one specific wafer's alarm, not
+    just the aggregate counts. No Content-Disposition, and explicitly
+    non-cached since the frontend calls this right before /api/chat.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return build_chat_context(_build_report_payload(dataset))
 
 
 @router.get("/models/performance", response_model=ModelPerformanceResponse)

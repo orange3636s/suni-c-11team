@@ -8114,20 +8114,103 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
 }
 .aiPanelInputArea{ padding: 12px 16px 16px; border-top: 1px solid var(--border-card, rgba(0,0,0,.08)); }
 .aiPanelInputRow{ display: flex; gap: 8px; }
-.aiPanelInputRow input{
-  flex: 1 1 auto; min-width: 0; min-height: 38px; padding: 0 12px; border-radius: 12px;
+.aiPanelInputRow textarea{
+  flex: 1 1 auto; min-width: 0; min-height: 38px; max-height: 120px; padding: 8px 12px; border-radius: 12px;
   border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: var(--surface, transparent);
-  color: inherit; font: inherit;
+  color: inherit; font: inherit; resize: none; line-height: 1.4;
 }
 .aiPanelSendButton{
   flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; border: none;
   background: #1D4ED8; color: #fff; display: inline-flex; align-items: center; justify-content: center;
-  cursor: pointer;
+  cursor: pointer; align-self: flex-end;
 }
 .aiPanelSendButton:disabled{ opacity: .4; cursor: not-allowed; }
 .aiPanelCaption{ margin: 8px 0 0; font-size: 11px; color: var(--text-secondary, #6e6e73); }
+.aiPanelFooterCaption{ margin: 6px 0 0; font-size: 10px; color: var(--text-secondary, #8a8a8f); text-align: center; }
 
 html[data-theme="dark"] .aiPanelBubble-suni{ background: #2C2C2E; border-color: rgba(255,255,255,.1); }
+
+/* Report responses break out of the bubble width -- a report has tables
+   and headings that need the panel's full width, not a 78% chat bubble. */
+.aiPanelBubble-report{ max-width: 100%; width: 100%; }
+.aiPanelRow:has(.aiPanelBubble-report){ width: 100%; }
+
+.aiPanelAiBadge{
+  display: inline-block; margin-bottom: 6px; padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  background: rgba(29, 78, 216, 0.12); color: #1D4ED8;
+}
+html[data-theme="dark"] .aiPanelAiBadge{ background: rgba(96, 148, 255, 0.18); color: #9db8ff; }
+
+.aiPanelBubble-errorState{ border-color: rgba(220, 38, 38, 0.4); }
+.aiPanelRetryButton{
+  display: inline-flex; margin-top: 8px; padding: 5px 12px; border-radius: 8px; border: none;
+  background: #DC2626; color: #fff; font-size: 12px; cursor: pointer;
+}
+
+.aiPanelReportActions{ display: flex; gap: 8px; margin-top: 10px; }
+.aiPanelReportActions button{
+  padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border-card, rgba(0,0,0,.12));
+  background: var(--surface, transparent); color: inherit; font-size: 12px; cursor: pointer;
+}
+.aiPanelReportActions button:hover{ background: rgba(0, 0, 0, 0.05); }
+html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255, 255, 255, 0.08); }
+
+.aiPanelTypingDots{ display: inline-flex; gap: 3px; padding: 4px 2px; }
+.aiPanelTypingDots span{
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary, #9a9aa0);
+  animation: aiPanelTypingBounce 1.1s infinite ease-in-out;
+}
+.aiPanelTypingDots span:nth-child(2){ animation-delay: .15s; }
+.aiPanelTypingDots span:nth-child(3){ animation-delay: .3s; }
+@keyframes aiPanelTypingBounce{
+  0%, 60%, 100%{ transform: translateY(0); opacity: .5; }
+  30%{ transform: translateY(-4px); opacity: 1; }
+}
+
+/* 4 chips (분석 보고서 생성 + 3 예시 질문) -- 2열 그리드로 고정 배치한다
+   (spec 재지시). 칩이 셀 폭을 채우도록 해 들쭉날쭉한 flex-wrap 대신 가지런한
+   2x2 블록으로 보이게 한다. */
+.aiPanelChipRow{
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 8px;
+  margin: 4px 0 10px 34px;
+}
+.aiPanelChip{
+  width: 100%; padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: var(--surface-card, #fff); color: inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.aiPanelChip:hover{ background: rgba(0, 0, 0, 0.05); }
+.aiPanelChip:disabled{ opacity: .45; cursor: not-allowed; }
+.aiPanelChipPrimary{ background: #1D4ED8; color: #fff; border-color: #1D4ED8; }
+.aiPanelChipPrimary:hover{ background: #1B45C4; }
+.aiPanelChipPrimary:disabled{ background: #1D4ED8; }
+html[data-theme="dark"] .aiPanelChip{ background: #2C2C2E; border-color: rgba(255,255,255,.12); }
+html[data-theme="dark"] .aiPanelChip:hover{ background: rgba(255, 255, 255, 0.08); }
+
+/* Markdown content inside SUNI's report/chat bubbles -- keep spacing tight,
+   the bubble is already padded. */
+.aiPanelMarkdown{ font-size: 13px; line-height: 1.6; }
+.aiPanelMarkdown > *:first-child{ margin-top: 0; }
+.aiPanelMarkdown > *:last-child{ margin-bottom: 0; }
+.aiPanelMarkdown h1, .aiPanelMarkdown h2, .aiPanelMarkdown h3{ margin: 14px 0 6px; font-size: 1em; font-weight: 700; }
+.aiPanelMarkdown h1{ font-size: 1.15em; }
+.aiPanelMarkdown h2{ font-size: 1.08em; }
+.aiPanelMarkdown p{ margin: 6px 0; }
+.aiPanelMarkdown ul, .aiPanelMarkdown ol{ margin: 6px 0; padding-left: 20px; }
+.aiPanelMarkdown li{ margin: 2px 0; }
+.aiPanelMarkdown strong{ font-weight: 700; }
+.aiPanelMarkdown code{ font-size: .9em; padding: 1px 4px; border-radius: 4px; background: rgba(0,0,0,.06); }
+html[data-theme="dark"] .aiPanelMarkdown code{ background: rgba(255,255,255,.1); }
+.aiPanelMarkdown table{
+  width: 100%; border-collapse: collapse; margin: 10px 0; font-size: .92em;
+  display: block; overflow-x: auto;
+}
+.aiPanelMarkdown th, .aiPanelMarkdown td{
+  border: 1px solid var(--border-card, rgba(0,0,0,.12)); padding: 5px 8px; text-align: left; white-space: nowrap;
+}
+.aiPanelMarkdown th{ background: rgba(0,0,0,.04); font-weight: 600; }
+html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); }
 
 /* Sidebar text/icons: fixed light color on the permanently-navy card,
    in both site themes -- see the .shellLogoBlock comment above for why. */
@@ -8817,78 +8900,74 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareTriggerButton:focus-visible{ outline: 3px solid rgba(255,255,255,0.55); outline-offset: 2px; }
 
 /* ===================================================================
-   Table full-bleed inside cards.
+   Table as one rounded block (spec 재지시: 모서리 정리).
 
-   Root cause (reported: header band + row dividers stop short of the
-   card's right edge): .tableWrap was a doubly-nested box -- its own
-   border/radius/background sitting fully inside .resultCard's padding,
-   with the header band painted per-<th> instead of on the row group.
-   Under table-layout:auto, a table with modest cell content (e.g. the
-   2-column benchmark table, or 타깃별 성능's short numeric columns)
-   doesn't reliably stretch every column to consume 100% of that inner
-   box, so the per-cell header background and border-bottom dividers --
-   which only ever paint the width of their own cell -- stopped short,
-   leaving a dead gap before the *inner* wrapper's edge, which itself
-   already sat --card-pad-x inside the card. Fix: the wrapper cancels
-   the card's own padding (so its box == the card's full inner width),
-   the header band is painted on <thead> (a row group always spans the
-   table's full rendered width, independent of individual column
-   sizing), and first/last cells restore the padding so text stays
-   aligned. Same offset variable both directions -- can't drift apart.
+   Previously each corner was rounded piecemeal (border-top-*-radius on
+   the first/last header cell, border-bottom-*-radius on the last row's
+   first/last cell) so the wrapper itself could stay overflow:visible
+   and support horizontal scroll on a narrow viewport. In practice the
+   header's top corners and the last row's bottom corners drifted out
+   of sync with the wrap's own border whenever content didn't line up
+   exactly, and the two radii (wrap vs. card) didn't read as one
+   consistent shape. Simplest fix, per spec: overflow:hidden on the
+   wrap itself clips every child to one radius, so header band, row
+   dividers, and the last row's bottom edge are always exactly as round
+   as the wrap's own border -- no per-cell radius bookkeeping. This
+   sacrifices horizontal scroll for a table wider than its card on a
+   narrow viewport (table-layout:fixed already keeps columns within
+   100% of the wrap, so that path was already rare) -- deliberate
+   trade-off, not an oversight.
+
+   overflow:hidden must never wrap a dropdown menu (spec warning) -- the
+   dataset selector's menu is portaled to document.body precisely so it
+   is never a descendant of any .tableWrap (see .datasetSelectorMenu's
+   own comment), so this is safe as applied here.
    =================================================================== */
 :root{
-  --card-pad-x: var(--space-card, 16px);
   --table-header-bg: #F4F5F7;
+  /* One step smaller than the card's own 16px (--radius-card) so the
+     inner block never reads as "more rounded" than its container. */
+  --table-radius: 12px;
 }
 html[data-theme="dark"]{
   --table-header-bg: #2F2F31;
 }
-.resultCard,
-.uploadCard{
-  /* Clips the full-bleed table's edges to the card's own rounded
-     corners instead of letting them square off past the radius. */
-  overflow: hidden;
-}
 .tableWrap,
 .tableWrapper{
   position: relative;
-  margin-left: calc(-1 * var(--card-pad-x));
-  margin-right: calc(-1 * var(--card-pad-x));
-  width: calc(100% + var(--card-pad-x) * 2);
-  max-width: calc(100% + var(--card-pad-x) * 2);
-  border: none;
-  border-radius: 0;
-  background:
-    linear-gradient(to right, var(--surface-card, var(--surface)) 0, transparent 24px) left / 32px 100% no-repeat local,
-    linear-gradient(to left, var(--surface-card, var(--surface)) 0, transparent 24px) right / 32px 100% no-repeat local;
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--border-card, var(--border));
+  border-radius: var(--table-radius);
+  overflow: hidden;
+  background: var(--surface-card, var(--surface));
 }
 .tableWrap table,
 .tableWrapper table{
   width: 100%;
-  /* Deterministic column widths -- with table-layout:auto, a table
-     specified at width:100% is only guaranteed to reach 100% as a
-     *box*; browsers don't consistently distribute any width left over
-     once every column's own content is satisfied, so trailing space
-     inside that box (after the last cell) is exactly where the header
-     band and row dividers were stopping short. `fixed` removes that
-     ambiguity: the columns' widths always sum to exactly 100%. */
+  /* min-width:0 overrides an older 640px floor set earlier in the
+     cascade (.tableWrap table{min-width:640px}) -- with overflow now
+     hidden, a wider-than-container table would silently clip instead
+     of scrolling, so that floor can't apply here. Deterministic column
+     widths: table-layout:auto only guarantees a table reaches 100% as
+     a *box*, not that leftover width is distributed to any column, so
+     `fixed` is what actually makes the header band and dividers reach
+     the wrap's own edges. */
+  min-width: 0;
   table-layout: fixed;
 }
 .tableWrap thead,
 .tableWrapper thead{
-  /* Row-group background always spans the table's full rendered width,
-     regardless of how table-layout distributes individual column
-     widths -- this is what actually guarantees "edge to edge". */
   background: var(--table-header-bg);
 }
-/* THIS was the sticky-header-turns-transparent bug (spec §5 재지시): a
-   sticky element detaches into its own compositing layer, so a
-   background painted only on the ancestor <thead> row-group doesn't
-   travel with it once the table scrolls underneath -- the `th` itself
-   needs its own fully opaque background, not `transparent`. Cell-level,
-   not thead/tr-level, since that's what actually stays painted on the
-   pinned layer; z-index comes from the established scale (not a raw
-   number) so it stays correctly ordered above scrolled body rows. */
+/* Sticky-header-turns-transparent fix: a sticky element detaches into
+   its own compositing layer, so a background painted only on the
+   ancestor <thead> row-group doesn't travel with it once the table
+   scrolls underneath -- the `th` itself needs its own fully opaque
+   background. `position:sticky;top:0` on .tableWrap th is set earlier
+   in the cascade and left untouched here. */
 .tableWrap th,
 .tableWrapper th{
   background: var(--table-header-bg);
@@ -8906,21 +8985,9 @@ html[data-theme="dark"] .tableWrapper td{
 }
 .tableWrap th:first-child, .tableWrap td:first-child,
 .tableWrapper th:first-child, .tableWrapper td:first-child{
-  padding-left: var(--card-pad-x);
   position: sticky;
   left: 0;
 }
-.tableWrap th:last-child, .tableWrap td:last-child,
-.tableWrapper th:last-child, .tableWrapper td:last-child{
-  padding-right: var(--card-pad-x);
-}
-/* Sticky first column (spec §4-4, and spec §5 재지시's "첫 컬럼도 같은
-   규칙을 적용") needs its own opaque background -- same reasoning as the
-   header fix above: a row-group/table background doesn't "follow" a
-   sticky descendant once it detaches from normal flow while scrolling.
-   The corner cell (th:first-child, sticky on *both* axes) uses the same
-   --z-sticky-seg as the header row so it stays above both the scrolled
-   body and the plain sticky-left column, not the old raw `2`. */
 .tableWrap td:first-child,
 .tableWrapper td:first-child{
   background: var(--surface-card, var(--surface));
@@ -8931,13 +8998,13 @@ html[data-theme="dark"] .tableWrapper td{
   background: var(--table-header-bg);
   z-index: var(--z-sticky-seg);
 }
-/* No divider directly under the header row or under the card's own
-   bottom border -- either would read as a doubled line against the
-   card edge (spec §3/#6). */
 .tableWrap thead tr:first-child th,
 .tableWrapper thead tr:first-child th{
   border-top: none;
 }
+/* No divider under the last row -- the wrap's own bottom border
+   already closes the box; a divider here would read as a doubled
+   line right against it. */
 .tableWrap tbody tr:last-child td,
 .tableWrapper tbody tr:last-child td{
   border-bottom: none;
@@ -8945,6 +9012,39 @@ html[data-theme="dark"] .tableWrapper td{
 .tableWrap .confidenceBadge,
 .tableWrapper .confidenceBadge{
   vertical-align: middle;
+}
+
+/* 데이터 전처리(BENCHMARK) 카드: R² 숫자와 채택 배지를 분리된 컬럼에 둔다
+   (spec 재지시) -- 같은 셀에 두면 배지가 있는 행만 숫자가 왼쪽으로 밀려
+   세 값의 우측 끝이 어긋난다. 배지 유무와 무관하게 3번째 컬럼(빈 셀 포함)
+   을 항상 렌더링해 정렬을 보존한다. */
+.benchmarkTable{
+  table-layout: fixed;
+  border-collapse: collapse;
+  width: 100%;
+}
+.benchmarkTable th:nth-child(1),
+.benchmarkTable td:nth-child(1){
+  width: auto;
+  text-align: left;
+}
+.benchmarkTable th:nth-child(2),
+.benchmarkTable td:nth-child(2){
+  width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.benchmarkTable th:nth-child(3),
+.benchmarkTable td:nth-child(3){
+  width: 64px;
+  text-align: left;
+  padding-left: 8px;
+}
+.benchmarkTableWrap{
+  /* Measured card bottom padding is 18px in this cascade -- add 2px so
+     the table-to-card gap reads as 20px now that the removed caption no
+     longer occupies that space. */
+  margin-bottom: 2px;
 }
 
 /* 원인 분석 실패 안내 (spec §5-2). Same shape family as
@@ -9111,6 +9211,20 @@ html[data-theme="dark"] .recommendationTag.tag-recommended{ border-color: #34D39
   color: var(--text-secondary); cursor: pointer; user-select: none; margin-right: 4px;
 }
 .recommendationToggle input{ cursor: pointer; }
+
+/* 알람/개선 권장 목록의 "해설" 버튼 (spec A-3) -- 작은 외곽선 버튼, 행
+   높이(--scroll-row-h: 42px)를 늘리지 않도록 세로 패딩을 최소로 둔다. */
+.explainButton{
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 18px; padding: 0 7px; border-radius: 999px;
+  border: 1px solid var(--border-card, rgba(0,0,0,.14)); background: transparent;
+  color: var(--text-secondary); font-size: 10.5px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; line-height: 1;
+}
+.explainButton svg{ width: 10px; height: 10px; flex: 0 0 auto; }
+.explainButton:hover:not(:disabled){ background: rgba(29,78,216,.08); color: #1D4ED8; border-color: #1D4ED8; }
+.explainButton:disabled{ opacity: .4; cursor: not-allowed; }
+html[data-theme="dark"] .explainButton:hover:not(:disabled){ background: rgba(96,148,255,.14); color: #9db8ff; border-color: #9db8ff; }
 
 .recommendationDirection{
   display: inline-flex; align-items: center; gap: 2px; font-weight: 600;

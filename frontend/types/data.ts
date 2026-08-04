@@ -641,6 +641,7 @@ export type ReportFactorEntry = {
   p_value: number;
   q_value: number;
   grade: string;
+  report_confidence: string;
   n_observed: number;
   n_missing_pct: number;
   relation: { shape: string; optimal_center: number | null; interpretation: string };
@@ -657,6 +658,20 @@ export type ReportFactorEntry = {
     sigma6: (number | null)[];
     sigma6_drawn: boolean;
   };
+  band_stability: number;
+  band_width: number | null;
+  window: {
+    lo: number;
+    hi: number;
+    mean_in_window: number | null;
+    mean_overall: number;
+    ratio: number | null;
+    n_in_window: number;
+  } | null;
+  chamber_interaction: boolean;
+  chamber_interaction_p: number | null;
+  chamber_interaction_q: number | null;
+  per_chamber_window: Record<string, { lo: number; hi: number; ratio: number | null; n: number }> | null;
   eval_result: { alarms: number; observed: number; mean_y_alarm: number | null; mean_y_normal: number | null };
 };
 
@@ -709,6 +724,15 @@ export type AnalysisReportResponse = {
   };
   targets: ReportTargetEntry[];
   alarms: ReportAlarmRecord[];
+  config_screening: {
+    n_tested: number;
+    n_significant_fdr: number;
+    max_observed_eps2: number | null;
+    max_observed_feature: string | null;
+    max_observed_target: string | null;
+    mde_eps2: number | null;
+    median_n_per_group: number | null;
+  };
   limitations: string[];
 };
 

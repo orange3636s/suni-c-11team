@@ -12,6 +12,7 @@ import {
   useTableSearchSort,
   type SortOption,
 } from "@/components/DataTablePanel";
+import { usePanelState } from "@/components/PanelStateProvider";
 import { getAlarmSummary, getAlarms, getRecommendations } from "@/lib/api";
 import type {
   AlarmItem,
@@ -22,6 +23,26 @@ import type {
 } from "@/types/data";
 
 const SEVERITY_LABEL: Record<string, string> = { low: "낮음", medium: "중간", high: "높음" };
+const RANGE_UNBOUNDED_LO = "-∞";
+const RANGE_UNBOUNDED_HI = "+∞";
+
+function alarmExplainMessage(item: AlarmItem): string {
+  const [lo, hi] = item.normal_range;
+  const rangeText = `${lo != null ? lo.toFixed(1) : RANGE_UNBOUNDED_LO}~${hi != null ? hi.toFixed(1) : RANGE_UNBOUNDED_HI}`;
+  return (
+    `알람: ${item.lot_wafer_id} · ${item.feature} = ${item.value.toFixed(1)} (관리한계 ${rangeText}) · ${item.target}\n` +
+    "이 알람에 대해 설명해 주세요."
+  );
+}
+
+function recommendationExplainMessage(item: RecommendationItem): string {
+  const [lo, hi] = item.recommended_range;
+  const rangeText = `${lo.toFixed(1)}~${hi.toFixed(1)}`;
+  return (
+    `개선 권장: ${item.lot_wafer_id} · ${item.feature} = ${item.value.toFixed(1)} (권장 구간 ${rangeText}) · ${item.target}\n` +
+    "이 항목에 대해 설명해 주세요."
+  );
+}
 const SEVERITY_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const TAG_LABEL: Record<string, string> = { priority: "우선 권장", recommended: "권장", reference: "참고" };
 const TAG_RANK: Record<string, number> = { priority: 3, recommended: 2, reference: 1 };
@@ -88,6 +109,7 @@ const RECOMMENDATION_SORT_OPTIONS: SortOption<RecommendationItem>[] = [
 ];
 
 export default function AlertsPage() {
+  const { analysisDataset, requestChat } = usePanelState();
   const [trainDataset, setTrainDataset] = useState("train");
   const [evalDataset, setEvalDataset] = useState("test");
   const [summary, setSummary] = useState<AlarmSummaryResponse | null>(null);
@@ -245,22 +267,28 @@ export default function AlertsPage() {
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: "12%" }}>Wafer</th>
+                    <th style={{ width: "10%" }}>Wafer</th>
                     <th style={{ width: "8%" }}>LOT</th>
                     <th style={{ width: "6%" }}>Step</th>
-                    <th style={{ width: "13%" }}>인자</th>
+                    <th style={{ width: "11%" }}>인자</th>
                     <th style={{ width: "6%" }}>타깃</th>
-                    <th className="numCol" style={{ width: "8%" }}>값</th>
-                    <th style={{ width: "14%" }}>정상범위</th>
+                    <th className="numCol" style={{ width: "7%" }}>값</th>
+                    <th style={{ width: "12%" }}>정상범위</th>
                     <th className="numCol" style={{ width: "8%" }}>이탈량</th>
                     <th style={{ width: "7%" }}>방향</th>
                     <th style={{ width: "9%" }}>심각성</th>
                     <th className="numCol" style={{ width: "9%" }}>실측값</th>
+                    <th style={{ width: "7%" }} aria-label="해설" />
                   </tr>
                 </thead>
                 <tbody>
                   {alarmTable.sorted.map((item, index) => (
-                    <AlarmRow key={`${item.lot_wafer_id}-${item.feature}-${index}`} item={item} />
+                    <AlarmRow
+                      key={`${item.lot_wafer_id}-${item.feature}-${index}`}
+                      item={item}
+                      onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
+                      explainDisabled={!analysisDataset}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -346,21 +374,27 @@ export default function AlertsPage() {
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: "12%" }}>Wafer</th>
+                    <th style={{ width: "10%" }}>Wafer</th>
                     <th style={{ width: "8%" }}>LOT</th>
                     <th style={{ width: "6%" }}>Step</th>
-                    <th style={{ width: "13%" }}>인자</th>
+                    <th style={{ width: "11%" }}>인자</th>
                     <th style={{ width: "6%" }}>타깃</th>
                     <th className="numCol" style={{ width: "8%" }}>현재값</th>
-                    <th style={{ width: "15%" }}>권장 구간</th>
+                    <th style={{ width: "12%" }}>권장 구간</th>
                     <th style={{ width: "9%" }}>이동 방향</th>
                     <th className="numCol" style={{ width: "9%" }}>기대 개선</th>
                     <th style={{ width: "9%" }}>태그</th>
+                    <th style={{ width: "7%" }} aria-label="해설" />
                   </tr>
                 </thead>
                 <tbody>
                   {recommendationTable.sorted.map((item, index) => (
-                    <RecommendationRow key={`${item.lot_wafer_id}-${item.feature}-${index}`} item={item} />
+                    <RecommendationRow
+                      key={`${item.lot_wafer_id}-${item.feature}-${index}`}
+                      item={item}
+                      onExplain={() => requestChat(recommendationExplainMessage(item), "chat")}
+                      explainDisabled={!analysisDataset}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -414,7 +448,32 @@ function AlarmSummaryCard({
   );
 }
 
-function AlarmRow({ item }: { item: AlarmItem }) {
+function ExplainButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      className="explainButton"
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? "원인 분석을 먼저 실행하세요" : "SUNI에게 이 건에 대해 물어보기"}
+    >
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+      </svg>
+      해설
+    </button>
+  );
+}
+
+function AlarmRow({
+  item,
+  onExplain,
+  explainDisabled,
+}: {
+  item: AlarmItem;
+  onExplain: () => void;
+  explainDisabled: boolean;
+}) {
   const [lo, hi] = item.normal_range;
   const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"} ~ ${hi != null ? hi.toFixed(1) : "+∞"}`;
   const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
@@ -435,11 +494,20 @@ function AlarmRow({ item }: { item: AlarmItem }) {
       <td>{item.direction === "above" ? "높음" : "낮음"}</td>
       <td><SeverityBadge severity={item.severity} /></td>
       <td className="numCol">{item.actual_y != null ? item.actual_y.toFixed(2) : "-"}</td>
+      <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
   );
 }
 
-function RecommendationRow({ item }: { item: RecommendationItem }) {
+function RecommendationRow({
+  item,
+  onExplain,
+  explainDisabled,
+}: {
+  item: RecommendationItem;
+  onExplain: () => void;
+  explainDisabled: boolean;
+}) {
   const [lo, hi] = item.recommended_range;
   const rangeText = `${lo.toFixed(1)} ~ ${hi.toFixed(1)}`;
   const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
@@ -462,6 +530,7 @@ function RecommendationRow({ item }: { item: RecommendationItem }) {
       </td>
       <td className="numCol">{improvement}</td>
       <td><RecommendationTagBadge tag={item.tag} /></td>
+      <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
   );
 }

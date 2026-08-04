@@ -7,6 +7,7 @@ import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
+import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
@@ -107,6 +108,7 @@ export default function RootCausePage() {
 function RootCauseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { setAnalysisDataset } = usePanelState();
   const [datasetId, setDatasetId] = useState("train");
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
@@ -147,8 +149,10 @@ function RootCauseContent() {
       setRunState("idle");
       setRunError("");
       setRunErrorDetail("");
+      setAnalysisDataset(null);
     }, 0);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
 
   async function runAnalysis() {
@@ -198,6 +202,7 @@ function RootCauseContent() {
       setScatterByKey(scatterMap);
       setCategoricalByKey(categoricalMap);
       setRunState("done");
+      setAnalysisDataset(datasetId);
     } catch (failure) {
       // Never leave a stale result on screen after a failure -- it could
       // be mistaken for the new run's output (spec §5-2).
@@ -209,6 +214,7 @@ function RootCauseContent() {
       setRunError(ANALYSIS_FAILURE_MESSAGE[kind]);
       setRunErrorDetail(detail);
       setRunState("error");
+      setAnalysisDataset(null);
     } finally {
       window.clearInterval(elapsedTimer);
     }

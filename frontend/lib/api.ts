@@ -418,3 +418,124 @@ export function getScreeningPareto(dataset: string, target: string): Promise<Par
 export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {
   return getJson(`/api/analysis/report?${new URLSearchParams({ dataset }).toString()}`);
 }
+
+export type ChatMode = "report" | "chat";
+export type ChatHistoryTurn = { role: "user" | "assistant"; content: string };
+
+// "no_llm"/"no_analysis" are terminal states a retry can't fix (spec §5-5:
+// only "timeout" and "other" get a 재시도 button).
+export type ChatErrorKind = "no_llm" | "no_analysis" | "timeout" | "other";
+
+export type ChatStreamHandlers = {
+  onDelta: (text: string) => void;
+  onDone: () => void;
+  onError: (message: string, kind: ChatErrorKind) => void;
+};
+
+// SUNI 보고서 응답은 20~60초가 걸릴 수 있어 다른 요청보다 넉넉한 상한선을 둔다
+// (spec §3-3: 백엔드 타임아웃도 90초).
+const CHAT_STREAM_TIMEOUT_MS = 90_000;
+
+/** Streams /api/chat's SSE body, decoding `data: {...}\n\n` frames as they
+ * arrive. Returns a handle to cancel the in-flight request (component
+ * unmount, user navigates away mid-stream). */
+export function streamChat(
+  params: { message: string; mode: ChatMode; dataset: string; history?: ChatHistoryTurn[] },
+  handlers: ChatStreamHandlers,
+): { cancel: () => void } {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), CHAT_STREAM_TIMEOUT_MS);
+  let settled = false;
+
+  function finishError(message: string, kind: ChatErrorKind = "other") {
+    if (settled) return;
+    settled = true;
+    window.clearTimeout(timer);
+    handlers.onError(message, kind);
+  }
+
+  function finishDone() {
+    if (settled) return;
+    settled = true;
+    window.clearTimeout(timer);
+    handlers.onDone();
+  }
+
+  (async () => {
+    let response: Response;
+    try {
+      response = await fetch(`${getApiBaseUrl()}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ history: [], ...params }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        finishError("응답 시간이 초과되었습니다. 다시 시도해 주세요.", "timeout");
+        return;
+      }
+      finishError("답변을 생성하지 못했습니다. 다시 시도해 주세요.");
+      return;
+    }
+
+    if (!response.ok) {
+      if (response.status === 503) {
+        finishError("LLM이 연결되지 않았습니다. 관리자에게 문의해 주세요.", "no_llm");
+      } else if (response.status === 400) {
+        finishError(await getErrorMessage(response), "no_analysis");
+      } else {
+        finishError("답변을 생성하지 못했습니다. 다시 시도해 주세요.");
+      }
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      finishError("답변을 생성하지 못했습니다. 다시 시도해 주세요.");
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.trim();
+          if (!line.startsWith("data:")) continue;
+          const jsonText = line.slice(5).trim();
+          if (!jsonText) continue;
+          let payload: { delta?: string; done?: boolean; error?: string };
+          try {
+            payload = JSON.parse(jsonText) as typeof payload;
+          } catch {
+            continue;
+          }
+          if (payload.error) {
+            finishError(payload.error);
+            return;
+          }
+          if (payload.delta) handlers.onDelta(payload.delta);
+          if (payload.done) {
+            finishDone();
+            return;
+          }
+        }
+      }
+      finishDone();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        finishError("응답 시간이 초과되었습니다. 다시 시도해 주세요.");
+      } else {
+        finishError("답변을 생성하지 못했습니다. 다시 시도해 주세요.");
+      }
+    }
+  })();
+
+  return { cancel: () => controller.abort() };
+}

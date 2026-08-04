@@ -89,6 +89,10 @@ class FactorRecommendation:
     expected_improvement_pct: float | None
     grade: str
     tag: str
+    mean_in_window: float | None
+    mean_overall: float
+    ratio: float | None
+    n_in_window: int
 
 
 @dataclass
@@ -146,6 +150,7 @@ def compute_factor_recommendation(
         if in_range_mean is not None and overall_mean != 0
         else None
     )
+    ratio = in_range_mean / overall_mean if in_range_mean is not None and overall_mean != 0 else None
 
     grade = confidence_tier(factor.eps2, factor.p_value)
     return FactorRecommendation(
@@ -157,6 +162,10 @@ def compute_factor_recommendation(
         expected_improvement_pct=expected_improvement_pct,
         grade=grade,
         tag=GRADE_TAG[grade],
+        mean_in_window=in_range_mean,
+        mean_overall=overall_mean,
+        ratio=ratio,
+        n_in_window=int(in_range_mask.sum()),
     )
 
 

@@ -164,6 +164,17 @@ class Settings:
             os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO"
         )
     )
+    upstage_api_key: str | None = field(
+        default_factory=lambda: os.environ.get("UPSTAGE_API_KEY", "").strip() or None
+    )
+    upstage_base_url: str = field(
+        default_factory=lambda: os.environ.get(
+            "UPSTAGE_BASE_URL", "https://api.upstage.ai/v1"
+        ).strip()
+    )
+    upstage_model: str = field(
+        default_factory=lambda: os.environ.get("UPSTAGE_MODEL", "solar-pro3").strip()
+    )
 
     def __post_init__(self) -> None:
         if self.log_level not in VALID_LOG_LEVELS:

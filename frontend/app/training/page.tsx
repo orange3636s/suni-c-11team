@@ -302,27 +302,30 @@ export default function TrainingPage() {
       <section className="resultCard">
         <div className="sectionHeading compact">
           <div>
-            <span className="sectionLabel">BENCHMARK</span>
-            <h2>전처리 방식별 CV 성능 비교 (train.CSV, GroupKFold(5))</h2>
+            <span className="sectionLabel">PREPROCESSING</span>
+            <h2>데이터 전처리</h2>
           </div>
         </div>
-        <div className="tableWrap">
-          <table>
-            <thead><tr><th style={{ width: "75%" }}>방식</th><th className="numCol" style={{ width: "25%" }}>R²</th></tr></thead>
+        <div className="tableWrap benchmarkTableWrap">
+          <table className="benchmarkTable">
+            <thead>
+              <tr>
+                <th>방식</th>
+                <th className="numCol">R²</th>
+                <th aria-hidden="true" />
+              </tr>
+            </thead>
             <tbody>
               {BENCHMARK_REFERENCE.map((row) => (
                 <tr key={row.name}>
                   <td>{row.name}</td>
-                  <td className="numCol">
-                    {row.y.toFixed(3)}
-                    {row.adopted && <span className="confidenceBadge adopted" style={{ marginLeft: 8 }}>채택</span>}
-                  </td>
+                  <td className="numCol">{row.y.toFixed(3)}</td>
+                  <td>{row.adopted && <span className="confidenceBadge adopted">채택</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <p className="emptyMessage">scripts/benchmark.py 실행 결과. 억지로 인자를 늘리거나 전처리를 바꿔 이 값을 올리지 않습니다.</p>
       </section>
 
       <HeatmapParetoSection

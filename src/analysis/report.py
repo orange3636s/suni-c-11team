@@ -29,11 +29,20 @@ from src.analysis.control_range import (
     evaluate_alarms,
     summarize_wafer_status,
 )
-from src.analysis.recommendations import REPORT_TAG_TIERS, compute_recommendations
+from src.analysis.llm_stats import (
+    band_stability,
+    chamber_interaction_p,
+    config_main_effect_screening,
+    judge_confidence,
+    measurement_bias_p,
+    per_chamber_window,
+)
+from src.analysis.recommendations import REPORT_TAG_TIERS, compute_factor_recommendation, compute_recommendations
 from src.analysis.rounding import round_floats
 from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import (
     ParetoFactor,
+    benjamini_hochberg,
     confidence_tier,
     select_fdr_significant_factors,
     select_primary_factor,
@@ -41,6 +50,14 @@ from src.analysis.screening.selector import (
 
 REPORT_INCLUSION_P_THRESHOLD = 0.05
 BINNED_PROFILE_BINS = 12
+
+# SUNI chatbot context (spec "챗봇 알람 답변 확장" A-2): safety caps so an
+# uploaded dataset with many more alarms/recommendations than the bundled
+# train.CSV can't blow up the LLM context payload.
+ALARM_RECORD_TRUNCATE_THRESHOLD = 200
+ALARM_RECORD_TRUNCATE_KEEP = 100
+RECOMMENDATION_RECORD_KEEP = 50
+_TAG_PRIORITY_RANK = {"priority": 2, "recommended": 1, "reference": 0}
 
 _INTERPRETATION_BY_SHAPE = {
     "monotonic_increasing": "값이 클수록 불량률이 상승하는 관계다. 값을 낮추는 방향의 조치가 유효하다.",
@@ -162,13 +179,56 @@ def build_analysis_report(
     schema = parse_schema(train_df)
 
     included_factors: list[ParetoFactor] = []
-    target_entries: list[dict[str, Any]] = []
+    # Two passes: chamber-interaction q-values are BH-corrected across this
+    # report's own 5 primary factors (one FDR family), so every factor's
+    # p-value must be collected before any q can be assigned.
+    raw_targets: list[dict[str, Any]] = []
+    chamber_p_values: list[float] = []
     for target in schema.target_cols:
         factor = _top_factor_per_target(train_df, schema, target)
+        if factor is None:
+            raw_targets.append({"target": target, "factor": None})
+            continue
+        included_factors.append(factor)
+        control_range = compute_control_range(train_df, factor)
+        one_sided = factor.relation_shape in ("monotonic_increasing", "monotonic_decreasing")
+        config_col = f"Step{factor.step}_Config"
+        chamber_p = chamber_interaction_p(train_df, factor.feature, target, config_col)
+        chamber_p_values.append(chamber_p if chamber_p is not None else 1.0)
+        raw_targets.append(
+            {
+                "target": target,
+                "factor": factor,
+                "control_range": control_range,
+                "band_stability": band_stability(pd.to_numeric(train_df[factor.feature], errors="coerce")),
+                "band_width": None if one_sided else control_range.band_width,
+                "window": compute_factor_recommendation(train_df, factor, control_range),
+                "config_col": config_col,
+                "chamber_p": chamber_p,
+            }
+        )
+
+    chamber_q_by_target: dict[str, float] = {}
+    if chamber_p_values:
+        q_values = benjamini_hochberg(chamber_p_values)
+        significant_index = 0
+        for entry in raw_targets:
+            if entry["factor"] is None:
+                continue
+            chamber_q_by_target[entry["target"]] = q_values[significant_index]
+            significant_index += 1
+
+    target_entries: list[dict[str, Any]] = []
+    for entry in raw_targets:
+        target = entry["target"]
+        factor = entry["factor"]
         factor_entries = []
         if factor is not None:
-            included_factors.append(factor)
-            control_range = compute_control_range(train_df, factor)
+            control_range = entry["control_range"]
+            chamber_p = entry["chamber_p"]
+            chamber_q = chamber_q_by_target.get(target)
+            chamber_significant = bool(chamber_p is not None and chamber_q is not None and chamber_q < 0.05)
+            window = entry["window"]
             factor_entries.append(
                 {
                     "feature": factor.feature,
@@ -184,6 +244,9 @@ def build_analysis_report(
                     "grade": {"strong": "강함", "moderate": "보통", "weak": "약함", "reference": "참고"}[
                         confidence_tier(factor.eps2, factor.p_value)
                     ],
+                    "report_confidence": judge_confidence(
+                        factor.eps2, factor.p_value, entry["band_stability"], entry["band_width"]
+                    ),
                     "n_observed": factor.n_observed,
                     "n_missing_pct": _missing_pct(train_df, factor.feature),
                     "relation": {
@@ -198,6 +261,28 @@ def build_analysis_report(
                         pd.to_numeric(train_df[target], errors="coerce"),
                     ),
                     "control_limits": _control_limits_dict(control_range),
+                    "band_stability": entry["band_stability"],
+                    "band_width": entry["band_width"],
+                    "window": (
+                        {
+                            "lo": window.recommended_lo,
+                            "hi": window.recommended_hi,
+                            "mean_in_window": window.mean_in_window,
+                            "mean_overall": window.mean_overall,
+                            "ratio": window.ratio,
+                            "n_in_window": window.n_in_window,
+                        }
+                        if window is not None
+                        else None
+                    ),
+                    "chamber_interaction": chamber_significant,
+                    "chamber_interaction_p": chamber_p,
+                    "chamber_interaction_q": chamber_q,
+                    "per_chamber_window": (
+                        per_chamber_window(train_df, factor.feature, target, entry["config_col"])
+                        if chamber_significant
+                        else None
+                    ),
                     "eval_result": _eval_result(eval_df, control_range, factor),
                 }
             )
@@ -229,9 +314,15 @@ def build_analysis_report(
     alarm_records: list[dict[str, Any]] = []
     for cr in control_ranges:
         step = step_by_feature_target.get((cr.feature, cr.target), 0)
+        config_col = f"Step{step}_Config"
         for alarm in alarms_by_feature.get(cr.feature, []):
             row = indexed.loc[alarm.lot_wafer_id] if indexed is not None and alarm.lot_wafer_id in indexed.index else None
             actual_y_final = float(row["Y"]) if row is not None and "Y" in row and pd.notna(row["Y"]) else None
+            config_value = (
+                str(row[config_col])
+                if row is not None and config_col in eval_df.columns and pd.notna(row.get(config_col))
+                else None
+            )
             alarm_records.append(
                 {
                     "lot_wafer_id": alarm.lot_wafer_id,
@@ -248,6 +339,7 @@ def build_analysis_report(
                     "severity": alarm.severity,
                     "actual_y_target": alarm.actual_y,
                     "actual_y_final": actual_y_final,
+                    "config": config_value,
                 }
             )
     alarm_records.sort(
@@ -290,6 +382,16 @@ def build_analysis_report(
     ]
     recommendation_records.sort(key=lambda item: item["lot_wafer_id"])
 
+    config_screening = config_main_effect_screening(train_df, schema)
+    bias_p = measurement_bias_p(train_df, schema)
+    limitations = list(LIMITATIONS)
+    if bias_p is not None:
+        limitations.append(
+            "R/D 계측이 하나도 없는 wafer와 하나 이상 계측된 wafer의 최종 수율(Y) 차이는 "
+            f"t-검정 결과 p={bias_p:.4f}로, 이 데이터셋에서는 통계적으로 유의하지 않다. "
+            "계측 편향이 관측되지 않았다는 뜻이지, 다른 데이터셋에도 성립한다는 보장은 아니다."
+        )
+
     report = {
         "meta": {
             "generated_at": generated_at,
@@ -330,7 +432,16 @@ def build_analysis_report(
         "targets": target_entries,
         "alarms": alarm_records,
         "recommendations": recommendation_records,
-        "limitations": LIMITATIONS,
+        "config_screening": {
+            "n_tested": config_screening.n_tested,
+            "n_significant_fdr": config_screening.n_significant_fdr,
+            "max_observed_eps2": config_screening.max_observed_eps2,
+            "max_observed_feature": config_screening.max_observed_feature,
+            "max_observed_target": config_screening.max_observed_target,
+            "mde_eps2": config_screening.mde_eps2,
+            "median_n_per_group": config_screening.median_n_per_group,
+        },
+        "limitations": limitations,
     }
     return round_floats(report)
 
@@ -340,3 +451,109 @@ def _lot_range(meta: dict[str, Any]) -> str | None:
     if lot_min is None or lot_max is None:
         return None
     return f"{lot_min}~{lot_max}"
+
+
+def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
+    """Reshapes build_analysis_report's flat `alarms`/`recommendations`
+    lists into `{summary, records[, records_truncated, records_total]}`
+    for the SUNI chatbot (spec "챗봇 알람 답변 확장" A-2) -- so a question
+    about one specific wafer ("L401W07 알람이 왜 떴어?") can be answered
+    from individual records, not just aggregates.
+
+    This is a presentation-layer reshaping on top of the already-built
+    report, not a second computation: `/api/analysis/report` (JSON
+    download) keeps the original flat shape untouched (existing golden
+    tests, existing frontend consumers); only `/api/analysis/context`
+    (and the chatbot's own grounding) sees this shape. Every other key
+    is passed through unchanged.
+    """
+    summary = report["summary"]
+
+    # binned_profile is chart-plotting data (12-point x/y profile) that no
+    # chatbot prompt section reads -- dropped here (context payload only,
+    # the download report keeps it) since it's the single largest
+    # per-factor field and directly trades off against the alarm/
+    # recommendation record budget below.
+    targets_out = [
+        {
+            **target_entry,
+            "factors": [
+                {k: v for k, v in factor.items() if k != "binned_profile"} for factor in target_entry["factors"]
+            ],
+        }
+        for target_entry in report["targets"]
+    ]
+
+    alarm_records = report["alarms"]
+    alarms_truncated = len(alarm_records) > ALARM_RECORD_TRUNCATE_THRESHOLD
+    kept_alarms = alarm_records[:ALARM_RECORD_TRUNCATE_KEEP] if alarms_truncated else alarm_records
+    alarms_out = {
+        "summary": {
+            "n_wafers": summary["alarm_wafers"],
+            "n_records": len(alarm_records),
+            "mean_yield_alarm": summary["mean_yield_alarm"],
+            "mean_yield_normal": summary["mean_yield_normal"],
+            "normal_wafers": summary["normal_wafers"],
+            "undecidable_wafers": summary["undecidable_wafers"],
+        },
+        "records": [
+            {
+                "lot_wafer_id": row["lot_wafer_id"],
+                "lot_id": row["lot_id"],
+                "wafer_slot": row["wafer_slot"],
+                "step": row["step"],
+                "feature": row["feature"],
+                "kind": row["kind"],
+                "target": row["target"],
+                "value": row["value"],
+                "control_band": row["normal_range"],
+                "deviation": row["deviation"],
+                "direction": row["direction"],
+                "severity": row["severity"],
+                "actual_y_target": row["actual_y_target"],
+                "actual_y_final": row["actual_y_final"],
+                "config": row["config"],
+            }
+            for row in kept_alarms
+        ],
+        "records_truncated": alarms_truncated,
+        "records_total": len(alarm_records),
+    }
+
+    # Already excludes 근거부족-equivalent factors (recommendation_records
+    # in build_analysis_report is filtered to REPORT_TAG_TIERS = 강함/보통
+    # before this function ever sees it) -- only re-sorted here (태그
+    # 우선순위 -> 기대 개선 내림차순) for the chatbot's presentation; the
+    # download report keeps its own lot_wafer_id order.
+    recommendation_records = sorted(
+        report["recommendations"],
+        key=lambda item: (
+            _TAG_PRIORITY_RANK.get(item["tag"], 0),
+            item["expected_improvement_pct"] if item["expected_improvement_pct"] is not None else float("-inf"),
+        ),
+        reverse=True,
+    )
+    recommendations_truncated = len(recommendation_records) > RECOMMENDATION_RECORD_KEEP
+    recommendations_out = {
+        "summary": {"n_records": len(recommendation_records)},
+        "records": [
+            {
+                "lot_wafer_id": row["lot_wafer_id"],
+                "lot_id": row["lot_id"],
+                "step": row["step"],
+                "feature": row["feature"],
+                "kind": row["kind"],
+                "target": row["target"],
+                "value": row["value"],
+                "recommended_range": row["recommended_range"],
+                "direction": row["direction"],
+                "expected_reduction_pct": row["expected_improvement_pct"],
+                "tag": row["tag"],
+            }
+            for row in recommendation_records[:RECOMMENDATION_RECORD_KEEP]
+        ],
+        "records_truncated": recommendations_truncated,
+        "records_total": len(recommendation_records),
+    }
+
+    return {**report, "targets": targets_out, "alarms": alarms_out, "recommendations": recommendations_out}
