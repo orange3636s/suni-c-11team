@@ -7920,7 +7920,10 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   --shell-logo-hover-bg: rgba(0, 0, 0, 0.04);
   --shell-circle-bg: rgba(255, 255, 255, 0.55);
   --shell-block-bg-on-navy: rgba(255, 255, 255, 0.12);
-  --shell-block-bg-on-navy-hover: rgba(255, 255, 255, 0.18);
+  /* Bumped from .18 (spec asked for "~.12 -> ~.20") so the collapsed
+     rail's now-sole expand affordance -- the logo -- reads clearly
+     clickable on hover (spec §1-2). */
+  --shell-block-bg-on-navy-hover: rgba(255, 255, 255, 0.20);
 }
 html[data-theme="dark"]{
   --shell-panel-bg: rgba(44, 44, 46, 0.82);
@@ -8051,12 +8054,15 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--brand-navy, #0e306d);
    text/icons on it (and on the rest of the navy card) stay a fixed
    light color regardless of site theme -- navy text on a navy
    background would be unreadable in either theme. */
-.sidebar .shellLogoBlock{ background: var(--shell-block-bg-on-navy); color: rgba(255, 255, 255, 0.92); }
+.sidebar .shellLogoBlock{ background: var(--shell-block-bg-on-navy); color: rgba(255, 255, 255, 0.92); cursor: pointer; }
 .sidebar .shellLogoBlock:hover,
 .sidebar .shellLogoBlock:focus-visible{ background: var(--shell-block-bg-on-navy-hover); }
 .sidebar .shellLogoBlock:focus-visible{ outline: 2px solid rgba(255, 255, 255, 0.6); outline-offset: 2px; }
-.sidebar.collapsed .shellLogoBlock{ flex-direction: column; gap: 4px; padding: 8px 4px; margin-bottom: 8px; }
-.sidebar.collapsed .shellLogoBlockChevron{ margin: 0; }
+/* Collapsed: logo-to-first-icon gap matches the rail's own icon-to-icon
+   gap (--railNav gap: 6px below) instead of the expanded state's 8px,
+   so the icons read as one continuous list starting right under the
+   logo (spec §1-1). */
+.sidebar.collapsed .shellLogoBlock{ flex-direction: column; gap: 4px; padding: 8px 4px; margin-bottom: 6px; }
 
 /* AI panel: block sits on the theme-following glass card, so it uses the
    same subtle contrast tint as everything else on that surface. */
@@ -8555,6 +8561,11 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 .scatterTrendBand{ opacity: 0.08; stroke: none; }
 .scatterTrendLine{ stroke-width: 2; }
 .scatterGuideLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
+/* Centers the badge on its line regardless of text width -- the
+   foreignObject box is wider than any single label needs, so an
+   inline-block child sized to its own content (e.g. "최적 중심" vs
+   "LCL") won't self-center against it on its own. */
+.scatterLineLabelWrap{ display: flex; justify-content: center; }
 .scatterLineLabel{
   font-size: 10px; font-weight: 700; text-align: center; white-space: nowrap;
   background: var(--surface-card, #fff); border-radius: 4px; padding: 1px 4px;

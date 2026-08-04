@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { factorAxisLabel } from "@/lib/chartLabels";
+import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ReferenceLine, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
@@ -9,7 +9,11 @@ export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 
 const MARGIN = { top: 36, right: 28, bottom: 46, left: 58 };
 const HEIGHT = 420;
-const LABEL_MIN_GAP = 34;
+// "최적 중심" (5 glyphs, ~58px at the label's 10px font) is roughly twice
+// as wide as "LCL"/"UCL" (~26px) -- widened from 34px so the 2-row
+// collision fallback actually engages before the two visually overlap,
+// not just when their center points happen to coincide.
+const LABEL_MIN_GAP = 46;
 
 type LineMeta = {
   legendId: string;
@@ -274,7 +278,7 @@ export default function ScatterChart({
     }
     if (data.optimal_center != null) {
       lines.push({
-        key: "optimal", value: data.optimal_center, shortLabel: "중심",
+        key: "optimal", value: data.optimal_center, shortLabel: "최적 중심",
         color: LINE_COLOR.optimal, dash: "4 3", strokeWidth: 1.8, greyedOut: false,
       });
     }
@@ -426,8 +430,15 @@ export default function ScatterChart({
     const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
     const x = xScale(line.value);
     return (
-      <foreignObject key={line.key} x={x - 20} y={layout.row * 16} width={40} height={14} style={{ overflow: "visible", pointerEvents: "none" }}>
-        <div className="scatterLineLabel" style={{ color }}>{line.shortLabel}</div>
+      // A wide, generously-overflowing box (label text is unconstrained
+      // by it anyway -- overflow:visible) with the badge itself centered
+      // by flex, not by relying on inline-block sizing to exactly 40px:
+      // "최적 중심" is wider than that and would render left-shifted off
+      // its true line position otherwise.
+      <foreignObject key={line.key} x={x - 45} y={layout.row * 16} width={90} height={16} style={{ overflow: "visible", pointerEvents: "none" }}>
+        <div className="scatterLineLabelWrap">
+          <span className="scatterLineLabel" style={{ color }}>{line.shortLabel}</span>
+        </div>
       </foreignObject>
     );
   }
@@ -441,7 +452,7 @@ export default function ScatterChart({
         <span>등급 {{ strong: "강함", moderate: "보통", weak: "약함", reference: "참고" }[data.confidence_tier]}</span>
       </div>
 
-      <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${data.axis.y_label} 산점도`}>
+      <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {/* axis ticks */}
           {niceTicks(yDomain, 5).map((tick) => (
@@ -641,7 +652,7 @@ export default function ScatterChart({
         <div className="heatmapTooltip" style={{ left: pointHover.clientX + 14, top: pointHover.clientY + 14 }}>
           {pointHover.point.lot_wafer_id && <strong>{pointHover.point.lot_wafer_id}</strong>}
           <div className="heatmapTooltipRow"><span>{factorAxisLabel(data.axis.x_label)}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
-          <div className="heatmapTooltipRow"><span>{data.axis.y_label.split(" ")[0]}</span><b>{pointHover.point.y.toFixed(1)}</b></div>
+          <div className="heatmapTooltipRow"><span>{targetAxisLabel(data.axis.y_label)}</span><b>{pointHover.point.y.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
           {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다
               (spec §5-3). 항상 최신 colorMode를 읽으므로 전환 시 즉시 반영된다. */}

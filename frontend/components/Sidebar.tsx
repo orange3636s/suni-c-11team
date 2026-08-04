@@ -55,12 +55,21 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
           onClick={onToggleCollapse}
           aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
           aria-expanded={!collapsed}
+          title={collapsed ? "펼치기" : undefined}
         >
           <SuniAvatar size={collapsed ? 32 : 28} />
           {!collapsed && <span className="shellLogoBlockTitle">써니C 11팀</span>}
-          <span className="shellLogoBlockChevron" aria-hidden="true">
-            <ChevronIcon direction={collapsed ? "right" : "left"} />
-          </span>
+          {/* Collapsed rail: the chevron is unmounted entirely, not just
+              hidden -- the logo itself is the only (and now sole) way to
+              expand, so a "collapsed" affordance chevron pointing the
+              wrong way (there's nothing left to collapse further) no
+              longer makes sense here (spec §1-1). Expanded state keeps
+              its `<` chevron unchanged. */}
+          {!collapsed && (
+            <span className="shellLogoBlockChevron" aria-hidden="true">
+              <ChevronIcon direction="left" />
+            </span>
+          )}
         </button>
 
         {collapsed ? (
