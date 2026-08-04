@@ -109,7 +109,7 @@ export default function CompareAcrossTargetsModal({
   const originData = dataByTarget[originTarget];
   const lcl = originData?.reference_lines.find((l) => l.key === "iqr_lo");
   const ucl = originData?.reference_lines.find((l) => l.key === "iqr_hi");
-  const mean = originData?.reference_lines.find((l) => l.key === "mean");
+  const optimalCenter = originData?.optimal_center ?? null;
 
   // Plain-language read of the 5 mini-charts: which target the factor
   // actually moves the needle on, in wording that doesn't require knowing
@@ -183,7 +183,7 @@ export default function CompareAcrossTargetsModal({
             {lcl && ucl && (
               <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? NAVY.dark : NAVY.light }} /> 관리한계 LCL/UCL ({formatNum(lcl.value)} / {formatNum(ucl.value)})</span>
             )}
-            {mean && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GREEN.dark : GREEN.light }} /> 평균 ({formatNum(mean.value)})</span>}
+            {optimalCenter != null && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GREEN.dark : GREEN.light }} /> 최적 중심 ({formatNum(optimalCenter)})</span>}
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? RED.dark : RED.light }} /> 구간 평균 불량률</span>
           </div>
         </div>
@@ -230,7 +230,7 @@ function MiniChart({
 
   const iqrLo = data?.reference_lines.find((l) => l.key === "iqr_lo");
   const iqrHi = data?.reference_lines.find((l) => l.key === "iqr_hi");
-  const mean = data?.reference_lines.find((l) => l.key === "mean");
+  const optimalCenter = data?.optimal_center ?? null;
 
   function handleMouseMove(event: React.MouseEvent<SVGRectElement>) {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -300,8 +300,8 @@ function MiniChart({
               <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={2.4} fill={pointColor} opacity={pointOpacity} />
             ))}
 
-            {mean?.drawable && (
-              <line x1={xScale(mean.value)} x2={xScale(mean.value)} y1={0} y2={plotHeight} stroke={greenColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
+            {optimalCenter != null && (
+              <line x1={xScale(optimalCenter)} x2={xScale(optimalCenter)} y1={0} y2={plotHeight} stroke={greenColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
             )}
             {iqrLo?.drawable && (
               <line x1={xScale(iqrLo.value)} x2={xScale(iqrLo.value)} y1={0} y2={plotHeight} stroke={navyColor} strokeWidth={1.6} strokeDasharray="7 4" opacity={lineOpacity} />

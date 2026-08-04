@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { factorAxisLabel } from "@/lib/chartLabels";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { ReferenceLine, ReferenceLineKey, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
+import type { ReferenceLine, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 
@@ -14,74 +15,81 @@ type LineMeta = {
   legendId: string;
   shortLabel: string;
   legendLabel: string;
-  legendDesc: string;
-  defaultVisible: boolean;
-  priority: number; // higher survives label-collision pruning first
   dash: string;
   strokeWidth: number;
 };
 
-const LINE_META: Record<ReferenceLineKey, LineMeta> = {
-  mean: { legendId: "mean", shortLabel: "평균", legendLabel: "평균", legendDesc: "중심", defaultVisible: true, priority: 50, dash: "6 4", strokeWidth: 1.5 },
-  iqr_lo: { legendId: "iqr", shortLabel: "LCL", legendLabel: "LCL/UCL (IQR 1.5배)", legendDesc: "관리한계, 알람 판정 기준", defaultVisible: true, priority: 40, dash: "10 5", strokeWidth: 2 },
-  iqr_hi: { legendId: "iqr", shortLabel: "UCL", legendLabel: "LCL/UCL (IQR 1.5배)", legendDesc: "관리한계, 알람 판정 기준", defaultVisible: true, priority: 40, dash: "10 5", strokeWidth: 2 },
-  q1: { legendId: "q1q3", shortLabel: "Q1", legendLabel: "Q1 / Q3", legendDesc: "사분위", defaultVisible: false, priority: 20, dash: "none", strokeWidth: 1.2 },
-  q3: { legendId: "q1q3", shortLabel: "Q3", legendLabel: "Q1 / Q3", legendDesc: "사분위", defaultVisible: false, priority: 20, dash: "none", strokeWidth: 1.2 },
-  s3_lo: { legendId: "s3", shortLabel: "−3σ", legendLabel: "±3σ", legendDesc: "참조선", defaultVisible: false, priority: 30, dash: "8 3 2 3", strokeWidth: 1.3 },
-  s3_hi: { legendId: "s3", shortLabel: "+3σ", legendLabel: "±3σ", legendDesc: "참조선", defaultVisible: false, priority: 30, dash: "8 3 2 3", strokeWidth: 1.3 },
-  s6_lo: { legendId: "s6", shortLabel: "−6σ", legendLabel: "±6σ", legendDesc: "참조선", defaultVisible: false, priority: 10, dash: "6 3 1 3 1 3", strokeWidth: 1.1 },
-  s6_hi: { legendId: "s6", shortLabel: "+6σ", legendLabel: "±6σ", legendDesc: "참조선", defaultVisible: false, priority: 10, dash: "6 3 1 3 1 3", strokeWidth: 1.1 },
+// Reduced to LCL/UCL only (spec: 산점도 기준선 3종으로 축소 -> ±3σ/±6σ/평균/Q1/Q3
+// removed from every display surface -- line/button/legend/tooltip). The
+// underlying stats (mean, std, q1, q3) are untouched in
+// src/analysis/control_range.py and still ride along in
+// `data.reference_lines` for the JSON report; this component just no
+// longer renders those five keys.
+const LINE_META: Record<"iqr_lo" | "iqr_hi", LineMeta> = {
+  iqr_lo: { legendId: "iqr", shortLabel: "LCL", legendLabel: "LCL/UCL (IQR 1.5배)", dash: "10 5", strokeWidth: 2 },
+  iqr_hi: { legendId: "iqr", shortLabel: "UCL", legendLabel: "LCL/UCL (IQR 1.5배)", dash: "10 5", strokeWidth: 2 },
 };
-
-// Button order follows the spec's worked example: LCL/UCL, ±3σ, ±6σ, 평균, Q1/Q3.
-const LEGEND_ORDER = ["iqr", "s3", "s6", "mean", "q1q3"];
-const QUARTILE_SIGMA_KEYS = new Set<ReferenceLineKey>(["q1", "q3", "s3_lo", "s3_hi", "s6_lo", "s6_hi"]);
 
 function formatNum1(value: number): string {
   return value.toFixed(1);
 }
 
-/** Legend button text with the actual computed values baked in (spec §4-6) --
- * separate from LINE_META.legendLabel, which stays a static category name used
- * by the per-line hover tooltip. */
-function buildLegendLabel(groupId: string, lines: ReferenceLine[]): string {
-  const find = (key: ReferenceLineKey) => lines.find((l) => l.key === key);
-  if (groupId === "mean") {
-    const mean = find("mean");
-    return mean ? `평균 (${formatNum1(mean.value)})` : "평균";
-  }
-  if (groupId === "iqr") {
-    const lo = find("iqr_lo");
-    const hi = find("iqr_hi");
-    if (lo?.drawable && hi?.drawable) return `LCL/UCL (IQR 1.5배 · ${formatNum1(lo.value)} / ${formatNum1(hi.value)})`;
-    if (hi?.drawable) return `UCL (${formatNum1(hi.value)})`;
-    if (lo?.drawable) return `LCL (${formatNum1(lo.value)})`;
-    return "LCL/UCL";
-  }
-  if (groupId === "q1q3") {
-    const q1 = find("q1");
-    const q3 = find("q3");
-    return q1 && q3 ? `Q1 / Q3 (${formatNum1(q1.value)} / ${formatNum1(q3.value)})` : "Q1 / Q3";
-  }
-  if (groupId === "s3" || groupId === "s6") {
-    const lo = find(groupId === "s3" ? "s3_lo" : "s6_lo");
-    const hi = find(groupId === "s3" ? "s3_hi" : "s6_hi");
-    const label = groupId === "s3" ? "±3σ" : "±6σ";
-    if (lo && hi) {
-      const deviation = (hi.value - lo.value) / 2;
-      return `${label} (${formatNum1(lo.value)} / ${formatNum1(hi.value)}, ±${formatNum1(deviation)})`;
-    }
-    return label;
-  }
-  return "";
+/** LCL/UCL button text with the actual computed values baked in (spec
+ * §4-6/§4-3) -- separate from LINE_META.legendLabel, which stays a
+ * static category name used by the per-line hover tooltip. */
+function buildIqrLabel(lines: ReferenceLine[]): string {
+  const lo = lines.find((l) => l.key === "iqr_lo");
+  const hi = lines.find((l) => l.key === "iqr_hi");
+  if (lo?.drawable && hi?.drawable) return `LCL/UCL (IQR 1.5배 · ${formatNum1(lo.value)} / ${formatNum1(hi.value)})`;
+  if (hi?.drawable) return `UCL (${formatNum1(hi.value)})`;
+  if (lo?.drawable) return `LCL (${formatNum1(lo.value)})`;
+  return "LCL/UCL";
+}
+
+/** Sample quantile with linear interpolation -- matches numpy/pandas'
+ * default `interpolation="linear"`, which is what the backend's own
+ * Q1/Q3/IQR figures already use (see control_range.py). `sorted` must
+ * already be sorted ascending. */
+function quantileOf(sorted: number[], q: number): number {
+  if (sorted.length === 0) return NaN;
+  if (sorted.length === 1) return sorted[0];
+  const pos = (sorted.length - 1) * q;
+  const lower = Math.floor(pos);
+  const upper = Math.ceil(pos);
+  if (lower === upper) return sorted[lower];
+  const weight = pos - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
+/** "권장 구간" has no backend field -- it's derived entirely from data
+ * already sent to the client (`points`, `bins`), not a new server-side
+ * statistic: the x-quantile span of the contiguous run of quantile bins
+ * (the same 12-bin profile driving the 구간 평균 불량률 curve) whose
+ * average defect rate sits at/below the factor's overall mean defect
+ * rate. Verified against train.CSV against all 5 spec worked examples
+ * (within ±0.1 of the given values). */
+function recommendedRange(
+  points: ScatterPoint[],
+  bins: ScreeningScatterResponse["bins"],
+): [number, number] | null {
+  if (bins.length === 0 || points.length === 0) return null;
+  const threshold = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+  const qualifying: number[] = [];
+  bins.forEach((bin, index) => {
+    if (bin.y_mean <= threshold) qualifying.push(index);
+  });
+  if (qualifying.length === 0) return null;
+  const first = qualifying[0];
+  const last = qualifying[qualifying.length - 1];
+  const xs = points.map((p) => p.x).sort((a, b) => a - b);
+  const nb = bins.length;
+  return [quantileOf(xs, first / nb), quantileOf(xs, (last + 1) / nb)];
 }
 
 const LINE_COLOR: Record<string, { light: string; dark: string }> = {
-  mean: { light: "#059669", dark: "#34D399" },
   iqr: { light: "#0E306D", dark: "#7BA3E8" },
-  s3: { light: "#9CA3AF", dark: "#6B7280" },
-  s6: { light: "#D1D5DB", dark: "#4B5563" },
-  q1q3: { light: "#3B82F6", dark: "#93C5FD" },
+  optimal: { light: "#059669", dark: "#34D399" },
+  recommended: { light: "#059669", dark: "#34D399" },
 };
 const TREND_COLOR = { light: "#DC2626", dark: "#F87171" };
 
@@ -123,13 +131,27 @@ function colorForPoint(point: ScatterPoint, mode: ScatterColorMode, lotIndex: Ma
     : { color: "#1D4ED8", size: 5.5, opacity: 0.85 };
 }
 
-type LineLayout = { line: ReferenceLine; xPixel: number; row: number; hidden: boolean };
+// A single vertical line drawn on the chart -- either one of the two
+// LCL/UCL reference lines, or the (backend-provided, not
+// frontend-computed) optimal-center point. Unified so both go through
+// the same paint order / label-collision layout instead of two parallel
+// code paths.
+type DisplayLine = {
+  key: "iqr_lo" | "iqr_hi" | "optimal";
+  value: number;
+  shortLabel: string;
+  color: { light: string; dark: string };
+  dash: string;
+  strokeWidth: number;
+  greyedOut: boolean;
+};
 
-function layoutLabels(entries: Array<{ line: ReferenceLine; xPixel: number }>): LineLayout[] {
-  const byPriority = [...entries].sort((a, b) => LINE_META[b.line.key].priority - LINE_META[a.line.key].priority);
+type LineLayout = { line: DisplayLine; xPixel: number; row: number; hidden: boolean };
+
+function layoutLabels(entries: Array<{ line: DisplayLine; xPixel: number }>): LineLayout[] {
   const placedPerRow: number[][] = [[], []];
   const result: LineLayout[] = [];
-  for (const entry of byPriority) {
+  for (const entry of entries) {
     let row = -1;
     for (let candidate = 0; candidate < 2; candidate += 1) {
       const conflict = placedPerRow[candidate].some((x) => Math.abs(x - entry.xPixel) < LABEL_MIN_GAP);
@@ -154,7 +176,7 @@ type TrendHover = {
   n: number;
 };
 
-type LineHover = { key: ReferenceLineKey; x: number; y: number };
+type LineHover = { key: string; x: number; y: number };
 
 type PointHover = { screenX: number; screenY: number; clientX: number; clientY: number; point: ScatterPoint };
 
@@ -175,7 +197,8 @@ export default function ScatterChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [containerWidth, setContainerWidth] = useState(680);
-  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(new Set(["mean", "iqr"]));
+  // All 4 remaining reference elements default to visible (spec §4-2).
+  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(new Set(["iqr", "optimal", "recommended"]));
   const [trendVisible, setTrendVisible] = useState(true);
   const [lineHover, setLineHover] = useState<LineHover | null>(null);
   const [trendHover, setTrendHover] = useState<TrendHover | null>(null);
@@ -220,11 +243,48 @@ export default function ScatterChart({
   // assign each distinct config/lot a stable color index for this render.
   const lotIndex = new Map<string, number>();
 
-  const drawableLines = data.reference_lines.filter((l) => l.drawable);
+  const iqrLo = data.reference_lines.find((l) => l.key === "iqr_lo");
+  const iqrHi = data.reference_lines.find((l) => l.key === "iqr_hi");
+  const iqrFullyNonDrawable = !iqrLo?.drawable && !iqrHi?.drawable;
+  // shape.py only ever sets optimal_center for a u_shape relation -- a
+  // monotonic factor (e.g. Step1_D1) genuinely has no interior optimum,
+  // not just one that fell outside the drawable range (spec §4-2/§4-3).
+  const optimalAvailable = data.optimal_center != null;
+
+  const recommendedRangeValue = useMemo(
+    () => recommendedRange(data.points, data.bins),
+    [data.points, data.bins],
+  );
+
+  const displayLines = useMemo<DisplayLine[]>(() => {
+    const lines: DisplayLine[] = [];
+    if (iqrLo?.drawable) {
+      lines.push({
+        key: "iqr_lo", value: iqrLo.value, shortLabel: "LCL",
+        color: LINE_COLOR.iqr, dash: LINE_META.iqr_lo.dash, strokeWidth: LINE_META.iqr_lo.strokeWidth,
+        greyedOut: !iqrLo.alarm_relevant,
+      });
+    }
+    if (iqrHi?.drawable) {
+      lines.push({
+        key: "iqr_hi", value: iqrHi.value, shortLabel: "UCL",
+        color: LINE_COLOR.iqr, dash: LINE_META.iqr_hi.dash, strokeWidth: LINE_META.iqr_hi.strokeWidth,
+        greyedOut: !iqrHi.alarm_relevant,
+      });
+    }
+    if (data.optimal_center != null) {
+      lines.push({
+        key: "optimal", value: data.optimal_center, shortLabel: "중심",
+        color: LINE_COLOR.optimal, dash: "4 3", strokeWidth: 1.8, greyedOut: false,
+      });
+    }
+    return lines;
+  }, [iqrLo, iqrHi, data.optimal_center]);
+
   const labelLayout = useMemo(
-    () => layoutLabels(drawableLines.map((line) => ({ line, xPixel: xScale(line.value) }))),
+    () => layoutLabels(displayLines.map((line) => ({ line, xPixel: xScale(line.value) }))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.reference_lines, plotWidth],
+    [displayLines, plotWidth],
   );
 
   const trendPath = useMemo(() => {
@@ -239,12 +299,19 @@ export default function ScatterChart({
   }, [data.bins, plotWidth, plotHeight]);
 
   function isGroupFullyNonDrawable(groupId: string): boolean {
-    return data.reference_lines.filter((l) => LINE_META[l.key].legendId === groupId).every((l) => !l.drawable);
+    if (groupId === "iqr") return iqrFullyNonDrawable;
+    if (groupId === "optimal") return !optimalAvailable;
+    if (groupId === "recommended") return recommendedRangeValue == null;
+    return false;
   }
 
   function toggleGroup(groupId: string, event: React.MouseEvent) {
     if (isGroupFullyNonDrawable(groupId)) {
-      setDisabledHint({ x: event.clientX, y: event.clientY, text: "데이터 범위 밖" });
+      setDisabledHint({
+        x: event.clientX,
+        y: event.clientY,
+        text: groupId === "optimal" ? "단조 관계라 최적 중심이 없습니다" : "데이터 범위 밖",
+      });
       window.setTimeout(() => setDisabledHint(null), 1500);
       return;
     }
@@ -323,20 +390,22 @@ export default function ScatterChart({
       (data.normal_range.hi == null || trendHover.dataX <= data.normal_range.hi)
     : null;
 
-  function renderLineBody(line: ReferenceLine) {
-    const meta = LINE_META[line.key];
-    if (!visibleGroups.has(meta.legendId)) return null;
+  function lineGroupOf(line: DisplayLine): string {
+    return line.key === "optimal" ? "optimal" : "iqr";
+  }
+
+  function renderLineBody(line: DisplayLine) {
+    if (!visibleGroups.has(lineGroupOf(line))) return null;
     const x = xScale(line.value);
-    const greyedOut = (line.key === "iqr_lo" || line.key === "iqr_hi") && !line.alarm_relevant;
-    const color = greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? LINE_COLOR[meta.legendId].dark : LINE_COLOR[meta.legendId].light);
+    const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
     return (
       <g key={line.key}>
         <line
           x1={x} x2={x} y1={0} y2={plotHeight}
           stroke={color}
-          strokeWidth={meta.strokeWidth}
-          strokeDasharray={meta.dash === "none" ? undefined : meta.dash}
-          opacity={greyedOut ? 0.55 : 0.9}
+          strokeWidth={line.strokeWidth}
+          strokeDasharray={line.dash}
+          opacity={line.greyedOut ? 0.55 : 0.9}
         />
         {/* widened invisible hit area */}
         <rect
@@ -350,17 +419,15 @@ export default function ScatterChart({
     );
   }
 
-  function renderLineLabel(line: ReferenceLine) {
-    const meta = LINE_META[line.key];
-    if (!visibleGroups.has(meta.legendId)) return null;
+  function renderLineLabel(line: DisplayLine) {
+    if (!visibleGroups.has(lineGroupOf(line))) return null;
     const layout = labelLayout.find((l) => l.line.key === line.key);
     if (!layout || layout.hidden) return null;
-    const greyedOut = (line.key === "iqr_lo" || line.key === "iqr_hi") && !line.alarm_relevant;
-    const color = greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? LINE_COLOR[meta.legendId].dark : LINE_COLOR[meta.legendId].light);
+    const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
     const x = xScale(line.value);
     return (
       <foreignObject key={line.key} x={x - 20} y={layout.row * 16} width={40} height={14} style={{ overflow: "visible", pointerEvents: "none" }}>
-        <div className="scatterLineLabel" style={{ color }}>{meta.shortLabel}</div>
+        <div className="scatterLineLabel" style={{ color }}>{line.shortLabel}</div>
       </foreignObject>
     );
   }
@@ -374,7 +441,7 @@ export default function ScatterChart({
         <span>등급 {{ strong: "강함", moderate: "보통", weak: "약함", reference: "참고" }[data.confidence_tier]}</span>
       </div>
 
-      <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${data.axis.x_label} vs ${data.axis.y_label} 산점도`}>
+      <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${data.axis.y_label} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {/* axis ticks */}
           {niceTicks(yDomain, 5).map((tick) => (
@@ -387,10 +454,10 @@ export default function ScatterChart({
             <text key={`x-${tick}`} x={xScale(tick)} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{formatTick(tick)}</text>
           ))}
 
-          {/* shading: amber outside IQR control limits, faint blue between Q1/Q3 */}
+          {/* shading: amber outside IQR control limits, green 13% band across
+              the recommended range (spec §4-2). Both sit below the points,
+              same as before -- a background region shouldn't obscure data. */}
           {(() => {
-            const iqrLo = data.reference_lines.find((l) => l.key === "iqr_lo");
-            const iqrHi = data.reference_lines.find((l) => l.key === "iqr_hi");
             const loX = iqrLo?.drawable ? xScale(iqrLo.value) : 0;
             const hiX = iqrHi?.drawable ? xScale(iqrHi.value) : plotWidth;
             return visibleGroups.has("iqr") ? (
@@ -400,14 +467,20 @@ export default function ScatterChart({
               </>
             ) : null;
           })()}
-          {(() => {
-            if (!visibleGroups.has("q1q3")) return null;
-            const q1 = data.reference_lines.find((l) => l.key === "q1");
-            const q3 = data.reference_lines.find((l) => l.key === "q3");
-            if (!q1?.drawable || !q3?.drawable) return null;
-            const x1 = xScale(q1.value);
-            const x2 = xScale(q3.value);
-            return <rect x={Math.min(x1, x2)} y={0} width={Math.abs(x2 - x1)} height={plotHeight} className="scatterQuartileShade" />;
+          {visibleGroups.has("recommended") && recommendedRangeValue && (() => {
+            const [lo, hi] = recommendedRangeValue;
+            const x1 = xScale(lo);
+            const x2 = xScale(hi);
+            return (
+              <rect
+                x={Math.min(x1, x2)} y={0} width={Math.abs(x2 - x1)} height={plotHeight}
+                className="scatterRecommendedBand"
+                style={{ fill: theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light }}
+                onMouseEnter={(event) => setLineHover({ key: "recommended", x: event.clientX, y: event.clientY })}
+                onMouseMove={(event) => setLineHover({ key: "recommended", x: event.clientX, y: event.clientY })}
+                onMouseLeave={() => setLineHover(null)}
+              />
+            );
           })()}
 
           {/* data points -- painted before every reference line/curve (spec
@@ -433,13 +506,12 @@ export default function ScatterChart({
           })}
 
           {/* reference line bodies, stacked bottom-to-top per spec §4-1:
-              Q1/Q3 + ±3σ/±6σ, then 평균, then LCL/UCL last (closest to the
-              trend curve/labels above them). Labels are a separate,
+              최적 중심 first, then LCL/UCL (closest to the trend
+              curve/labels above them). Labels are a separate,
               always-topmost pass below so they never sit under a
               later-drawn line. */}
-          {drawableLines.filter((line) => QUARTILE_SIGMA_KEYS.has(line.key)).map((line) => renderLineBody(line))}
-          {drawableLines.filter((line) => line.key === "mean").map((line) => renderLineBody(line))}
-          {drawableLines.filter((line) => line.key === "iqr_lo" || line.key === "iqr_hi").map((line) => renderLineBody(line))}
+          {displayLines.filter((line) => line.key === "optimal").map((line) => renderLineBody(line))}
+          {displayLines.filter((line) => line.key === "iqr_lo" || line.key === "iqr_hi").map((line) => renderLineBody(line))}
 
           {/* confidence band + trend curve -- above every reference line */}
           {trendVisible && data.bins.length > 0 && (
@@ -450,7 +522,7 @@ export default function ScatterChart({
           )}
 
           {/* line name labels -- topmost of all */}
-          {drawableLines.map((line) => renderLineLabel(line))}
+          {displayLines.map((line) => renderLineLabel(line))}
 
           {/* continuous point+trend hover overlay -- nearest-point search,
               not per-point listeners (see findNearestPoint's comment). */}
@@ -476,28 +548,40 @@ export default function ScatterChart({
         </g>
       </svg>
 
-      <p className="scatterAxisTitle">{data.axis.x_label}</p>
+      <p className="scatterAxisTitle">{factorAxisLabel(data.axis.x_label)}</p>
 
+      {/* 4 reference elements only (spec §4-2): ±3σ/±6σ/평균/Q1/Q3 removed
+          from every display surface here, but never from
+          src/analysis/control_range.py or the JSON report -- those still
+          compute mean/std/q1/q3 because LCL/UCL is derived from them. */}
       <div className="scatterLegend">
-        {LEGEND_ORDER.map((groupId) => {
-          const sampleLine = data.reference_lines.find((l) => LINE_META[l.key].legendId === groupId);
-          if (!sampleLine) return null;
-          const meta = LINE_META[sampleLine.key];
-          const disabled = isGroupFullyNonDrawable(groupId);
-          const active = visibleGroups.has(groupId) && !disabled;
-          return (
-            <button
-              key={groupId}
-              type="button"
-              className={`scatterLegendItem ${active ? "active" : ""} ${disabled ? "disabled" : ""}`}
-              onClick={(event) => toggleGroup(groupId, event)}
-              title={disabled ? "데이터 범위 밖" : meta.legendDesc}
-            >
-              <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR[groupId].dark : LINE_COLOR[groupId].light }} />
-              {buildLegendLabel(groupId, data.reference_lines)}
-            </button>
-          );
-        })}
+        <button
+          type="button"
+          className={`scatterLegendItem ${visibleGroups.has("iqr") && !iqrFullyNonDrawable ? "active" : ""} ${iqrFullyNonDrawable ? "disabled" : ""}`}
+          onClick={(event) => toggleGroup("iqr", event)}
+          title={iqrFullyNonDrawable ? "데이터 범위 밖" : "관리한계, 알람 판정 기준"}
+        >
+          <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR.iqr.dark : LINE_COLOR.iqr.light }} />
+          {buildIqrLabel(data.reference_lines)}
+        </button>
+        <button
+          type="button"
+          className={`scatterLegendItem ${visibleGroups.has("optimal") && optimalAvailable ? "active" : ""} ${!optimalAvailable ? "disabled" : ""}`}
+          onClick={(event) => toggleGroup("optimal", event)}
+          title={optimalAvailable ? "구간 평균 불량률이 가장 낮은 지점" : "단조 관계라 최적 중심이 없습니다"}
+        >
+          <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR.optimal.dark : LINE_COLOR.optimal.light }} />
+          {optimalAvailable ? `최적 중심 (${formatNum1(data.optimal_center as number)})` : "최적 중심 (해당 없음)"}
+        </button>
+        <button
+          type="button"
+          className={`scatterLegendItem ${visibleGroups.has("recommended") && recommendedRangeValue ? "active" : ""} ${!recommendedRangeValue ? "disabled" : ""}`}
+          onClick={(event) => toggleGroup("recommended", event)}
+          title={recommendedRangeValue ? "구간 평균 불량률이 전체 평균 이하인 구간" : "데이터 범위 밖"}
+        >
+          <i className="scatterLegendSwatch scatterLegendSwatch-band" style={{ background: theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light }} />
+          {recommendedRangeValue ? `권장 구간 (${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])})` : "권장 구간"}
+        </button>
         <button
           type="button"
           className={`scatterLegendItem ${trendVisible ? "active" : ""}`}
@@ -510,24 +594,42 @@ export default function ScatterChart({
       </div>
 
       {lineHover && (() => {
+        if (lineHover.key === "optimal") {
+          if (data.optimal_center == null) return null;
+          return (
+            <div className="heatmapTooltip" style={{ left: lineHover.x + 14, top: lineHover.y + 14 }}>
+              <strong>최적 중심</strong>
+              <div className="heatmapTooltipRow"><span>값</span><b>{formatNum1(data.optimal_center)}</b></div>
+              <div className="heatmapTooltipRow"><span>의미</span><b>구간 평균 불량률 최저 지점</b></div>
+            </div>
+          );
+        }
+        if (lineHover.key === "recommended") {
+          if (!recommendedRangeValue) return null;
+          return (
+            <div className="heatmapTooltip" style={{ left: lineHover.x + 14, top: lineHover.y + 14 }}>
+              <strong>권장 구간</strong>
+              <div className="heatmapTooltipRow"><span>범위</span><b>{formatNum1(recommendedRangeValue[0])} ~ {formatNum1(recommendedRangeValue[1])}</b></div>
+              <div className="heatmapTooltipRow"><span>의미</span><b>구간 평균 불량률이 전체 평균 이하</b></div>
+            </div>
+          );
+        }
         const line = data.reference_lines.find((l) => l.key === lineHover.key);
-        if (!line) return null;
+        if (!line || (line.key !== "iqr_lo" && line.key !== "iqr_hi")) return null;
         const meta = LINE_META[line.key];
         return (
           <div className="heatmapTooltip" style={{ left: lineHover.x + 14, top: lineHover.y + 14 }}>
-            <strong>{meta.legendLabel} {meta.shortLabel && `(${meta.shortLabel})`}</strong>
+            <strong>{meta.legendLabel} ({meta.shortLabel})</strong>
             <div className="heatmapTooltipRow"><span>값</span><b>{line.value.toFixed(1)}</b></div>
             <div className="heatmapTooltipRow"><span>계산</span><b>{line.formula}</b></div>
-            {line.key !== "mean" && (
-              <div className="heatmapTooltipRow"><span>이 선 밖</span><b>{line.outside_count.toLocaleString()}장</b></div>
-            )}
+            <div className="heatmapTooltipRow"><span>이 선 밖</span><b>{line.outside_count.toLocaleString()}장</b></div>
           </div>
         );
       })()}
 
       {trendHover && !pointHover && (
         <div className="heatmapTooltip" style={{ left: MARGIN.left + trendHover.screenX + 14, top: MARGIN.top + trendHover.screenY + 14 }}>
-          <strong>{data.axis.x_label.split(" ")[0]} = {trendHover.dataX.toFixed(1)}</strong>
+          <strong>{factorAxisLabel(data.axis.x_label)} = {trendHover.dataX.toFixed(1)}</strong>
           <div className="heatmapTooltipRow"><span>구간 평균 불량률</span><b>{trendHover.dataY.toFixed(2)}%</b></div>
           <div className="heatmapTooltipRow"><span>95% 신뢰구간</span><b>{trendHover.ciLo.toFixed(2)} ~ {trendHover.ciHi.toFixed(2)}</b></div>
           <div className="heatmapTooltipRow"><span>이 구간 wafer 수</span><b>{trendHover.n.toLocaleString()}</b></div>
@@ -538,7 +640,7 @@ export default function ScatterChart({
       {pointHover && (
         <div className="heatmapTooltip" style={{ left: pointHover.clientX + 14, top: pointHover.clientY + 14 }}>
           {pointHover.point.lot_wafer_id && <strong>{pointHover.point.lot_wafer_id}</strong>}
-          <div className="heatmapTooltipRow"><span>{data.axis.x_label.split(" ")[0]}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
+          <div className="heatmapTooltipRow"><span>{factorAxisLabel(data.axis.x_label)}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
           <div className="heatmapTooltipRow"><span>{data.axis.y_label.split(" ")[0]}</span><b>{pointHover.point.y.toFixed(1)}</b></div>
           <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
           {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다

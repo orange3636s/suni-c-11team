@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { deleteDataset, getDatasets, uploadDataset } from "@/lib/api";
 import type { DatasetSummary } from "@/types/data";
 
@@ -11,12 +12,22 @@ type DatasetSelectorProps = {
   onDatasetsLoaded?: (datasets: DatasetSummary[]) => void;
 };
 
+type MenuPosition = { left: number; width: number; top?: number; bottom?: number };
+
+// Menu height isn't known until it renders, so an upward flip is done with
+// `bottom` (anchored to the button's top edge) instead of computing a `top`
+// that would need the height in advance -- it just grows upward on its own.
+const MENU_MAX_HEIGHT = 360;
+
 export default function DatasetSelector({ label, value, onChange, onDatasetsLoaded }: DatasetSelectorProps) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<MenuPosition | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
@@ -35,14 +46,76 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The menu itself lives in a portal outside `containerRef` (spec §1-4),
+  // so an outside-click check needs to also exempt clicks landing inside
+  // the portaled menu -- otherwise every option click would immediately
+  // read as "outside" and close the menu before onSelect fires.
   useEffect(() => {
     if (!open) return;
+    function isOutside(target: Node) {
+      if (containerRef.current?.contains(target)) return false;
+      if (menuRef.current?.contains(target)) return false;
+      return true;
+    }
     function handleOutside(event: MouseEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+      if (isOutside(event.target as Node)) setOpen(false);
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    // Simplest correct response to a scroll/resize while open: close,
+    // rather than track and re-measure a moving anchor (spec §1-4 allows
+    // either).
+    function handleScrollOrResize() {
+      setOpen(false);
     }
     document.addEventListener("mousedown", handleOutside);
-    return () => document.removeEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKey);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
+    };
   }, [open]);
+
+  // The trigger button can move without a window resize or scroll event --
+  // toggling the left/right panel animates the grid's column widths, which
+  // shifts this button horizontally. Poll its rect while open and close
+  // rather than let the portaled menu drift out of alignment with it.
+  useEffect(() => {
+    if (!open) return;
+    let rafId: number;
+    let lastRect = buttonRef.current?.getBoundingClientRect();
+    function poll() {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (rect && lastRect && (Math.abs(rect.left - lastRect.left) > 0.5 || Math.abs(rect.top - lastRect.top) > 0.5)) {
+        setOpen(false);
+        return;
+      }
+      lastRect = rect;
+      rafId = requestAnimationFrame(poll);
+    }
+    rafId = requestAnimationFrame(poll);
+    return () => cancelAnimationFrame(rafId);
+  }, [open]);
+
+  function openMenu() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = Math.max(rect.width, 320);
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const flipUp = spaceBelow < MENU_MAX_HEIGHT && spaceAbove > spaceBelow;
+    setMenuPos(
+      flipUp
+        ? { left: rect.left, width, bottom: window.innerHeight - rect.top + 6 }
+        : { left: rect.left, width, top: rect.bottom + 6 },
+    );
+    setOpen(true);
+  }
 
   const selected = datasets.find((item) => item.dataset_id === value);
 
@@ -89,17 +162,23 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
       <span>{label}</span>
       <div className="datasetSelector" ref={containerRef}>
         <button
+          ref={buttonRef}
           type="button"
           className="datasetSelectorButton"
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => (open ? setOpen(false) : openMenu())}
           aria-haspopup="listbox"
           aria-expanded={open}
         >
           <span>{selected ? selected.original_filename : "선택하세요"}</span>
           <ChevronIcon />
         </button>
-        {open && (
-          <div className="datasetSelectorMenu" role="listbox">
+        {open && menuPos && createPortal(
+          <div
+            ref={menuRef}
+            className="datasetSelectorMenu"
+            role="listbox"
+            style={{ left: menuPos.left, width: menuPos.width, top: menuPos.top, bottom: menuPos.bottom }}
+          >
             {bundled.map((item) => (
               <DatasetOption key={item.dataset_id} item={item} active={item.dataset_id === value} onSelect={() => { onChange(item.dataset_id); setOpen(false); }} />
             ))}
@@ -121,7 +200,8 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
             >
               {uploading ? "업로드 중…" : "+ 파일 추가"}
             </button>
-          </div>
+          </div>,
+          document.body,
         )}
         <input
           ref={fileInputRef}

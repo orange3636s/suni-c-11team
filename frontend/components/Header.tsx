@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ApiStatus = "checking" | "online" | "offline";
 
@@ -11,6 +11,25 @@ function apiBaseUrl() {
 export default function Header() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const headerRef = useRef<HTMLElement>(null);
+
+  // --header-height drives both the sticky Y1~Y5 segment's `top` offset
+  // and the sidebar/AI panel's clearance below the header -- measuring
+  // the real rendered box (border included) instead of hardcoding a
+  // guess is what keeps the segment from sticking a few pixels too high
+  // and rendering partly behind the header (spec §1-3).
+  useEffect(() => {
+    const node = headerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const setHeightVar = () => {
+      const height = node.getBoundingClientRect().height;
+      if (height > 0) document.documentElement.style.setProperty("--header-height", `${Math.ceil(height)}px`);
+    };
+    setHeightVar();
+    const observer = new ResizeObserver(setHeightVar);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     function updateCurrentTime() {
@@ -60,7 +79,7 @@ export default function Header() {
     : "--:--:--";
 
   return (
-    <header className="topHeader">
+    <header className="topHeader" ref={headerRef}>
       <div className="headerContext">
         <h1>제조 공정 불량 예측 &amp; 원인 분석 AI</h1>
       </div>

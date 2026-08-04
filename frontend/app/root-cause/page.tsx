@@ -9,6 +9,7 @@ import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode } from "@/components/ScatterChart";
+import { factorAxisLabel } from "@/lib/chartLabels";
 import {
   ApiNetworkError,
   ApiResponseError,
@@ -88,7 +89,7 @@ function buildCategoricalSpec(data: CategoricalScatterResponse) {
       },
     ],
     layout: {
-      xaxis: { title: { text: data.axis.x_label }, tickangle: 0 },
+      xaxis: { title: { text: factorAxisLabel(data.axis.x_label) }, tickangle: 0 },
       yaxis: { title: { text: data.axis.y_label } },
       margin: { t: 20, b: 90 },
     },

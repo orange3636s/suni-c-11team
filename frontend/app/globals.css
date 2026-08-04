@@ -3699,7 +3699,7 @@ select,
 .topHeader{
   position: sticky;
   top: 0;
-  z-index: 15;
+  z-index: var(--z-header);
   min-height: 88px;
   justify-content: initial;
   gap: 24px;
@@ -7951,8 +7951,8 @@ html[data-theme="dark"]{
 }
 @media (max-width: 1280px){
   .dashboardGrid{ grid-template-columns: 1fr; }
-  .dashboardGrid > .sidebar{ position: fixed; z-index: 40; }
-  .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: var(--panel-top-offset); z-index: 40; }
+  .dashboardGrid > .sidebar{ position: fixed; z-index: var(--z-panel); }
+  .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: var(--panel-top-offset); z-index: var(--z-panel); }
 }
 
 /* Positioning shell (no visual of its own). Explicit top/left/right/bottom
@@ -7963,6 +7963,7 @@ html[data-theme="dark"]{
   position: sticky;
   top: var(--panel-top-offset);
   bottom: auto;
+  z-index: var(--z-panel);
   align-self: start;
   height: calc(100dvh - var(--panel-top-offset) - var(--shell-margin));
   max-height: calc(100dvh - var(--panel-top-offset) - var(--shell-margin));
@@ -8182,8 +8183,13 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
   min-height: 40px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--border-card, rgba(0,0,0,.12));
   background: var(--surface, #fff); color: inherit; font: inherit; cursor: pointer;
 }
+/* Portaled to document.body (spec §1-4) -- position/left/top/width come
+   from an inline style computed off the trigger button's own
+   getBoundingClientRect(), not from this class, so it's never clipped
+   by an ancestor card's overflow:hidden (added for the full-bleed
+   tables) and never loses a z-index comparison to a later card. */
 .datasetSelectorMenu{
-  position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: max(100%, 320px);
+  position: fixed; z-index: var(--z-dropdown);
   border-radius: 14px; border: 1px solid var(--border-card, rgba(0,0,0,.1)); background: var(--surface-card, #fff);
   box-shadow: 0 12px 32px rgba(15,23,42,.16); padding: 6px; max-height: 360px; overflow-y: auto;
 }
@@ -8223,8 +8229,13 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
   margin: var(--target-segment-gap, 24px) 0;
   padding: 6px 4px;
   position: sticky;
-  top: calc(var(--header-height, 60px) + 1px);
-  z-index: 10;
+  /* --header-height is kept in sync with the header's real rendered
+     height by a ResizeObserver in Header.tsx -- a hardcoded guess here
+     previously undershot the actual height, so the segment stuck a few
+     pixels too high and rendered partly behind the (higher z-index)
+     header instead of flush beneath it. */
+  top: calc(var(--header-height, 60px) + 12px);
+  z-index: var(--z-sticky-seg);
   border-radius: 12px;
   border-bottom: 1px solid transparent;
   transition: background-color 160ms ease, border-color 160ms ease;
@@ -8357,7 +8368,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapColorbarTrack{ width: 160px; height: 10px; border-radius: 999px; border: 1px solid var(--heatmap-cell-border); }
 
 .heatmapTooltip{
-  position: fixed; z-index: 60; pointer-events: none; max-width: 260px; padding: 10px 12px; border-radius: 10px;
+  position: fixed; z-index: var(--z-tooltip); pointer-events: none; max-width: 260px; padding: 10px 12px; border-radius: 10px;
   background: var(--surface-card, var(--surface)); border: 1px solid var(--heatmap-cell-border);
   box-shadow: 0 10px 30px rgba(0,0,0,.22); font-size: 12px; line-height: 1.6;
 }
@@ -8538,7 +8549,9 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 .scatterGridLine{ stroke: var(--heatmap-cell-border, var(--border)); stroke-width: 1; }
 .scatterTickLabel{ font-size: 10.5px; fill: var(--text-secondary); }
 .scatterOutsideShade{ fill: #F59E0B; opacity: 0.08; }
-.scatterQuartileShade{ fill: #3B82F6; opacity: 0.04; }
+/* 권장 구간 band (spec §4-2): fill color set inline per-theme in TSX,
+   opacity fixed at 13% here. */
+.scatterRecommendedBand{ opacity: 0.13; cursor: help; }
 .scatterTrendBand{ opacity: 0.08; stroke: none; }
 .scatterTrendLine{ stroke-width: 2; }
 .scatterGuideLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
@@ -8559,6 +8572,9 @@ html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c
 .scatterLegendItem.active{ opacity: 1; background: var(--surface-secondary, var(--surface-muted)); color: var(--text-primary); }
 .scatterLegendItem.disabled{ opacity: 0.3; cursor: not-allowed; text-decoration: line-through; }
 .scatterLegendSwatch{ display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+/* Wider/taller + translucent so 권장 구간's swatch reads as a shaded band,
+   not a line, next to the other 3 line-style swatches. */
+.scatterLegendSwatch-band{ width: 16px; height: 10px; border-radius: 3px; opacity: 0.35; }
 
 /* Alarm-log summary cards: 6-up grid, Apple-round 16px card + low-elevation
    shadow (same visual language as .resultCard/.uploadCard), label-on-top /
@@ -8647,7 +8663,7 @@ html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
 /* Y1~Y5 비교 모달: 인자 하나 고정, 타깃 5개를 가로 1행으로 비교. */
 .compareModalBackdrop{
   position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
-  display: flex; align-items: center; justify-content: center; z-index: 300; padding: 24px;
+  display: flex; align-items: center; justify-content: center; z-index: var(--z-modal); padding: 24px;
 }
 .compareModal{
   width: 92vw; max-width: 1760px; max-height: 88vh;
@@ -8693,7 +8709,7 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareMiniTick{ font-size: 9px; fill: var(--text-secondary); }
 .compareMiniOutsideShade{ fill: #F59E0B; opacity: 0.08; }
 .compareMiniGuideLine{ stroke: var(--text-secondary); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0.6; }
-.compareMiniTooltip{ position: fixed; pointer-events: none; }
+.compareMiniTooltip{ position: fixed; pointer-events: none; z-index: var(--z-tooltip); }
 .compareModalFooter{
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
   padding: 14px 22px; border-top: 1px solid var(--border);
@@ -8858,4 +8874,25 @@ html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 25
   height: 30px; max-width: 160px; padding: 0 8px; border-radius: 8px;
   border: 1px solid var(--border); background: transparent; color: var(--text-primary);
   font-size: 12.5px; font-weight: 600; font-family: inherit;
+}
+
+/* ===================================================================
+   z-index scale (spec: 레이어 겹침 — z-index 체계 정립).
+   Every layer implicated in the reported overlap bugs (sticky header,
+   sticky Y1~Y5 segment, left/right panels, the dataset-selector
+   dropdown, the compare modal, and hover tooltips) reads its z-index
+   from here -- no raw numbers at these call sites, so the relative
+   order can't drift out of sync between them again. Order matters more
+   than the absolute numbers: sticky-seg < header < panel < dropdown <
+   modal < tooltip.
+   =================================================================== */
+:root{
+  --z-base: 0;
+  --z-card: 1;
+  --z-sticky-seg: 20;
+  --z-header: 30;
+  --z-panel: 40;
+  --z-dropdown: 60;
+  --z-modal: 80;
+  --z-tooltip: 100;
 }
