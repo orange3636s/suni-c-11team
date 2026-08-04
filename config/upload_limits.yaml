@@ -1,11 +1,12 @@
 # Upload safety limits for Railway's 512MB/1vCPU free-tier plan.
 #
 # A CSV inflates roughly 3.4x once loaded into a pandas DataFrame (measured:
-# 7.6MB bundled train.CSV -> 26.3MB in memory). At the 50MB limit this used
-# to be, a worst-case upload could push process RSS past 450MB -- too close
-# to the 512MB ceiling. 15MB caps the in-memory DataFrame around ~51MB,
-# keeping peak RSS near 280MB even under FastAPI/uvicorn overhead.
-max_upload_size_mb: 15
+# 7.6MB bundled train.CSV -> 26.3MB in memory). Raised from 15MB to 20MB to
+# fit the two wider bundled datasets added alongside train/test (11.8MB /
+# 112 cols and 16.7MB / 189 cols) -- measured screening runs against both
+# stayed safe (26.7MB and 41.6MB peak DataFrame size, +23MB and +0MB extra
+# RSS during a full screening pass), well under the 512MB ceiling.
+max_upload_size_mb: 20
 # A secondary guard independent of file size: a very wide but short file
 # could pass the byte-size check yet still carry an unexpectedly large
 # row count. 50,000 rows measured at ~218MB peak RSS / 9.5s screening --

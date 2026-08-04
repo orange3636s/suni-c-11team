@@ -29,6 +29,7 @@ from src.analysis.control_range import (
     evaluate_alarms,
     summarize_wafer_status,
 )
+from src.analysis.recommendations import REPORT_TAG_TIERS, compute_recommendations
 from src.analysis.rounding import round_floats
 from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import (
@@ -181,7 +182,7 @@ def build_analysis_report(
                     "p_value": factor.p_value,
                     "q_value": factor.q_value,
                     "grade": {"strong": "강함", "moderate": "보통", "weak": "약함", "reference": "참고"}[
-                        confidence_tier(factor.p_value)
+                        confidence_tier(factor.eps2, factor.p_value)
                     ],
                     "n_observed": factor.n_observed,
                     "n_missing_pct": _missing_pct(train_df, factor.feature),
@@ -261,6 +262,34 @@ def build_analysis_report(
         mean_yield_alarm - mean_yield_normal if mean_yield_alarm is not None and mean_yield_normal is not None else None
     )
 
+    # 개선 권장 목록 (spec §3-6) -- scoped to the same "1위 인자" set as
+    # targets[].factors above, not the full pool; only 강함/보통 rows are
+    # exported here (참고-tagged rows still show on the live screen with
+    # its own hide-by-default toggle, but don't belong in a report meant
+    # to be cited as findings).
+    primary_factors_by_target = {factor.target: factor for factor in included_factors}
+    recommendation_rows, recommendation_summaries = compute_recommendations(
+        train_df, eval_df, schema, primary_factors=primary_factors_by_target
+    )
+    recommendation_records = [
+        {
+            "lot_wafer_id": row.lot_wafer_id,
+            "lot_id": row.lot_id,
+            "step": row.step,
+            "feature": row.feature,
+            "kind": row.kind,
+            "target": row.target,
+            "value": row.value,
+            "recommended_range": [row.recommended_lo, row.recommended_hi],
+            "direction": row.direction,
+            "expected_improvement_pct": row.expected_improvement_pct,
+            "tag": row.tag,
+        }
+        for row in recommendation_rows
+        if (summary := recommendation_summaries.get(row.target)) is not None and summary.grade in REPORT_TAG_TIERS
+    ]
+    recommendation_records.sort(key=lambda item: item["lot_wafer_id"])
+
     report = {
         "meta": {
             "generated_at": generated_at,
@@ -300,6 +329,7 @@ def build_analysis_report(
         },
         "targets": target_entries,
         "alarms": alarm_records,
+        "recommendations": recommendation_records,
         "limitations": LIMITATIONS,
     }
     return round_floats(report)

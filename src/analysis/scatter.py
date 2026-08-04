@@ -35,7 +35,7 @@ def _config_column_for(feature: str, df: pd.DataFrame) -> str | None:
     return candidate if candidate in df.columns else None
 
 
-def _quantile_bins(x: pd.Series, y: pd.Series, bins: int = 12) -> list[dict[str, float]]:
+def quantile_bins(x: pd.Series, y: pd.Series, bins: int = 12) -> list[dict[str, float]]:
     try:
         q = pd.qcut(x, bins, duplicates="drop")
     except ValueError:
@@ -57,6 +57,12 @@ def _quantile_bins(x: pd.Series, y: pd.Series, bins: int = 12) -> list[dict[str,
         )
     profile.sort(key=lambda row: row["x_mean"])
     return profile
+
+
+# Kept as a private alias -- this module's own callers below were written
+# against the underscored name before `recommendations.py` needed to reuse
+# the same binning as a public function.
+_quantile_bins = quantile_bins
 
 
 def _outside_count(x: pd.Series, key: str, value: float) -> int:
@@ -154,7 +160,7 @@ def build_scatter_data(
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,
-        confidence_tier=confidence_tier(factor.p_value),
+        confidence_tier=confidence_tier(factor.eps2, factor.p_value),
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · {_kind_label(factor.kind)})",
@@ -224,7 +230,7 @@ def build_categorical_data(eval_df: pd.DataFrame, factor: ParetoFactor) -> Categ
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,
-        confidence_tier=confidence_tier(factor.p_value),
+        confidence_tier=confidence_tier(factor.eps2, factor.p_value),
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · 장비 설정)",

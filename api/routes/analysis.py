@@ -4,6 +4,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, Literal
 
+import pandas as pd
 from fastapi import APIRouter, HTTPException, status
 
 from api.routes.datasets import get_dataset_registry
@@ -16,6 +17,7 @@ from api.schemas.analysis import (
     HeatmapResponse,
     ModelPerformanceResponse,
     ParetoRankingResponse,
+    RecommendationListResponse,
     ScreeningScatterResponse,
 )
 from api.settings import APP_VERSION, settings
@@ -24,6 +26,7 @@ from src.analysis.control_range import (
     evaluate_alarms,
     summarize_wafer_status,
 )
+from src.analysis.recommendations import compute_recommendations
 from src.analysis.report import build_analysis_report
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
@@ -35,6 +38,7 @@ from src.analysis.screening.selector import (
     confidence_tier,
     find_factor,
     select_fdr_significant_factors,
+    select_primary_factor,
 )
 from src.analysis.screening.selector import _ranked_rows_with_contribution as _ranked_rows
 from src.ml.inference import get_latest_model_metadata
@@ -200,7 +204,7 @@ def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
             "p_value": row["p_value"],
             "q_value": row["q_value"],
             "significant": row["significant"],
-            "confidence_tier": confidence_tier(row["p_value"]),
+            "confidence_tier": confidence_tier(row["eps2"], row["p_value"]),
             "n_observed": row["n_observed"],
             "contribution_pct": row["contribution_pct"],
             "cumulative_pct": row["cumulative_pct"],
@@ -345,6 +349,69 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
         "no_alarm_group_yield_avg": no_alarm_avg,
         "yield_gap": (alarm_avg - no_alarm_avg) if alarm_avg is not None and no_alarm_avg is not None else None,
         "top_lots": top_lots,
+    }
+
+
+@router.get("/recommendations", response_model=RecommendationListResponse)
+def get_recommendations(train: str = "train", eval: str = "test") -> dict[str, Any]:
+    """개선 권장 목록: wafers outside the recommended range of each
+    target's primary (1위) factor -- the same factor already shown on
+    the training/root-cause screens, not the full R+D+Config pool. Rows
+    already caught by that same factor's alarm (LCL/UCL) are excluded
+    (spec §3-1: "관리한계 이탈로 이미 알람에 잡힌 건은 개선 권장 목록에서
+    제외한다").
+    """
+    train_df = _dataframe_or_404(train)
+    eval_df = _dataframe_or_404(eval)
+    schema = parse_schema(train_df)
+
+    primary_factors: dict[str, ParetoFactor] = {}
+    for target in schema.target_cols:
+        factor = select_primary_factor(train_df, schema, target)
+        if factor is not None:
+            primary_factors[target] = factor
+
+    rows, factor_summaries = compute_recommendations(train_df, eval_df, schema, primary_factors=primary_factors)
+
+    excluded_alarm_count = 0
+    for target, factor in primary_factors.items():
+        summary = factor_summaries.get(target)
+        if summary is None or factor.feature not in eval_df.columns:
+            continue
+        control_range = compute_control_range(train_df, factor)
+        already_alarmed = {a.lot_wafer_id for a in evaluate_alarms(eval_df, control_range)}
+        ex = pd.to_numeric(eval_df[factor.feature], errors="coerce")
+        id_col = eval_df["Lot_Wafer_ID"] if "Lot_Wafer_ID" in eval_df.columns else None
+        for position, value in ex.items():
+            if pd.isna(value) or summary.recommended_lo <= value <= summary.recommended_hi:
+                continue
+            wafer_id = str(id_col.loc[position]) if id_col is not None else str(position)
+            if wafer_id in already_alarmed:
+                excluded_alarm_count += 1
+
+    items = [
+        {
+            "lot_wafer_id": row.lot_wafer_id,
+            "lot_id": row.lot_id,
+            "step": row.step,
+            "feature": row.feature,
+            "kind": row.kind,
+            "target": row.target,
+            "value": row.value,
+            "recommended_range": [row.recommended_lo, row.recommended_hi],
+            "direction": row.direction,
+            "expected_improvement_pct": row.expected_improvement_pct,
+            "tag": row.tag,
+        }
+        for row in rows
+    ]
+    items.sort(key=lambda item: item["lot_wafer_id"])
+    return {
+        "train_dataset_id": train,
+        "eval_dataset_id": eval,
+        "items": items,
+        "total": len(items),
+        "excluded_alarm_count": excluded_alarm_count,
     }
 
 

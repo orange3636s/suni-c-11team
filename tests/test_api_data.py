@@ -48,7 +48,11 @@ def test_valid_csv_validation_succeeds() -> None:
 
     assert response.success is True
     assert response.row_count == 2
-    assert response.column_count == 5
+    # 5 source columns + Lot_ID/Wafer_Slot derived from Lot_Wafer_ID (no
+    # native Lot_ID here -- schema-compat auto-parsing, see
+    # src/dataset_normalization.py) + Step1_EQ normalized to Step1_Config
+    # in place (same column count either way).
+    assert response.column_count == 7
     assert response.validation.is_valid is True
     assert response.validation.detected_columns.r == ["Step1_R1"]
 
@@ -60,7 +64,10 @@ def test_valid_csv_preprocessing_succeeds() -> None:
     assert response.changes.filled_missing_values == 1
     assert len(response.preview) == 2
     assert response.preview[1]["Step1_R1"] is not None
-    assert response.preview[1]["Step1_EQ"] == "UNKNOWN"
+    # Step1_EQ -> Step1_Config: Step{n}_EQ and Step{n}_Config are the same
+    # concept under different column names (spec §2-1); normalized to
+    # Step{n}_Config before any other processing sees it.
+    assert response.preview[1]["Step1_Config"] == "UNKNOWN"
     assert response.processing_summary["missing_strategy"] == "native"
     assert response.processing_summary["outlier_strategy"] == "flag_only"
     assert response.warnings == []

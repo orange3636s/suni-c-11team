@@ -169,7 +169,9 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
           aria-haspopup="listbox"
           aria-expanded={open}
         >
-          <span>{selected ? selected.original_filename : "선택하세요"}</span>
+          <span className="datasetSelectorButtonLabel" title={selected?.original_filename}>
+            {selected ? selected.original_filename : "선택하세요"}
+          </span>
           <ChevronIcon />
         </button>
         {open && menuPos && createPortal(
@@ -232,7 +234,7 @@ function DatasetOption({
   const uploadedNote = item.uploaded_at ? new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.uploaded_at)) : "내장";
   return (
     <button type="button" className={`datasetSelectorItem ${active ? "active" : ""}`} onClick={onSelect} role="option" aria-selected={active} style={{ flex: 1 }}>
-      <strong>{item.original_filename}</strong>
+      <strong className="datasetSelectorFilename" title={item.original_filename}>{item.original_filename}</strong>
       <small>{item.kind === "bundled" ? "내장" : "업로드"} · {item.row_count.toLocaleString()}행 · {lotRange} · {uploadedNote}</small>
       {item.warnings.length > 0 && <small style={{ color: "#b8720a" }}>⚠ {item.warnings[0]}</small>}
     </button>

@@ -96,7 +96,7 @@ def build_heatmap(
             n_row.append(n)
             q_row.append(scored["q_value"] if scored else None)
             sig_row.append(bool(scored["significant"]) if scored else False)
-            tier_row.append(confidence_tier(scored["p_value"]) if (scored and n >= MIN_CELL_N) else None)
+            tier_row.append(confidence_tier(scored["eps2"], scored["p_value"]) if (scored and n >= MIN_CELL_N) else None)
             rho_row.append(rho if rho is not None else (scored["eps2"] if scored else None))
         values.append(value_row)
         n_grid.append(n_row)

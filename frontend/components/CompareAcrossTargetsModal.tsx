@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getScreeningScatter } from "@/lib/api";
+import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
+import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ScreeningScatterResponse } from "@/types/data";
 
@@ -12,6 +14,12 @@ const CHART_GAP = 24;
 const MARGIN = { top: 26, right: 10, bottom: 26, left: 36 };
 const STRONG_RHO = 0.15;
 const POINT_HOVER_RADIUS = 16;
+// Tighter than the main chart's 8-10/6-8 (spec §8: mini-charts get their
+// own defaults) -- these panels are ~320x260 vs. the main chart's much
+// larger plot area, so the same density would just overlap.
+const MINI_TICK_FONT = "9px system-ui, -apple-system, sans-serif";
+const MINI_X_TICK_COUNT: [max: number, min: number] = [5, 4];
+const MINI_Y_TICK_COUNT = 4;
 
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 const NAVY = { light: "#0E306D", dark: "#7BA3E8" };
@@ -20,13 +28,6 @@ const RED = { light: "#DC2626", dark: "#F87171" };
 
 function formatNum(v: number): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
-}
-
-function niceTicks(domain: readonly [number, number], count: number): number[] {
-  const [min, max] = domain;
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return [min];
-  const step = (max - min) / count;
-  return Array.from({ length: count + 1 }, (_, i) => min + step * i);
 }
 
 type PointHover = { screenX: number; screenY: number; x: number; y: number } | null;
@@ -228,6 +229,12 @@ function MiniChart({
   const xScale = (v: number) => ((v - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * plotWidth;
   const yScale = (v: number) => plotHeight - ((v - yDomain[0]) / (yDomain[1] - yDomain[0] || 1)) * plotHeight;
 
+  const xTicks = useMemo(
+    () => niceTicksFitted(xDomain, MINI_X_TICK_COUNT[0], MINI_X_TICK_COUNT[1], plotWidth, formatNum, (label) => measureTextWidth(label, MINI_TICK_FONT)),
+    [xDomain, plotWidth],
+  );
+  const yTicks = useMemo(() => niceTicks(yDomain, MINI_Y_TICK_COUNT), [yDomain]);
+
   const iqrLo = data?.reference_lines.find((l) => l.key === "iqr_lo");
   const iqrHi = data?.reference_lines.find((l) => l.key === "iqr_hi");
   const optimalCenter = data?.optimal_center ?? null;
@@ -277,13 +284,13 @@ function MiniChart({
       ) : (
         <svg ref={svgRef} width={CHART_W} height={CHART_H} className="compareMiniChartSvg">
           <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-            {niceTicks(yDomain, 3).map((tick) => (
+            {yTicks.map((tick) => (
               <g key={`y-${tick}`}>
                 <line x1={0} x2={plotWidth} y1={yScale(tick)} y2={yScale(tick)} className="compareMiniGridLine" />
                 <text x={-4} y={yScale(tick)} textAnchor="end" dominantBaseline="middle" className="compareMiniTick">{formatNum(tick)}</text>
               </g>
             ))}
-            {niceTicks(xDomain, 3).map((tick) => (
+            {xTicks.map((tick) => (
               <text key={`x-${tick}`} x={xScale(tick)} y={plotHeight + 14} textAnchor="middle" className="compareMiniTick">{formatNum(tick)}</text>
             ))}
 

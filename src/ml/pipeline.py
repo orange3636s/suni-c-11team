@@ -224,7 +224,7 @@ def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str
             "cumulative_pct": factor.cumulative_pct,
             "p_value": factor.p_value,
             "q_value": factor.q_value,
-            "confidence_tier": confidence_tier(factor.p_value),
+            "confidence_tier": confidence_tier(factor.eps2, factor.p_value),
             "r2": metrics["r2"],
             "rmse": metrics["rmse"],
             "mae": metrics["mae"],

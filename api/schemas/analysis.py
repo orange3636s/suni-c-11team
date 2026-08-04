@@ -176,6 +176,28 @@ class AlarmSummaryResponse(BaseModel):
     top_lots: list[LotAlarmCount] = Field(default_factory=list)
 
 
+class RecommendationItemSchema(BaseModel):
+    lot_wafer_id: str
+    lot_id: str | None
+    step: int
+    feature: str
+    kind: str
+    target: str
+    value: float
+    recommended_range: list[float]
+    direction: str
+    expected_improvement_pct: float | None
+    tag: str
+
+
+class RecommendationListResponse(BaseModel):
+    train_dataset_id: str
+    eval_dataset_id: str
+    items: list[RecommendationItemSchema]
+    total: int
+    excluded_alarm_count: int
+
+
 class TargetPerformanceSchema(BaseModel):
     target: str
     no_factor_available: bool
@@ -303,4 +325,5 @@ class AnalysisReportResponse(BaseModel):
     summary: ReportSummarySchema
     targets: list[ReportTargetEntrySchema]
     alarms: list[ReportAlarmRecordSchema]
+    recommendations: list[RecommendationItemSchema] = Field(default_factory=list)
     limitations: list[str]

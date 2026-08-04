@@ -1,0 +1,10 @@
+# Effect-size gate for the confidence-tier grade (spec §5-2).
+#
+# p-value alone answers "is the effect non-zero", not "is the effect big
+# enough to act on" -- a large-n dataset makes p tiny even for a near-zero
+# eps2 (e.g. Step6_R1 -> Y1: n=1,462, p=0.006, eps2=0.0089, under 1%
+# explained). eps2 is checked first and can only push the tier down, never
+# up on its own.
+min_eps2_reference: 0.02   # below this: always 참고, regardless of p
+min_eps2_moderate: 0.05    # 보통 additionally requires eps2 >= this
+min_eps2_strong: 0.10      # 강함 additionally requires eps2 >= this

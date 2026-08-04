@@ -540,6 +540,30 @@ export type AlarmSummaryResponse = {
   top_lots: Array<{ lot_id: string; alarm_count: number }>;
 };
 
+export type RecommendationTag = "priority" | "recommended" | "reference";
+
+export type RecommendationItem = {
+  lot_wafer_id: string;
+  lot_id: string | null;
+  step: number;
+  feature: string;
+  kind: string;
+  target: string;
+  value: number;
+  recommended_range: [number, number];
+  direction: "up" | "down";
+  expected_improvement_pct: number | null;
+  tag: RecommendationTag;
+};
+
+export type RecommendationListResponse = {
+  train_dataset_id: string;
+  eval_dataset_id: string;
+  items: RecommendationItem[];
+  total: number;
+  excluded_alarm_count: number;
+};
+
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";
 
 export type ParetoRankingItem = {

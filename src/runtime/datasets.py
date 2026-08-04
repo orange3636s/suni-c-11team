@@ -18,6 +18,7 @@ from uuid import uuid4
 import pandas as pd
 
 from src.analysis.screening.schema import Schema, parse_schema
+from src.dataset_normalization import normalize_dataset
 from src.runtime.store import RuntimeStore
 from src.upload_limits import max_row_count, max_upload_size_bytes, max_upload_size_mb
 
@@ -27,9 +28,13 @@ MIN_FACTOR_OBSERVATIONS = 100
 ID_COLUMN = "Lot_Wafer_ID"
 LOT_COLUMN = "Lot_ID"
 
+# Display order is explicit and fixed (spec §1) -- never sorted by name or
+# size. train.CSV stays the default selection.
 BUNDLED_DATASET_FILES = {
     "train": "train.CSV",
     "test": "test.CSV",
+    "mentorship_dataset_final": "mentorship_dataset_final.CSV",
+    "mentorship_dataset_v7_killing_event": "mentorship_dataset_v7_killing_event.csv",
 }
 
 
@@ -69,7 +74,7 @@ def _lot_summary(df: pd.DataFrame) -> tuple[str | None, str | None, int | None]:
     return str(lots.min()), str(lots.max()), int(lots.nunique())
 
 
-def parse_uploaded_csv(content: bytes) -> pd.DataFrame:
+def parse_uploaded_csv(content: bytes) -> tuple[pd.DataFrame, dict[str, object]]:
     if len(content) > max_upload_size_bytes():
         actual_mb = len(content) / (1024 * 1024)
         raise DatasetValidationError(
@@ -81,10 +86,15 @@ def parse_uploaded_csv(content: bytes) -> pd.DataFrame:
         raise DatasetValidationError([f"CSV 파싱에 실패했습니다: {exc}"]) from exc
     if df.shape[1] == 0:
         raise DatasetValidationError(["컬럼이 없는 CSV입니다."])
-    return df
+    return normalize_dataset(df)
 
 
-def validate_dataset(df: pd.DataFrame, *, baseline_schema: Schema | None = None) -> DatasetValidation:
+def validate_dataset(
+    df: pd.DataFrame,
+    *,
+    baseline_schema: Schema | None = None,
+    normalization_report: dict[str, object] | None = None,
+) -> DatasetValidation:
     blocking_errors: list[str] = []
     warnings: list[str] = []
 
@@ -107,11 +117,20 @@ def validate_dataset(df: pd.DataFrame, *, baseline_schema: Schema | None = None)
     if row_count > max_row_count():
         warnings.append(f"행 수가 많습니다 ({row_count:,}행, 권장 상한 {max_row_count():,}행). 처리 시간과 메모리 사용량이 늘어날 수 있습니다.")
 
-    if LOT_COLUMN not in df.columns:
+    # Lot_ID may have been derived from Lot_Wafer_ID just now (spec §2-2)
+    # rather than having existed in the source file -- either way, if it's
+    # missing entirely (couldn't be parsed for a single row) GroupKFold is
+    # still impossible and gets the same existing warning. A *partial*
+    # parse failure (most rows fine, a handful malformed) is a distinct,
+    # narrower warning instead of the blanket "no LOT column" one.
+    failed_count = int((normalization_report or {}).get("lot_id_parse_failed_count", 0) or 0)
+    if LOT_COLUMN not in df.columns or (row_count > 0 and failed_count >= row_count):
         warnings.append(
             "LOT 열이 없어 GroupKFold를 적용할 수 없습니다. 단순 KFold로 대체하며 "
             "결과가 낙관적으로 나올 수 있습니다."
         )
+    elif failed_count > 0:
+        warnings.append(f"Lot_Wafer_ID에서 LOT을 파싱하지 못한 행이 {failed_count}개 있습니다. 해당 행은 LOT 미상으로 처리됩니다.")
 
     if baseline_schema is not None:
         diffs: list[str] = []
@@ -155,7 +174,9 @@ class DatasetRegistry:
 
     def _load_bundled(self, dataset_id: str) -> pd.DataFrame:
         if dataset_id not in self._bundled_cache:
-            self._bundled_cache[dataset_id] = pd.read_csv(self._bundled_path(dataset_id))
+            raw = pd.read_csv(self._bundled_path(dataset_id))
+            normalized, _ = normalize_dataset(raw)
+            self._bundled_cache[dataset_id] = normalized
         return self._bundled_cache[dataset_id]
 
     def bundled_schema(self, dataset_id: str = "train") -> Schema:
@@ -202,14 +223,16 @@ class DatasetRegistry:
         record = self.store.get_dataset(dataset_id)
         if record is None:
             raise DatasetNotFoundError(dataset_id)
-        return pd.read_csv(self.upload_root / record["stored_path"])
+        raw = pd.read_csv(self.upload_root / record["stored_path"])
+        normalized, _ = normalize_dataset(raw)
+        return normalized
 
     def upload(self, filename: str, content: bytes) -> dict[str, Any]:
         import gc
 
         try:
             try:
-                df = parse_uploaded_csv(content)
+                df, normalization_report = parse_uploaded_csv(content)
             except DatasetValidationError as exc:
                 return {
                     "success": False,
@@ -220,7 +243,7 @@ class DatasetRegistry:
                 }
 
             baseline_schema = self.bundled_schema("train")
-            validation = validate_dataset(df, baseline_schema=baseline_schema)
+            validation = validate_dataset(df, baseline_schema=baseline_schema, normalization_report=normalization_report)
             if not validation.is_valid:
                 return {
                     "success": False,

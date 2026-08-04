@@ -71,12 +71,15 @@ GOLDEN_TOP5 = {
 GOLDEN_CUM5 = {"Y1": (75.6, False), "Y2": (79.7, False), "Y3": (95.4, True), "Y4": (60.7, False), "Y5": (92.2, True)}
 
 # Confidence-tier composition across the fixed top 5 (강함/보통/약함/참고).
+# Updated for the eps2-gated grade (spec §5-2): p-value alone no longer
+# decides the tier, so most of a target's #2-#5 factors (real, but with
+# eps2 well under 2% explained) now read "참고" instead of "강함"/"보통".
 GOLDEN_TIER_COUNTS = {
-    "Y1": {"strong": 2, "moderate": 0, "weak": 3, "reference": 0},
-    "Y2": {"strong": 2, "moderate": 0, "weak": 3, "reference": 0},
-    "Y3": {"strong": 1, "moderate": 1, "weak": 2, "reference": 1},
-    "Y4": {"strong": 1, "moderate": 2, "weak": 2, "reference": 0},
-    "Y5": {"strong": 1, "moderate": 3, "weak": 1, "reference": 0},
+    "Y1": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
+    "Y2": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
+    "Y3": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
+    "Y4": {"strong": 0, "moderate": 1, "weak": 0, "reference": 4},
+    "Y5": {"strong": 1, "moderate": 0, "weak": 1, "reference": 3},
 }
 
 PCT_TOLERANCE = 0.5
@@ -116,7 +119,7 @@ def test_golden_cumulative_five_and_80pct_reach(train_df, schema, target):
 @pytest.mark.parametrize("target", list(GOLDEN_TIER_COUNTS))
 def test_golden_tier_composition(train_df, schema, target):
     factors = select_top_factors(train_df, schema, target, limit=5)
-    counts = Counter(confidence_tier(f.p_value) for f in factors)
+    counts = Counter(confidence_tier(f.eps2, f.p_value) for f in factors)
     expected = GOLDEN_TIER_COUNTS[target]
     for tier, expected_count in expected.items():
         assert counts.get(tier, 0) == expected_count, f"{target}/{tier}: expected {expected_count}, got {counts.get(tier, 0)}"

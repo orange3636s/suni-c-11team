@@ -2,12 +2,24 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { niceTicksFitted } from "@/lib/niceTicks";
+import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ReferenceLine, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 
-const MARGIN = { top: 36, right: 28, bottom: 46, left: 58 };
+// left margin widened 58->72 to fit the y-axis title (spec §7) inside the
+// reserved tick-label gutter without crowding the tick numbers themselves.
+const MARGIN = { top: 36, right: 28, bottom: 46, left: 72 };
+// Matches .scatterTickLabel's font-size (app/globals.css) -- used to
+// measure candidate tick labels for the overlap-backoff pass (spec §8).
+const TICK_FONT = "10.5px system-ui, -apple-system, sans-serif";
+// Y tick labels are horizontal text stacked vertically, so their collision
+// dimension is line height, not width -- a fixed estimate for 10.5px text.
+const Y_TICK_LABEL_HEIGHT_PX = 14;
+const X_TICK_COUNT: [max: number, min: number] = [10, 8];
+const Y_TICK_COUNT: [max: number, min: number] = [8, 6];
 const HEIGHT = 420;
 // "최적 중심" (5 glyphs, ~58px at the label's 10px font) is roughly twice
 // as wide as "LCL"/"UCL" (~26px) -- widened from 34px so the 2-row
@@ -105,7 +117,37 @@ function modelOf(config: string | null): string {
 const MODEL_COLORS = ["#1D4ED8", "#059669", "#B45309"];
 const LOT_PALETTE = ["#1D4ED8", "#059669", "#B45309", "#7C3AED", "#DB2777", "#0891B2", "#65A30D", "#DC2626"];
 
-function colorForPoint(point: ScatterPoint, mode: ScatterColorMode, lotIndex: Map<string, number>): { color: string; size: number; opacity: number } {
+export type PointZone = "in_recommended" | "in_control" | "out_control";
+
+/** Which of the 3 "기본" Color By zones a point falls into (spec §5) --
+ * shared by colorForPoint (paint) and the point tooltip (label) so they
+ * can never disagree about a given point's zone. Only meaningful for the
+ * "default" mode; other modes don't use zones at all. */
+function zoneOf(point: ScatterPoint, recommendedRangeValue: [number, number] | null): PointZone {
+  if (!point.in_range) return "out_control";
+  if (recommendedRangeValue && point.x >= recommendedRangeValue[0] && point.x <= recommendedRangeValue[1]) return "in_recommended";
+  return "in_control";
+}
+
+const ZONE_STYLE: Record<PointZone, { light: string; dark: string; size: number; opacity: number }> = {
+  in_recommended: { light: "#BFDBFE", dark: "#1E3A5F", size: 3.5, opacity: 0.35 },
+  in_control: { light: "#60A5FA", dark: "#3B82F6", size: 4.5, opacity: 0.6 },
+  out_control: { light: "#1D4ED8", dark: "#93C5FD", size: 5.5, opacity: 0.9 },
+};
+
+const ZONE_LABEL: Record<PointZone, string> = {
+  in_recommended: "권장 구간 안",
+  in_control: "권장 구간 밖 · 관리한계 안",
+  out_control: "관리한계 밖",
+};
+
+function colorForPoint(
+  point: ScatterPoint,
+  mode: ScatterColorMode,
+  lotIndex: Map<string, number>,
+  theme: "light" | "dark",
+  recommendedRangeValue: [number, number] | null,
+): { color: string; size: number; opacity: number } {
   if (mode === "alarm") {
     return point.in_range
       ? { color: "#1D4ED8", size: 4.5, opacity: 0.7 }
@@ -129,10 +171,11 @@ function colorForPoint(point: ScatterPoint, mode: ScatterColorMode, lotIndex: Ma
     }
     return { color: LOT_PALETTE[idx % LOT_PALETTE.length], size: 5, opacity: 0.85 };
   }
-  // default
-  return point.in_range
-    ? { color: "#93C5FD", size: 4.5, opacity: 0.5 }
-    : { color: "#1D4ED8", size: 5.5, opacity: 0.85 };
+  // default -- 3-tier by zone (spec §5): 권장 구간 안 < 권장 구간 밖·관리한계 안
+  // < 관리한계 밖, darker = worse, same direction as the previous 2-tier
+  // version (관리한계 밖 stays the same color/size/opacity as before).
+  const style = ZONE_STYLE[zoneOf(point, recommendedRangeValue)];
+  return { color: theme === "dark" ? style.dark : style.light, size: style.size, opacity: style.opacity };
 }
 
 // A single vertical line drawn on the chart -- either one of the two
@@ -242,6 +285,20 @@ export default function ScatterChart({
     };
   }, [data.points, plotWidth, plotHeight]);
 
+  // Tick density up from the previous fixed 6 (x) / 5 (y) to spec §8's
+  // 8-10 / 6-8, backing off toward the lower bound whenever labels would
+  // collide -- which also makes density shrink automatically as the chart
+  // narrows (panel open, mobile), since a narrower plotWidth needs more
+  // backoff steps to stop the same labels from overlapping.
+  const xTicks = useMemo(
+    () => niceTicksFitted(xDomain, X_TICK_COUNT[0], X_TICK_COUNT[1], plotWidth, formatTick, (label) => measureTextWidth(label, TICK_FONT)),
+    [xDomain, plotWidth],
+  );
+  const yTicks = useMemo(
+    () => niceTicksFitted(yDomain, Y_TICK_COUNT[0], Y_TICK_COUNT[1], plotHeight, formatTick, () => Y_TICK_LABEL_HEIGHT_PX),
+    [yDomain, plotHeight],
+  );
+
   // A plain object recreated each render -- cheap (just an empty Map),
   // and colorForPoint mutates it while walking data.points below to
   // assign each distinct config/lot a stable color index for this render.
@@ -255,10 +312,20 @@ export default function ScatterChart({
   // not just one that fell outside the drawable range (spec §4-2/§4-3).
   const optimalAvailable = data.optimal_center != null;
 
-  const recommendedRangeValue = useMemo(
-    () => recommendedRange(data.points, data.bins),
-    [data.points, data.bins],
-  );
+  // Recommended range is clamped into the control-limit range (spec §5-3)
+  // so it never contradicts the alarm boundaries -- if clamping collapses
+  // the range entirely, the recommendation is suppressed (null), same as
+  // the "no qualifying bins" case. `recommendedClamped` drives the
+  // "관리한계에 맞춰 조정됨" tooltip note, true only when clamping actually
+  // narrowed the raw range.
+  const { value: recommendedRangeValue, clamped: recommendedClamped } = useMemo(() => {
+    const raw = recommendedRange(data.points, data.bins);
+    if (!raw) return { value: null as [number, number] | null, clamped: false };
+    const lo = data.normal_range.lo != null ? Math.max(raw[0], data.normal_range.lo) : raw[0];
+    const hi = data.normal_range.hi != null ? Math.min(raw[1], data.normal_range.hi) : raw[1];
+    if (lo >= hi) return { value: null as [number, number] | null, clamped: false };
+    return { value: [lo, hi] as [number, number], clamped: lo !== raw[0] || hi !== raw[1] };
+  }, [data.points, data.bins, data.normal_range.lo, data.normal_range.hi]);
 
   const displayLines = useMemo<DisplayLine[]>(() => {
     const lines: DisplayLine[] = [];
@@ -455,15 +522,32 @@ export default function ScatterChart({
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {/* axis ticks */}
-          {niceTicks(yDomain, 5).map((tick) => (
+          {yTicks.map((tick) => (
             <g key={`y-${tick}`}>
               <line x1={0} x2={plotWidth} y1={yScale(tick)} y2={yScale(tick)} className="scatterGridLine" />
               <text x={-8} y={yScale(tick)} textAnchor="end" dominantBaseline="middle" className="scatterTickLabel">{formatTick(tick)}</text>
             </g>
           ))}
-          {niceTicks(xDomain, 6).map((tick) => (
-            <text key={`x-${tick}`} x={xScale(tick)} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{formatTick(tick)}</text>
+          {xTicks.map((tick) => (
+            <g key={`x-${tick}`}>
+              <line x1={xScale(tick)} x2={xScale(tick)} y1={0} y2={plotHeight} className="scatterGridLine scatterGridLine-x" />
+              <text x={xScale(tick)} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{formatTick(tick)}</text>
+            </g>
           ))}
+
+          {/* y-axis title -- target name only (e.g. "Y5"), same grey/
+              secondary style as the x-axis title below the plot (spec §7).
+              Rotated in place around its own anchor point, same technique
+              as the x-axis tick text just without the rotation. */}
+          <text
+            x={-MARGIN.left + 14}
+            y={plotHeight / 2}
+            textAnchor="middle"
+            transform={`rotate(-90, ${-MARGIN.left + 14}, ${plotHeight / 2})`}
+            className="scatterAxisTitleSvg"
+          >
+            {targetAxisLabel(data.axis.y_label)}
+          </text>
 
           {/* shading: amber outside IQR control limits, green 13% band across
               the recommended range (spec §4-2). Both sit below the points,
@@ -498,7 +582,7 @@ export default function ScatterChart({
               §4-1: lines and the trend curve must sit above the points,
               never hidden behind them). */}
           {data.points.map((point, index) => {
-            const style = colorForPoint(point, colorMode, lotIndex);
+            const style = colorForPoint(point, colorMode, lotIndex, theme, recommendedRangeValue);
             const isHovered = pointHover?.point === point;
             return (
               <circle
@@ -561,6 +645,23 @@ export default function ScatterChart({
 
       <p className="scatterAxisTitle">{factorAxisLabel(data.axis.x_label)}</p>
 
+      {/* 점 색상 3단계 범례 -- "기본" Color By 모드에서만 의미가 있다 (spec §5).
+          다른 Color By 모드(설비/LOT/알람)는 각자 자기 방식대로 이미 구분되므로
+          이 범례를 보여주지 않는다. */}
+      {colorMode === "default" && (
+        <div className="scatterLegend scatterZoneLegend">
+          {(["in_recommended", "in_control", "out_control"] as PointZone[]).map((zone) => (
+            <span className="scatterLegendItem scatterZoneLegendItem" key={zone}>
+              <i
+                className="scatterLegendSwatch"
+                style={{ background: theme === "dark" ? ZONE_STYLE[zone].dark : ZONE_STYLE[zone].light }}
+              />
+              {ZONE_LABEL[zone]}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* 4 reference elements only (spec §4-2): ±3σ/±6σ/평균/Q1/Q3 removed
           from every display surface here, but never from
           src/analysis/control_range.py or the JSON report -- those still
@@ -588,7 +689,11 @@ export default function ScatterChart({
           type="button"
           className={`scatterLegendItem ${visibleGroups.has("recommended") && recommendedRangeValue ? "active" : ""} ${!recommendedRangeValue ? "disabled" : ""}`}
           onClick={(event) => toggleGroup("recommended", event)}
-          title={recommendedRangeValue ? "구간 평균 불량률이 전체 평균 이하인 구간" : "데이터 범위 밖"}
+          title={
+            recommendedRangeValue
+              ? `구간 평균 불량률이 전체 평균 이하인 구간${recommendedClamped ? " (관리한계에 맞춰 조정됨)" : ""}`
+              : "데이터 범위 밖"
+          }
         >
           <i className="scatterLegendSwatch scatterLegendSwatch-band" style={{ background: theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light }} />
           {recommendedRangeValue ? `권장 구간 (${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])})` : "권장 구간"}
@@ -622,6 +727,9 @@ export default function ScatterChart({
               <strong>권장 구간</strong>
               <div className="heatmapTooltipRow"><span>범위</span><b>{formatNum1(recommendedRangeValue[0])} ~ {formatNum1(recommendedRangeValue[1])}</b></div>
               <div className="heatmapTooltipRow"><span>의미</span><b>구간 평균 불량률이 전체 평균 이하</b></div>
+              {recommendedClamped && (
+                <div className="heatmapTooltipRow"><span /><b>관리한계에 맞춰 조정됨</b></div>
+              )}
             </div>
           );
         }
@@ -654,6 +762,9 @@ export default function ScatterChart({
           <div className="heatmapTooltipRow"><span>{factorAxisLabel(data.axis.x_label)}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
           <div className="heatmapTooltipRow"><span>{targetAxisLabel(data.axis.y_label)}</span><b>{pointHover.point.y.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
+          {colorMode === "default" && (
+            <div className="heatmapTooltipRow"><span>구간</span><b>{ZONE_LABEL[zoneOf(pointHover.point, recommendedRangeValue)]}</b></div>
+          )}
           {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다
               (spec §5-3). 항상 최신 colorMode를 읽으므로 전환 시 즉시 반영된다. */}
           {colorMode === "config_model" && pointHover.point.config && (() => {
@@ -687,15 +798,6 @@ export default function ScatterChart({
       )}
     </div>
   );
-}
-
-function niceTicks(domain: [number, number], count: number): number[] {
-  const [min, max] = domain;
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return [min];
-  const step = (max - min) / count;
-  const ticks: number[] = [];
-  for (let i = 0; i <= count; i += 1) ticks.push(min + step * i);
-  return ticks;
 }
 
 function formatTick(value: number): string {

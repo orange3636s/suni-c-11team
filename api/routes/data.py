@@ -52,6 +52,7 @@ from api.schemas.jobs import TrainJobAccepted, TrainJobResult, TrainJobStatus
 from api.settings import settings
 from src.analysis.screening.schema import parse_schema
 from src.data_validation import load_data_schema, validate_dataframe
+from src.dataset_normalization import normalize_dataset
 from src.ml.dataset import (
     RANDOM_STATE,
     TARGET_COLUMN,
@@ -226,7 +227,14 @@ def _read_csv_stream(source: Any) -> pd.DataFrame:
             wrapper.detach()
             wrapper = None
             source.seek(0)
-            return pd.read_csv(source, encoding=encoding)
+            raw = pd.read_csv(source, encoding=encoding)
+            # This training-job upload re-reads the file's own bytes
+            # independently of the dataset registry's cache (see
+            # src/dataset_normalization.py's module docstring) -- it
+            # needs the same Step{n}_Config/_EQ + Lot_ID normalization
+            # applied here too, not just on the screening/analysis side.
+            normalized, _ = normalize_dataset(raw)
+            return normalized
         except UnicodeDecodeError:
             continue
         except HTTPException:

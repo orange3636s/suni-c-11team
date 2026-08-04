@@ -8189,6 +8189,15 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
   min-height: 40px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--border-card, rgba(0,0,0,.12));
   background: var(--surface, #fff); color: inherit; font: inherit; cursor: pointer;
 }
+/* Bundled filenames now include long ones (mentorship_dataset_v7_killing_event.csv,
+   spec §1) -- truncate rather than let them push the dropdown trigger wide
+   or wrap inside the menu list, and expose the full name via title=. */
+.datasetSelectorButtonLabel{
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.datasetSelectorFilename{
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
 /* Portaled to document.body (spec §1-4) -- position/left/top/width come
    from an inline style computed off the trigger button's own
    getBoundingClientRect(), not from this class, so it's never clipped
@@ -8400,14 +8409,18 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .paretoChartHeader h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
 
 .paretoChartBody{ display: flex; align-items: stretch; gap: 6px; }
-.paretoAxisCol{ display: flex; align-items: stretch; gap: 2px; flex: 0 0 auto; }
+/* Axis title <-> tick gap widened from a near-touching 2px to spec §6's
+   8-12px (10px here) -- the title was crowding the tick numbers, not
+   sitting far from them. Still well inside .paretoChartCard's 24px
+   padding either way, so this can't push the plot out of the card. */
+.paretoAxisCol{ display: flex; align-items: stretch; gap: 10px; flex: 0 0 auto; }
 /* Rotated as a single plain-text run (not writing-mode: vertical-rl --
    that rotates Latin/symbol glyphs but keeps Hangul upright per
    text-orientation:mixed, so a Korean+"(%)" label came out inconsistently
    flipped). -90deg reads correctly with a left head-tilt, unified for both
    the left and right axis titles. */
 .paretoAxisLabel{
-  width: 18px; flex: 0 0 auto; font-size: 11px; color: var(--text-secondary);
+  width: 16px; flex: 0 0 auto; font-size: 10px; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
 }
 .paretoAxisLabelText{
@@ -8552,7 +8565,11 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
   justify-content: flex-end; margin-bottom: 2px;
 }
 .scatterChartSvg{ display: block; overflow: visible; }
-.scatterGridLine{ stroke: var(--heatmap-cell-border, var(--border)); stroke-width: 1; }
+/* Lightened (spec §8) so the denser 8-10/6-8 tick grid doesn't read as
+   visual clutter -- was full-opacity border color at the old fixed 6/5
+   tick count. */
+.scatterGridLine{ stroke: var(--heatmap-cell-border, var(--border)); stroke-width: 1; opacity: 0.55; }
+.scatterGridLine-x{ opacity: 0.35; }
 .scatterTickLabel{ font-size: 10.5px; fill: var(--text-secondary); }
 .scatterOutsideShade{ fill: #F59E0B; opacity: 0.08; }
 /* 권장 구간 band (spec §4-2): fill color set inline per-theme in TSX,
@@ -8573,6 +8590,9 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 }
 html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c2e); }
 .scatterAxisTitle{ margin: 4px 0 0; text-align: center; font-size: 12px; color: var(--text-secondary); }
+/* y-axis title (spec §7) -- SVG <text> version of .scatterAxisTitle, same
+   grey/secondary color and a matching font-size. */
+.scatterAxisTitleSvg{ font-size: 12px; fill: var(--text-secondary); }
 
 .scatterLegend{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .scatterLegendItem{
@@ -8586,6 +8606,11 @@ html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c
 /* Wider/taller + translucent so 권장 구간's swatch reads as a shaded band,
    not a line, next to the other 3 line-style swatches. */
 .scatterLegendSwatch-band{ width: 16px; height: 10px; border-radius: 3px; opacity: 0.35; }
+
+/* 3단계 점 색상 범례 (spec §5) -- 토글 버튼이 아닌 정적 라벨이므로 항상 100%
+   불투명, 클릭 커서 없음 (.scatterLegendItem 기본값은 비활성 상태처럼 흐릿하다). */
+.scatterZoneLegend{ margin-top: 6px; }
+.scatterZoneLegendItem{ opacity: 1; cursor: default; }
 
 /* Alarm-log summary cards: 6-up grid, Apple-round 16px card + low-elevation
    shadow (same visual language as .resultCard/.uploadCard), label-on-top /
@@ -8907,3 +8932,115 @@ html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 25
   --z-modal: 80;
   --z-tooltip: 100;
 }
+
+/* ===================================================================
+   개선 권장 목록 (spec §3) + 테이블 검색/정렬/10행 스크롤 (spec §4).
+   Both the 알람 목록 and 개선 권장 목록 tables share this shell.
+   =================================================================== */
+.sectionHeading.compact .tableToolbar{
+  margin-left: auto;
+}
+.sectionHeading.compact{
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+.tableToolbar{
+  display: flex; align-items: center; gap: 8px; flex: 0 1 auto;
+}
+.tableSearchBox{
+  position: relative; display: inline-flex; align-items: center;
+  width: 220px; flex: 0 0 220px;
+}
+.tableSearchIcon{
+  position: absolute; left: 9px; color: var(--text-secondary); pointer-events: none;
+}
+.tableSearchBox input{
+  width: 100%; height: 32px; padding: 0 28px 0 30px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
+  font-size: 12.5px; font-family: inherit;
+}
+.tableSearchBox input:focus{ outline: none; border-color: var(--accent); }
+.tableSearchClear{
+  position: absolute; right: 6px; width: 18px; height: 18px; border-radius: 50%;
+  border: none; background: var(--surface-muted); color: var(--text-secondary);
+  font-size: 13px; line-height: 1; cursor: pointer; display: inline-flex;
+  align-items: center; justify-content: center; padding: 0;
+}
+.tableSortSelect{
+  height: 32px; max-width: 180px; padding: 0 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
+  font-size: 12.5px; font-weight: 600; font-family: inherit;
+}
+.tableCaption{
+  margin: 8px 2px 0; font-size: 12px; color: var(--text-secondary);
+}
+.tableEmptySearch{
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.tableEmptySearch button{
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
+  border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+
+/* Fixed 10-row-tall scroll body. Row height is pinned via --scroll-row-h so
+   the max-height math (header + 10 rows) stays exact regardless of content;
+   thead's existing `position:sticky;top:0` (see .tableWrap th above) keeps
+   the header pinned while this wrapper scrolls. */
+.scrollTableWrap{
+  --scroll-row-h: 42px;
+  --scroll-header-h: 38px;
+  position: relative;
+  max-height: calc(var(--scroll-header-h) + var(--scroll-row-h) * 10);
+  overflow-y: auto;
+  overflow-x: auto;
+}
+.scrollTableWrap table{
+  table-layout: fixed;
+}
+.scrollTableWrap th{
+  height: var(--scroll-header-h);
+}
+.scrollTableWrap td{
+  height: var(--scroll-row-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scrollTableFade{
+  position: sticky;
+  left: 0; right: 0; bottom: 0;
+  height: 22px;
+  margin-top: -22px;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+  pointer-events: none;
+}
+
+/* 개선 권장 목록 태그 -- 기존 confidenceBadge와 같은 형태를 재사용하되
+   (우선 권장=강함/채움, 권장=보통/외곽선) 색을 다르게 써서 알람 등급
+   배지와 시각적으로 구분한다. 참고 태그는 회색으로 기본 숨김(토글). */
+.recommendationTag{
+  display: inline-flex; align-items: center; padding: 2px 9px;
+  border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: middle;
+  line-height: 1.6; white-space: nowrap;
+}
+.recommendationTag.tag-priority{ background: #059669; color: #fff; }
+.recommendationTag.tag-recommended{ background: transparent; border: 1.5px solid #059669; color: #059669; }
+.recommendationTag.tag-reference{
+  background: var(--surface-muted); color: var(--text-secondary); border: 1px solid var(--border);
+}
+html[data-theme="dark"] .recommendationTag.tag-priority{ background: #34D399; color: #052e1f; }
+html[data-theme="dark"] .recommendationTag.tag-recommended{ border-color: #34D399; color: #34D399; }
+
+.recommendationToggle{
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--text-secondary); cursor: pointer; user-select: none; margin-right: 4px;
+}
+.recommendationToggle input{ cursor: pointer; }
+
+.recommendationDirection{
+  display: inline-flex; align-items: center; gap: 2px; font-weight: 600;
+}
+.recommendationDirection.dir-down{ color: #2563EB; }
+.recommendationDirection.dir-up{ color: #DC2626; }
+html[data-theme="dark"] .recommendationDirection.dir-down{ color: #60A5FA; }
+html[data-theme="dark"] .recommendationDirection.dir-up{ color: #F87171; }

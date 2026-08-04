@@ -15,6 +15,7 @@ import type {
   ModelPerformanceResponse,
   ParetoRankingResponse,
   PreprocessResponse,
+  RecommendationListResponse,
   ScreeningScatterResponse,
   TrainResponse,
   TrainingJobCreateResponse,
@@ -396,6 +397,10 @@ export function getAlarms(trainDataset: string, evalDataset: string, severity?: 
 
 export function getAlarmSummary(trainDataset: string, evalDataset: string): Promise<AlarmSummaryResponse> {
   return getJson(`/api/alarms/summary?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
+}
+
+export function getRecommendations(trainDataset: string, evalDataset: string): Promise<RecommendationListResponse> {
+  return getJson(`/api/recommendations?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
 }
 
 export function getModelPerformance(): Promise<ModelPerformanceResponse> {

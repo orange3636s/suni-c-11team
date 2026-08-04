@@ -92,7 +92,7 @@ def test_random_noise_still_returns_a_primary_factor_with_low_confidence():
     factor = select_primary_factor(df, schema, "Y1")
 
     assert factor is not None
-    assert confidence_tier(factor.p_value) in ("weak", "reference")
+    assert confidence_tier(factor.eps2, factor.p_value) in ("weak", "reference")
 
 
 def test_all_candidates_below_min_n_returns_none():

@@ -20,9 +20,12 @@ Three selection concepts, each serving a different caller:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from src.analysis.screening.effect_size import eps2_categorical, eps2_numeric
 from src.analysis.screening.schema import Schema
@@ -35,19 +38,44 @@ DEFAULT_TOP_N = 5
 
 CONFIDENCE_TIERS = ("strong", "moderate", "weak", "reference")
 
+GRADE_THRESHOLDS_PATH = Path(__file__).resolve().parents[3] / "config" / "grade_thresholds.yaml"
+DEFAULT_GRADE_THRESHOLDS = {
+    "min_eps2_reference": 0.02,
+    "min_eps2_moderate": 0.05,
+    "min_eps2_strong": 0.10,
+}
 
-def confidence_tier(p_value: float) -> str:
-    """p-value -> a display-confidence label, independent of FDR.
 
-    The FDR gate (q < 0.05) no longer decides what feeds the alarm engine
-    either (see select_alarm_factor, which gates on raw p instead) -- it
-    is purely informational now, surfaced in q_value for tooltips.
-    Nothing is hidden because of low confidence; it just reads as a
-    weaker tier.
+@lru_cache(maxsize=1)
+def _grade_thresholds() -> dict[str, float]:
+    try:
+        loaded = yaml.safe_load(GRADE_THRESHOLDS_PATH.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return dict(DEFAULT_GRADE_THRESHOLDS)
+    return {**DEFAULT_GRADE_THRESHOLDS, **loaded}
+
+
+def confidence_tier(eps2: float, p_value: float) -> str:
+    """Effect size gates first, then p-value (spec §5-2).
+
+    p-value alone answers "is the effect non-zero", not "is the effect
+    big enough to act on" -- at large n, p can be tiny even for a
+    near-zero eps2 (e.g. Step6_R1 -> Y1: n=1,462, p=0.006, eps2=0.0089,
+    under 1% explained -- used to read "강함"). eps2 < min_eps2_reference
+    is always "참고" regardless of how small p is; "강함"/"보통" each add
+    their own eps2 floor on top of the p-value cut.
+
+    The FDR gate (q < 0.05) still doesn't factor in here -- it's
+    informational only, surfaced in q_value. Alarm generation
+    (select_alarm_factor) is untouched: still gated on raw p < 0.05,
+    independent of this tier.
     """
-    if p_value < 0.01:
+    thresholds = _grade_thresholds()
+    if eps2 < thresholds["min_eps2_reference"]:
+        return "reference"
+    if p_value < 0.01 and eps2 >= thresholds["min_eps2_strong"]:
         return "strong"
-    if p_value < 0.05:
+    if p_value < 0.05 and eps2 >= thresholds["min_eps2_moderate"]:
         return "moderate"
     if p_value < 0.20:
         return "weak"
