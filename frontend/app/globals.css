@@ -9018,7 +9018,8 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 
 /* ===================================================================
    Table sits inside the card's own padding (spec 재지시: 다른 카드와
-   여백 통일 -- full-bleed 지시를 철회).
+   여백 통일 -- full-bleed 지시를 철회) + outer border restored (spec
+   재지시: 테두리 부분 복원).
 
    Reference measured directly in-browser (getBoundingClientRect), not
    assumed: CORRELATION OVERVIEW's placeholder box (.emptyMessage, plain
@@ -9029,19 +9030,30 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
    table wrap any left/right margin at all and let it sit in that same
    normal content edge -- no variable needs to reproduce "17px", it falls
    out automatically once the wrap stops overriding its own position.
+
+   That same .emptyMessage box's own border (getComputedStyle, not
+   guessed) is what --table-outer-border/--table-outer-radius reproduce
+   exactly: 1px solid rgba(0,0,0,.08) light / rgba(255,255,255,.08) dark,
+   border-radius 14px. Kept as its own pair of variables rather than
+   reusing --table-border/--table-radius below, because those two still
+   drive the header's bottom divider and were deliberately left alone
+   here ("안쪽은 그대로 유지") -- an outer-border color/radius change was
+   never supposed to also retint that inner line.
    =================================================================== */
 :root{
   --table-header-bg: #F4F5F7;
   --table-border: rgba(0, 0, 0, 0.10);
   --table-line: rgba(0, 0, 0, 0.06);
-  /* One step smaller than the card's own 16px (--radius-card) so the
-     inner block never reads as more rounded than its container. */
   --table-radius: 12px;
+  /* Measured from .emptyMessage (CORRELATION OVERVIEW's placeholder box) */
+  --table-outer-border: rgba(0, 0, 0, 0.08);
+  --table-outer-radius: 14px;
 }
 html[data-theme="dark"]{
   --table-header-bg: #2F2F31;
   --table-border: rgba(255, 255, 255, 0.14);
   --table-line: rgba(255, 255, 255, 0.08);
+  --table-outer-border: rgba(255, 255, 255, 0.08);
 }
 .tableWrap,
 .tableWrapper{
@@ -9050,13 +9062,13 @@ html[data-theme="dark"]{
   margin-right: 0;
   width: 100%;
   max-width: 100%;
-  border: none;
-  border-radius: var(--table-radius);
+  border: 1px solid var(--table-outer-border);
+  border-radius: var(--table-outer-radius);
   /* `clip`, not `hidden`: both clip the header band's corners to this
      radius, but `hidden` formally establishes a *scroll container* --
      combined with the sticky <th> below and this wrap's own zero
-     border/padding, that made Chromium reserve a ~15px scrollbar gutter
-     in clientWidth even though nothing ever actually overflows (found by
+     padding, that made Chromium reserve a ~15px scrollbar gutter in
+     clientWidth even though nothing ever actually overflows (found by
      toggling the property in devtools: table width jumped from 796px to
      the full 811px the instant overflow changed from hidden to
      visible/clip). `clip` clips the same way without ever being treated
