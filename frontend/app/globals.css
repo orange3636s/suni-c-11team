@@ -8290,7 +8290,12 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapCard{ display: flex; flex-direction: column; gap: 12px; }
 .heatmapHeaderRow{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .heatmapHeaderRow h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
-.heatmapHeaderRow p{ margin: 4px 0 0; font-size: 12.5px; color: var(--text-secondary); max-width: 60ch; }
+/* Was capped at 60ch, breaking the sentence mid-way even when the card
+   had plenty of room left (spec §5-4-5). No cap now -- it only wraps
+   when the row itself actually runs out of width, and keep-all avoids
+   splitting a Korean word/particle across the break when it does. */
+.heatmapHeaderRowText{ flex: 1 1 320px; min-width: 0; }
+.heatmapHeaderRow p{ margin: 4px 0 0; font-size: 12.5px; color: var(--text-secondary); max-width: none; word-break: keep-all; }
 .heatmapMetricToggle{ display: inline-flex; border: 1px solid var(--border-card, var(--border)); border-radius: 999px; padding: 3px; gap: 2px; flex: 0 0 auto; }
 .heatmapMetricToggle button{
   border: none; background: transparent; padding: 6px 12px; border-radius: 999px; font: 600 12.5px/1 var(--font-ui);
@@ -8305,6 +8310,18 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapScrollArea{ overflow: auto; max-height: 620px; border-radius: 12px; border: 1px solid var(--heatmap-cell-border); }
 .heatmapScrollArea.collapsed{ max-height: 462px; }
 .heatmapGrid{ display: grid; min-width: 480px; }
+@keyframes heatmapRowSettle{
+  from{ opacity: .35; transform: translateY(-3px); }
+  to{ opacity: 1; transform: translateY(0); }
+}
+.heatmapGrid.sorting .heatmapRowLabel,
+.heatmapGrid.sorting .heatmapCell{
+  animation: heatmapRowSettle 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce){
+  .heatmapGrid.sorting .heatmapRowLabel,
+  .heatmapGrid.sorting .heatmapCell{ animation: none; }
+}
 .heatmapGrid .heatmapCornerCell{
   position: sticky; top: 0; left: 0; z-index: 3; background: var(--surface-card, var(--surface));
 }
@@ -8474,10 +8491,12 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .confidenceBadge.adopted{ background: #059669; color: #fff; }
 html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #052e1f; }
 
-/* 모델 학습 -- 요약바 + 통합 테이블 (spec §1) */
+/* 모델 학습 -- 요약바 + 통합 테이블 (spec §1). Horizontal padding matches
+   every other card (--card-pad-x, defined below) so stacked cards line
+   their text up on the same left edge. */
 .trainingSummaryBar{
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px;
-  min-height: 48px; padding: 14px 20px; border-radius: 12px;
+  min-height: 48px; padding: 14px var(--card-pad-x, 16px); border-radius: 12px;
   border: 1px solid var(--border-card, rgba(0,0,0,.08)); background: var(--surface-card, #fff);
 }
 .trainingSummaryLabel{ font-size: 13px; font-weight: 600; color: var(--text-secondary); }
@@ -8485,7 +8504,7 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 .trainingSummaryMetrics span:not(:first-child)::before{ content: "·"; margin: 0 10px; opacity: .6; }
 .trainingSummarySkeleton{
   display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  min-height: 48px; padding: 14px 20px; border-radius: 12px;
+  min-height: 48px; padding: 14px var(--card-pad-x, 16px); border-radius: 12px;
   border: 1px solid var(--border-card, rgba(0,0,0,.08)); background: var(--surface-card, #fff);
 }
 .trainingSummarySkeletonBar{
@@ -8499,7 +8518,7 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 }
 .trainingResultError{
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  padding: 14px 20px; border-radius: 12px;
+  padding: 14px var(--card-pad-x, 16px); border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border-card, rgba(0,0,0,.08)));
   background: var(--danger-soft, color-mix(in srgb, var(--danger) 8%, transparent));
   color: var(--danger);
@@ -8686,7 +8705,157 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 /* "Y1~Y5 비교" button on each scatter card header. */
 .compareTriggerButton{
   display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
-  background: transparent; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600;
+  background: transparent; border-radius: 8px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600;
   color: var(--text-primary); cursor: pointer; white-space: nowrap;
 }
 .compareTriggerButton:hover{ background: var(--surface-secondary, var(--surface-muted)); border-color: var(--brand-navy-text); }
+
+/* ===================================================================
+   Table full-bleed inside cards.
+
+   Root cause (reported: header band + row dividers stop short of the
+   card's right edge): .tableWrap was a doubly-nested box -- its own
+   border/radius/background sitting fully inside .resultCard's padding,
+   with the header band painted per-<th> instead of on the row group.
+   Under table-layout:auto, a table with modest cell content (e.g. the
+   2-column benchmark table, or 타깃별 성능's short numeric columns)
+   doesn't reliably stretch every column to consume 100% of that inner
+   box, so the per-cell header background and border-bottom dividers --
+   which only ever paint the width of their own cell -- stopped short,
+   leaving a dead gap before the *inner* wrapper's edge, which itself
+   already sat --card-pad-x inside the card. Fix: the wrapper cancels
+   the card's own padding (so its box == the card's full inner width),
+   the header band is painted on <thead> (a row group always spans the
+   table's full rendered width, independent of individual column
+   sizing), and first/last cells restore the padding so text stays
+   aligned. Same offset variable both directions -- can't drift apart.
+   =================================================================== */
+:root{
+  --card-pad-x: var(--space-card, 16px);
+}
+.resultCard,
+.uploadCard{
+  /* Clips the full-bleed table's edges to the card's own rounded
+     corners instead of letting them square off past the radius. */
+  overflow: hidden;
+}
+.tableWrap,
+.tableWrapper{
+  position: relative;
+  margin-left: calc(-1 * var(--card-pad-x));
+  margin-right: calc(-1 * var(--card-pad-x));
+  width: calc(100% + var(--card-pad-x) * 2);
+  max-width: calc(100% + var(--card-pad-x) * 2);
+  border: none;
+  border-radius: 0;
+  background:
+    linear-gradient(to right, var(--surface-card, var(--surface)) 0, transparent 24px) left / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--surface-card, var(--surface)) 0, transparent 24px) right / 32px 100% no-repeat local;
+}
+.tableWrap table,
+.tableWrapper table{
+  width: 100%;
+  /* Deterministic column widths -- with table-layout:auto, a table
+     specified at width:100% is only guaranteed to reach 100% as a
+     *box*; browsers don't consistently distribute any width left over
+     once every column's own content is satisfied, so trailing space
+     inside that box (after the last cell) is exactly where the header
+     band and row dividers were stopping short. `fixed` removes that
+     ambiguity: the columns' widths always sum to exactly 100%. */
+  table-layout: fixed;
+}
+.tableWrap thead,
+.tableWrapper thead{
+  /* Row-group background always spans the table's full rendered width,
+     regardless of how table-layout distributes individual column
+     widths -- this is what actually guarantees "edge to edge". */
+  background: var(--surface-tertiary, var(--surface-muted));
+}
+.tableWrap th,
+.tableWrapper th{
+  background: transparent;
+  border-bottom: 1.5px solid var(--border-card, var(--border));
+}
+.tableWrap td,
+.tableWrapper td{
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+html[data-theme="dark"] .tableWrap td,
+html[data-theme="dark"] .tableWrapper td{
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.tableWrap th:first-child, .tableWrap td:first-child,
+.tableWrapper th:first-child, .tableWrapper td:first-child{
+  padding-left: var(--card-pad-x);
+  position: sticky;
+  left: 0;
+}
+.tableWrap th:last-child, .tableWrap td:last-child,
+.tableWrapper th:last-child, .tableWrapper td:last-child{
+  padding-right: var(--card-pad-x);
+}
+/* Sticky first column (spec §4-4) needs its own opaque background --
+   a row-group/table background doesn't "follow" a sticky descendant
+   reliably once it detaches from normal flow while scrolling. */
+.tableWrap td:first-child,
+.tableWrapper td:first-child{
+  background: var(--surface-card, var(--surface));
+  z-index: 1;
+}
+.tableWrap th:first-child,
+.tableWrapper th:first-child{
+  background: var(--surface-tertiary, var(--surface-muted));
+  z-index: 2;
+}
+/* No divider directly under the header row or under the card's own
+   bottom border -- either would read as a doubled line against the
+   card edge (spec §3/#6). */
+.tableWrap thead tr:first-child th,
+.tableWrapper thead tr:first-child th{
+  border-top: none;
+}
+.tableWrap tbody tr:last-child td,
+.tableWrapper tbody tr:last-child td{
+  border-bottom: none;
+}
+.tableWrap .confidenceBadge,
+.tableWrapper .confidenceBadge{
+  vertical-align: middle;
+}
+
+/* 원인 분석 실패 안내 (spec §5-2). Same shape family as
+   .heatmapSignificanceBanner (13px radius, similar padding), red instead
+   of amber, plus an icon so it isn't color-only. */
+.analysisErrorBox{
+  display: flex; align-items: flex-start; gap: 10px; margin-top: 12px;
+  padding: 13px 14px; border-radius: 13px;
+  border: 1px solid #FECACA; background: #FEF2F2; color: #B42318;
+}
+html[data-theme="dark"] .analysisErrorBox{
+  border-color: rgba(248, 113, 113, 0.4); background: rgba(127, 29, 29, 0.28); color: #FCA5A5;
+}
+.analysisErrorIcon{ flex: 0 0 auto; font-size: 15px; line-height: 1.5; }
+.analysisErrorBody{ flex: 1 1 auto; min-width: 0; }
+.analysisErrorMessage{ margin: 0; font-size: 13px; line-height: 1.5; }
+.analysisErrorDetail{ margin-top: 6px; font-size: 11.5px; }
+.analysisErrorDetail summary{ cursor: pointer; color: inherit; opacity: .85; }
+.analysisErrorDetail code{
+  display: block; margin-top: 4px; padding: 6px 8px; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.05); font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; white-space: pre-wrap; word-break: break-word;
+}
+html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 255, 0.08); }
+.analysisErrorBox > .button{ flex: 0 0 auto; }
+
+/* Per-scatter-card Color By dropdown (spec §5-3) -- lines up with
+   .compareTriggerButton: same height/radius/font, same gap on both
+   sides via --factor-title-gap. */
+.colorBySelectField{
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  font-size: 12px; color: var(--text-secondary);
+}
+.colorBySelect{
+  height: 30px; max-width: 160px; padding: 0 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: transparent; color: var(--text-primary);
+  font-size: 12.5px; font-weight: 600; font-family: inherit;
+}

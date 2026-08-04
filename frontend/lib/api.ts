@@ -32,6 +32,26 @@ export class ApiResponseError extends Error {
   }
 }
 
+export class ApiTimeoutError extends Error {
+  constructor(message = "요청이 시간 내에 끝나지 않았습니다.") {
+    super(message);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+export class ApiNetworkError extends Error {
+  constructor(message = "서버에 연결할 수 없습니다.") {
+    super(message);
+    this.name = "ApiNetworkError";
+  }
+}
+
+// 원인 분석 실행은 여러 타깃 x 인자 조합을 한 번에 조회해 12초 안팎이 걸릴
+// 수 있다 -- 이전에는 명시적인 타임아웃이 없어 연결이 멎으면 스피너가
+// 무한정 돌았다. 90초는 그 요청들이 정상적으로 끝나는 시간보다 넉넉히
+// 길게 잡은 상한선이다.
+const DEFAULT_TIMEOUT_MS = 90_000;
+
 export type LatestModelMetadata = {
   model_id: string;
   model_name?: string | null;
@@ -308,13 +328,20 @@ export async function deleteModel(modelId: string): Promise<DeleteModelResponse>
   return result;
 }
 
-async function getJson<T>(path: string): Promise<T> {
+async function getJson<T>(path: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetch(`${getApiBaseUrl()}${path}`, { method: "GET", cache: "no-store" });
+    response = await fetch(`${getApiBaseUrl()}${path}`, { method: "GET", cache: "no-store", signal: controller.signal });
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiTimeoutError();
+    }
     rethrowApiConfigurationError(error);
-    throw new Error("서버에 연결할 수 없습니다.");
+    throw new ApiNetworkError();
+  } finally {
+    window.clearTimeout(timer);
   }
   if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
   return response.json() as Promise<T>;

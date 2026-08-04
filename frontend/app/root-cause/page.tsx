@@ -10,6 +10,9 @@ import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode } from "@/components/ScatterChart";
 import {
+  ApiNetworkError,
+  ApiResponseError,
+  ApiTimeoutError,
   getAnalysisReport,
   getScreeningHeatmap,
   getScreeningPareto,
@@ -38,6 +41,32 @@ function formatP(p: number): string {
 
 function hasReliableEvidence(tier: ConfidenceTier): boolean {
   return tier === "strong" || tier === "moderate";
+}
+
+type AnalysisFailureKind = "network" | "timeout" | "server" | "model_not_ready" | "unknown";
+
+const ANALYSIS_FAILURE_MESSAGE: Record<AnalysisFailureKind, string> = {
+  network: "서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+  timeout: "분석 시간이 초과되었습니다. 다시 시도해 주세요.",
+  server: "분석 중 오류가 발생했습니다. 다시 시도해 주세요.",
+  model_not_ready: "모델 학습이 완료되지 않았습니다. 모델 학습 탭에서 먼저 학습을 실행해 주세요.",
+  unknown: "분석을 완료하지 못했습니다. 다시 시도해 주세요.",
+};
+
+/** Turns a raw fetch/HTTP failure into a screen-safe message -- never
+ * shows "Failed to fetch"/"500 Internal Server Error" verbatim (spec
+ * §5-2). The raw detail is kept separately for the collapsible
+ * "자세히 보기" section and the console, not shown by default. */
+function classifyAnalysisFailure(error: unknown): { kind: AnalysisFailureKind; detail: string } {
+  if (error instanceof ApiTimeoutError) return { kind: "timeout", detail: error.message };
+  if (error instanceof ApiNetworkError) return { kind: "network", detail: error.message };
+  if (error instanceof ApiResponseError) {
+    if (error.status >= 500) return { kind: "server", detail: `HTTP ${error.status}: ${error.message}` };
+    if (/모델|학습/.test(error.message)) return { kind: "model_not_ready", detail: `HTTP ${error.status}: ${error.message}` };
+    return { kind: "unknown", detail: `HTTP ${error.status}: ${error.message}` };
+  }
+  if (error instanceof Error) return { kind: "unknown", detail: error.message };
+  return { kind: "unknown", detail: String(error) };
 }
 
 function ConfidenceBadge({ tier }: { tier: ConfidenceTier }) {
@@ -79,13 +108,19 @@ function RootCauseContent() {
   const searchParams = useSearchParams();
   const [datasetId, setDatasetId] = useState("train");
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
-  const [colorMode, setColorMode] = useState<ColorMode>("default");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
   const [compareFeature, setCompareFeature] = useState<string | null>(null);
 
   const [runState, setRunState] = useState<RunState>("idle");
+  // Bumped once per "원인 분석 실행"/"다시 실행" -- folded into each factor
+  // card's React `key` so every chart's per-card Color By state (spec
+  // §5-3) is forced back to "기본" on a fresh run, even when the same
+  // feature reappears at the same list position.
+  const [runGeneration, setRunGeneration] = useState(0);
   const [runStageIndex, setRunStageIndex] = useState(0);
   const [runError, setRunError] = useState("");
+  const [runErrorDetail, setRunErrorDetail] = useState("");
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
   const [reportSaving, setReportSaving] = useState(false);
   const [reportToast, setReportToast] = useState("");
 
@@ -97,6 +132,7 @@ function RootCauseContent() {
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string; isConfig: boolean } | null>(null);
   const [quickLookData, setQuickLookData] = useState<ScreeningScatterResponse | CategoricalScatterResponse | null>(null);
   const [quickLookError, setQuickLookError] = useState("");
+  const [quickLookColorMode, setQuickLookColorMode] = useState<ColorMode>("default");
   const initialDeepLinkHandled = useRef(false);
 
   // A dataset change invalidates every cached result -- back to "not yet run".
@@ -109,6 +145,7 @@ function RootCauseContent() {
       setQuickLookData(null);
       setRunState("idle");
       setRunError("");
+      setRunErrorDetail("");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [datasetId]);
@@ -116,7 +153,14 @@ function RootCauseContent() {
   async function runAnalysis() {
     setRunState("running");
     setRunError("");
+    setRunErrorDetail("");
     setRunStageIndex(0);
+    setRunElapsedSeconds(0);
+    setRunGeneration((generation) => generation + 1);
+    const startedAt = Date.now();
+    const elapsedTimer = window.setInterval(() => {
+      setRunElapsedSeconds(Math.round((Date.now() - startedAt) / 1000));
+    }, 1000);
     try {
       setRunStageIndex(1);
       const paretoResults = await Promise.all(
@@ -154,11 +198,18 @@ function RootCauseContent() {
       setCategoricalByKey(categoricalMap);
       setRunState("done");
     } catch (failure) {
+      // Never leave a stale result on screen after a failure -- it could
+      // be mistaken for the new run's output (spec §5-2).
       setParetoByTarget({});
       setScatterByKey({});
       setCategoricalByKey({});
-      setRunError(failure instanceof Error ? failure.message : "원인 분석 실행에 실패했습니다.");
+      const { kind, detail } = classifyAnalysisFailure(failure);
+      console.error("원인 분석 실행 실패:", failure);
+      setRunError(ANALYSIS_FAILURE_MESSAGE[kind]);
+      setRunErrorDetail(detail);
       setRunState("error");
+    } finally {
+      window.clearInterval(elapsedTimer);
     }
   }
 
@@ -217,6 +268,9 @@ function RootCauseContent() {
     setQuickLook(null);
     setQuickLookData(null);
     setQuickLookError("");
+    // Every newly opened quick-look factor starts at 기본, same as the
+    // main list's per-card Color By (spec §5-3).
+    setQuickLookColorMode("default");
     const isDisplayed = (paretoByTarget[target]?.items ?? []).some((f) => f.feature === feature);
     if (isDisplayed) {
       setPendingScrollFeature(feature);
@@ -298,17 +352,8 @@ function RootCauseContent() {
       </section>
 
       <section className="uploadCard">
-        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr) minmax(180px,1fr)" }}>
+        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr)" }}>
           <DatasetSelector label="분석 데이터셋" value={datasetId} onChange={setDatasetId} />
-          <div className="fieldGroup">
-            <span>Color By</span>
-            <select value={colorMode} onChange={(event) => setColorMode(event.target.value as ColorMode)}>
-              <option value="default">기본</option>
-              <option value="config_model">Config 모델별</option>
-              <option value="lot">LOT별</option>
-              <option value="alarm">알람 여부</option>
-            </select>
-          </div>
         </div>
       </section>
 
@@ -345,10 +390,24 @@ function RootCauseContent() {
             <div className="paretoRunProgressTrack">
               <span style={{ width: `${((runStageIndex + 1) / RUN_STAGES.length) * 100}%` }} />
             </div>
-            <span className="paretoRunStage">{RUN_STAGES[runStageIndex]}</span>
+            <span className="paretoRunStage">{RUN_STAGES[runStageIndex]} · 경과 {runElapsedSeconds}초</span>
           </div>
         )}
-        {runState === "error" && <p className="errorMessage">{runError}</p>}
+        {runState === "error" && (
+          <div className="analysisErrorBox" role="alert">
+            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
+            <div className="analysisErrorBody">
+              <p className="analysisErrorMessage">{runError}</p>
+              {runErrorDetail && (
+                <details className="analysisErrorDetail">
+                  <summary>자세히 보기</summary>
+                  <code>{runErrorDetail}</code>
+                </details>
+              )}
+            </div>
+            <button type="button" className="button" onClick={() => void runAnalysis()}>다시 시도</button>
+          </div>
+        )}
       </section>
 
       <HeatmapParetoSection
@@ -366,9 +425,12 @@ function RootCauseContent() {
           {quickLook && (
             <article id="heatmapQuickLook" className="resultCard factorChartCard">
               <div className="factorChartMeta">
-                <div>
+                <div className="factorChartTitleBlock">
                   <span className="sectionLabel">선택한 인자</span>
-                  <h2>{quickLook.feature} vs {quickLook.target}</h2>
+                  <div className="factorChartTitleRow">
+                    <h2>{quickLook.feature} vs {quickLook.target}</h2>
+                    {!quickLook.isConfig && <ColorBySelect value={quickLookColorMode} onChange={setQuickLookColorMode} />}
+                  </div>
                 </div>
                 <button
                   className="button"
@@ -394,7 +456,7 @@ function RootCauseContent() {
                 </p>
               )}
               {quickLookNumeric ? (
-                <ScatterChart data={quickLookNumeric} colorMode={colorMode} onSelectWafer={setSelectedWafer} height={420} />
+                <ScatterChart data={quickLookNumeric} colorMode={quickLookColorMode} onSelectWafer={setSelectedWafer} height={420} />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={420} />
               ) : !quickLookError ? (
@@ -407,9 +469,20 @@ function RootCauseContent() {
             {activeDisplayFactors.map((item, index) => {
               const isConfig = item.kind === "Config";
               const key = `${activeTarget}::${item.feature}`;
-              const numericData = !isConfig ? scatterByKey[key] : undefined;
-              const categoricalData = isConfig ? categoricalByKey[key] : undefined;
-              const n = numericData?.n ?? categoricalData?.n;
+              if (!isConfig) {
+                return (
+                  <NumericFactorCard
+                    key={`${runGeneration}-${activeTarget}-${item.feature}`}
+                    item={item}
+                    index={index}
+                    activeTarget={activeTarget}
+                    numericData={scatterByKey[key]}
+                    onSelectWafer={setSelectedWafer}
+                    onCompare={setCompareFeature}
+                  />
+                );
+              }
+              const categoricalData = categoricalByKey[key];
               return (
                 <article className="resultCard factorChartCard" id={`factor-${item.feature}`} key={item.feature}>
                   <div className="factorChartMeta">
@@ -418,21 +491,11 @@ function RootCauseContent() {
                       <div className="factorChartTitleRow">
                         <h2>{item.feature} vs {activeTarget}</h2>
                         <ConfidenceBadge tier={item.confidence_tier} />
-                        {!isConfig && (
-                          <button
-                            type="button"
-                            className="compareTriggerButton"
-                            title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
-                            onClick={() => setCompareFeature(item.feature)}
-                          >
-                            ⊞ Y1~Y5 비교
-                          </button>
-                        )}
                       </div>
                     </div>
-                    {n != null && (
+                    {categoricalData && (
                       <small className="factorChartStats">
-                        <span>n={n}</span>
+                        <span>n={categoricalData.n}</span>
                         <span>기여율={item.contribution_pct.toFixed(1)}%</span>
                         <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
                         <span>p-value {formatP(item.p_value)}</span>
@@ -444,14 +507,8 @@ function RootCauseContent() {
                       이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatP(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
                     </p>
                   )}
-                  {isConfig ? (
-                    categoricalData ? (
-                      <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={420} />
-                    ) : (
-                      <p className="emptyMessage">불러오는 중…</p>
-                    )
-                  ) : numericData ? (
-                    <ScatterChart data={numericData} colorMode={colorMode} onSelectWafer={setSelectedWafer} height={480} />
+                  {categoricalData ? (
+                    <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={420} />
                   ) : (
                     <p className="emptyMessage">불러오는 중…</p>
                   )}
@@ -485,6 +542,89 @@ function RootCauseContent() {
         />
       )}
     </DashboardShell>
+  );
+}
+
+/** One dropdown per scatter card (spec §5-3) -- no server round-trip on
+ * change, `lot_id`/`config` already ride along in the point data
+ * ScatterChart already has. */
+function ColorBySelect({ value, onChange }: { value: ColorMode; onChange: (mode: ColorMode) => void }) {
+  return (
+    <label className="colorBySelectField">
+      <span>색상</span>
+      <select
+        className="colorBySelect"
+        value={value}
+        onChange={(event) => onChange(event.target.value as ColorMode)}
+      >
+        <option value="default">기본</option>
+        <option value="config_model">Config 모델별</option>
+        <option value="lot">LOT별</option>
+        <option value="alarm">알람 여부</option>
+      </select>
+    </label>
+  );
+}
+
+/** Owns its own Color By state locally (spec §5-3: "전역 store에 넣지
+ * 마라") -- the parent forces a reset to 기본 by changing this
+ * component's `key` (remount) on every new analysis run or target
+ * switch, rather than lifting the state up. */
+function NumericFactorCard({
+  item,
+  index,
+  activeTarget,
+  numericData,
+  onSelectWafer,
+  onCompare,
+}: {
+  item: ParetoRankingItem;
+  index: number;
+  activeTarget: string;
+  numericData: ScreeningScatterResponse | undefined;
+  onSelectWafer: (point: ScatterPoint) => void;
+  onCompare: (feature: string) => void;
+}) {
+  const [colorMode, setColorMode] = useState<ColorMode>("default");
+  return (
+    <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
+      <div className="factorChartMeta">
+        <div className="factorChartTitleBlock">
+          <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
+          <div className="factorChartTitleRow">
+            <h2>{item.feature} vs {activeTarget}</h2>
+            <ConfidenceBadge tier={item.confidence_tier} />
+            <button
+              type="button"
+              className="compareTriggerButton"
+              title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
+              onClick={() => onCompare(item.feature)}
+            >
+              ⊞ Y1~Y5 비교
+            </button>
+            <ColorBySelect value={colorMode} onChange={setColorMode} />
+          </div>
+        </div>
+        {numericData && (
+          <small className="factorChartStats">
+            <span>n={numericData.n}</span>
+            <span>기여율={item.contribution_pct.toFixed(1)}%</span>
+            <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
+            <span>p-value {formatP(item.p_value)}</span>
+          </small>
+        )}
+      </div>
+      {!hasReliableEvidence(item.confidence_tier) && (
+        <p className="heatmapSignificanceBanner">
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatP(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
+        </p>
+      )}
+      {numericData ? (
+        <ScatterChart data={numericData} colorMode={colorMode} onSelectWafer={onSelectWafer} height={480} />
+      ) : (
+        <p className="emptyMessage">불러오는 중…</p>
+      )}
+    </article>
   );
 }
 

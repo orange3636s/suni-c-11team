@@ -132,7 +132,17 @@ export default function AlertsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Wafer</th><th>LOT</th><th>Step</th><th>인자</th><th>타깃</th><th>값</th><th>정상범위</th><th>이탈량</th><th>방향</th><th>심각성</th><th>실측값</th>
+                  <th style={{ width: "12%" }}>Wafer</th>
+                  <th style={{ width: "8%" }}>LOT</th>
+                  <th style={{ width: "6%" }}>Step</th>
+                  <th style={{ width: "13%" }}>인자</th>
+                  <th style={{ width: "6%" }}>타깃</th>
+                  <th className="numCol" style={{ width: "8%" }}>값</th>
+                  <th style={{ width: "14%" }}>정상범위</th>
+                  <th className="numCol" style={{ width: "8%" }}>이탈량</th>
+                  <th style={{ width: "7%" }}>방향</th>
+                  <th style={{ width: "9%" }}>심각성</th>
+                  <th className="numCol" style={{ width: "9%" }}>실측값</th>
                 </tr>
               </thead>
               <tbody>
@@ -155,10 +165,10 @@ export default function AlertsPage() {
         {summary && summary.top_lots.length > 0 ? (
           <div className="tableWrap">
             <table>
-              <thead><tr><th>LOT</th><th>알람 건수</th></tr></thead>
+              <thead><tr><th style={{ width: "70%" }}>LOT</th><th className="numCol" style={{ width: "30%" }}>알람 건수</th></tr></thead>
               <tbody>
                 {summary.top_lots.slice(0, 10).map((lot) => (
-                  <tr key={lot.lot_id}><td>{lot.lot_id}</td><td>{lot.alarm_count}</td></tr>
+                  <tr key={lot.lot_id}><td>{lot.lot_id}</td><td className="numCol">{lot.alarm_count}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -223,12 +233,12 @@ function AlarmRow({ item }: { item: AlarmItem }) {
         <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.feature}</Link>
       </td>
       <td>{item.target}</td>
-      <td>{item.value.toFixed(2)}</td>
+      <td className="numCol">{item.value.toFixed(2)}</td>
       <td title={`train에서 ${item.feature} 자체 분포의 IQR×1.5 관리한계 (Y와 무관)`}>{rangeText}</td>
-      <td>{item.deviation.toFixed(2)}</td>
+      <td className="numCol">{item.deviation.toFixed(2)}</td>
       <td>{item.direction === "above" ? "높음" : "낮음"}</td>
       <td><SeverityBadge severity={item.severity} /></td>
-      <td>{item.actual_y != null ? item.actual_y.toFixed(2) : "-"}</td>
+      <td className="numCol">{item.actual_y != null ? item.actual_y.toFixed(2) : "-"}</td>
     </tr>
   );
 }

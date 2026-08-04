@@ -7,7 +7,22 @@ import type { ConfidenceTier, HeatmapMetric, HeatmapResponse } from "@/types/dat
 
 const DEFAULT_ROW_LIMIT = 20;
 const METRIC_LABEL: Record<HeatmapMetric, string> = { spearman: "상관계수 (ρ)", eps2: "설명력 (ε²)" };
-type SortMode = "max_rho" | "target" | "step";
+type SortMode = "max_rho" | "min_rho" | "target" | "step";
+
+/** ε² has no sign, so "절댓값"/"부호 포함" framing doesn't apply to it --
+ * spearman shows the qualifier, eps2 shows the plain magnitude-only label
+ * (spec §5-4-1/§5-4-2). */
+function sortOptionLabels(metric: HeatmapMetric): { max: string; min: string; target: string; step: string } {
+  if (metric === "eps2") {
+    return { max: "최대 ε²", min: "최소 ε²", target: "특정 타깃 기준", step: "Step 순서" };
+  }
+  return {
+    max: "최대 |ρ| (절댓값)",
+    min: "최소 |ρ| (절댓값)",
+    target: "특정 타깃 기준 (부호 포함)",
+    step: "Step 순서",
+  };
+}
 
 function featureStep(feature: string): number {
   const match = /^Step(\d+)_/.exec(feature);
@@ -99,7 +114,17 @@ export default function CorrelationHeatmap({
   const [sortTarget, setSortTarget] = useState<string>("");
   const [expanded, setExpanded] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  // Brief settle animation on the rows whenever the sort/filter controls
+  // below actually change the order (spec §5-4-3) -- triggered from
+  // those controls' own onChange, not derived reactively from `rows`,
+  // so it never fires a setState synchronously inside an effect.
+  const [sorting, setSorting] = useState(false);
   const cache = useRef<Map<string, HeatmapResponse>>(new Map());
+
+  function triggerRowSettle() {
+    setSorting(true);
+    window.setTimeout(() => setSorting(false), 220);
+  }
 
   useEffect(() => {
     cache.current = new Map();
@@ -147,14 +172,23 @@ export default function CorrelationHeatmap({
     if (sortMode === "step") {
       indices = [...indices].sort((a, b) => featureStep(data.features[a]) - featureStep(data.features[b]));
     } else if (sortMode === "target" && sortTarget) {
+      // Signed, not absolute -- "Y1 기준" means "가장 많이 올리는 인자가
+      // 위로", so a strong negative correlation sorts to the bottom, not
+      // the top (spec §5-4-2; this differs from max/min |ρ| on purpose).
       const colIndex = data.targets.indexOf(sortTarget);
       if (colIndex >= 0) {
         indices = [...indices].sort((a, b) => {
-          const va = Math.abs(data.values[a][colIndex] ?? 0);
-          const vb = Math.abs(data.values[b][colIndex] ?? 0);
+          const va = data.values[a][colIndex] ?? -Infinity;
+          const vb = data.values[b][colIndex] ?? -Infinity;
           return vb - va;
         });
       }
+    } else if (sortMode === "min_rho") {
+      // The server's default order is already max|value| desc (see the
+      // "max_rho" case below) -- reversing that exact order is exactly
+      // ascending order by the same per-row max|value|, without
+      // recomputing it client-side.
+      indices = [...indices].reverse();
     }
     // sortMode "max_rho" keeps the server's default order (already max|rho| desc)
     return indices;
@@ -198,10 +232,10 @@ export default function CorrelationHeatmap({
   return (
     <section className="resultCard heatmapCard">
       <div className="heatmapHeaderRow">
-        <div>
+        <div className="heatmapHeaderRowText">
           <span className="sectionLabel">CORRELATION OVERVIEW</span>
           <h2>전체 상관관계 히트맵</h2>
-          <p>산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</p>
+          <p className="heatmapIntro">산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</p>
         </div>
         <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
           {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
@@ -222,16 +256,29 @@ export default function CorrelationHeatmap({
       <div className="heatmapControls">
         <div className="fieldGroup">
           <span>정렬 기준</span>
-          <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
-            <option value="max_rho">최대 |ρ|</option>
-            <option value="target">특정 타깃 기준</option>
-            <option value="step">Step 순서</option>
+          <select
+            value={sortMode}
+            onChange={(event) => {
+              setSortMode(event.target.value as SortMode);
+              triggerRowSettle();
+            }}
+          >
+            <option value="max_rho">{sortOptionLabels(metric).max}</option>
+            <option value="min_rho">{sortOptionLabels(metric).min}</option>
+            <option value="target">{sortOptionLabels(metric).target}</option>
+            <option value="step">{sortOptionLabels(metric).step}</option>
           </select>
         </div>
         {sortMode === "target" && (
           <div className="fieldGroup">
             <span>기준 타깃</span>
-            <select value={sortTarget} onChange={(event) => setSortTarget(event.target.value)}>
+            <select
+              value={sortTarget}
+              onChange={(event) => {
+                setSortTarget(event.target.value);
+                triggerRowSettle();
+              }}
+            >
               {data.targets.map((target) => (
                 <option key={target} value={target}>{target}</option>
               ))}
@@ -239,13 +286,20 @@ export default function CorrelationHeatmap({
           </div>
         )}
         <label>
-          <input type="checkbox" checked={significantOnly} onChange={(event) => setSignificantOnly(event.target.checked)} />
+          <input
+            type="checkbox"
+            checked={significantOnly}
+            onChange={(event) => {
+              setSignificantOnly(event.target.checked);
+              triggerRowSettle();
+            }}
+          />
           유의 인자만 보기
         </label>
       </div>
 
       <div className={`heatmapScrollArea ${expanded ? "" : "collapsed"}`}>
-        <div className="heatmapGrid" style={{ gridTemplateColumns }}>
+        <div className={`heatmapGrid ${sorting ? "sorting" : ""}`} style={{ gridTemplateColumns }}>
           <div className="heatmapCornerCell heatmapColHeader" />
           {data.targets.map((target) => (
             <div key={target} className="heatmapColHeader">{target}</div>

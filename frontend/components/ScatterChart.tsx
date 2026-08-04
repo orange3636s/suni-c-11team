@@ -541,6 +541,29 @@ export default function ScatterChart({
           <div className="heatmapTooltipRow"><span>{data.axis.x_label.split(" ")[0]}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
           <div className="heatmapTooltipRow"><span>{data.axis.y_label.split(" ")[0]}</span><b>{pointHover.point.y.toFixed(1)}</b></div>
           <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
+          {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다
+              (spec §5-3). 항상 최신 colorMode를 읽으므로 전환 시 즉시 반영된다. */}
+          {colorMode === "config_model" && pointHover.point.config && (() => {
+            const parts = parseConfigParts(pointHover.point.config);
+            return (
+              <div className="scatterColorByRow">
+                <div className="heatmapTooltipRow"><span>설비</span><b>{pointHover.point.config}</b></div>
+                {parts && (
+                  <div className="heatmapTooltipRow"><span /><b>모델 {parts.model} · 장비 {parts.equipment} · 챔버 {parts.chamber}</b></div>
+                )}
+              </div>
+            );
+          })()}
+          {colorMode === "lot" && pointHover.point.lot_id && (
+            <div className="scatterColorByRow">
+              <div className="heatmapTooltipRow"><span>LOT</span><b>{pointHover.point.lot_id}</b></div>
+            </div>
+          )}
+          {colorMode === "alarm" && (
+            <div className="scatterColorByRow">
+              <div className="heatmapTooltipRow"><span>판정</span><b>{alarmVerdict(pointHover.point, data.reference_lines)}</b></div>
+            </div>
+          )}
         </div>
       )}
 
@@ -564,4 +587,25 @@ function niceTicks(domain: [number, number], count: number): number[] {
 
 function formatTick(value: number): string {
   return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1);
+}
+
+/** `Step16_Model2_EQB_CH3` -> model/equipment/chamber (display-only split,
+ * mirrors what colorForPoint's modelOf() already does for the "Config
+ * 모델별" coloring itself -- src/config_parser.py deliberately never
+ * decomposes Config server-side, so this stays purely a tooltip label). */
+function parseConfigParts(config: string): { model: string; equipment: string; chamber: string } | null {
+  const withoutStepPrefix = config.replace(/^Step\d+_/, "");
+  const parts = withoutStepPrefix.split("_");
+  if (parts.length !== 3) return null;
+  const [model, equipment, chamber] = parts;
+  return { model, equipment, chamber };
+}
+
+function alarmVerdict(point: ScatterPoint, referenceLines: ReferenceLine[]): string {
+  if (point.in_range) return "관리한계 내";
+  const lo = referenceLines.find((l) => l.key === "iqr_lo");
+  const hi = referenceLines.find((l) => l.key === "iqr_hi");
+  if (hi?.drawable && point.x > hi.value) return `관리한계 밖 (상한 +${(point.x - hi.value).toFixed(1)})`;
+  if (lo?.drawable && point.x < lo.value) return `관리한계 밖 (하한 -${(lo.value - point.x).toFixed(1)})`;
+  return "관리한계 밖";
 }

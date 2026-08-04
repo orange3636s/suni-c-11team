@@ -266,7 +266,13 @@ export default function TrainingPage() {
             <table className="trainingTargetTable">
               <thead>
                 <tr>
-                  <th>타깃</th><th>1위 인자</th><th className="numCol">ε²</th><th className="numCol">기여율</th><th>등급</th><th className="numCol">R²</th><th className="numCol">MAE</th>
+                  <th style={{ width: "10%" }}>타깃</th>
+                  <th style={{ width: "28%" }}>1위 인자</th>
+                  <th className="numCol" style={{ width: "13%" }}>ε²</th>
+                  <th className="numCol" style={{ width: "13%" }}>기여율</th>
+                  <th style={{ width: "12%" }}>등급</th>
+                  <th className="numCol" style={{ width: "12%" }}>R²</th>
+                  <th className="numCol" style={{ width: "12%" }}>MAE</th>
                 </tr>
               </thead>
               <tbody>
@@ -302,7 +308,7 @@ export default function TrainingPage() {
         </div>
         <div className="tableWrap">
           <table>
-            <thead><tr><th>방식</th><th className="numCol">R²</th></tr></thead>
+            <thead><tr><th style={{ width: "75%" }}>방식</th><th className="numCol" style={{ width: "25%" }}>R²</th></tr></thead>
             <tbody>
               {BENCHMARK_REFERENCE.map((row) => (
                 <tr key={row.name}>
@@ -341,7 +347,14 @@ export default function TrainingPage() {
             <table>
               <thead>
                 <tr>
-                  <th>인자명</th><th>종류</th><th>ε²</th><th>기여율</th><th>누적%</th><th>관측수</th><th>q값</th><th>신뢰도</th>
+                  <th style={{ width: "22%" }}>인자명</th>
+                  <th style={{ width: "12%" }}>종류</th>
+                  <th className="numCol" style={{ width: "11%" }}>ε²</th>
+                  <th className="numCol" style={{ width: "11%" }}>기여율</th>
+                  <th className="numCol" style={{ width: "11%" }}>누적%</th>
+                  <th className="numCol" style={{ width: "11%" }}>관측수</th>
+                  <th className="numCol" style={{ width: "12%" }}>q값</th>
+                  <th style={{ width: "10%" }}>신뢰도</th>
                 </tr>
               </thead>
               <tbody>
@@ -349,11 +362,11 @@ export default function TrainingPage() {
                   <tr key={factor.feature}>
                     <td>{factor.feature}</td>
                     <td>{KIND_LABEL[factor.kind] ?? factor.kind}</td>
-                    <td>{showMetric(factor.eps2)}</td>
-                    <td>{showMetric(factor.contribution_pct, 1)}%</td>
-                    <td>{showMetric(factor.cumulative_pct, 1)}%</td>
-                    <td>{factor.n_observed}</td>
-                    <td>{factor.q_value < 0.001 ? factor.q_value.toExponential(2) : showMetric(factor.q_value, 4)}</td>
+                    <td className="numCol">{showMetric(factor.eps2)}</td>
+                    <td className="numCol">{showMetric(factor.contribution_pct, 1)}%</td>
+                    <td className="numCol">{showMetric(factor.cumulative_pct, 1)}%</td>
+                    <td className="numCol">{factor.n_observed}</td>
+                    <td className="numCol">{factor.q_value < 0.001 ? factor.q_value.toExponential(2) : showMetric(factor.q_value, 4)}</td>
                     <td><span className={`confidenceBadge tier-${factor.confidence_tier}`} style={{ marginLeft: 0 }}>{TIER_LABEL[factor.confidence_tier]}</span></td>
                   </tr>
                 ))}
