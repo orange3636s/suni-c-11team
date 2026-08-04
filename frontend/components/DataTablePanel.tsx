@@ -92,19 +92,29 @@ export function TableToolbar({
   );
 }
 
-export function ScrollTableBody({ children }: { children: ReactNode }) {
+export function ScrollTableBody({ children, rows = 10 }: { children: ReactNode; rows?: number }) {
   return (
-    <div className="tableWrap scrollTableWrap">
+    <div className="tableWrap scrollTableWrap" style={{ ["--scroll-rows" as string]: rows }}>
       {children}
       <div className="scrollTableFade" />
     </div>
   );
 }
 
-export function TableCaption({ total, shown }: { total: number; shown: number }) {
+export function TableCaption({
+  total,
+  shown,
+  totalUnit = "건",
+  shownUnit = "건",
+}: {
+  total: number;
+  shown: number;
+  totalUnit?: string;
+  shownUnit?: string;
+}) {
   return (
     <p className="tableCaption">
-      전체 {total}건 중 {shown}건 표시
+      전체 {total}{totalUnit} 중 {shown}{shownUnit} 표시
     </p>
   );
 }

@@ -41,15 +41,27 @@ export function niceTicks(domain: readonly [number, number], targetCount: number
   return ticks.length > 0 ? ticks : [min];
 }
 
-/** Backs off from `maxCount` toward `minCount`, one nice-step level at a
- * time, until adjacent tick labels no longer overlap across `pixelSpan`
- * -- or `minCount` is reached regardless (spec §8: "겹치면 한 단계
- * 물러난다"). `measureLabelSize` decides what "overlap" means along this
- * axis: label *width* for a horizontal axis with centered text, or a
- * fixed label *height* for a vertical axis of stacked horizontal text --
- * the caller picks, since the two axes collide on different dimensions.
- * Density naturally shrinks as `pixelSpan` shrinks (panel open, mobile)
- * since the same labels then need more backoff steps to stop colliding. */
+/** Picks a tick set whose *actual* count lands in [minCount, maxCount]
+ * and whose labels don't overlap across `pixelSpan` -- or gets as close
+ * to that as the 1/2/5/10 step grid allows (spec §8).
+ *
+ * `niceTicks(domain, requestedCount)` doesn't reliably return
+ * `requestedCount` ticks -- the step it rounds to comes off a coarse
+ * {1,2,5,10}x10^n grid, so asking for e.g. 8 ticks across a span of 4.3
+ * can round to step=1 and yield only 4 (well under the 6-8 target this
+ * was meant to hit). Requesting a single fixed count is therefore not
+ * enough; this searches a padded band of *requested* counts, collects
+ * whichever ones land their *actual* length inside [minCount, maxCount],
+ * and from those prefers the densest one that doesn't overlap. If none
+ * land in-band at all (the grid can skip straight from 6 to 11 ticks for
+ * some spans), it searches every candidate instead so overlap-safety
+ * still wins over hitting the band exactly (spec: "겹치면 한 단계 줄인다").
+ * `measureLabelSize` decides what "overlap" means along this axis: label
+ * *width* for a horizontal axis with centered text, or a fixed label
+ * *height* for a vertical axis of stacked horizontal text -- the caller
+ * picks, since the two axes collide on different dimensions. Density
+ * naturally shrinks as `pixelSpan` shrinks (panel open, mobile) since
+ * the same labels then need a sparser candidate to stop colliding. */
 export function niceTicksFitted(
   domain: readonly [number, number],
   maxCount: number,
@@ -59,14 +71,23 @@ export function niceTicksFitted(
   measureLabelSize: (label: string) => number,
   minGapPx = 6,
 ): number[] {
-  let best = niceTicks(domain, maxCount);
-  for (let count = maxCount; count >= minCount; count -= 1) {
-    const ticks = niceTicks(domain, count);
-    best = ticks;
-    if (ticks.length < 2) break;
+  const candidates: number[][] = [];
+  for (let requested = maxCount + 4; requested >= 2; requested -= 1) {
+    candidates.push(niceTicks(domain, requested));
+  }
+  const inBand = candidates.filter((ticks) => ticks.length >= minCount && ticks.length <= maxCount);
+  const pool = inBand.length > 0 ? inBand : candidates;
+  const byDensityDesc = [...pool].sort((a, b) => b.length - a.length);
+  let fallback = byDensityDesc[byDensityDesc.length - 1] ?? niceTicks(domain, minCount);
+  for (const ticks of byDensityDesc) {
+    if (ticks.length < 2) {
+      fallback = ticks;
+      continue;
+    }
     const spacingPx = pixelSpan / (ticks.length - 1);
     const maxLabelSize = Math.max(...ticks.map((tick) => measureLabelSize(formatFn(tick))));
-    if (maxLabelSize + minGapPx <= spacingPx) break;
+    if (maxLabelSize + minGapPx <= spacingPx) return ticks;
+    fallback = ticks;
   }
-  return best;
+  return fallback;
 }

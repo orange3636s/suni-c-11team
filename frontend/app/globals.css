@@ -8368,11 +8368,13 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 }
 .heatmapCell:hover{ transform: scale(1.06); z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
 .heatmapCell:focus-visible{ outline: 2px solid var(--accent); outline-offset: -2px; }
-.heatmapCell.significant{ border: 2px solid var(--heatmap-fdr-border); }
-.heatmapCell.significant::after{
-  content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%;
-  background: var(--heatmap-fdr-border);
-}
+/* Yellow inset border, no corner dot (spec §9 재지시) -- the dot covered
+   the value in small cells, and the black/white --heatmap-fdr-border
+   theme-swap wasn't distinct enough from the cell's own border. `inset`
+   box-shadow instead of a wider `border` so it paints inside the cell's
+   existing 1px border-box instead of growing it into neighboring cells.
+   Same #FBBC05 in both themes -- it has enough contrast against either. */
+.heatmapCell.significant{ box-shadow: inset 0 0 0 2px #FBBC05; }
 .heatmapCell.masked{
   background: repeating-linear-gradient(45deg, var(--surface-tertiary) 0 6px, var(--surface-secondary) 6px 12px);
   color: var(--text-muted); font-weight: 500; cursor: default;
@@ -8408,25 +8410,30 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .paretoChartHeader{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
 .paretoChartHeader h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
 
+/* This 6px gap (axisCol <-> plotScroll) plus the tick text sitting flush
+   against its own tickCol edge is the "눈금 숫자 <-> 축선 6px" leg of the
+   spec §1 budget below -- already correct, not touched here. */
 .paretoChartBody{ display: flex; align-items: stretch; gap: 6px; }
-/* Axis title <-> tick gap widened from a near-touching 2px to spec §6's
-   8-12px (10px here) -- the title was crowding the tick numbers, not
-   sitting far from them. Still well inside .paretoChartCard's 24px
-   padding either way, so this can't push the plot out of the card. */
-.paretoAxisCol{ display: flex; align-items: stretch; gap: 10px; flex: 0 0 auto; }
+/* A prior pass misread this bug as "title crowds the ticks" and widened
+   the gap to 10px -- backwards. The actual bug (spec §1 re-instruction):
+   the title sits at the outer card edge, far from the ticks, because
+   nothing pulled it inward. Fix is a *small* deliberate gap (8px) plus a
+   tighter tickCol, so axis-line -> title stays within ~50px total:
+   tickCol(22) + gap(8) + label(14) + .paretoChartBody's own 6px = 50px. */
+.paretoAxisCol{ display: flex; align-items: stretch; gap: 8px; flex: 0 0 auto; }
 /* Rotated as a single plain-text run (not writing-mode: vertical-rl --
    that rotates Latin/symbol glyphs but keeps Hangul upright per
    text-orientation:mixed, so a Korean+"(%)" label came out inconsistently
    flipped). -90deg reads correctly with a left head-tilt, unified for both
    the left and right axis titles. */
 .paretoAxisLabel{
-  width: 16px; flex: 0 0 auto; font-size: 10px; color: var(--text-secondary);
+  width: 14px; flex: 0 0 auto; font-size: 10px; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
 }
 .paretoAxisLabelText{
   display: inline-block; white-space: nowrap; transform: rotate(-90deg);
 }
-.paretoTickCol{ position: relative; width: 30px; flex: 0 0 auto; }
+.paretoTickCol{ position: relative; width: 22px; flex: 0 0 auto; }
 .paretoTick{
   position: absolute; transform: translateY(50%); font-size: 10px; color: var(--text-secondary);
   white-space: nowrap; width: 100%;
@@ -8565,13 +8572,22 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
   justify-content: flex-end; margin-bottom: 2px;
 }
 .scatterChartSvg{ display: block; overflow: visible; }
+/* Dark-mode-only plot background, one shade darker than the card
+   (#242426 vs. --surface's #252527) so points read as "floating" above
+   it instead of blending into the card (spec §4 재지시). Light mode
+   stays transparent -- a white-on-white plot never had this problem. */
+.scatterPlotBg{ fill: transparent; }
+html[data-theme="dark"] .scatterPlotBg{ fill: #242426; }
 /* Lightened (spec §8) so the denser 8-10/6-8 tick grid doesn't read as
    visual clutter -- was full-opacity border color at the old fixed 6/5
-   tick count. */
+   tick count. Dark mode gets its own explicit low-alpha value (spec §4
+   재지시) rather than riding the var-based light formula. */
 .scatterGridLine{ stroke: var(--heatmap-cell-border, var(--border)); stroke-width: 1; opacity: 0.55; }
 .scatterGridLine-x{ opacity: 0.35; }
+html[data-theme="dark"] .scatterGridLine{ stroke: rgba(255, 255, 255, 0.05); opacity: 1; }
 .scatterTickLabel{ font-size: 10.5px; fill: var(--text-secondary); }
 .scatterOutsideShade{ fill: #F59E0B; opacity: 0.08; }
+html[data-theme="dark"] .scatterOutsideShade{ opacity: 0.12; }
 /* 권장 구간 band (spec §4-2): fill color set inline per-theme in TSX,
    opacity fixed at 13% here. */
 .scatterRecommendedBand{ opacity: 0.13; cursor: help; }
@@ -8661,6 +8677,14 @@ html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
   .alarmSummaryCard.skeleton .alarmSkeletonLine{ animation: none; }
 }
 .alarmSummaryNote{ margin: -6px 0 4px; font-size: 13px; color: var(--text-secondary); }
+/* Bottom-of-card explanatory blurb under 알람 목록/개선 권장 목록's table
+   (spec §7 재지시) -- same font-size/color as .alarmSummaryNote, but its
+   own class since this one always sits below the table/caption, wraps to
+   2-3 lines, and never breaks mid-Korean-word. */
+.tableDisclaimer{
+  margin: 10px 2px 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5;
+  word-break: keep-all;
+}
 
 /* JSON report button, next to the root-cause "실행" button. */
 .reportButton{
@@ -8792,6 +8816,10 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
    =================================================================== */
 :root{
   --card-pad-x: var(--space-card, 16px);
+  --table-header-bg: #F4F5F7;
+}
+html[data-theme="dark"]{
+  --table-header-bg: #2F2F31;
 }
 .resultCard,
 .uploadCard{
@@ -8829,11 +8857,21 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
   /* Row-group background always spans the table's full rendered width,
      regardless of how table-layout distributes individual column
      widths -- this is what actually guarantees "edge to edge". */
-  background: var(--surface-tertiary, var(--surface-muted));
+  background: var(--table-header-bg);
 }
+/* THIS was the sticky-header-turns-transparent bug (spec §5 재지시): a
+   sticky element detaches into its own compositing layer, so a
+   background painted only on the ancestor <thead> row-group doesn't
+   travel with it once the table scrolls underneath -- the `th` itself
+   needs its own fully opaque background, not `transparent`. Cell-level,
+   not thead/tr-level, since that's what actually stays painted on the
+   pinned layer; z-index comes from the established scale (not a raw
+   number) so it stays correctly ordered above scrolled body rows. */
 .tableWrap th,
 .tableWrapper th{
-  background: transparent;
+  background: var(--table-header-bg);
+  backdrop-filter: none;
+  z-index: var(--z-sticky-seg);
   border-bottom: 1.5px solid var(--border-card, var(--border));
 }
 .tableWrap td,
@@ -8854,18 +8892,22 @@ html[data-theme="dark"] .tableWrapper td{
 .tableWrapper th:last-child, .tableWrapper td:last-child{
   padding-right: var(--card-pad-x);
 }
-/* Sticky first column (spec §4-4) needs its own opaque background --
-   a row-group/table background doesn't "follow" a sticky descendant
-   reliably once it detaches from normal flow while scrolling. */
+/* Sticky first column (spec §4-4, and spec §5 재지시's "첫 컬럼도 같은
+   규칙을 적용") needs its own opaque background -- same reasoning as the
+   header fix above: a row-group/table background doesn't "follow" a
+   sticky descendant once it detaches from normal flow while scrolling.
+   The corner cell (th:first-child, sticky on *both* axes) uses the same
+   --z-sticky-seg as the header row so it stays above both the scrolled
+   body and the plain sticky-left column, not the old raw `2`. */
 .tableWrap td:first-child,
 .tableWrapper td:first-child{
   background: var(--surface-card, var(--surface));
-  z-index: 1;
+  z-index: var(--z-card);
 }
 .tableWrap th:first-child,
 .tableWrapper th:first-child{
-  background: var(--surface-tertiary, var(--surface-muted));
-  z-index: 2;
+  background: var(--table-header-bg);
+  z-index: var(--z-sticky-seg);
 }
 /* No divider directly under the header row or under the card's own
    bottom border -- either would read as a doubled line against the
@@ -8990,15 +9032,18 @@ html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 25
   border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
 }
 
-/* Fixed 10-row-tall scroll body. Row height is pinned via --scroll-row-h so
-   the max-height math (header + 10 rows) stays exact regardless of content;
-   thead's existing `position:sticky;top:0` (see .tableWrap th above) keeps
-   the header pinned while this wrapper scrolls. */
+/* Fixed N-row-tall scroll body (10 rows for 알람/개선 권장, 5 for
+   LOT별 알람 집계 -- spec §6 재지시 -- via the --scroll-rows inline var,
+   default 10). Row height is pinned via --scroll-row-h so the max-height
+   math (header + N rows) stays exact regardless of content; thead's
+   existing `position:sticky;top:0` (see .tableWrap th above) keeps the
+   header pinned while this wrapper scrolls. */
 .scrollTableWrap{
   --scroll-row-h: 42px;
   --scroll-header-h: 38px;
+  --scroll-rows: 10;
   position: relative;
-  max-height: calc(var(--scroll-header-h) + var(--scroll-row-h) * 10);
+  max-height: calc(var(--scroll-header-h) + var(--scroll-row-h) * var(--scroll-rows));
   overflow-y: auto;
   overflow-x: auto;
 }
@@ -9052,3 +9097,25 @@ html[data-theme="dark"] .recommendationTag.tag-recommended{ border-color: #34D39
 .recommendationDirection.dir-up{ color: #DC2626; }
 html[data-theme="dark"] .recommendationDirection.dir-down{ color: #60A5FA; }
 html[data-theme="dark"] .recommendationDirection.dir-up{ color: #F87171; }
+
+/* ===================================================================
+   SUNI C 헤더 로고 (spec §10). .headerContext now has 2 children (logo
+   link + h1) instead of 1, so it needs an explicit gap -- it never had
+   one before since align-items:center + a single child didn't need it.
+   =================================================================== */
+.headerContext{ gap: 28px; }
+.headerLogoLink{
+  display: inline-flex; align-items: center; flex: 0 0 auto;
+  cursor: pointer; transition: opacity .15s ease;
+}
+.headerLogoLink:hover{ opacity: 0.85; }
+/* Intrinsic 452x119 (3.80:1) -- height-driven, width:auto so the ratio
+   can never be distorted regardless of the Image component's own
+   width/height attrs (those are just for Next's layout-shift math). */
+.headerLogo{ height: 32px; width: auto; display: block; }
+@media (max-width: 1279px){
+  .headerLogo{ height: 24px; }
+}
+@media (max-width: 1023px){
+  .headerLogoLink{ display: none; }
+}

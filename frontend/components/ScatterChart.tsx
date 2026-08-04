@@ -9,9 +9,10 @@ import type { ReferenceLine, ScatterPoint, ScreeningScatterResponse } from "@/ty
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 
-// left margin widened 58->72 to fit the y-axis title (spec §7) inside the
-// reserved tick-label gutter without crowding the tick numbers themselves.
-const MARGIN = { top: 36, right: 28, bottom: 46, left: 72 };
+// left margin back to its original 58 -- the y-axis title now sits
+// horizontally in the *top* margin instead of rotated in the *left*
+// margin (spec §2 re-instruction), so it no longer needs extra left room.
+const MARGIN = { top: 36, right: 28, bottom: 46, left: 58 };
 // Matches .scatterTickLabel's font-size (app/globals.css) -- used to
 // measure candidate tick labels for the overlap-backoff pass (spec §8).
 const TICK_FONT = "10.5px system-ui, -apple-system, sans-serif";
@@ -129,11 +130,22 @@ function zoneOf(point: ScatterPoint, recommendedRangeValue: [number, number] | n
   return "in_control";
 }
 
-const ZONE_STYLE: Record<PointZone, { light: string; dark: string; size: number; opacity: number }> = {
-  in_recommended: { light: "#BFDBFE", dark: "#1E3A5F", size: 3.5, opacity: 0.35 },
-  in_control: { light: "#60A5FA", dark: "#3B82F6", size: 4.5, opacity: 0.6 },
-  out_control: { light: "#1D4ED8", dark: "#93C5FD", size: 5.5, opacity: 0.9 },
+// Re-tuned per spec (재조정): darkest-first ordering flipped from the
+// original "얼마나 벗어났는지" intuition -- 권장 구간 안 (where most points
+// cluster) is now the *darkest* tier so the density/shape of that cluster
+// actually reads, while 관리한계 밖 stays identifiable by its position
+// inside the amber shaded band plus its own border (see OUT_CONTROL_BORDER)
+// rather than by being darkest. Dark-theme opacity is +0.1 over light's
+// (same alpha reads fainter on a dark background).
+const ZONE_STYLE: Record<PointZone, { light: string; dark: string; size: number; opacityLight: number; opacityDark: number }> = {
+  in_recommended: { light: "#1D4ED8", dark: "#93C5FD", size: 4, opacityLight: 0.75, opacityDark: 0.85 },
+  in_control: { light: "#60A5FA", dark: "#5B8DEF", size: 4.5, opacityLight: 0.65, opacityDark: 0.75 },
+  out_control: { light: "#93C5FD", dark: "#3E6FB8", size: 5.5, opacityLight: 0.9, opacityDark: 1 },
 };
+
+// 관리한계 밖 점만 받는 1px 테두리 -- 가장 연한 채움색이라도 테두리로
+// 형태가 드러나게 한다 (spec §3).
+const OUT_CONTROL_BORDER = { light: "#1E3A8A", dark: "#DBEAFE" };
 
 const ZONE_LABEL: Record<PointZone, string> = {
   in_recommended: "권장 구간 안",
@@ -171,11 +183,16 @@ function colorForPoint(
     }
     return { color: LOT_PALETTE[idx % LOT_PALETTE.length], size: 5, opacity: 0.85 };
   }
-  // default -- 3-tier by zone (spec §5): 권장 구간 안 < 권장 구간 밖·관리한계 안
-  // < 관리한계 밖, darker = worse, same direction as the previous 2-tier
-  // version (관리한계 밖 stays the same color/size/opacity as before).
+  // default -- 3-tier by zone: 권장 구간 안이 가장 진하고 관리한계 밖이
+  // 가장 연하다 (재조정 spec §3) -- 대부분의 점이 몰려 있는 권장 구간의
+  // 밀집도/형태를 진한 색으로 드러내는 게 의도이고, 관리한계 밖 점은 이미
+  // 앰버 음영 안에 있어 색이 연해도 위치+테두리로 식별된다.
   const style = ZONE_STYLE[zoneOf(point, recommendedRangeValue)];
-  return { color: theme === "dark" ? style.dark : style.light, size: style.size, opacity: style.opacity };
+  return {
+    color: theme === "dark" ? style.dark : style.light,
+    size: style.size,
+    opacity: theme === "dark" ? style.opacityDark : style.opacityLight,
+  };
 }
 
 // A single vertical line drawn on the chart -- either one of the two
@@ -521,6 +538,9 @@ export default function ScatterChart({
 
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
+          {/* dark-mode-only plot background (spec §4 재지시) -- painted
+              first so every other layer sits on top of it. */}
+          <rect x={0} y={0} width={plotWidth} height={plotHeight} className="scatterPlotBg" />
           {/* axis ticks */}
           {yTicks.map((tick) => (
             <g key={`y-${tick}`}>
@@ -536,14 +556,14 @@ export default function ScatterChart({
           ))}
 
           {/* y-axis title -- target name only (e.g. "Y5"), same grey/
-              secondary style as the x-axis title below the plot (spec §7).
-              Rotated in place around its own anchor point, same technique
-              as the x-axis tick text just without the rotation. */}
+              secondary style as the x-axis title below the plot. Spec §2
+              re-instruction: short 2-3 char target names don't need to be
+              rotated -- shown horizontal, above the y-tick numbers, at the
+              plot's top-left corner (not vertically centered like before). */}
           <text
-            x={-MARGIN.left + 14}
-            y={plotHeight / 2}
-            textAnchor="middle"
-            transform={`rotate(-90, ${-MARGIN.left + 14}, ${plotHeight / 2})`}
+            x={-MARGIN.left}
+            y={-14}
+            textAnchor="start"
             className="scatterAxisTitleSvg"
           >
             {targetAxisLabel(data.axis.y_label)}
@@ -584,6 +604,15 @@ export default function ScatterChart({
           {data.points.map((point, index) => {
             const style = colorForPoint(point, colorMode, lotIndex, theme, recommendedRangeValue);
             const isHovered = pointHover?.point === point;
+            // 관리한계 밖 점은 가장 연한 채움이라 테두리로도 구분되게 한다
+            // (spec §3) -- 기본 모드에서만, 호버 중엔 기존 호버 테두리가
+            // 우선한다.
+            const isOutControlBorder = colorMode === "default" && !isHovered && zoneOf(point, recommendedRangeValue) === "out_control";
+            const stroke = isHovered
+              ? (theme === "dark" ? "#FFFFFF" : "#0E306D")
+              : isOutControlBorder
+                ? (theme === "dark" ? OUT_CONTROL_BORDER.dark : OUT_CONTROL_BORDER.light)
+                : "none";
             return (
               <circle
                 key={point.lot_wafer_id ?? index}
@@ -592,8 +621,8 @@ export default function ScatterChart({
                 r={isHovered ? style.size * 1.5 : style.size}
                 fill={style.color}
                 opacity={isHovered ? 1 : style.opacity}
-                stroke={isHovered ? (theme === "dark" ? "#FFFFFF" : "#0E306D") : "none"}
-                strokeWidth={isHovered ? 1.5 : 0}
+                stroke={stroke}
+                strokeWidth={isHovered ? 1.5 : isOutControlBorder ? 1 : 0}
                 style={{ cursor: "pointer" }}
                 onClick={() => onSelectWafer(point)}
               />

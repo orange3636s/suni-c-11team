@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 type ApiStatus = "checking" | "online" | "offline";
@@ -81,6 +83,12 @@ export default function Header() {
   return (
     <header className="topHeader" ref={headerRef}>
       <div className="headerContext">
+        {/* SUNI C brand mark -- separate from the sidebar's character logo
+            (SuniAvatar), not a replacement for it. Links to the model
+            training tab like any header logo would. */}
+        <Link href="/training" className="headerLogoLink" aria-label="SUNI C - 모델 학습으로 이동">
+          <Image src="/suni-c-logo.png" alt="SUNI C" width={122} height={32} unoptimized priority className="headerLogo" />
+        </Link>
         <h1>제조 공정 불량 예측 &amp; 원인 분석 AI</h1>
       </div>
       <div className="headerMeta" aria-label="현재 시각">

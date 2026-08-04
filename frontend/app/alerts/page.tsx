@@ -268,6 +268,11 @@ export default function AlertsPage() {
             <TableCaption total={alarmTable.sorted.length} shown={Math.min(10, alarmTable.sorted.length)} />
           </>
         )}
+        <p className="tableDisclaimer">
+          알람은 인자 값이 관리한계(LCL/UCL)를 벗어난 wafer입니다. 관리한계는 학습 데이터의
+          인자 분포에서 산출한 값으로, 해당 wafer가 평소와 다른 조건에서 처리되었음을 뜻합니다.
+          불량의 원인으로 확정된 것은 아니며, 우선 확인 대상을 좁히는 용도입니다.
+        </p>
       </section>
 
       <section className="resultCard">
@@ -278,16 +283,24 @@ export default function AlertsPage() {
           </div>
         </div>
         {summary && summary.top_lots.length > 0 ? (
-          <div className="tableWrap">
-            <table>
-              <thead><tr><th style={{ width: "70%" }}>LOT</th><th className="numCol" style={{ width: "30%" }}>알람 건수</th></tr></thead>
-              <tbody>
-                {summary.top_lots.slice(0, 10).map((lot) => (
-                  <tr key={lot.lot_id}><td>{lot.lot_id}</td><td className="numCol">{lot.alarm_count}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <ScrollTableBody rows={5}>
+              <table>
+                <thead><tr><th style={{ width: "70%" }}>LOT</th><th className="numCol" style={{ width: "30%" }}>알람 건수</th></tr></thead>
+                <tbody>
+                  {summary.top_lots.map((lot) => (
+                    <tr key={lot.lot_id}><td>{lot.lot_id}</td><td className="numCol">{lot.alarm_count}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollTableBody>
+            <TableCaption
+              total={summary.top_lots.length}
+              shown={Math.min(5, summary.top_lots.length)}
+              totalUnit="개 LOT"
+              shownUnit="개"
+            />
+          </>
         ) : (
           <p className="emptyMessage">알람이 발생한 LOT이 없습니다.</p>
         )}
@@ -320,9 +333,6 @@ export default function AlertsPage() {
             />
           )}
         </div>
-        <p className="alarmSummaryNote" style={{ margin: "0 0 4px" }}>
-          알람은 관리한계(LCL/UCL) 이탈을 나타내는 이상 탐지이고, 개선 권장은 권장 구간 이탈을 나타내는 개선 제안입니다. 이미 알람으로 잡힌 wafer는 같은 인자에 대해 중복 집계하지 않습니다.
-        </p>
         {loading && <p className="emptyMessage">불러오는 중…</p>}
         {!loading && recommendations && recommendations.items.length === 0 && (
           <p className="emptyMessage">권장할 항목이 없습니다.</p>
@@ -358,6 +368,9 @@ export default function AlertsPage() {
             <TableCaption total={recommendationTable.sorted.length} shown={Math.min(10, recommendationTable.sorted.length)} />
           </>
         )}
+        <p className="tableDisclaimer">
+          알람은 관리한계(LCL/UCL) 이탈을 나타내는 이상 탐지이고, 개선 권장은 권장 구간 이탈을 나타내는 개선 제안입니다. 이미 알람으로 잡힌 wafer는 같은 인자에 대해 중복 집계하지 않습니다.
+        </p>
       </section>
 
       <section className="analysisDisclaimers">
