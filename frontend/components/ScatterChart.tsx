@@ -9,10 +9,13 @@ import type { ReferenceLine, ScatterPoint, ScreeningScatterResponse } from "@/ty
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 
-// left margin back to its original 58 -- the y-axis title now sits
-// horizontally in the *top* margin instead of rotated in the *left*
-// margin (spec §2 re-instruction), so it no longer needs extra left room.
-const MARGIN = { top: 36, right: 28, bottom: 46, left: 58 };
+// left margin widened 58->76 (spec §1 재지시): the y-axis title moved
+// from the top margin back to sitting horizontally left of the tick
+// numbers, vertically centered on the plot -- that needs *horizontal*
+// room again, sized to comfortably fit the widest realistic tick label
+// (~35px, e.g. "-123.4") + 8px tick-gap + the title text + its own 8px
+// gap, with a few px of slack.
+const MARGIN = { top: 36, right: 28, bottom: 46, left: 76 };
 // Matches .scatterTickLabel's font-size (app/globals.css) -- used to
 // measure candidate tick labels for the overlap-backoff pass (spec §8).
 const TICK_FONT = "10.5px system-ui, -apple-system, sans-serif";
@@ -315,6 +318,15 @@ export default function ScatterChart({
     () => niceTicksFitted(yDomain, Y_TICK_COUNT[0], Y_TICK_COUNT[1], plotHeight, formatTick, () => Y_TICK_LABEL_HEIGHT_PX),
     [yDomain, plotHeight],
   );
+  // Measured (not guessed) so the y-axis title's 8px clearance (spec §1
+  // 재지시) holds regardless of how wide the actual tick numbers render --
+  // short domains ("1".."5") get a tighter gutter, wide ones ("-123.4")
+  // get a wider one, and MARGIN.left's fixed 76px budget just needs to
+  // comfortably cover the realistic worst case.
+  const maxYTickLabelWidth = useMemo(
+    () => yTicks.reduce((max, tick) => Math.max(max, measureTextWidth(formatTick(tick), TICK_FONT)), 0),
+    [yTicks],
+  );
 
   // A plain object recreated each render -- cheap (just an empty Map),
   // and colorForPoint mutates it while walking data.points below to
@@ -556,14 +568,16 @@ export default function ScatterChart({
           ))}
 
           {/* y-axis title -- target name only (e.g. "Y5"), same grey/
-              secondary style as the x-axis title below the plot. Spec §2
-              re-instruction: short 2-3 char target names don't need to be
-              rotated -- shown horizontal, above the y-tick numbers, at the
-              plot's top-left corner (not vertically centered like before). */}
+              secondary style as the x-axis title below the plot. Spec §1
+              재지시: horizontal (not rotated), vertically centered on the
+              plot height, positioned left of the tick numbers with an
+              8px gap measured against the actual widest tick label so it
+              never overlaps regardless of the domain's value range. */}
           <text
-            x={-MARGIN.left}
-            y={-14}
-            textAnchor="start"
+            x={-8 - maxYTickLabelWidth - 8}
+            y={plotHeight / 2}
+            textAnchor="end"
+            dominantBaseline="middle"
             className="scatterAxisTitleSvg"
           >
             {targetAxisLabel(data.axis.y_label)}

@@ -8442,7 +8442,19 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .paretoAxisCol-right .paretoTick{ left: 0; text-align: left; }
 
 .paretoPlotScroll{ flex: 1 1 auto; min-width: 0; overflow-x: auto; }
-.paretoPlotCenterer{ display: flex; flex-direction: column; align-items: center; margin: 0 auto; width: fit-content; max-width: 100%; }
+/* `margin: 0 auto` here (spec §3 재지시's actual root cause, candidate #2/#3
+   combined) was centering the bars inside .paretoPlotScroll -- which is a
+   flex:1 sibling that grows to fill whatever width is left over, so
+   whenever the bar count is small enough that the plot is narrower than
+   that leftover space (the common case), the axis line drifted right by
+   the centering offset while the axis-title columns (fixed-width flex
+   siblings, not inside this centered box) stayed put. The title's real
+   on-screen distance from the axis grew with that drift instead of
+   staying pinned to the small constant set on .paretoAxisCol -- that's
+   why the previous gap tuning never actually closed the visual distance.
+   Left-aligning removes the drift entirely: the axis line now always
+   sits immediately after the tick column, regardless of bar count. */
+.paretoPlotCenterer{ display: flex; flex-direction: column; align-items: center; width: fit-content; max-width: 100%; }
 .paretoPlotArea{
   position: relative;
   border-bottom: 1px solid var(--heatmap-cell-border, var(--border));
