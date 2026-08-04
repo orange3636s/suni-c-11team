@@ -8951,48 +8951,25 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareTriggerButton:focus-visible{ outline: 3px solid rgba(255,255,255,0.55); outline-offset: 2px; }
 
 /* ===================================================================
-   Table as one rounded block (spec 재지시: 모서리 정밀 수정).
+   Table sits inside the card's own padding (spec 재지시: 다른 카드와
+   여백 통일 -- full-bleed 지시를 철회).
 
-   Root cause of the previous attempt (found by checking computed styles
-   in-browser, not by inspection alone): .tableWrap and .scrollTableWrap
-   were two classes on the SAME element for any table with vertical
-   scroll (알람 목록, LOT별 알람 집계, 개선 권장 목록). A single element
-   has exactly one computed `overflow` -- .tableWrap{overflow:hidden}
-   (meant for corner-rounding) and .scrollTableWrap{overflow-y:auto;
-   overflow-x:auto} (meant for scrolling) both targeted it, and the
-   scroll rule, appearing later in the cascade, won outright: the
-   rounding rule never took effect at all on any scrolling table. (This
-   matches spec §A-2 candidates #1 and #5 together -- overflow:hidden
-   WAS declared, but a later same-specificity rule on the same element
-   overrode it back to auto, via what was effectively an extra, invisible
-   "scroll container" sharing the wrap's own box.) The non-scrolling
-   tables (데이터 전처리 등, plain .tableWrap with no second class) never
-   hit this conflict, which is why they looked fine in isolation.
-
-   Fix: split the two jobs onto two different elements so they can never
-   compete for the same property again.
-     .tableWrap   -- outer. border + radius + overflow:hidden. Never
-                     scrolls itself, so its overflow is never contested.
-     .tableScroll -- inner (only present for tables that scroll
-                     vertically, via ScrollTableBody). overflow-y:auto,
-                     overflow-x:hidden. No border/radius of its own --
-                     the outer wrap's overflow:hidden clips it (and
-                     everything inside it, including the sticky header)
-                     to one radius regardless of scroll position.
-   Sticky headers resolve `position:sticky` against the nearest actually-
-   scrolling ancestor, which is now unambiguously .tableScroll.
-
-   overflow:hidden must never wrap a dropdown menu (spec warning) -- the
-   dataset selector's menu is portaled to document.body precisely so it
-   is never a descendant of any .tableWrap (see .datasetSelectorMenu's
-   own comment), so this is safe as applied here.
+   Reference measured directly in-browser (getBoundingClientRect), not
+   assumed: CORRELATION OVERVIEW's placeholder box (.emptyMessage, plain
+   text with no positioning CSS of its own) sits 17px inside its
+   .resultCard on both sides -- exactly the card's own padding(16px) +
+   border(1px), i.e. the plain content edge every normal-flow element in
+   a card already gets for free. So the fix is simply: stop giving the
+   table wrap any left/right margin at all and let it sit in that same
+   normal content edge -- no variable needs to reproduce "17px", it falls
+   out automatically once the wrap stops overriding its own position.
    =================================================================== */
 :root{
   --table-header-bg: #F4F5F7;
   --table-border: rgba(0, 0, 0, 0.10);
   --table-line: rgba(0, 0, 0, 0.06);
   /* One step smaller than the card's own 16px (--radius-card) so the
-     inner block never reads as "more rounded" than its container. */
+     inner block never reads as more rounded than its container. */
   --table-radius: 12px;
 }
 html[data-theme="dark"]{
@@ -9007,15 +8984,23 @@ html[data-theme="dark"]{
   margin-right: 0;
   width: 100%;
   max-width: 100%;
-  border: 1px solid var(--table-border);
+  border: none;
   border-radius: var(--table-radius);
-  overflow: hidden;
-  /* Opaque -- nothing shows through past the rounded edge. */
+  /* `clip`, not `hidden`: both clip the header band's corners to this
+     radius, but `hidden` formally establishes a *scroll container* --
+     combined with the sticky <th> below and this wrap's own zero
+     border/padding, that made Chromium reserve a ~15px scrollbar gutter
+     in clientWidth even though nothing ever actually overflows (found by
+     toggling the property in devtools: table width jumped from 796px to
+     the full 811px the instant overflow changed from hidden to
+     visible/clip). `clip` clips the same way without ever being treated
+     as a scrollable region, so the gutter is never reserved. */
+  overflow: clip;
   background: var(--surface-card, var(--surface));
 }
-/* The inner scroll container (ScrollTableBody). No border/radius/
-   overflow-hidden of its own -- it only scrolls; the outer .tableWrap
-   does all the clipping. */
+/* The inner scroll container (ScrollTableBody). No border/radius of its
+   own, and no overflow:hidden either -- it only scrolls vertically; the
+   card is what clips corners, regardless of scroll position. */
 .tableScroll{
   --scroll-row-h: 42px;
   --scroll-header-h: 38px;
@@ -9041,8 +9026,8 @@ html[data-theme="dark"]{
    its own compositing layer, so a background painted only on the
    ancestor <thead> row-group doesn't travel with it once the table
    scrolls underneath -- the `th` itself needs its own fully opaque
-   background. Only a horizontal (bottom) border -- no left/right, the
-   wrap's own border is the only vertical edge a table ever draws. */
+   background. Only a horizontal (bottom) border -- no left/right, no
+   vertical divider is ever drawn anywhere in a table. */
 .tableWrap th,
 .tableWrapper th{
   position: sticky;
@@ -9061,13 +9046,24 @@ html[data-theme="dark"]{
   border-left: none;
   border-right: none;
 }
+/* Plain cell padding -- no card-padding compensation needed. The wrap
+   itself no longer moves, so its normal 14px inner cell padding already
+   lines text up with the card's own title (both now sit at the same
+   card-padding content edge). */
+.tableWrap th:first-child, .tableWrap td:first-child,
+.tableWrapper th:first-child, .tableWrapper td:first-child{
+  padding-left: 14px;
+}
+.tableWrap th:last-child, .tableWrap td:last-child,
+.tableWrapper th:last-child, .tableWrapper td:last-child{
+  padding-right: 14px;
+}
 .tableWrap thead tr:first-child th,
 .tableWrapper thead tr:first-child th{
   border-top: none;
 }
-/* No divider under the last row -- the wrap's own bottom border
-   already closes the box; a divider here would read as a doubled
-   line right against it. */
+/* No divider under the last row -- a divider here would double up
+   visually against the card's own bottom edge. */
 .tableWrap tbody tr:last-child td,
 .tableWrapper tbody tr:last-child td{
   border-bottom: none;
