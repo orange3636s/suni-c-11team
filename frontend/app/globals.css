@@ -8754,13 +8754,21 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareModalLegend span{ display: inline-flex; align-items: center; gap: 6px; }
 .compareLegendSwatch{ display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
 
-/* "Y1~Y5 비교" button on each scatter card header. */
+/* "Y1~Y5 비교" button on each scatter card header -- filled, not an
+   outline, so it reads as a clickable button instead of a badge next to
+   the (also-rounded-outline) confidence badge it sits beside. Same
+   #0072C6 in both themes -- it has enough contrast against both a light
+   card and the dark theme's #252527 surface, so it doesn't need a
+   separate dark-mode value. Size/radius/font/position are untouched,
+   only color changed. */
 .compareTriggerButton{
-  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
-  background: transparent; border-radius: 8px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600;
-  color: var(--text-primary); cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent;
+  background: #0072C6; border-radius: 8px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600;
+  color: #FFFFFF; cursor: pointer; white-space: nowrap;
 }
-.compareTriggerButton:hover{ background: var(--surface-secondary, var(--surface-muted)); border-color: var(--brand-navy-text); }
+.compareTriggerButton:hover{ background: #005A9E; }
+.compareTriggerButton:active{ background: #004C85; }
+.compareTriggerButton:focus-visible{ outline: 3px solid rgba(255,255,255,0.55); outline-offset: 2px; }
 
 /* ===================================================================
    Table full-bleed inside cards.
