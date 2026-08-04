@@ -8168,17 +8168,14 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
   30%{ transform: translateY(-4px); opacity: 1; }
 }
 
-/* 4 chips (분석 보고서 생성 + 3 예시 질문) -- 2열 그리드로 고정 배치한다
-   (spec 재지시). 칩이 셀 폭을 채우도록 해 들쭉날쭉한 flex-wrap 대신 가지런한
-   2x2 블록으로 보이게 한다. */
-.aiPanelChipRow{
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 8px;
-  margin: 4px 0 10px 34px;
+/* "분석 보고서 생성" 만 고정 배치한다 (spec 재지시: 흐르는 줄에서 제외 --
+   가장 중요한 버튼이 움직이면 누르기 어렵다). */
+.aiPanelChipsWrap{
+  margin: 4px 0 8px 34px;
 }
 .aiPanelChip{
-  width: 100%; padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
   border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: var(--surface-card, #fff); color: inherit;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .aiPanelChip:hover{ background: rgba(0, 0, 0, 0.05); }
 .aiPanelChip:disabled{ opacity: .45; cursor: not-allowed; }
@@ -8187,6 +8184,60 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
 .aiPanelChipPrimary:disabled{ background: #1D4ED8; }
 html[data-theme="dark"] .aiPanelChip{ background: #2C2C2E; border-color: rgba(255,255,255,.12); }
 html[data-theme="dark"] .aiPanelChip:hover{ background: rgba(255, 255, 255, 0.08); }
+
+/* Example-question marquee: 2 rows, opposite directions, both 28s/loop
+   (spec 재지시 -- 패널 폭이 좁아 Railway류 10s 기준은 너무 빠르다). Each
+   row's chip list is duplicated and the track animates to exactly -50% of
+   its own scrollable width so the seam between the two copies never shows
+   (see MarqueeRow's comment in AiPanel.tsx for why). */
+.aiPanelMarquee{
+  overflow: hidden;
+  position: relative;
+  margin: 6px 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+}
+.aiPanelMarqueeTrack{
+  display: flex;
+  gap: 8px;
+  width: max-content;
+  animation: aiPanelMarqueeLeft 28s linear infinite;
+  will-change: transform;
+}
+.aiPanelMarqueeTrack.reverse{
+  animation-name: aiPanelMarqueeRight;
+}
+/* Hovering (or, via keyboard, focusing) one row pauses only that row --
+   each .aiPanelMarquee is its own hover/focus scope. */
+.aiPanelMarquee:hover .aiPanelMarqueeTrack,
+.aiPanelMarquee:focus-within .aiPanelMarqueeTrack{
+  animation-play-state: paused;
+}
+@keyframes aiPanelMarqueeLeft{
+  from{ transform: translateX(0); }
+  to{ transform: translateX(-50%); }
+}
+@keyframes aiPanelMarqueeRight{
+  from{ transform: translateX(-50%); }
+  to{ transform: translateX(0); }
+}
+.aiPanelMarqueeChip{
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: var(--surface-card, #fff); color: inherit;
+}
+.aiPanelMarqueeChip:hover{ background: rgba(0, 0, 0, 0.05); }
+.aiPanelMarqueeChip:disabled{ opacity: .45; cursor: not-allowed; }
+/* Icon reads as part of the label, not a separate accent -- same muted
+   tone as the chip text, never louder than it. */
+.aiPanelMarqueeChip svg{ flex: 0 0 auto; color: var(--text-secondary, currentColor); opacity: .7; }
+html[data-theme="dark"] .aiPanelMarqueeChip{ background: #2C2C2E; border-color: rgba(255,255,255,.12); }
+html[data-theme="dark"] .aiPanelMarqueeChip:hover{ background: rgba(255, 255, 255, 0.08); }
+
+@media (prefers-reduced-motion: reduce){
+  .aiPanelMarqueeTrack{ animation: none; }
+  .aiPanelMarquee{ overflow-x: auto; -webkit-mask-image: none; mask-image: none; }
+}
 
 /* Markdown content inside SUNI's report/chat bubbles -- keep spacing tight,
    the bubble is already padded. */

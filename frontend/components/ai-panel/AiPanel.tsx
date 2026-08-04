@@ -22,11 +22,33 @@ const WELCOME_ID = "welcome";
 const INITIAL_MESSAGES: ChatMessage[] = [
   { id: WELCOME_ID, from: "suni", text: "무엇을 도와드릴까요?", status: "done" },
 ];
-// Second position is the alarm question deliberately (사전 알람 로그가 주요
-// 기능이므로 노출도가 높아야 한다) -- every chip here must be answerable
-// from the context JSON alone (alarms.records/targets[]), never a question
-// that needs physical-mechanism knowledge the data can't provide.
-const EXAMPLE_QUERIES = ["알람이 가장 많은 인자는?", "Y2에 영향이 큰 인자는?", "관리한계는 어떻게 정했나요?"];
+
+type ChipIconKind = "bell" | "chart" | "help" | "warning";
+type ExampleChip = { icon: ChipIconKind; text: string };
+
+// Every chip here must be answerable from the context JSON alone
+// (targets[]/alarms.records/recommendations.records/config_screening/
+// limitations) -- never a question that needs physical-mechanism or
+// corrective-action knowledge the data can't provide (the system prompt
+// forbids causal/action phrasing, so a chip that invites it would just
+// produce a refusal). Row 1 asks about results (bell/chart icons), row 2
+// asks about method and limits (help/warning icons) -- kept as two
+// semantically distinct rows so their opposite scroll directions read as
+// two different kinds of question, not an arbitrary split.
+const MARQUEE_ROW_1: ExampleChip[] = [
+  { icon: "bell", text: "알람이 가장 많은 인자는?" },
+  { icon: "chart", text: "Y2에 영향이 큰 인자는?" },
+  { icon: "chart", text: "개선 여지가 가장 큰 인자는?" },
+  { icon: "bell", text: "알람 wafer의 수율은 얼마나 낮나요?" },
+  { icon: "chart", text: "가장 신뢰도 높은 인자는?" },
+];
+const MARQUEE_ROW_2: ExampleChip[] = [
+  { icon: "help", text: "관리한계는 어떻게 정했나요?" },
+  { icon: "help", text: "권장 구간은 무엇인가요?" },
+  { icon: "help", text: "Step16_R1을 어느 범위로 관리해야 하나요?" },
+  { icon: "warning", text: "판정불가 wafer가 왜 많나요?" },
+  { icon: "warning", text: "이 분석의 한계는?" },
+];
 const REPORT_KEYWORD_PATTERN = /보고서|리포트|report|요약해줘|정리해줘/i;
 // Reveals streamed text one character per tick regardless of how large the
 // underlying network chunk was (spec §5-3: "한 글자씩 이어 붙인다").
@@ -42,6 +64,7 @@ export default function AiPanel({
   onToggle: () => void;
 }) {
   const { analysisDataset, pendingChatRequest, clearPendingChatRequest, setAiPanelOpen } = usePanelState();
+  const reducedMotion = usePrefersReducedMotion();
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -291,7 +314,7 @@ export default function AiPanel({
                       </div>
                     </div>
                     {message.id === WELCOME_ID && (
-                      <div className="aiPanelChipRow">
+                      <div className="aiPanelChipsWrap">
                         <button
                           type="button"
                           className="aiPanelChip aiPanelChipPrimary"
@@ -300,18 +323,25 @@ export default function AiPanel({
                         >
                           분석 보고서 생성
                         </button>
-                        {EXAMPLE_QUERIES.map((query) => (
-                          <button
-                            key={query}
-                            type="button"
-                            className="aiPanelChip"
-                            disabled={streaming}
-                            onClick={() => send(query)}
-                          >
-                            {query}
-                          </button>
-                        ))}
                       </div>
+                    )}
+                    {message.id === WELCOME_ID && (
+                      <>
+                        <MarqueeRow
+                          chips={MARQUEE_ROW_1}
+                          direction="left"
+                          disabled={streaming}
+                          reducedMotion={reducedMotion}
+                          onSend={(text) => send(text)}
+                        />
+                        <MarqueeRow
+                          chips={MARQUEE_ROW_2}
+                          direction="right"
+                          disabled={streaming}
+                          reducedMotion={reducedMotion}
+                          onSend={(text) => send(text)}
+                        />
+                      </>
                     )}
                   </div>
                 );
@@ -351,6 +381,98 @@ export default function AiPanel({
       </div>
     </aside>
   );
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    function handleChange(event: MediaQueryListEvent) {
+      setReduced(event.matches);
+    }
+    query.addEventListener("change", handleChange);
+    return () => query.removeEventListener("change", handleChange);
+  }, []);
+  return reduced;
+}
+
+// Continuous marquee: the chip list is rendered twice back-to-back and the
+// track animates to exactly -50% of its own width, so the seam between the
+// two copies is invisible -- the moment copy 1 scrolls fully offscreen,
+// copy 2 is sitting exactly where copy 1 started. `prefers-reduced-motion`
+// renders only one copy (no seam to hide) and falls back to native
+// horizontal scroll instead of the transform loop.
+function MarqueeRow({
+  chips,
+  direction,
+  disabled,
+  reducedMotion,
+  onSend,
+}: {
+  chips: ExampleChip[];
+  direction: "left" | "right";
+  disabled: boolean;
+  reducedMotion: boolean;
+  onSend: (text: string) => void;
+}) {
+  const items = reducedMotion ? chips : [...chips, ...chips];
+  return (
+    <div className="aiPanelMarquee">
+      <div className={`aiPanelMarqueeTrack ${direction === "right" ? "reverse" : ""}`}>
+        {items.map((chip, index) => (
+          <button
+            key={`${chip.text}-${index}`}
+            type="button"
+            className="aiPanelMarqueeChip"
+            disabled={disabled}
+            onClick={() => onSend(chip.text)}
+          >
+            <ChipIcon kind={chip.icon} />
+            {chip.text}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChipIcon({ kind }: { kind: ChipIconKind }) {
+  switch (kind) {
+    case "bell":
+      return (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      );
+    case "chart":
+      return (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M18 17V9" />
+          <path d="M13 17V5" />
+          <path d="M8 17v-3" />
+        </svg>
+      );
+    case "help":
+      return (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <path d="M12 17h.01" />
+        </svg>
+      );
+    case "warning":
+      return (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </svg>
+      );
+  }
 }
 
 function SendIcon() {
