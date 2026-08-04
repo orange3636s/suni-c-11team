@@ -8900,23 +8900,36 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareTriggerButton:focus-visible{ outline: 3px solid rgba(255,255,255,0.55); outline-offset: 2px; }
 
 /* ===================================================================
-   Table as one rounded block (spec 재지시: 모서리 정리).
+   Table as one rounded block (spec 재지시: 모서리 정밀 수정).
 
-   Previously each corner was rounded piecemeal (border-top-*-radius on
-   the first/last header cell, border-bottom-*-radius on the last row's
-   first/last cell) so the wrapper itself could stay overflow:visible
-   and support horizontal scroll on a narrow viewport. In practice the
-   header's top corners and the last row's bottom corners drifted out
-   of sync with the wrap's own border whenever content didn't line up
-   exactly, and the two radii (wrap vs. card) didn't read as one
-   consistent shape. Simplest fix, per spec: overflow:hidden on the
-   wrap itself clips every child to one radius, so header band, row
-   dividers, and the last row's bottom edge are always exactly as round
-   as the wrap's own border -- no per-cell radius bookkeeping. This
-   sacrifices horizontal scroll for a table wider than its card on a
-   narrow viewport (table-layout:fixed already keeps columns within
-   100% of the wrap, so that path was already rare) -- deliberate
-   trade-off, not an oversight.
+   Root cause of the previous attempt (found by checking computed styles
+   in-browser, not by inspection alone): .tableWrap and .scrollTableWrap
+   were two classes on the SAME element for any table with vertical
+   scroll (알람 목록, LOT별 알람 집계, 개선 권장 목록). A single element
+   has exactly one computed `overflow` -- .tableWrap{overflow:hidden}
+   (meant for corner-rounding) and .scrollTableWrap{overflow-y:auto;
+   overflow-x:auto} (meant for scrolling) both targeted it, and the
+   scroll rule, appearing later in the cascade, won outright: the
+   rounding rule never took effect at all on any scrolling table. (This
+   matches spec §A-2 candidates #1 and #5 together -- overflow:hidden
+   WAS declared, but a later same-specificity rule on the same element
+   overrode it back to auto, via what was effectively an extra, invisible
+   "scroll container" sharing the wrap's own box.) The non-scrolling
+   tables (데이터 전처리 등, plain .tableWrap with no second class) never
+   hit this conflict, which is why they looked fine in isolation.
+
+   Fix: split the two jobs onto two different elements so they can never
+   compete for the same property again.
+     .tableWrap   -- outer. border + radius + overflow:hidden. Never
+                     scrolls itself, so its overflow is never contested.
+     .tableScroll -- inner (only present for tables that scroll
+                     vertically, via ScrollTableBody). overflow-y:auto,
+                     overflow-x:hidden. No border/radius of its own --
+                     the outer wrap's overflow:hidden clips it (and
+                     everything inside it, including the sticky header)
+                     to one radius regardless of scroll position.
+   Sticky headers resolve `position:sticky` against the nearest actually-
+   scrolling ancestor, which is now unambiguously .tableScroll.
 
    overflow:hidden must never wrap a dropdown menu (spec warning) -- the
    dataset selector's menu is portaled to document.body precisely so it
@@ -8925,12 +8938,16 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
    =================================================================== */
 :root{
   --table-header-bg: #F4F5F7;
+  --table-border: rgba(0, 0, 0, 0.10);
+  --table-line: rgba(0, 0, 0, 0.06);
   /* One step smaller than the card's own 16px (--radius-card) so the
      inner block never reads as "more rounded" than its container. */
   --table-radius: 12px;
 }
 html[data-theme="dark"]{
   --table-header-bg: #2F2F31;
+  --table-border: rgba(255, 255, 255, 0.14);
+  --table-line: rgba(255, 255, 255, 0.08);
 }
 .tableWrap,
 .tableWrapper{
@@ -8939,24 +8956,31 @@ html[data-theme="dark"]{
   margin-right: 0;
   width: 100%;
   max-width: 100%;
-  border: 1px solid var(--border-card, var(--border));
+  border: 1px solid var(--table-border);
   border-radius: var(--table-radius);
   overflow: hidden;
+  /* Opaque -- nothing shows through past the rounded edge. */
   background: var(--surface-card, var(--surface));
+}
+/* The inner scroll container (ScrollTableBody). No border/radius/
+   overflow-hidden of its own -- it only scrolls; the outer .tableWrap
+   does all the clipping. */
+.tableScroll{
+  --scroll-row-h: 42px;
+  --scroll-header-h: 38px;
+  --scroll-rows: 10;
+  position: relative;
+  max-height: calc(var(--scroll-header-h) + var(--scroll-row-h) * var(--scroll-rows));
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .tableWrap table,
 .tableWrapper table{
   width: 100%;
-  /* min-width:0 overrides an older 640px floor set earlier in the
-     cascade (.tableWrap table{min-width:640px}) -- with overflow now
-     hidden, a wider-than-container table would silently clip instead
-     of scrolling, so that floor can't apply here. Deterministic column
-     widths: table-layout:auto only guarantees a table reaches 100% as
-     a *box*, not that leftover width is distributed to any column, so
-     `fixed` is what actually makes the header band and dividers reach
-     the wrap's own edges. */
   min-width: 0;
   table-layout: fixed;
+  border-collapse: collapse;
+  border: none;
 }
 .tableWrap thead,
 .tableWrapper thead{
@@ -8966,37 +8990,25 @@ html[data-theme="dark"]{
    its own compositing layer, so a background painted only on the
    ancestor <thead> row-group doesn't travel with it once the table
    scrolls underneath -- the `th` itself needs its own fully opaque
-   background. `position:sticky;top:0` on .tableWrap th is set earlier
-   in the cascade and left untouched here. */
+   background. Only a horizontal (bottom) border -- no left/right, the
+   wrap's own border is the only vertical edge a table ever draws. */
 .tableWrap th,
 .tableWrapper th{
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky-seg);
   background: var(--table-header-bg);
   backdrop-filter: none;
-  z-index: var(--z-sticky-seg);
-  border-bottom: 1.5px solid var(--border-card, var(--border));
+  border-bottom: 1.5px solid var(--table-border);
+  border-top: none;
+  border-left: none;
+  border-right: none;
 }
 .tableWrap td,
 .tableWrapper td{
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-}
-html[data-theme="dark"] .tableWrap td,
-html[data-theme="dark"] .tableWrapper td{
-  border-bottom-color: rgba(255, 255, 255, 0.08);
-}
-.tableWrap th:first-child, .tableWrap td:first-child,
-.tableWrapper th:first-child, .tableWrapper td:first-child{
-  position: sticky;
-  left: 0;
-}
-.tableWrap td:first-child,
-.tableWrapper td:first-child{
-  background: var(--surface-card, var(--surface));
-  z-index: var(--z-card);
-}
-.tableWrap th:first-child,
-.tableWrapper th:first-child{
-  background: var(--table-header-bg);
-  z-index: var(--z-sticky-seg);
+  border-bottom: 1px solid var(--table-line);
+  border-left: none;
+  border-right: none;
 }
 .tableWrap thead tr:first-child th,
 .tableWrapper thead tr:first-child th{
@@ -9156,26 +9168,19 @@ html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 25
 
 /* Fixed N-row-tall scroll body (10 rows for 알람/개선 권장, 5 for
    LOT별 알람 집계 -- spec §6 재지시 -- via the --scroll-rows inline var,
-   default 10). Row height is pinned via --scroll-row-h so the max-height
-   math (header + N rows) stays exact regardless of content; thead's
-   existing `position:sticky;top:0` (see .tableWrap th above) keeps the
-   header pinned while this wrapper scrolls. */
-.scrollTableWrap{
-  --scroll-row-h: 42px;
-  --scroll-header-h: 38px;
-  --scroll-rows: 10;
-  position: relative;
-  max-height: calc(var(--scroll-header-h) + var(--scroll-row-h) * var(--scroll-rows));
-  overflow-y: auto;
-  overflow-x: auto;
-}
-.scrollTableWrap table{
+   default 10, set on .tableScroll itself -- see the "Table as one
+   rounded block" section above for the base .tableScroll rule and why
+   it's a separate element from .tableWrap). Row height is pinned via
+   --scroll-row-h so the max-height math (header + N rows) stays exact
+   regardless of content; thead's `position:sticky;top:0` (see .tableWrap
+   th above) keeps the header pinned while .tableScroll scrolls. */
+.tableScroll table{
   table-layout: fixed;
 }
-.scrollTableWrap th{
+.tableScroll th{
   height: var(--scroll-header-h);
 }
-.scrollTableWrap td{
+.tableScroll td{
   height: var(--scroll-row-h);
   overflow: hidden;
   text-overflow: ellipsis;

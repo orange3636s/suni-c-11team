@@ -92,11 +92,20 @@ export function TableToolbar({
   );
 }
 
+// .tableWrap (outer) only ever does border + radius + overflow:hidden --
+// it never scrolls itself. .tableScroll (inner) is the one element that
+// scrolls vertically. Splitting these into two elements, instead of one
+// div wearing both classes, is deliberate: a single element can only have
+// one computed `overflow`, so a later rule giving it `overflow-y:auto`
+// for scrolling silently wins over an earlier `overflow:hidden` meant for
+// corner-rounding -- the two goals were never compatible on one box.
 export function ScrollTableBody({ children, rows = 10 }: { children: ReactNode; rows?: number }) {
   return (
-    <div className="tableWrap scrollTableWrap" style={{ ["--scroll-rows" as string]: rows }}>
-      {children}
-      <div className="scrollTableFade" />
+    <div className="tableWrap">
+      <div className="tableScroll" style={{ ["--scroll-rows" as string]: rows }}>
+        {children}
+        <div className="scrollTableFade" />
+      </div>
     </div>
   );
 }
