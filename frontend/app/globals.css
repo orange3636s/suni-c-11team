@@ -8840,23 +8840,48 @@ html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c
    grey/secondary color and a matching font-size. */
 .scatterAxisTitleSvg{ font-size: 12px; fill: var(--text-secondary); }
 
-.scatterLegend{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.scatterLegendItem{
-  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-card, var(--border));
-  border-radius: 999px; padding: 5px 12px; background: transparent; color: var(--text-secondary);
-  font-size: 12px; cursor: pointer; opacity: 0.55; transition: opacity 120ms ease, background-color 120ms ease;
+/* 해석 팁 (spec §2-1) -- 차트 바로 위, 옅은 파란 카드. 라이트/다크 각각
+   배경·테두리·본문 색을 명시해 둘 다에서 카드 경계가 읽힌다. */
+.scatterInterpretationTip{
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-bottom: 12px; padding: 8px 12px; border-radius: 8px;
+  background: #F2F7FC; border: 1px solid #D6E4F0;
 }
-.scatterLegendItem.active{ opacity: 1; background: var(--surface-secondary, var(--surface-muted)); color: var(--text-primary); }
-.scatterLegendItem.disabled{ opacity: 0.3; cursor: not-allowed; text-decoration: line-through; }
-.scatterLegendSwatch{ display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
-/* Wider/taller + translucent so 권장 구간's swatch reads as a shaded band,
-   not a line, next to the other 3 line-style swatches. */
-.scatterLegendSwatch-band{ width: 16px; height: 10px; border-radius: 3px; opacity: 0.35; }
+html[data-theme="dark"] .scatterInterpretationTip{
+  background: rgba(59, 130, 246, 0.10); border-color: rgba(255, 255, 255, 0.10);
+}
+.scatterInterpretationTipLabel{
+  flex: 0 0 auto; font-size: 11px; font-weight: 700; color: #0E306D; padding-top: 1px;
+}
+html[data-theme="dark"] .scatterInterpretationTipLabel{ color: #93C5FD; }
+.scatterInterpretationTipBody{
+  margin: 0; flex: 1 1 auto; font-size: 12px; line-height: 1.5; color: #3B4A5A; word-break: keep-all;
+}
+html[data-theme="dark"] .scatterInterpretationTipBody{ color: #C7CFD9; }
 
-/* 3단계 점 색상 범례 (spec §5) -- 토글 버튼이 아닌 정적 라벨이므로 항상 100%
-   불투명, 클릭 커서 없음 (.scatterLegendItem 기본값은 비활성 상태처럼 흐릿하다). */
-.scatterZoneLegend{ margin-top: 6px; }
-.scatterZoneLegendItem{ opacity: 1; cursor: default; }
+/* 산점도 범례 -- 2행 x 최대 4항목, 각 항목이 견본+굵은 라벨+작은 설명을
+   갖는 카드 (spec §3). 토글 가능한 카드(관리한계/최적 중심/권장 구간/구간
+   평균 불량률)는 <button>으로, 나머지는 <div>로 렌더링되지만 스타일은
+   공유한다. */
+.scatterRefLegend{ display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.scatterRefLegendDivider{ height: 1px; background: var(--border-card, var(--border)); opacity: 0.6; }
+.scatterLegendRow{ display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+.scatterLegendCard{
+  display: flex; align-items: flex-start; gap: 8px; flex: 1 1 160px; min-width: 150px;
+  border: 1px solid transparent; border-radius: 8px; padding: 6px 8px; margin: 0;
+  background: transparent; text-align: left; font: inherit; color: inherit; cursor: default;
+}
+.scatterLegendCard.interactive{ cursor: pointer; border-color: var(--border-card, var(--border)); }
+.scatterLegendCard.interactive.active{ background: var(--surface-secondary, var(--surface-muted)); }
+.scatterLegendCard.interactive.disabled{ opacity: 0.35; cursor: not-allowed; }
+.scatterLegendCardSwatch{ flex: 0 0 auto; display: inline-flex; align-items: center; padding-top: 2px; }
+.scatterLegendCardText{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.scatterLegendCardText strong{ font-size: 11px; font-weight: 700; color: var(--text-primary); }
+.scatterLegendCardText small{ font-size: 9px; color: var(--text-secondary); }
+/* LOT별 Color By -- 최대 400개까지 순환하는 색을 견본으로 나열하는 대신
+   안내 문구 한 줄로 대체한다 (spec §5). */
+.scatterColorLegendNote{ margin: 0; align-self: center; font-size: 11px; color: var(--text-secondary); }
+.scatterHoverHint{ margin: 2px 0 0; text-align: center; font-size: 10px; color: var(--text-secondary); }
 
 /* Box Plot legend (spec §4) -- 2 rows x up to 5 read-only cards, each a
    swatch + bold label + small description, closing with a centered green

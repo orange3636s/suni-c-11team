@@ -6,7 +6,7 @@ import { formatPValue } from "@/lib/numberFormat";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { ReferenceLine, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
+import type { ReferenceLine, RelationShape, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 export type ScatterView = "scatter" | "box";
@@ -62,16 +62,35 @@ function formatNum1(value: number): string {
   return value.toFixed(1);
 }
 
-/** LCL/UCL button text with the actual computed values baked in (spec
- * §4-6/§4-3) -- separate from LINE_META.legendLabel, which stays a
- * static category name used by the per-line hover tooltip. */
-function buildIqrLabel(lines: ReferenceLine[]): string {
-  const lo = lines.find((l) => l.key === "iqr_lo");
-  const hi = lines.find((l) => l.key === "iqr_hi");
-  if (lo?.drawable && hi?.drawable) return `LCL/UCL (IQR 1.5배 · ${formatNum1(lo.value)} / ${formatNum1(hi.value)})`;
-  if (hi?.drawable) return `UCL (${formatNum1(hi.value)})`;
-  if (lo?.drawable) return `LCL (${formatNum1(lo.value)})`;
-  return "LCL/UCL";
+// Below this ε², the curve is close enough to flat that naming a shape
+// (U자/단조) would read as a confident pattern the data doesn't actually
+// support -- so the flatness message wins regardless of `relation_shape`
+// (spec §2-2, priority 1).
+const EPS2_FLAT_THRESHOLD = 0.02;
+
+/** One-line, jargon-free reading of the chart above it (spec §2) -- no
+ * ρ/ε²/p-value, factor/target names and the optimal-center value swapped
+ * in as real numbers. `optimalCenter` only ever backs the u_shape branch
+ * (monotonic relations have none by construction -- see
+ * src/analysis/screening/shape.py); a u_shape whose center got dropped
+ * (sparse min-y bin) still gets the U-shape message, just without a
+ * number to anchor it to. */
+function buildInterpretationTip(eps2: number, shape: RelationShape, optimalCenter: number | null, targetLabel: string): string {
+  if (eps2 < EPS2_FLAT_THRESHOLD) {
+    return `곡선이 거의 평평합니다. 이 인자만으로는 ${targetLabel} 불량률을 설명하기 어렵습니다.`;
+  }
+  if (shape === "u_shape") {
+    return optimalCenter != null
+      ? `값이 ${formatNum1(optimalCenter)}에서 멀어질수록 ${targetLabel} 불량률이 오르는 U자 형태입니다. 양쪽 끝이 모두 나쁘므로 한 방향으로만 조절하면 안 됩니다.`
+      : `값이 낮아도 높아도 ${targetLabel} 불량률이 오르는 U자 형태입니다. 양쪽 끝이 모두 나쁘므로 한 방향으로만 조절하면 안 됩니다.`;
+  }
+  if (shape === "monotonic_increasing") {
+    return `값이 커질수록 ${targetLabel} 불량률이 오릅니다. 낮게 유지하는 방향이 유리합니다.`;
+  }
+  if (shape === "monotonic_decreasing") {
+    return `값이 커질수록 ${targetLabel} 불량률이 내려갑니다. 높게 유지하는 방향이 유리합니다.`;
+  }
+  return `뚜렷한 방향성 없이 흩어져 있습니다. 이 인자만으로 ${targetLabel} 불량률의 방향을 판단하기 어렵습니다.`;
 }
 
 /** Sample quantile with linear interpolation -- matches numpy/pandas'
@@ -344,6 +363,68 @@ function IconBand({ color }: { color: string }) {
     </svg>
   );
 }
+// Single-dot swatch (spec §3-1/§5) -- point-color legend entries (zone
+// tiers, Config 모델별, 알람 여부) need one filled circle matching the
+// actual point fill, not a line/band icon.
+function IconDot({ color }: { color: string }) {
+  return (
+    <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
+      <circle cx="11" cy="8" r="4" fill={color} />
+    </svg>
+  );
+}
+
+/** Read-only-or-toggle legend card: swatch + bold label + small
+ * description, stacked (spec §3). Renders as a `<button>` (and picks up
+ * `.active`/`.disabled`) when `onClick` is given -- reused for both the
+ * static Color By row and the still-toggleable reference-line row so
+ * clicking LCL/UCL, 최적 중심, 권장 구간, 구간 평균 불량률 keeps working
+ * exactly as before (spec §3-3: 기존 토글 기능 유지). */
+function LegendCard({
+  icon,
+  label,
+  desc,
+  onClick,
+  active,
+  disabled,
+  title,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  desc: string;
+  onClick?: (event: React.MouseEvent) => void;
+  active?: boolean;
+  disabled?: boolean;
+  title?: string;
+}) {
+  const className = [
+    "scatterLegendCard",
+    onClick ? "interactive" : "",
+    active ? "active" : "",
+    disabled ? "disabled" : "",
+  ].filter(Boolean).join(" ");
+  const inner = (
+    <>
+      <span className="scatterLegendCardSwatch">{icon}</span>
+      <span className="scatterLegendCardText">
+        <strong>{label}</strong>
+        <small>{desc}</small>
+      </span>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" className={className} onClick={onClick} title={title}>
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div className={className} title={title}>
+      {inner}
+    </div>
+  );
+}
 
 function modelOf(config: string | null): string {
   if (!config) return "미계측";
@@ -386,6 +467,21 @@ const ZONE_LABEL: Record<PointZone, string> = {
   in_recommended: "권장 구간 안",
   in_control: "권장 구간 밖 · 관리한계 안",
   out_control: "관리한계 밖",
+};
+
+// Row 1 legend wording (spec §3-1) -- deliberately its own copy rather
+// than reusing ZONE_LABEL: the legend is read before any point is
+// hovered, so it names the zone ("권장 구간 내 wafer") rather than the
+// point-tooltip's already-in-context phrasing ("권장 구간 안").
+const ZONE_LEGEND_LABEL: Record<PointZone, string> = {
+  in_recommended: "권장 구간 내 wafer",
+  in_control: "권장 구간 밖",
+  out_control: "관리한계 밖",
+};
+const ZONE_LEGEND_DESC: Record<PointZone, string> = {
+  in_recommended: "가장 진한 파랑 · 불량률이 낮게 관측되는 범위",
+  in_control: "중간 파랑 · 관리한계는 넘지 않음",
+  out_control: "연한 파랑 · 알람 대상 wafer",
 };
 
 function colorForPoint(
@@ -840,6 +936,40 @@ export default function ScatterChart({
       (data.normal_range.hi == null || trendHover.dataX <= data.normal_range.hi)
     : null;
 
+  const interpretationText = buildInterpretationTip(data.eps2, data.relation_shape, data.optimal_center, targetAxisLabel(data.axis.y_label));
+
+  // Row 1 (색 구분) is the only part of the legend Color By actually
+  // changes (spec §5) -- Config 모델별 needs each model's *actual* paint
+  // color, so it reads straight off `lotIndex`, which `colorForPoint`
+  // already filled in first-seen order while painting the points above
+  // (same render pass, evaluated earlier in this JSX tree) instead of
+  // re-deriving a possibly different encounter order here.
+  const modelLegendEntries = colorMode === "config_model"
+    ? Array.from(lotIndex.entries()).map(([key, idx]) => ({ key, color: MODEL_COLORS[idx % MODEL_COLORS.length] }))
+    : [];
+
+  // Row 2 (기준선) labels/descriptions -- unlike the old flat button text,
+  // a one-sided factor (e.g. Step1_D1, LCL-less) needs its value baked
+  // into the *label* itself, not just the tooltip (spec §3-4).
+  function iqrLegendLabel(): string {
+    if (iqrHi?.drawable && !iqrLo?.drawable) return `관리한계 UCL (${formatNum1(iqrHi.value)})`;
+    if (iqrLo?.drawable && !iqrHi?.drawable) return `관리한계 LCL (${formatNum1(iqrLo.value)})`;
+    return "관리한계 LCL/UCL";
+  }
+  function iqrLegendDesc(): string {
+    if (iqrLo?.drawable && iqrHi?.drawable) return `네이비 파선 (${formatNum1(iqrLo.value)} / ${formatNum1(iqrHi.value)}) · 이 밖은 알람 대상`;
+    return "네이비 파선 · 이 밖은 알람 대상";
+  }
+  function outControlLegendDesc(): string {
+    if (iqrHi?.drawable && !iqrLo?.drawable) return "앰버 영역 (상한 초과)";
+    if (iqrLo?.drawable && !iqrHi?.drawable) return "앰버 영역 (하한 미달)";
+    return "앰버 영역";
+  }
+  // 단조 인자는 최적 중심 자체가 개념적으로 없으므로 항목을 아예 숨긴다
+  // (spec §3-4) -- u_shape/unclear에서 값이 빠진 경우는 기존처럼 "해당
+  // 없음" 비활성 카드로 남겨 이유를 알 수 있게 한다.
+  const showOptimalLegendCard = data.relation_shape !== "monotonic_increasing" && data.relation_shape !== "monotonic_decreasing";
+
   function lineGroupOf(line: DisplayLine): string {
     return line.key === "optimal" ? "optimal" : "iqr";
   }
@@ -919,6 +1049,14 @@ export default function ScatterChart({
             Box Plot
           </button>
         </div>
+      </div>
+
+      {/* 해석 팁 (spec §2) -- 차트 바로 위, 제목/메타 정보와는 별도 줄로
+          쌓인다. 통계 용어 없이 이 차트가 무엇을 보여주는지 한 줄로
+          요약한다. */}
+      <div className="scatterInterpretationTip">
+        <span className="scatterInterpretationTipLabel">해석</span>
+        <p className="scatterInterpretationTipBody">{interpretationText}</p>
       </div>
 
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
@@ -1172,71 +1310,93 @@ export default function ScatterChart({
       </p>
 
       {view === "scatter" && (
-        <>
-          {/* 점 색상 3단계 범례 -- "기본" Color By 모드에서만 의미가 있다 (spec §5).
-              다른 Color By 모드(설비/LOT/알람)는 각자 자기 방식대로 이미 구분되므로
-              이 범례를 보여주지 않는다. */}
-          {colorMode === "default" && (
-            <div className="scatterLegend scatterZoneLegend">
-              {(["in_recommended", "in_control", "out_control"] as PointZone[]).map((zone) => (
-                <span className="scatterLegendItem scatterZoneLegendItem" key={zone}>
-                  <i
-                    className="scatterLegendSwatch"
-                    style={{ background: theme === "dark" ? ZONE_STYLE[zone].dark : ZONE_STYLE[zone].light }}
-                  />
-                  {ZONE_LABEL[zone]}
-                </span>
-              ))}
-            </div>
-          )}
+        <div className="scatterRefLegend">
+          <div className="scatterRefLegendDivider" />
 
-          {/* 4 reference elements only (spec §4-2): ±3σ/±6σ/평균/Q1/Q3 removed
-              from every display surface here, but never from
-              src/analysis/control_range.py or the JSON report -- those still
-              compute mean/std/q1/q3 because LCL/UCL is derived from them. */}
-          <div className="scatterLegend">
-            <button
-              type="button"
-              className={`scatterLegendItem ${visibleGroups.has("iqr") && !iqrFullyNonDrawable ? "active" : ""} ${iqrFullyNonDrawable ? "disabled" : ""}`}
+          {/* 1행 -- 점의 색 구분 (spec §3-1/§5). Color By가 바뀌면 이 행만
+              함께 바뀐다: 다른 모드는 이미 각자 방식대로 점을 구분하므로
+              "기본" 모드의 3단계 존 대신 자기 방식을 설명한다. 견본 색은
+              colorForPoint가 실제로 칠하는 값과 정확히 같은 소스(테마별
+              ZONE_STYLE, MODEL_COLORS, 고정 알람 색)에서 그대로 가져온다. */}
+          <div className="scatterLegendRow">
+            {colorMode === "default" &&
+              (["in_recommended", "in_control", "out_control"] as PointZone[]).map((zone) => (
+                <LegendCard
+                  key={zone}
+                  icon={<IconDot color={theme === "dark" ? ZONE_STYLE[zone].dark : ZONE_STYLE[zone].light} />}
+                  label={ZONE_LEGEND_LABEL[zone]}
+                  desc={ZONE_LEGEND_DESC[zone]}
+                />
+              ))}
+            {colorMode === "config_model" &&
+              modelLegendEntries.map((entry) => (
+                <LegendCard key={entry.key} icon={<IconDot color={entry.color} />} label={entry.key} desc="Config 모델" />
+              ))}
+            {colorMode === "alarm" && (
+              <>
+                <LegendCard icon={<IconDot color="#F59E0B" />} label="알람" desc="관리한계 밖" />
+                <LegendCard icon={<IconDot color="#1D4ED8" />} label="정상" desc="관리한계 내" />
+              </>
+            )}
+            {colorMode === "lot" && (
+              <p className="scatterColorLegendNote">LOT마다 다른 색 · 정확한 LOT은 툴팁으로 확인</p>
+            )}
+            <LegendCard
+              icon={<IconTrendLine color={theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light} />}
+              label="구간 평균 불량률"
+              desc="12구간으로 나눈 평균을 이은 선"
+              onClick={() => setTrendVisible((v) => !v)}
+              active={trendVisible}
+              title="구간 평균 불량률"
+            />
+          </div>
+
+          {/* 2행 -- 기준선 4종 (spec §3-2). Color By와 무관하게 항상 동일.
+              ±3σ/±6σ/평균/Q1/Q3는 여전히 어느 화면에도 노출하지 않는다
+              (src/analysis/control_range.py에는 그대로 남아 있다). */}
+          <div className="scatterLegendRow">
+            <LegendCard
+              icon={<IconDashedLine color={theme === "dark" ? LINE_COLOR.iqr.dark : LINE_COLOR.iqr.light} />}
+              label={iqrLegendLabel()}
+              desc={iqrLegendDesc()}
               onClick={(event) => toggleGroup("iqr", event)}
+              active={visibleGroups.has("iqr") && !iqrFullyNonDrawable}
+              disabled={iqrFullyNonDrawable}
               title={iqrFullyNonDrawable ? "데이터 범위 밖" : "관리한계, 알람 판정 기준"}
-            >
-              <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR.iqr.dark : LINE_COLOR.iqr.light }} />
-              {buildIqrLabel(data.reference_lines)}
-            </button>
-            <button
-              type="button"
-              className={`scatterLegendItem ${visibleGroups.has("optimal") && optimalAvailable ? "active" : ""} ${!optimalAvailable ? "disabled" : ""}`}
-              onClick={(event) => toggleGroup("optimal", event)}
-              title={optimalAvailable ? "구간 평균 불량률이 가장 낮은 지점" : optimalUnavailableReason}
-            >
-              <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR.optimal.dark : LINE_COLOR.optimal.light }} />
-              {optimalAvailable ? `최적 중심 (${formatNum1(data.optimal_center as number)})` : "최적 중심 (해당 없음)"}
-            </button>
-            <button
-              type="button"
-              className={`scatterLegendItem ${visibleGroups.has("recommended") && recommendedRangeValue ? "active" : ""} ${!recommendedRangeValue ? "disabled" : ""}`}
+            />
+            {showOptimalLegendCard && (
+              <LegendCard
+                icon={<IconDashedLine color={theme === "dark" ? LINE_COLOR.optimal.dark : LINE_COLOR.optimal.light} dotted />}
+                label="최적 중심"
+                desc={optimalAvailable ? `초록 점선 (${formatNum1(data.optimal_center as number)}) · 불량률이 가장 낮은 지점` : optimalUnavailableReason}
+                onClick={(event) => toggleGroup("optimal", event)}
+                active={visibleGroups.has("optimal") && optimalAvailable}
+                disabled={!optimalAvailable}
+                title={optimalAvailable ? "구간 평균 불량률이 가장 낮은 지점" : optimalUnavailableReason}
+              />
+            )}
+            <LegendCard
+              icon={<IconBand color={theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light} />}
+              label="권장 구간"
+              desc={
+                recommendedRangeValue
+                  ? `초록 영역 (${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])}) · 이 범위로 관리 권장${recommendedClamped ? " (관리한계에 맞춰 조정됨)" : ""}`
+                  : "데이터 범위 밖"
+              }
               onClick={(event) => toggleGroup("recommended", event)}
+              active={visibleGroups.has("recommended") && !!recommendedRangeValue}
+              disabled={!recommendedRangeValue}
               title={
                 recommendedRangeValue
                   ? `구간 평균 불량률이 전체 평균 이하인 구간${recommendedClamped ? " (관리한계에 맞춰 조정됨)" : ""}`
                   : "데이터 범위 밖"
               }
-            >
-              <i className="scatterLegendSwatch scatterLegendSwatch-band" style={{ background: theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light }} />
-              {recommendedRangeValue ? `권장 구간 (${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])})` : "권장 구간"}
-            </button>
-            <button
-              type="button"
-              className={`scatterLegendItem ${trendVisible ? "active" : ""}`}
-              onClick={() => setTrendVisible((v) => !v)}
-              title="구간 평균 불량률"
-            >
-              <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} />
-              구간 평균 불량률
-            </button>
+            />
+            <LegendCard icon={<IconBand color="#F59E0B" />} label="관리한계 밖" desc={outControlLegendDesc()} />
           </div>
-        </>
+
+          <p className="scatterHoverHint">점 하나가 wafer 한 장입니다 — 마우스를 올리면 값을 볼 수 있습니다</p>
+        </div>
       )}
 
       {/* Box Plot 전용 2행 범례 (spec §4) -- 토글 버튼이 아닌 읽기 전용 설명
