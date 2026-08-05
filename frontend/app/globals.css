@@ -8786,6 +8786,21 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
   display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary);
   justify-content: flex-end; margin-bottom: 2px;
 }
+/* Scatter/Box view toggle (spec §2-1) -- own row directly under the meta
+   line, right-aligned segmented control matching .compareTriggerButton's
+   height/radius/font. */
+.scatterViewToggleRow{ display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
+.scatterViewToggleLabel{ font-size: 12px; color: var(--text-secondary); }
+.scatterViewToggle{
+  display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px;
+  background: var(--surface-secondary, var(--surface-muted));
+}
+.scatterViewToggleBtn{
+  height: 26px; padding: 0 12px; border: none; border-radius: 6px; background: transparent;
+  color: var(--text-secondary); font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+}
+.scatterViewToggleBtn.active{ background: #0E306D; color: #FFFFFF; }
+html[data-theme="dark"] .scatterViewToggleBtn.active{ background: #3B5DA8; color: #FFFFFF; }
 .scatterChartSvg{ display: block; overflow: visible; }
 /* Dark-mode-only plot background, one shade darker than the card
    (#242426 vs. --surface's #252527) so points read as "floating" above
@@ -8842,6 +8857,27 @@ html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c
    불투명, 클릭 커서 없음 (.scatterLegendItem 기본값은 비활성 상태처럼 흐릿하다). */
 .scatterZoneLegend{ margin-top: 6px; }
 .scatterZoneLegendItem{ opacity: 1; cursor: default; }
+
+/* Box Plot legend (spec §4) -- 2 rows x up to 5 read-only cards, each a
+   swatch + bold label + small description, closing with a centered green
+   callout. Not a toggle button set like .scatterLegendItem -- box mode
+   doesn't offer per-element visibility toggling. */
+.scatterBoxLegend{ margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.scatterBoxLegendRow{ display: flex; gap: 18px; flex-wrap: wrap; }
+.scatterBoxLegendItem{ display: flex; align-items: flex-start; gap: 8px; min-width: 150px; }
+.scatterBoxLegendSwatch{ flex: 0 0 auto; display: inline-flex; align-items: center; padding-top: 2px; }
+.scatterBoxLegendText{ display: flex; flex-direction: column; gap: 1px; }
+.scatterBoxLegendText strong{ font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
+.scatterBoxLegendText small{ font-size: 11px; color: var(--text-secondary); }
+.scatterBoxLegendNote{
+  margin: 2px 0 0; text-align: center; font-size: 12.5px; font-weight: 700;
+  color: #059669;
+}
+html[data-theme="dark"] .scatterBoxLegendNote{ color: #34D399; }
+
+/* Box mode point-hover tooltip "이상치" tag (spec §5). */
+.scatterOutlierTag{ color: #DC2626; }
+html[data-theme="dark"] .scatterOutlierTag{ color: #F87171; }
 
 /* Alarm-log aggregate cards: 4-up grid (알람/개선 권장/정상/판정불가), same
    card size/style/font as before -- only the column count changed (3 ->
