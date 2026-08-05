@@ -10,6 +10,5 @@ PyYAML==6.0.3
 python-multipart==0.0.32
 pydantic==2.13.4
 psutil>=5.9,<8.0
-shap==0.52.0
 statsmodels==0.14.6
 openai==2.53.0
