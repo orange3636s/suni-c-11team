@@ -20,6 +20,7 @@ from src.runtime.datasets import (
     DatasetNotFoundError,
     DatasetRegistry,
 )
+from src.analysis.screening.schema import parse_schema
 from src.runtime.store import RuntimeStore
 from src.upload_limits import max_upload_size_bytes, max_upload_size_mb
 
@@ -100,8 +101,6 @@ def get_dataset_schema(dataset_id: str) -> dict[str, Any]:
         df = registry.get_dataframe(dataset_id)
     except DatasetNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.") from exc
-
-    from src.analysis.screening.schema import parse_schema
 
     schema = parse_schema(df)
     missing_rates = {

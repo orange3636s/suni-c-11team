@@ -2,6 +2,8 @@
 
 import re
 
+from src.schema_loader import load_data_schema
+
 
 def detect_feature_columns(
     columns: list[str],
@@ -9,8 +11,6 @@ def detect_feature_columns(
 ) -> dict[str, list[str]]:
     """R, D, EQ 및 목표 컬럼을 설정 기반으로 대소문자 구분 없이 탐지한다."""
     if schema_config is None:
-        from src.data_validation import load_data_schema
-
         schema_config = load_data_schema()
 
     patterns = schema_config["feature_patterns"]

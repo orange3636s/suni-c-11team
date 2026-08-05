@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.data_validation import load_data_schema
+from src.schema_loader import load_data_schema
 
 
 CONFIG_PARSER_VERSION = "3.0-frequency-no-decomposition"

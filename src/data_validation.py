@@ -4,48 +4,24 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import yaml
 from pandas.api.types import is_numeric_dtype
 
 from src.column_detection import detect_feature_columns
-
-
-DEFAULT_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[1] / "config" / "data_schema.yaml"
+from src.config_parser import parse_config_columns
+from src.schema_loader import (
+    DEFAULT_SCHEMA_PATH,
+    REQUIRED_SCHEMA_KEYS,
+    load_data_schema,
 )
-REQUIRED_SCHEMA_KEYS = (
-    "id_column",
-    "yield_column",
-    "fail_rate_columns",
-    "fail_bit_columns",
-    "response_suffix",
-    "defect_suffix",
-    "equipment_suffix",
-    "feature_patterns",
-)
+
+__all__ = [
+    "DEFAULT_SCHEMA_PATH",
+    "REQUIRED_SCHEMA_KEYS",
+    "load_data_schema",
+    "validate_dataframe",
+]
+
 VALIDATION_MODES = {"training", "inference", "analysis"}
-
-
-def load_data_schema(
-    schema_path: str | Path | None = None,
-) -> dict[str, Any]:
-    """YAML 파일에서 데이터 컬럼 및 접미사 설정을 읽는다."""
-    resolved_path = Path(schema_path) if schema_path else DEFAULT_SCHEMA_PATH
-    with resolved_path.open(encoding="utf-8") as schema_file:
-        schema = yaml.safe_load(schema_file)
-
-    if not isinstance(schema, dict):
-        raise ValueError("데이터 스키마 설정은 YAML 매핑이어야 합니다.")
-
-    # V2 keeps aliases for old integrations, while custom v1 schemas remain valid.
-    missing_keys = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
-    if missing_keys:
-        raise ValueError(
-            "데이터 스키마 필수 설정이 누락되었습니다: "
-            + ", ".join(missing_keys)
-        )
-
-    return schema
 
 
 def validate_dataframe(
@@ -135,8 +111,6 @@ def validate_dataframe(
             ).sum().sum()
         )
         try:
-            from src.config_parser import parse_config_columns
-
             _, config_report = parse_config_columns(df, schema)
             config_parse_error_count = int(config_report["parse_error_count"])
         except ValueError as exc:
