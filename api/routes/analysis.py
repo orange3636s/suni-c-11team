@@ -104,6 +104,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "q_value": data.q_value,
         "significant": data.significant,
         "confidence_tier": data.confidence_tier,
+        "relation_shape": data.relation_shape,
         "n": data.n,
         "axis": data.axis,
     }

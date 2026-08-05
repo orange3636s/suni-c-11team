@@ -5,7 +5,7 @@ import { getScreeningScatter } from "@/lib/api";
 import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { ScreeningScatterResponse } from "@/types/data";
+import type { RelationShape, ScreeningScatterResponse } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 const CHART_W = 320;
@@ -28,6 +28,105 @@ const RED = { light: "#DC2626", dark: "#F87171" };
 
 function formatNum(v: number): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
+}
+
+// A target that "dominates" needs its |rho| to clear the runner-up by this
+// ratio, otherwise the spread reads as broad-and-even rather than
+// one-target-leads (spec §2-1 pattern B vs. C).
+const DOMINANCE_RATIO = 1.5;
+
+/** Korean 이/가 particle for a word ending in digit, hangul, or latin letter
+ * (spec §2-4) -- picked by trailing-syllable batchim, not by hardcoding
+ * "이(가)" for every factor name. */
+function particle(word: string, withBatchim: string, without: string): string {
+  const last = word[word.length - 1] ?? "";
+  let hasBatchim: boolean;
+  if (last >= "0" && last <= "9") {
+    hasBatchim = "0136780".includes(last); // 영/일/삼/육/칠/팔 -> batchim
+  } else if (last >= "가" && last <= "힣") {
+    hasBatchim = (last.charCodeAt(0) - 0xac00) % 28 !== 0;
+  } else {
+    hasBatchim = "lmnr".includes(last.toLowerCase());
+  }
+  return hasBatchim ? withBatchim : without;
+}
+
+type TargetKey = (typeof TARGETS)[number];
+type KnownEntry = { target: TargetKey; rho: number; shape: RelationShape };
+type DirectionKind = "up" | "down" | "mixed" | "u";
+
+/** U-shape takes priority over sign (spec §2-3): a factor that hurts both
+ * tails reads as monotonic-up/down only by coincidence of which half of the
+ * range has more points, so the shape check is applied before the sign
+ * check rather than after. */
+function classifyDirection(entries: KnownEntry[]): DirectionKind {
+  if (entries.some((e) => e.shape === "u_shape")) return "u";
+  const signs = entries.map((e) => Math.sign(e.rho));
+  if (signs.every((s) => s >= 0)) return "up";
+  if (signs.every((s) => s <= 0)) return "down";
+  return "mixed";
+}
+
+const DIRECTION_PHRASE: Record<DirectionKind, string> = {
+  up: "값이 커질수록 불량률이 함께 올라갑니다",
+  down: "값이 커질수록 불량률이 함께 내려갑니다",
+  mixed: "값에 따라 불량률이 함께 변합니다",
+  u: "값이 양쪽 끝으로 갈수록 불량률이 함께 올라갑니다",
+};
+
+const CHANGE_VERB: Record<DirectionKind, string> = {
+  up: "올라가지만",
+  down: "내려가지만",
+  mixed: "변하지만",
+  u: "휘어지지만",
+};
+
+/** Plain-language read of the 5 mini-charts: which target(s) the factor
+ * actually moves the needle on, in wording that doesn't require knowing
+ * what rho/eps2/p-value mean (spec §5-2). Branches on how many targets
+ * clear STRONG_RHO -- a single "strongest wins" reduce (the pre-existing
+ * approach) reads as selective even when a factor moves every target
+ * together, which is a real pattern in its own right (spec §2-1).
+ */
+function buildInterpretation(feature: string, entries: KnownEntry[]): string[] | null {
+  if (entries.length === 0) return null;
+
+  const featureParticle = particle(feature, "이", "가");
+  const strong = entries.filter((e) => Math.abs(e.rho) >= STRONG_RHO);
+  const sortedAbs = entries.map((e) => Math.abs(e.rho)).sort((a, b) => b - a);
+  const top = entries.reduce((best, e) => (Math.abs(e.rho) > Math.abs(best.rho) ? e : best));
+  const second = sortedAbs[1] ?? 0;
+
+  if (strong.length === 0) {
+    return [
+      "다섯 유형 모두에서 곡선이 거의 평평합니다.",
+      "이 인자만으로는 특정 불량 유형을 설명하기 어렵다는 뜻입니다.",
+    ];
+  }
+
+  if (strong.length === 1) {
+    const main = strong[0].target;
+    const others = TARGETS.filter((t) => t !== main);
+    return [
+      `${others.join(", ")}에서는 값이 변해도 불량률이 거의 일정합니다.`,
+      `${main}에서만 곡선이 뚜렷하게 휘어, ${feature}${featureParticle} ${main} 불량에 선택적으로 작용함을 뜻합니다.`,
+    ];
+  }
+
+  if (Math.abs(top.rho) >= second * DOMINANCE_RATIO) {
+    const others = strong.filter((e) => e.target !== top.target).map((e) => e.target);
+    const direction = classifyDirection(strong);
+    return [
+      `${others.join(", ")}에서 불량률이 함께 ${CHANGE_VERB[direction]}, ${top.target}에서 가장 뚜렷합니다.`,
+      `${feature}${featureParticle} 여러 불량 유형에 영향을 주면서 ${top.target}에 특히 크게 작용함을 뜻합니다.`,
+    ];
+  }
+
+  const direction = classifyDirection(strong);
+  return [
+    `${TARGETS.join(", ")} 모두에서 ${DIRECTION_PHRASE[direction]}.`,
+    `${feature}${featureParticle} 특정 불량 유형이 아니라 전반에 걸쳐 작용함을 뜻합니다.`,
+  ];
 }
 
 type PointHover = { screenX: number; screenY: number; x: number; y: number } | null;
@@ -112,27 +211,13 @@ export default function CompareAcrossTargetsModal({
   const ucl = originData?.reference_lines.find((l) => l.key === "iqr_hi");
   const optimalCenter = originData?.optimal_center ?? null;
 
-  // Plain-language read of the 5 mini-charts: which target the factor
-  // actually moves the needle on, in wording that doesn't require knowing
-  // what rho/eps2/p-value mean (spec §5-2).
   const interpretation = useMemo(() => {
     if (loading) return null;
-    const known = TARGETS.map((t) => ({ target: t, rho: dataByTarget[t]?.spearman_r ?? null })).filter(
-      (entry): entry is { target: (typeof TARGETS)[number]; rho: number } => entry.rho != null,
-    );
-    if (known.length === 0) return null;
-    const main = known.reduce((best, entry) => (Math.abs(entry.rho) > Math.abs(best.rho) ? entry : best));
-    const others = TARGETS.filter((t) => t !== main.target);
-    if (Math.abs(main.rho) >= STRONG_RHO) {
-      return [
-        `${others.join(", ")}에서는 값이 변해도 불량률이 거의 일정합니다.`,
-        `${main.target}에서만 곡선이 뚜렷하게 휘어, ${feature}이(가) ${main.target} 불량에 선택적으로 작용함을 뜻합니다.`,
-      ];
-    }
-    return [
-      "다섯 유형 모두에서 곡선이 거의 평평합니다.",
-      "이 인자만으로는 특정 불량 유형을 설명하기 어렵다는 뜻입니다.",
-    ];
+    const known = TARGETS.map((t) => {
+      const d = dataByTarget[t];
+      return d?.spearman_r != null ? { target: t, rho: d.spearman_r, shape: d.relation_shape } : null;
+    }).filter((entry): entry is KnownEntry => entry != null);
+    return buildInterpretation(feature, known);
   }, [loading, dataByTarget, feature]);
 
   return (

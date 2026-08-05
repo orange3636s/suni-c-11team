@@ -101,6 +101,7 @@ class ScatterData:
     q_value: float
     significant: bool
     confidence_tier: str
+    relation_shape: str
     n: int
     axis: dict[str, str]
 
@@ -172,6 +173,7 @@ def build_scatter_data(
         q_value=factor.q_value,
         significant=factor.significant,
         confidence_tier=confidence_tier(factor.eps2, factor.p_value),
+        relation_shape=factor.relation_shape,
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · {_kind_label(factor.kind)})",

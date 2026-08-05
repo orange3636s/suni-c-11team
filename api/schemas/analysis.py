@@ -84,6 +84,7 @@ class ScreeningScatterResponse(BaseModel):
     q_value: float
     significant: bool
     confidence_tier: str
+    relation_shape: str
     n: int
     axis: dict[str, str]
 

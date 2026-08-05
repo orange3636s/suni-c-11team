@@ -475,6 +475,7 @@ export type ScreeningScatterResponse = {
   q_value: number;
   significant: boolean;
   confidence_tier: ConfidenceTier;
+  relation_shape: RelationShape;
   n: number;
   axis: { x_label: string; y_label: string };
 };
