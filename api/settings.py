@@ -5,10 +5,17 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from src import upload_limits
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+_ENV_PATH = PROJECT_ROOT / ".env"
+load_dotenv(_ENV_PATH, override=False)
+ENV_FILE_LOADED = _ENV_PATH.exists()
+
 APP_VERSION = "1.0.0"
 DEFAULT_FRONTEND_ORIGINS = (
     "http://localhost:3000",

@@ -15,7 +15,7 @@ from api.routes.data import (
 from api.routes.analysis import router as analysis_router
 from api.routes.chat import router as chat_router
 from api.routes.datasets import get_dataset_registry, router as datasets_router
-from api.settings import APP_VERSION, settings
+from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
 from src.runtime.datasets import BUNDLED_DATASET_FILES
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -34,6 +34,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+logger.info(".env %s", "loaded" if ENV_FILE_LOADED else "not found (using OS env)")
 
 
 def _is_deployment_environment() -> bool:
