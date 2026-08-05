@@ -23,7 +23,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from src.analysis.control_range import ControlRange, WaferAlarm, compute_control_range, evaluate_alarms
-from src.analysis.scatter import quantile_bins
+from src.analysis.screening.quantile_profile import quantile_bins, window_from_bins
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import ParetoFactor, confidence_tier
 
@@ -40,21 +40,6 @@ TAG_LABEL = {"priority": "우선 권장", "recommended": "권장", "reference": 
 REPORT_TAG_TIERS = ("strong", "moderate")
 
 
-def _quantile_of(sorted_values: list[float], q: float) -> float:
-    n = len(sorted_values)
-    if n == 0:
-        return float("nan")
-    if n == 1:
-        return sorted_values[0]
-    position = (n - 1) * q
-    lower = int(position)
-    upper = min(lower + 1, n - 1)
-    weight = position - lower
-    if weight == 0:
-        return sorted_values[lower]
-    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
-
-
 def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | None:
     """The x-quantile span of the contiguous run of 12 quantile bins (the
     same profile the 구간 평균 불량률 curve is built from) whose average
@@ -65,14 +50,7 @@ def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | 
     bins = quantile_bins(x, y)
     if not bins:
         return None
-    threshold = float(y.mean())
-    qualifying = [i for i, row in enumerate(bins) if row["y_mean"] <= threshold]
-    if not qualifying:
-        return None
-    first, last = qualifying[0], qualifying[-1]
-    sorted_x = sorted(float(v) for v in x.tolist())
-    n_bins = len(bins)
-    return _quantile_of(sorted_x, first / n_bins), _quantile_of(sorted_x, (last + 1) / n_bins)
+    return window_from_bins(bins, x, float(y.mean()))
 
 
 @dataclass

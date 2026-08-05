@@ -7,15 +7,19 @@ a pre-rendered chart spec -- "서버는 데이터만 반환한다".
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from src.analysis.control_range import ControlRange, compute_control_range
+from src.analysis.recommendations import compute_factor_recommendation
+from src.analysis.screening.quantile_profile import quantile_bins
 from src.analysis.screening.selector import ParetoFactor, confidence_tier
+
+logger = logging.getLogger(__name__)
 
 STEP_PATTERN = re.compile(r"^Step(\d+)_")
 ID_COLUMN = "Lot_Wafer_ID"
@@ -35,33 +39,10 @@ def _config_column_for(feature: str, df: pd.DataFrame) -> str | None:
     return candidate if candidate in df.columns else None
 
 
-def quantile_bins(x: pd.Series, y: pd.Series, bins: int = 12) -> list[dict[str, float]]:
-    try:
-        q = pd.qcut(x, bins, duplicates="drop")
-    except ValueError:
-        return []
-    frame = pd.DataFrame({"x": x, "y": y, "q": q})
-    profile = []
-    for _, group in frame.groupby("q", observed=True):
-        n = len(group)
-        y_mean = float(group["y"].mean())
-        y_sem = float(group["y"].std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
-        profile.append(
-            {
-                "x_mean": float(group["x"].mean()),
-                "y_mean": y_mean,
-                "y_lo": y_mean - 1.96 * y_sem,
-                "y_hi": y_mean + 1.96 * y_sem,
-                "n": n,
-            }
-        )
-    profile.sort(key=lambda row: row["x_mean"])
-    return profile
-
-
 # Kept as a private alias -- this module's own callers below were written
-# against the underscored name before `recommendations.py` needed to reuse
-# the same binning as a public function.
+# against the underscored name before `quantile_bins` moved to
+# screening/quantile_profile.py as the shared definition every consumer
+# (this module, recommendations.py, shape.py) reads from.
 _quantile_bins = quantile_bins
 
 
@@ -79,6 +60,33 @@ def _outside_count(x: pd.Series, key: str, value: float) -> int:
     return 0
 
 
+def _resolve_optimal_center(
+    train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange
+) -> tuple[float | None, str | None]:
+    """Validates the already-classified optimal_center (shape.py, itself
+    now bin-mean-based -- see quantile_profile.py) against the train-side
+    recommended window: both must agree, since a "최적 중심" outside its
+    own "권장구간" is the exact contradiction this module exists to
+    prevent (spec §3-3). Only clamping-to-control-range can legitimately
+    push a correctly-computed center outside its window; when that
+    happens the center is dropped (never forced back inside) and the
+    reason surfaces to the caller for the disabled-toggle tooltip.
+    """
+    if factor.optimal_center is None:
+        return None, None
+    window = compute_factor_recommendation(train_df, factor, control_range)
+    if window is None:
+        return factor.optimal_center, None
+    lo, hi = window.recommended_lo, window.recommended_hi
+    if not (lo <= factor.optimal_center <= hi):
+        logger.warning(
+            "optimal_center %.3f outside recommended window [%.3f, %.3f] for %s -> %s; dropping",
+            factor.optimal_center, lo, hi, factor.feature, factor.target,
+        )
+        return None, "관리한계 조정으로 최적 지점이 권장구간을 벗어나 표시하지 않음"
+    return factor.optimal_center, None
+
+
 @dataclass
 class ScatterData:
     points: list[dict[str, Any]]
@@ -86,6 +94,7 @@ class ScatterData:
     normal_range: dict[str, Any]
     bins: list[dict[str, float]]
     optimal_center: float | None
+    optimal_center_dropped_reason: str | None
     eps2: float
     spearman_r: float | None
     p_value: float
@@ -107,6 +116,7 @@ def build_scatter_data(
     inspect train itself).
     """
     control_range = compute_control_range(train_df, factor)
+    optimal_center, optimal_center_dropped_reason = _resolve_optimal_center(train_df, factor, control_range)
 
     config_column = _config_column_for(factor.feature, eval_df)
     frame = pd.DataFrame(
@@ -154,7 +164,8 @@ def build_scatter_data(
             "fallback_applied": control_range.fallback_applied,
         },
         bins=_quantile_bins(frame["x"], frame["y"]),
-        optimal_center=factor.optimal_center,
+        optimal_center=optimal_center,
+        optimal_center_dropped_reason=optimal_center_dropped_reason,
         eps2=factor.eps2,
         spearman_r=factor.spearman_r,
         p_value=factor.p_value,

@@ -52,12 +52,32 @@ class ReferenceLineSchema(BaseModel):
     outside_count: int
 
 
+class BinProfileSchema(BaseModel):
+    x_mean: float
+    y_mean: float
+    y_lo: float
+    y_hi: float
+    n: int
+    x_lo: float
+    x_hi: float
+    bin_span_ratio: float
+    # An outlier-widened bin (its own [x_lo, x_hi] spans an outsized share
+    # of the factor's overall range) -- the frontend draws this bin's
+    # curve segment dashed rather than solid (spec §3-4).
+    sparse: bool
+
+
 class ScreeningScatterResponse(BaseModel):
     points: list[ScatterPointSchema]
     reference_lines: list[ReferenceLineSchema]
     normal_range: NormalRangeSchema
-    bins: list[dict[str, float]]
+    bins: list[BinProfileSchema]
     optimal_center: float | None
+    # Set only when a classified optimal_center existed but was dropped
+    # (fell outside its own recommended window after control-range
+    # clamping, spec §3-3) -- the frontend disables the 최적 중심 toggle
+    # and shows this as the tooltip reason instead of "단조 관계라...".
+    optimal_center_dropped_reason: str | None
     eps2: float
     spearman_r: float | None
     p_value: float

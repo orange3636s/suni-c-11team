@@ -341,6 +341,11 @@ export default function ScatterChart({
   // monotonic factor (e.g. Step1_D1) genuinely has no interior optimum,
   // not just one that fell outside the drawable range (spec §4-2/§4-3).
   const optimalAvailable = data.optimal_center != null;
+  // A classified center that got dropped downstream (fell outside its
+  // own recommended window after control-range clamping, or was picked
+  // from a sparse/outlier-widened bin) gets its own specific reason
+  // instead of the generic "단조 관계라..." message (spec §3-3/§3-4).
+  const optimalUnavailableReason = data.optimal_center_dropped_reason ?? "단조 관계라 최적 중심이 없습니다";
 
   // Recommended range is clamped into the control-limit range (spec §5-3)
   // so it never contradicts the alarm boundaries -- if clamping collapses
@@ -389,13 +394,20 @@ export default function ScatterChart({
   );
 
   const trendPath = useMemo(() => {
-    if (!data.bins.length) return { line: "", band: "" };
+    if (!data.bins.length) return { segments: [] as { d: string; dashed: boolean }[], band: "" };
     const points = data.bins.map((b) => [xScale(b.x_mean), yScale(b.y_mean)] as const);
-    const line = points.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x},${y}`).join(" ");
+    // One segment per adjacent bin pair, dashed whenever either endpoint
+    // bin is `sparse` (outlier-widened -- spec §3-4: "표본이 넓게 흩어진
+    // 구간" gets a visibly different line style, not silently blended
+    // into the solid curve).
+    const segments = points.slice(1).map(([x2, y2], i) => {
+      const [x1, y1] = points[i];
+      return { d: `M${x1},${y1} L${x2},${y2}`, dashed: data.bins[i].sparse || data.bins[i + 1].sparse };
+    });
     const upper = data.bins.map((b) => [xScale(b.x_mean), yScale(b.y_hi)] as const);
     const lower = [...data.bins].reverse().map((b) => [xScale(b.x_mean), yScale(b.y_lo)] as const);
     const band = [...upper, ...lower].map(([x, y], i) => `${i === 0 ? "M" : "L"}${x},${y}`).join(" ") + " Z";
-    return { line, band };
+    return { segments, band };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.bins, plotWidth, plotHeight]);
 
@@ -411,7 +423,7 @@ export default function ScatterChart({
       setDisabledHint({
         x: event.clientX,
         y: event.clientY,
-        text: groupId === "optimal" ? "단조 관계라 최적 중심이 없습니다" : "데이터 범위 밖",
+        text: groupId === "optimal" ? optimalUnavailableReason : "데이터 범위 밖",
       });
       window.setTimeout(() => setDisabledHint(null), 1500);
       return;
@@ -652,11 +664,22 @@ export default function ScatterChart({
           {displayLines.filter((line) => line.key === "optimal").map((line) => renderLineBody(line))}
           {displayLines.filter((line) => line.key === "iqr_lo" || line.key === "iqr_hi").map((line) => renderLineBody(line))}
 
-          {/* confidence band + trend curve -- above every reference line */}
+          {/* confidence band + trend curve -- above every reference line.
+              Segments touching a sparse (outlier-widened) bin render
+              dashed instead of solid (spec §3-4). */}
           {trendVisible && data.bins.length > 0 && (
             <>
               <path d={trendPath.band} className="scatterTrendBand" style={{ fill: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} />
-              <path d={trendPath.line} className="scatterTrendLine" style={{ stroke: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} fill="none" />
+              {trendPath.segments.map((segment, i) => (
+                <path
+                  key={i}
+                  d={segment.d}
+                  className="scatterTrendLine"
+                  style={{ stroke: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }}
+                  strokeDasharray={segment.dashed ? "5 4" : undefined}
+                  fill="none"
+                />
+              ))}
             </>
           )}
 
@@ -724,7 +747,7 @@ export default function ScatterChart({
           type="button"
           className={`scatterLegendItem ${visibleGroups.has("optimal") && optimalAvailable ? "active" : ""} ${!optimalAvailable ? "disabled" : ""}`}
           onClick={(event) => toggleGroup("optimal", event)}
-          title={optimalAvailable ? "구간 평균 불량률이 가장 낮은 지점" : "단조 관계라 최적 중심이 없습니다"}
+          title={optimalAvailable ? "구간 평균 불량률이 가장 낮은 지점" : optimalUnavailableReason}
         >
           <i className="scatterLegendSwatch" style={{ background: theme === "dark" ? LINE_COLOR.optimal.dark : LINE_COLOR.optimal.light }} />
           {optimalAvailable ? `최적 중심 (${formatNum1(data.optimal_center as number)})` : "최적 중심 (해당 없음)"}

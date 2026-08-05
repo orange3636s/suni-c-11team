@@ -39,6 +39,7 @@ from src.analysis.llm_stats import (
 )
 from src.analysis.recommendations import REPORT_TAG_TIERS, compute_factor_recommendation, compute_recommendations
 from src.analysis.rounding import round_floats
+from src.analysis.screening.quantile_profile import quantile_bins
 from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import (
     ParetoFactor,
@@ -79,16 +80,15 @@ LIMITATIONS = [
 
 
 def _binned_profile(x: pd.Series, y: pd.Series, bins: int = BINNED_PROFILE_BINS) -> list[dict[str, float]]:
-    try:
-        q = pd.qcut(x, bins, duplicates="drop")
-    except ValueError:
-        return []
-    frame = pd.DataFrame({"x": x, "y": y, "q": q})
-    profile = []
-    for _, group in frame.groupby("q", observed=True):
-        profile.append({"x_center": float(group["x"].mean()), "y_mean": float(group["y"].mean()), "n": int(len(group))})
-    profile.sort(key=lambda row: row["x_center"])
-    return profile
+    """Same quantile_bins grouping every other consumer (curve, window,
+    optimal center) reads from -- just reshaped to this report's own
+    long-standing {x_center, y_mean, n} field names rather than a second,
+    separately-binned computation.
+    """
+    return [
+        {"x_center": row["x_mean"], "y_mean": row["y_mean"], "n": row["n"]}
+        for row in quantile_bins(x, y, bins=bins)
+    ]
 
 
 def _target_stats(df: pd.DataFrame, target: str) -> dict[str, float]:
@@ -99,6 +99,19 @@ def _target_stats(df: pd.DataFrame, target: str) -> dict[str, float]:
 
 def _missing_pct(df: pd.DataFrame, feature: str) -> float:
     return float(df[feature].isna().mean() * 100.0)
+
+
+def _resolved_optimal_center(factor: ParetoFactor, window: Any) -> float | None:
+    """Same guard as scatter.py's `_resolve_optimal_center`: an
+    optimal_center outside its own recommended window is a contradiction
+    (spec §3-3), never something to report as-is. `window` is the
+    `FactorRecommendation` already computed for this factor (or None).
+    """
+    if factor.optimal_center is None or window is None:
+        return factor.optimal_center
+    if window.recommended_lo <= factor.optimal_center <= window.recommended_hi:
+        return factor.optimal_center
+    return None
 
 
 def _control_limits_dict(control_range: ControlRange) -> dict[str, Any]:
@@ -251,7 +264,7 @@ def build_analysis_report(
                     "n_missing_pct": _missing_pct(train_df, factor.feature),
                     "relation": {
                         "shape": factor.relation_shape,
-                        "optimal_center": factor.optimal_center,
+                        "optimal_center": _resolved_optimal_center(factor, window),
                         "interpretation": _INTERPRETATION_BY_SHAPE.get(
                             factor.relation_shape, _INTERPRETATION_BY_SHAPE["unclear"]
                         ),

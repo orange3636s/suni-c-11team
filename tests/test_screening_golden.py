@@ -24,12 +24,19 @@ from src.analysis.screening.selector import (
 TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 
 # Per-target: the top-eps2 factor (regardless of significance), plus its shape/center.
+# `center` values were re-derived when optimal_center switched from an
+# unrelated linear grid-search (src/analysis/screening/shape.py's old
+# `_best_center` value) to the x_mean of the quantile-bin with the lowest
+# y_mean (see screening/quantile_profile.py) -- the same bin the
+# recommended window and 구간 평균 불량률 curve already used, so a factor's
+# "최적 중심" can no longer land outside its own "권장구간" the way it did
+# for mentorship_dataset_v7_killing_event's Step26_R1 -> Y1.
 GOLDEN_TABLE = {
-    "Y1": {"feature": "Step28_R1", "eps2": 0.192, "shape": "u_shape", "center": 57.4},
-    "Y2": {"feature": "Step16_R1", "eps2": 0.159, "shape": "u_shape", "center": 58.1},
+    "Y1": {"feature": "Step28_R1", "eps2": 0.192, "shape": "u_shape", "center": 57.9},
+    "Y2": {"feature": "Step16_R1", "eps2": 0.159, "shape": "u_shape", "center": 56.5},
     "Y3": {"feature": "Step1_D1", "eps2": 0.660, "shape": "monotonic_increasing", "center": None},
-    "Y4": {"feature": "Step24_R1", "eps2": 0.073, "shape": "u_shape", "center": 56.9},
-    "Y5": {"feature": "Step18_R1", "eps2": 0.287, "shape": "u_shape", "center": 56.1},
+    "Y4": {"feature": "Step24_R1", "eps2": 0.073, "shape": "u_shape", "center": 56.7},
+    "Y5": {"feature": "Step18_R1", "eps2": 0.287, "shape": "u_shape", "center": 55.9},
 }
 
 # contribution_pct/cumulative_pct denominated by the FULL candidate pool

@@ -4,7 +4,19 @@ Determines what to overlay on a factor's scatter plot. A U-shaped
 relationship (common for process parameters with a process-window optimum)
 looks uncorrelated to Pearson/Spearman because the two tails point in
 opposite directions from the center — so this module explicitly searches
-for a center point ``c`` that linearizes ``|x - c|`` against ``y``.
+for a center point ``c`` that linearizes ``|x - c|`` against ``y`` *to
+decide whether the relationship is U-shaped at all*.
+
+That grid-search center is used only for that yes/no test, never for the
+*displayed* optimal_center value: `_best_center` searches a plain linear
+grid over `[x.min(), x.max()]`, which for a heavily skewed/outlier-heavy
+factor can land in a region with zero observations (e.g. a few outliers
+pulling x.max() far out leaves a wide empty gap the grid still spans).
+The reported `optimal_center` instead always comes from
+`quantile_profile.optimal_center_from_bins` -- the x_mean of the same
+quantile-binned minimum-y bin the recommended window and the 구간 평균
+불량률 curve are built from, so "최적 중심" can never land outside "권장
+구간" or in a gap the curve itself shows as empty.
 """
 
 from __future__ import annotations
@@ -14,6 +26,12 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+from src.analysis.screening.quantile_profile import (
+    DEFAULT_BINS,
+    optimal_center_from_bins,
+    quantile_bins,
+)
 
 MONOTONIC_SPEARMAN_THRESHOLD = 0.3
 U_SHAPE_RATIO_THRESHOLD = 1.3
@@ -81,13 +99,24 @@ def classify_shape(x: pd.Series, y: pd.Series, bins: int = 8) -> ShapeResult:
         r, _ = stats.pearsonr(frame["x"], frame["y"])
         pearson_r = float(r) if np.isfinite(r) else 0.0
 
-    center, dev_abs_r = _best_center(frame["x"], frame["y"])
+    # `_best_center`'s own grid-search value is discarded below -- it only
+    # feeds `dev_abs_r`, the statistical test for *whether* this is a
+    # U-shape at all. See module docstring for why the displayed center
+    # never comes from that grid search.
+    _grid_center, dev_abs_r = _best_center(frame["x"], frame["y"])
     if abs(pearson_r) < 1e-9:
         is_u_shape = dev_abs_r > 0
     else:
         is_u_shape = dev_abs_r >= U_SHAPE_RATIO_THRESHOLD * abs(pearson_r)
 
     if is_u_shape:
+        optimal_bins = quantile_bins(frame["x"], frame["y"], bins=DEFAULT_BINS)
+        center, sparse = optimal_center_from_bins(optimal_bins)
+        # A minimum-y bin that's itself outlier-widened (`sparse`) isn't a
+        # meaningful process-window location -- no center is better than a
+        # misleading one (spec §3-4).
+        if sparse:
+            center = None
         return ShapeResult(shape="u_shape", optimal_center=center, quantile_profile=profile)
 
     return ShapeResult(shape="unclear", optimal_center=None, quantile_profile=profile)

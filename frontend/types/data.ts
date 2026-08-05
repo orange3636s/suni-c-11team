@@ -444,12 +444,31 @@ export type ReferenceLine = {
   outside_count: number;
 };
 
+export type BinProfile = {
+  x_mean: number;
+  y_mean: number;
+  y_lo: number;
+  y_hi: number;
+  n: number;
+  x_lo: number;
+  x_hi: number;
+  bin_span_ratio: number;
+  /** Outlier-widened bin (its own [x_lo, x_hi] spans an outsized share of
+   * the factor's overall range) -- rendered as a dashed curve segment. */
+  sparse: boolean;
+};
+
 export type ScreeningScatterResponse = {
   points: ScatterPoint[];
   reference_lines: ReferenceLine[];
   normal_range: NormalRange;
-  bins: Array<{ x_mean: number; y_mean: number; y_lo: number; y_hi: number; n: number }>;
+  bins: BinProfile[];
   optimal_center: number | null;
+  /** Set only when a classified optimal center existed but was dropped
+   * (fell outside its own recommended window, or was picked from a
+   * sparse bin) -- shown as the disabled-toggle tooltip reason instead
+   * of the generic "단조 관계라..." message. */
+  optimal_center_dropped_reason: string | null;
   eps2: number;
   spearman_r: number | null;
   p_value: number;
