@@ -14,6 +14,8 @@ import {
   getScreeningPareto,
   getTrainingJob,
 } from "@/lib/api";
+import { kindLabel } from "@/lib/kindLabels";
+import { formatQValue } from "@/lib/numberFormat";
 import type { DatasetSummary, ModelPerformanceResponse, ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
 
 const BUNDLED_TRAIN_ID = "train";
@@ -37,7 +39,6 @@ function hasUsableResult(performance: ModelPerformanceResponse | null): boolean 
   return Boolean(performance && performance.model_id && performance.targets.length > 0);
 }
 
-const KIND_LABEL: Record<string, string> = { R: "계측값", D: "결함수", Config: "장비 설정" };
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 
 const BENCHMARK_REFERENCE = [
@@ -364,12 +365,12 @@ export default function TrainingPage() {
                 {(paretoByTarget[activeTarget]?.items ?? []).map((factor) => (
                   <tr key={factor.feature}>
                     <td>{factor.feature}</td>
-                    <td>{KIND_LABEL[factor.kind] ?? factor.kind}</td>
+                    <td>{kindLabel(factor.kind)}</td>
                     <td className="numCol">{showMetric(factor.eps2)}</td>
                     <td className="numCol">{showMetric(factor.contribution_pct, 1)}%</td>
                     <td className="numCol">{showMetric(factor.cumulative_pct, 1)}%</td>
                     <td className="numCol">{factor.n_observed}</td>
-                    <td className="numCol">{factor.q_value < 0.001 ? factor.q_value.toExponential(2) : showMetric(factor.q_value, 4)}</td>
+                    <td className="numCol">{formatQValue(factor.q_value)}</td>
                     <td><span className={`confidenceBadge tier-${factor.confidence_tier}`} style={{ marginLeft: 0 }}>{TIER_LABEL[factor.confidence_tier]}</span></td>
                   </tr>
                 ))}
@@ -384,7 +385,7 @@ export default function TrainingPage() {
         <ul>
           <li>이 분석은 해당 인자가 계측된 wafer만 대상으로 합니다. R은 전체의 15%, D는 5%입니다. 미계측 wafer로의 일반화는 보장되지 않습니다.</li>
           <li>ε²는 통계적 연관성이지 인과가 아닙니다. 공정 순서상 선행/후행 관계나 교락 인자는 반영되지 않았습니다.</li>
-          <li>Config(장비)에서 유의 인자가 검출되지 않은 것은 &quot;장비 영향이 없다&quot;가 아니라 &quot;현재 표본으로는 검출되지 않는다&quot;는 뜻입니다. 장비당 표본이 278장 수준이라 ε² 0.01 미만의 효과는 검출력이 부족합니다.</li>
+          <li>Eq.(장비)에서 유의 인자가 검출되지 않은 것은 &quot;장비 영향이 없다&quot;가 아니라 &quot;현재 표본으로는 검출되지 않는다&quot;는 뜻입니다. 장비당 표본이 278장 수준이라 ε² 0.01 미만의 효과는 검출력이 부족합니다.</li>
         </ul>
       </section>
     </DashboardShell>

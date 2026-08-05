@@ -5,6 +5,7 @@ import Link from "next/link";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import {
+  HScrollTableBody,
   NoSearchResults,
   ScrollTableBody,
   TableCaption,
@@ -13,11 +14,13 @@ import {
   type SortOption,
 } from "@/components/DataTablePanel";
 import { usePanelState } from "@/components/PanelStateProvider";
+import { niceTicks } from "@/lib/niceTicks";
 import { getAlarmSummary, getAlarms, getRecommendations } from "@/lib/api";
 import type {
   AlarmItem,
   AlarmListResponse,
   AlarmSummaryResponse,
+  FactorBand,
   RecommendationItem,
   RecommendationListResponse,
 } from "@/types/data";
@@ -119,6 +122,7 @@ export default function AlertsPage() {
   const [showReferenceTag, setShowReferenceTag] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [factorBandIndex, setFactorBandIndex] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,6 +136,7 @@ export default function AlertsPage() {
       setSummary(summaryResponse);
       setAlarms(alarmsResponse);
       setRecommendations(recommendationsResponse);
+      setFactorBandIndex(0);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "알람 로그를 불러오지 못했습니다.");
     } finally {
@@ -165,10 +170,8 @@ export default function AlertsPage() {
     recommendationTieBreak,
   );
 
-  const yieldGap = summary?.yield_gap;
-  const totalWafers = summary
-    ? summary.counts.alarm + summary.counts.normal + summary.counts.unmeasured
-    : 0;
+  const factorBands = summary?.factor_bands ?? [];
+  const activeFactorBand = factorBands[factorBandIndex] ?? factorBands[0] ?? null;
 
   return (
     <DashboardShell activeItem="사전 알람 로그">
@@ -196,38 +199,54 @@ export default function AlertsPage() {
       </section>
 
       {summary ? (
-        <section className="alarmSummaryGrid">
-          <AlarmSummaryCard
-            label="알람 wafer"
-            value={`${summary.counts.alarm}장`}
-            aux={pct(summary.counts.alarm, totalWafers)}
-            tone="highlight"
-          />
-          <AlarmSummaryCard label="정상" value={`${summary.counts.normal}장`} />
-          <AlarmSummaryCard
-            label="판정불가 (미계측)"
-            value={`${summary.counts.unmeasured}장`}
-            aux={pct(summary.counts.unmeasured, totalWafers)}
-            tone="muted"
-            title="선정 인자가 하나도 계측되지 않아 판정할 수 없는 wafer"
-          />
-          <AlarmSummaryCard
-            label="알람군 평균수율"
-            value={summary.alarm_group_yield_avg != null ? summary.alarm_group_yield_avg.toFixed(2) : "-"}
-          />
-          <AlarmSummaryCard
-            label="무알람군 평균수율"
-            value={summary.no_alarm_group_yield_avg != null ? summary.no_alarm_group_yield_avg.toFixed(2) : "-"}
-          />
-          <AlarmSummaryCard
-            label="격차"
-            value={yieldGap != null ? `${yieldGap > 0 ? "+" : ""}${yieldGap.toFixed(2)}%p` : "-"}
-            tone={yieldGap != null && yieldGap < 0 ? "highlight" : "default"}
-          />
-        </section>
+        <>
+          <section className="alarmSummaryGrid">
+            <AlarmSummaryCard
+              label="알람 wafer"
+              value={`${summary.counts.alarm}장`}
+              aux={pct(summary.counts.alarm, summary.total_wafers)}
+              tone="highlight"
+              title="관리한계(LCL/UCL) 이탈"
+            />
+            <AlarmSummaryCard
+              label="개선 권장 wafer"
+              value={`${summary.counts.out_of_recommended}장`}
+              aux={pct(summary.counts.out_of_recommended, summary.total_wafers)}
+              tone="neutral"
+              title="권장구간 밖 (관리한계 내)"
+            />
+            <AlarmSummaryCard
+              label="정상 wafer"
+              value={`${summary.counts.in_recommended}장`}
+              aux={pct(summary.counts.in_recommended, summary.total_wafers)}
+              tone="good"
+              title="권장구간 내"
+            />
+            <AlarmSummaryCard
+              label="판정불가 (미계측) wafer"
+              value={`${summary.counts.unmeasured}장`}
+              aux={pct(summary.counts.unmeasured, summary.total_wafers)}
+              tone="faint"
+              title="선정 인자가 하나도 계측되지 않아 판정할 수 없는 wafer"
+            />
+          </section>
+          <p className="alarmSummaryCaption">전체 {summary.total_wafers.toLocaleString()}장 기준</p>
+
+          <ConceptYieldBandCard summary={summary} />
+
+          {activeFactorBand && (
+            <FactorYieldBandCard
+              bands={factorBands}
+              activeIndex={factorBands.indexOf(activeFactorBand)}
+              onChange={setFactorBandIndex}
+            />
+          )}
+
+          <UnmeasuredCard summary={summary} />
+        </>
       ) : (
         <section className="alarmSummaryGrid">
-          {Array.from({ length: 6 }).map((_, index) => (
+          {Array.from({ length: 4 }).map((_, index) => (
             <div className="alarmSummaryCard skeleton" key={index}>
               <div className="alarmSkeletonLine label" />
               <div className="alarmSkeletonLine value" />
@@ -263,22 +282,22 @@ export default function AlertsPage() {
         )}
         {!loading && alarms && alarmTable.sorted.length > 0 && (
           <>
-            <ScrollTableBody>
+            <HScrollTableBody minWidth={980}>
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: "10%" }}>Wafer</th>
-                    <th style={{ width: "8%" }}>LOT</th>
-                    <th style={{ width: "6%" }}>Step</th>
-                    <th style={{ width: "11%" }}>인자</th>
-                    <th style={{ width: "6%" }}>타깃</th>
-                    <th className="numCol" style={{ width: "7%" }}>값</th>
-                    <th style={{ width: "12%" }}>정상범위</th>
-                    <th className="numCol" style={{ width: "8%" }}>이탈량</th>
-                    <th style={{ width: "7%" }}>방향</th>
-                    <th style={{ width: "9%" }}>심각성</th>
-                    <th className="numCol" style={{ width: "9%" }}>실측값</th>
-                    <th style={{ width: "7%" }} aria-label="해설" />
+                    <th className="col-wafer colNoTruncate">Wafer</th>
+                    <th>LOT</th>
+                    <th>Step</th>
+                    <th>인자</th>
+                    <th>타깃</th>
+                    <th className="numCol col-value colNoTruncate">값</th>
+                    <th className="col-range colNoTruncate">정상범위</th>
+                    <th className="numCol col-deviation colNoTruncate">이탈량</th>
+                    <th>방향</th>
+                    <th className="col-severity colNoTruncate">심각성</th>
+                    <th className="numCol" title="해당 행의 타깃(target) 실제 불량률">실측값</th>
+                    <th aria-label="해설" />
                   </tr>
                 </thead>
                 <tbody>
@@ -292,7 +311,7 @@ export default function AlertsPage() {
                   ))}
                 </tbody>
               </table>
-            </ScrollTableBody>
+            </HScrollTableBody>
             <TableCaption total={alarmTable.sorted.length} shown={Math.min(10, alarmTable.sorted.length)} />
           </>
         )}
@@ -370,21 +389,21 @@ export default function AlertsPage() {
         )}
         {!loading && recommendations && recommendationTable.sorted.length > 0 && (
           <>
-            <ScrollTableBody>
+            <HScrollTableBody minWidth={960}>
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: "10%" }}>Wafer</th>
-                    <th style={{ width: "8%" }}>LOT</th>
-                    <th style={{ width: "6%" }}>Step</th>
-                    <th style={{ width: "11%" }}>인자</th>
-                    <th style={{ width: "6%" }}>타깃</th>
-                    <th className="numCol" style={{ width: "8%" }}>현재값</th>
-                    <th style={{ width: "12%" }}>권장 구간</th>
-                    <th style={{ width: "9%" }}>이동 방향</th>
-                    <th className="numCol" style={{ width: "9%" }}>기대 개선</th>
-                    <th style={{ width: "9%" }}>태그</th>
-                    <th style={{ width: "7%" }} aria-label="해설" />
+                    <th className="col-wafer colNoTruncate">Wafer</th>
+                    <th>LOT</th>
+                    <th>Step</th>
+                    <th>인자</th>
+                    <th>타깃</th>
+                    <th className="numCol col-value colNoTruncate">현재값</th>
+                    <th className="col-range colNoTruncate">권장 구간</th>
+                    <th>이동 방향</th>
+                    <th className="numCol">기대 개선</th>
+                    <th>태그</th>
+                    <th aria-label="해설" />
                   </tr>
                 </thead>
                 <tbody>
@@ -398,7 +417,7 @@ export default function AlertsPage() {
                   ))}
                 </tbody>
               </table>
-            </ScrollTableBody>
+            </HScrollTableBody>
             <TableCaption total={recommendationTable.sorted.length} shown={Math.min(10, recommendationTable.sorted.length)} />
           </>
         )}
@@ -434,17 +453,292 @@ function AlarmSummaryCard({
   label: string;
   value: string;
   aux?: string;
-  tone?: "default" | "highlight" | "muted";
+  tone?: "default" | "highlight" | "neutral" | "good" | "faint";
   title?: string;
 }) {
   return (
     <div className={`alarmSummaryCard ${tone !== "default" ? `tone-${tone}` : ""}`} title={title}>
-      <span className="alarmSummaryLabel">{label}</span>
+      <span className="alarmSummaryLabel" title={label}>{label}</span>
       <div className="alarmSummaryValueRow">
         <strong className="alarmSummaryValue">{value}</strong>
         {aux && <span className="alarmSummaryAux">{aux}</span>}
       </div>
     </div>
+  );
+}
+
+/* ===================================================================
+   카드①②: 구간별 수율/불량률 밴드. 공통 세그먼트+세로선+수치 레이아웃을
+   두 카드가 공유하고, 개념도(균등 폭)와 실제 축(값 기준 폭)만 갈린다.
+   =================================================================== */
+
+type BandTone = "out" | "outrec" | "inrec";
+type BandSegment = { tone: BandTone; label: string; widthPct: number };
+type BandLine = { tone: "control" | "recommended"; pct: number };
+type BandTick = { pct: number; label: string };
+
+const TONE_LABEL: Record<BandTone, string> = { out: "이탈", outrec: "권장 밖", inrec: "권장 내" };
+
+function formatTickValue(value: number): string {
+  return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1);
+}
+
+function formatDeltaPP(delta: number): string {
+  if (!Number.isFinite(delta)) return "-";
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  return `${sign}${Math.abs(delta).toFixed(2)}%p`;
+}
+
+function ArrowIcon() {
+  return (
+    <svg width="20" height="12" viewBox="0 0 20 12" fill="none" aria-hidden="true">
+      <path d="M1 6h15" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 1.5 17 6l-5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
+function BandTrack({
+  segments,
+  lines,
+  ticks,
+  lclPct,
+  uclPct,
+  recLoPct,
+  recHiPct,
+}: {
+  segments: BandSegment[];
+  lines: BandLine[];
+  ticks?: BandTick[];
+  lclPct: number | null;
+  uclPct: number | null;
+  recLoPct: number | null;
+  recHiPct: number | null;
+}) {
+  return (
+    <>
+      <div className="yieldBandLabelsRow">
+        {lclPct != null && <span className="yieldBandBoundaryLabel" style={{ left: `${lclPct}%` }}>LCL</span>}
+        {recLoPct != null && recHiPct != null && (
+          <span
+            className="yieldBandRecommendedArrow"
+            style={{ left: `${(recLoPct + recHiPct) / 2}%` }}
+          >
+            ◀─ 권장구간 ─▶
+          </span>
+        )}
+        {uclPct != null && <span className="yieldBandBoundaryLabel" style={{ left: `${uclPct}%` }}>UCL</span>}
+      </div>
+      <div className="yieldBandTrack">
+        {segments.map((seg, index) => (
+          <div key={index} className={`yieldBandSeg seg-${seg.tone}`} style={{ width: `${Math.max(seg.widthPct, 0)}%` }}>
+            <span>{seg.label}</span>
+          </div>
+        ))}
+        {lines.map((line, index) => (
+          <div key={index} className={`yieldBandLine line-${line.tone}`} style={{ left: `${line.pct}%` }} />
+        ))}
+      </div>
+      {ticks && (
+        <div className="yieldBandTicks">
+          {ticks.map((tick) => (
+            <span key={tick.label} className="yieldBandTick" style={{ left: `${tick.pct}%` }}>{tick.label}</span>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function BandStatsRow({
+  stats,
+  arrowTone,
+}: {
+  stats: { name: string; tone: BandTone; value: number | null; count: number; pct: number }[];
+  arrowTone: "yield" | "defect";
+}) {
+  return (
+    <div className="yieldBandStats">
+      {stats.map((stat, index) => (
+        <div key={stat.tone} style={{ display: "contents" }}>
+          <div className={`yieldBandStatCol seg-${stat.tone}`}>
+            <span className="yieldBandStatName">{stat.name}</span>
+            <strong className="yieldBandStatValue">{stat.value != null ? stat.value.toFixed(2) : "-"}</strong>
+            <span className="yieldBandStatSub">{stat.count.toLocaleString()}장 · {stat.pct.toFixed(1)}%</span>
+          </div>
+          {index < stats.length - 1 && (
+            <div className={`yieldBandArrowGap tone-${arrowTone}`}>
+              <ArrowIcon />
+              <span>
+                {stats[index + 1].value != null && stat.value != null
+                  ? formatDeltaPP(stats[index + 1].value! - stat.value!)
+                  : "-"}
+              </span>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 카드①: 구간별 평균 수율 -- 개념도. 다섯 구간 폭을 균등하게 그린다(실제
+ * 인자 값 축이 아니다) -- 축 눈금·"인자 값" 캡션 없음, 특정 인자를 가리키지
+ * 않는다. */
+function ConceptYieldBandCard({ summary }: { summary: AlarmSummaryResponse }) {
+  const segments: BandSegment[] = [
+    { tone: "out", label: "이탈", widthPct: 20 },
+    { tone: "outrec", label: "권장 밖", widthPct: 20 },
+    { tone: "inrec", label: "권장 내", widthPct: 20 },
+    { tone: "outrec", label: "권장 밖", widthPct: 20 },
+    { tone: "out", label: "이탈", widthPct: 20 },
+  ];
+  const lines: BandLine[] = [
+    { tone: "control", pct: 20 },
+    { tone: "recommended", pct: 40 },
+    { tone: "recommended", pct: 60 },
+    { tone: "control", pct: 80 },
+  ];
+
+  const measured = summary.measured_wafers;
+  const stats = [
+    { name: TONE_LABEL.out, tone: "out" as const, value: summary.band_yield.alarm, count: summary.counts.alarm, pct: measured > 0 ? (summary.counts.alarm / measured) * 100 : 0 },
+    {
+      name: TONE_LABEL.outrec,
+      tone: "outrec" as const,
+      value: summary.band_yield.out_of_recommended,
+      count: summary.counts.out_of_recommended,
+      pct: measured > 0 ? (summary.counts.out_of_recommended / measured) * 100 : 0,
+    },
+    {
+      name: TONE_LABEL.inrec,
+      tone: "inrec" as const,
+      value: summary.band_yield.in_recommended,
+      count: summary.counts.in_recommended,
+      pct: measured > 0 ? (summary.counts.in_recommended / measured) * 100 : 0,
+    },
+  ];
+
+  return (
+    <section className="resultCard yieldBandCard">
+      <div className="yieldBandCaptionRow">
+        <div className="yieldBandCardTitle"><h3>구간별 평균 수율 (%)</h3></div>
+        <span className="yieldBandCardMeta">{measured.toLocaleString()}장 판정 완료</span>
+      </div>
+      <BandTrack segments={segments} lines={lines} lclPct={20} uclPct={80} recLoPct={40} recHiPct={60} />
+      <BandStatsRow stats={stats} arrowTone="yield" />
+    </section>
+  );
+}
+
+/** 카드②: 인자별 불량률 -- 선택된 인자의 실제 값 축(실측 min~max) 기준.
+ * 단조 인자(하한 없음)는 왼쪽 이탈 영역을 그리지 않는다. */
+function FactorYieldBandCard({
+  bands,
+  activeIndex,
+  onChange,
+}: {
+  bands: FactorBand[];
+  activeIndex: number;
+  onChange: (index: number) => void;
+}) {
+  const band = bands[activeIndex] ?? bands[0];
+  if (!band) return null;
+
+  const pad = (band.x_max - band.x_min) * 0.04 || 1;
+  const domainLoRaw = Math.min(band.x_min, band.lcl ?? band.x_min);
+  const domainHiRaw = Math.max(band.x_max, band.ucl ?? band.x_max);
+  const domainLo = domainLoRaw - pad;
+  const domainHi = domainHiRaw + pad;
+  const span = domainHi - domainLo || 1;
+  const pctOf = (v: number) => ((v - domainLo) / span) * 100;
+
+  const lclPct = band.lcl != null ? pctOf(band.lcl) : null;
+  const uclPct = band.ucl != null ? pctOf(band.ucl) : null;
+  const hasRecommended = band.recommended_lo != null && band.recommended_hi != null;
+  const recLoPct = hasRecommended ? pctOf(band.recommended_lo as number) : null;
+  const recHiPct = hasRecommended ? pctOf(band.recommended_hi as number) : null;
+
+  const segments: BandSegment[] = [];
+  const lines: BandLine[] = [];
+  let leftEdge = 0;
+  if (lclPct != null) {
+    segments.push({ tone: "out", label: "이탈", widthPct: lclPct - leftEdge });
+    lines.push({ tone: "control", pct: lclPct });
+    leftEdge = lclPct;
+  }
+  const rightEdge = uclPct ?? 100;
+  if (recLoPct != null && recHiPct != null) {
+    segments.push({ tone: "outrec", label: "권장 밖", widthPct: recLoPct - leftEdge });
+    lines.push({ tone: "recommended", pct: recLoPct });
+    segments.push({ tone: "inrec", label: "권장 내", widthPct: recHiPct - recLoPct });
+    lines.push({ tone: "recommended", pct: recHiPct });
+    leftEdge = recHiPct;
+  }
+  segments.push({ tone: "outrec", label: "권장 밖", widthPct: rightEdge - leftEdge });
+  if (uclPct != null) {
+    lines.push({ tone: "control", pct: uclPct });
+    segments.push({ tone: "out", label: "이탈", widthPct: 100 - uclPct });
+  }
+
+  const ticks: BandTick[] = niceTicks([domainLo, domainHi], 6).map((value) => ({
+    pct: pctOf(value),
+    label: formatTickValue(value),
+  }));
+
+  const totalMeasured = band.out_of_control.count + band.out_of_recommended.count + band.in_recommended.count;
+  const statsOf = (count: number) => (totalMeasured > 0 ? (count / totalMeasured) * 100 : 0);
+  const stats = [
+    { name: TONE_LABEL.out, tone: "out" as const, value: band.out_of_control.mean_defect_rate, count: band.out_of_control.count, pct: statsOf(band.out_of_control.count) },
+    { name: TONE_LABEL.outrec, tone: "outrec" as const, value: band.out_of_recommended.mean_defect_rate, count: band.out_of_recommended.count, pct: statsOf(band.out_of_recommended.count) },
+    { name: TONE_LABEL.inrec, tone: "inrec" as const, value: band.in_recommended.mean_defect_rate, count: band.in_recommended.count, pct: statsOf(band.in_recommended.count) },
+  ];
+
+  return (
+    <section className="resultCard yieldBandCard">
+      <div className="yieldBandCardHeader">
+        <div className="yieldBandCardTitle">
+          <h3>인자별 불량률 (%)</h3>
+          <label className="factorSelectField">
+            <select
+              className="factorSelect"
+              value={activeIndex}
+              onChange={(event) => onChange(Number(event.target.value))}
+            >
+              {bands.map((item, index) => (
+                <option key={`${item.feature}-${item.target}`} value={index}>
+                  {item.feature} → {item.target}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <span className="yieldBandCardMeta">낮을수록 좋음</span>
+      </div>
+      <BandTrack segments={segments} lines={lines} ticks={ticks} lclPct={lclPct} uclPct={uclPct} recLoPct={recLoPct} recHiPct={recHiPct} />
+      <BandStatsRow stats={stats} arrowTone="defect" />
+    </section>
+  );
+}
+
+/** 카드③: 판정불가 -- 톤을 낮춘다(보조 텍스트만, 큰 숫자 없음). 위 카드들과
+ * 분리해 90.24가 "최고 구간"으로 오독되지 않게 한다. 비율은 표기하지
+ * 않는다(분모가 다르다). p값은 데이터셋별로 갱신되며, 검정이 불가능하면
+ * 그 문장을 생략한다. */
+function UnmeasuredCard({ summary }: { summary: AlarmSummaryResponse }) {
+  const avgYield = summary.band_yield.unmeasured;
+  return (
+    <section className="unmeasuredCard">
+      <p>
+        <strong>
+          판정불가 {summary.counts.unmeasured.toLocaleString()}장{avgYield != null ? ` · 평균 수율 ${avgYield.toFixed(2)} (%)` : ""}
+        </strong>
+      </p>
+      <p>선정 인자가 계측되지 않아 판정할 수 없는 wafer입니다.</p>
+      {summary.measurement_bias_p != null && (
+        <p>계측 편향 검정 결과 유의한 차이는 없었습니다 (p = {summary.measurement_bias_p.toFixed(2)}).</p>
+      )}
+    </section>
   );
 }
 
@@ -479,7 +773,7 @@ function AlarmRow({
   const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
   return (
     <tr>
-      <td>
+      <td className="col-wafer colNoTruncate">
         <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.lot_wafer_id}</Link>
       </td>
       <td>{item.lot_id ?? "-"}</td>
@@ -488,11 +782,11 @@ function AlarmRow({
         <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.feature}</Link>
       </td>
       <td>{item.target}</td>
-      <td className="numCol">{item.value.toFixed(2)}</td>
-      <td title={`train에서 ${item.feature} 자체 분포의 IQR×1.5 관리한계 (Y와 무관)`}>{rangeText}</td>
-      <td className="numCol">{item.deviation.toFixed(2)}</td>
+      <td className="numCol col-value colNoTruncate">{item.value.toFixed(2)}</td>
+      <td className="col-range colNoTruncate" title={`train에서 ${item.feature} 자체 분포의 IQR×1.5 관리한계 (Y와 무관)`}>{rangeText}</td>
+      <td className="numCol col-deviation colNoTruncate">{item.deviation.toFixed(2)}</td>
       <td>{item.direction === "above" ? "높음" : "낮음"}</td>
-      <td><SeverityBadge severity={item.severity} /></td>
+      <td className="col-severity colNoTruncate"><SeverityBadge severity={item.severity} /></td>
       <td className="numCol">{item.actual_y != null ? item.actual_y.toFixed(2) : "-"}</td>
       <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
@@ -514,7 +808,7 @@ function RecommendationRow({
   const improvement = item.expected_improvement_pct != null ? `−${item.expected_improvement_pct.toFixed(0)}%` : "-";
   return (
     <tr>
-      <td>
+      <td className="col-wafer colNoTruncate">
         <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.lot_wafer_id}</Link>
       </td>
       <td>{item.lot_id ?? "-"}</td>
@@ -523,8 +817,8 @@ function RecommendationRow({
         <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.feature}</Link>
       </td>
       <td>{item.target}</td>
-      <td className="numCol">{item.value.toFixed(2)}</td>
-      <td>{rangeText}</td>
+      <td className="numCol col-value colNoTruncate">{item.value.toFixed(2)}</td>
+      <td className="col-range colNoTruncate">{rangeText}</td>
       <td>
         <span className={`recommendationDirection dir-${item.direction}`}>{DIRECTION_LABEL[item.direction] ?? item.direction}</span>
       </td>

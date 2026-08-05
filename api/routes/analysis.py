@@ -24,11 +24,13 @@ from api.schemas.analysis import (
     ScreeningScatterResponse,
 )
 from api.settings import APP_VERSION, settings
+from src.analysis.alarm_bands import classify_measured_bands, compute_factor_band
 from src.analysis.control_range import (
     compute_control_range,
     evaluate_alarms,
     summarize_wafer_status,
 )
+from src.analysis.llm_stats import measurement_bias_p
 from src.analysis.recommendations import compute_recommendations
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
@@ -324,6 +326,26 @@ def get_alarms(train: str = "train", eval: str = "test", severity: str | None = 
     return {"train_dataset_id": train, "eval_dataset_id": eval, "items": items, "total": len(items)}
 
 
+def _factor_band_dict(band) -> dict[str, Any]:
+    return {
+        "feature": band.feature,
+        "target": band.target,
+        "kind": band.kind,
+        "x_min": band.x_min,
+        "x_max": band.x_max,
+        "lcl": band.lcl,
+        "ucl": band.ucl,
+        "recommended_lo": band.recommended_lo,
+        "recommended_hi": band.recommended_hi,
+        "out_of_control": {"count": band.out_of_control.count, "mean_defect_rate": band.out_of_control.mean_defect_rate},
+        "out_of_recommended": {
+            "count": band.out_of_recommended.count,
+            "mean_defect_rate": band.out_of_recommended.mean_defect_rate,
+        },
+        "in_recommended": {"count": band.in_recommended.count, "mean_defect_rate": band.in_recommended.mean_defect_rate},
+    }
+
+
 @router.get("/alarms/summary", response_model=AlarmSummaryResponse)
 def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any]:
     train_df = _dataframe_or_404(train)
@@ -339,16 +361,6 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
     normal_ids = [v.lot_wafer_id for v in verdicts if v.status == "normal"]
     unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
 
-    indexed = eval_df.set_index("Lot_Wafer_ID") if "Lot_Wafer_ID" in eval_df.columns else None
-    alarm_avg = None
-    no_alarm_avg = None
-    if indexed is not None and "Y" in eval_df.columns:
-        if alarm_ids:
-            alarm_avg = float(indexed.loc[alarm_ids, "Y"].mean())
-        no_alarm_group = normal_ids + unmeasured_ids
-        if no_alarm_group:
-            no_alarm_avg = float(indexed.loc[no_alarm_group, "Y"].mean())
-
     lot_counts: dict[str, int] = {}
     for v in verdicts:
         if v.status == "alarm" and v.lot_id:
@@ -359,15 +371,52 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
         reverse=True,
     )
 
-    return {
-        "train_dataset_id": train,
-        "eval_dataset_id": eval,
-        "counts": {"alarm": len(alarm_ids), "normal": len(normal_ids), "unmeasured": len(unmeasured_ids)},
-        "alarm_group_yield_avg": alarm_avg,
-        "no_alarm_group_yield_avg": no_alarm_avg,
-        "yield_gap": (alarm_avg - no_alarm_avg) if alarm_avg is not None and no_alarm_avg is not None else None,
-        "top_lots": top_lots,
-    }
+    # 3-way band split for the redesigned 사전 알람 로그 summary (spec PART B):
+    # 관리한계 이탈 (alarm, already computed above) / 권장구간 밖 / 권장구간 내,
+    # reusing the same alarm-eligible factor set and its recommended windows
+    # so these numbers never disagree with /api/alarms or /api/recommendations.
+    bands = classify_measured_bands(
+        train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, factors, control_ranges
+    )
+
+    # Per-factor 인자별 불량률 breakdown (카드②): the 5 primary (1위) factors,
+    # one per target -- the same "1위 인자" concept used everywhere else
+    # (training summary, 개선 권장 목록), not the full alarm-eligible set.
+    factor_bands: list[dict[str, Any]] = []
+    for target in schema.target_cols:
+        primary = select_primary_factor(train_df, schema, target)
+        if primary is None:
+            continue
+        primary_control_range = compute_control_range(train_df, primary)
+        band = compute_factor_band(train_df, eval_df, primary, primary_control_range)
+        if band is not None:
+            factor_bands.append(_factor_band_dict(band))
+
+    bias_p = measurement_bias_p(train_df, schema)
+
+    return round_floats(
+        {
+            "train_dataset_id": train,
+            "eval_dataset_id": eval,
+            "total_wafers": len(verdicts),
+            "measured_wafers": len(alarm_ids) + len(normal_ids),
+            "counts": {
+                "alarm": len(alarm_ids),
+                "out_of_recommended": bands.out_of_recommended.count,
+                "in_recommended": bands.in_recommended.count,
+                "unmeasured": len(unmeasured_ids),
+            },
+            "band_yield": {
+                "alarm": bands.alarm.mean_yield,
+                "out_of_recommended": bands.out_of_recommended.mean_yield,
+                "in_recommended": bands.in_recommended.mean_yield,
+                "unmeasured": bands.unmeasured.mean_yield,
+            },
+            "top_lots": top_lots,
+            "measurement_bias_p": bias_p,
+            "factor_bands": factor_bands,
+        }
+    )
 
 
 @router.get("/recommendations", response_model=RecommendationListResponse)

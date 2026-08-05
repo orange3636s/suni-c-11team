@@ -157,7 +157,8 @@ class AlarmListResponse(BaseModel):
 
 class WaferStatusCounts(BaseModel):
     alarm: int
-    normal: int
+    out_of_recommended: int
+    in_recommended: int
     unmeasured: int
 
 
@@ -166,14 +167,43 @@ class LotAlarmCount(BaseModel):
     alarm_count: int
 
 
+class BandYieldSchema(BaseModel):
+    alarm: float | None
+    out_of_recommended: float | None
+    in_recommended: float | None
+    unmeasured: float | None
+
+
+class FactorBandPointSchema(BaseModel):
+    count: int
+    mean_defect_rate: float | None
+
+
+class FactorBandSchema(BaseModel):
+    feature: str
+    target: str
+    kind: str
+    x_min: float
+    x_max: float
+    lcl: float | None
+    ucl: float | None
+    recommended_lo: float | None
+    recommended_hi: float | None
+    out_of_control: FactorBandPointSchema
+    out_of_recommended: FactorBandPointSchema
+    in_recommended: FactorBandPointSchema
+
+
 class AlarmSummaryResponse(BaseModel):
     train_dataset_id: str
     eval_dataset_id: str
+    total_wafers: int
+    measured_wafers: int
     counts: WaferStatusCounts
-    alarm_group_yield_avg: float | None
-    no_alarm_group_yield_avg: float | None
-    yield_gap: float | None
+    band_yield: BandYieldSchema
     top_lots: list[LotAlarmCount] = Field(default_factory=list)
+    measurement_bias_p: float | None
+    factor_bands: list[FactorBandSchema] = Field(default_factory=list)
 
 
 class RecommendationItemSchema(BaseModel):

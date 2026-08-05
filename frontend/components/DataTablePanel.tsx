@@ -110,6 +110,34 @@ export function ScrollTableBody({ children, rows = 10 }: { children: ReactNode; 
   );
 }
 
+// Horizontal-scroll variant of ScrollTableBody (spec PART C): same
+// vertical-scroll/sticky-header shell, plus table-layout:auto (so no
+// column ellipsis-truncates), a horizontally scrolling body once content
+// exceeds `minWidth`, and a sticky first column so the row identity
+// (Wafer) stays visible while scrolled. Shared by 알람 목록 and 개선 권장
+// 목록 -- same column-truncation problem, same fix.
+export function HScrollTableBody({
+  children,
+  rows = 10,
+  minWidth = 900,
+}: {
+  children: ReactNode;
+  rows?: number;
+  minWidth?: number;
+}) {
+  return (
+    <div className="tableWrap hScrollWrap">
+      <div
+        className="tableScroll hScroll"
+        style={{ ["--scroll-rows" as string]: rows, ["--table-min-width" as string]: `${minWidth}px` }}
+      >
+        {children}
+        <div className="scrollTableFade" />
+      </div>
+    </div>
+  );
+}
+
 export function TableCaption({
   total,
   shown,

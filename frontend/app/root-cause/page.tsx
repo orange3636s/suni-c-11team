@@ -11,6 +11,7 @@ import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { formatPValue } from "@/lib/numberFormat";
 import {
   ApiNetworkError,
   ApiResponseError,
@@ -36,10 +37,6 @@ const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중"
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
-
-function formatP(p: number): string {
-  return p.toFixed(3);
-}
 
 function hasReliableEvidence(tier: ConfidenceTier): boolean {
   return tier === "strong" || tier === "moderate";
@@ -371,7 +368,7 @@ function RootCauseContent() {
             <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
               {runState === "done"
                 ? "완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다."
-                : "타깃 5개 각각의 전체 인자 풀(R+D+Config) 기준 Pareto 상위 5개를 계산합니다."}
+                : "타깃 5개 각각의 전체 인자 풀(R+D+Eq.) 기준 Pareto 상위 5개를 계산합니다."}
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -453,13 +450,13 @@ function RootCauseContent() {
               {quickLookError && <p className="errorMessage">{quickLookError}</p>}
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
-                  이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatP(quickLookNumeric.p_value)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
+                  이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(quickLookNumeric.p_value)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
                   아래 관리한계선은 인자 자체의 분포에서 산출된 것으로 별개이지만, 원인으로 단정할 근거는 부족합니다.
                 </p>
               )}
               {!quickLookError && quickLookCategorical && !hasReliableEvidence(quickLookCategorical.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
-                  통계적 신뢰도가 낮습니다 (p = {formatP(quickLookCategorical.p_value)}, 등급 {TIER_LABEL[quickLookCategorical.confidence_tier]}).
+                  통계적 신뢰도가 낮습니다 (p = {formatPValue(quickLookCategorical.p_value)}, 등급 {TIER_LABEL[quickLookCategorical.confidence_tier]}).
                 </p>
               )}
               {quickLookNumeric ? (
@@ -505,13 +502,13 @@ function RootCauseContent() {
                         <span>n={categoricalData.n}</span>
                         <span>기여율={item.contribution_pct.toFixed(1)}%</span>
                         <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
-                        <span>p-value {formatP(item.p_value)}</span>
+                        <span>p-value {formatPValue(item.p_value)}</span>
                       </small>
                     )}
                   </div>
                   {!hasReliableEvidence(item.confidence_tier) && (
                     <p className="heatmapSignificanceBanner">
-                      이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatP(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
+                      이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
                     </p>
                   )}
                   {categoricalData ? (
@@ -565,7 +562,7 @@ function ColorBySelect({ value, onChange }: { value: ColorMode; onChange: (mode:
         onChange={(event) => onChange(event.target.value as ColorMode)}
       >
         <option value="default">기본</option>
-        <option value="config_model">Config 모델별</option>
+        <option value="config_model">Eq. 모델별</option>
         <option value="lot">LOT별</option>
         <option value="alarm">알람 여부</option>
       </select>
@@ -617,13 +614,13 @@ function NumericFactorCard({
             <span>n={numericData.n}</span>
             <span>기여율={item.contribution_pct.toFixed(1)}%</span>
             <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
-            <span>p-value {formatP(item.p_value)}</span>
+            <span>p-value {formatPValue(item.p_value)}</span>
           </small>
         )}
       </div>
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
-          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatP(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
       {numericData ? (
@@ -658,7 +655,7 @@ function WaferDetailPopover({
         <dt>{target}</dt><dd>{point.y.toFixed(2)}</dd>
         <dt>인자값</dt><dd>{point.x.toFixed(2)}</dd>
         <dt>정상범위 내</dt><dd>{point.in_range ? "예" : "아니오 (알람)"}</dd>
-        <dt>Config</dt><dd>{point.config ?? "미계측"}</dd>
+        <dt>Eq.</dt><dd>{point.config ?? "미계측"}</dd>
       </dl>
     </div>
   );

@@ -530,14 +530,41 @@ export type AlarmListResponse = {
   total: number;
 };
 
+export type FactorBandPoint = {
+  count: number;
+  mean_defect_rate: number | null;
+};
+
+export type FactorBand = {
+  feature: string;
+  target: string;
+  kind: string;
+  x_min: number;
+  x_max: number;
+  lcl: number | null;
+  ucl: number | null;
+  recommended_lo: number | null;
+  recommended_hi: number | null;
+  out_of_control: FactorBandPoint;
+  out_of_recommended: FactorBandPoint;
+  in_recommended: FactorBandPoint;
+};
+
 export type AlarmSummaryResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
-  counts: { alarm: number; normal: number; unmeasured: number };
-  alarm_group_yield_avg: number | null;
-  no_alarm_group_yield_avg: number | null;
-  yield_gap: number | null;
+  total_wafers: number;
+  measured_wafers: number;
+  counts: { alarm: number; out_of_recommended: number; in_recommended: number; unmeasured: number };
+  band_yield: {
+    alarm: number | null;
+    out_of_recommended: number | null;
+    in_recommended: number | null;
+    unmeasured: number | null;
+  };
   top_lots: Array<{ lot_id: string; alarm_count: number }>;
+  measurement_bias_p: number | null;
+  factor_bands: FactorBand[];
 };
 
 export type RecommendationTag = "priority" | "recommended" | "reference";

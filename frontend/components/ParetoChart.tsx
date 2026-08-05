@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatPValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ParetoRankingItem } from "@/types/data";
 
@@ -23,10 +24,6 @@ const LABEL_FONT = "10px var(--font-ui, system-ui, sans-serif)";
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 
 type TooltipState = { x: number; y: number; index: number } | null;
-
-function formatP(p: number): string {
-  return p.toFixed(3);
-}
 
 function shortenFeatureName(feature: string, maxLength = 11): string {
   return feature.length > maxLength ? `${feature.slice(0, maxLength - 1)}…` : feature;
@@ -282,7 +279,7 @@ export default function ParetoChart({
           <div className="heatmapTooltipRow"><span>기여율</span><b>{tooltipItem.contribution_pct.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>누적 기여율</span><b>{tooltipItem.cumulative_pct.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>ε²</span><b>{tooltipItem.eps2.toFixed(3)}</b></div>
-          <div className="heatmapTooltipRow"><span>p값</span><b>{formatP(tooltipItem.p_value)}</b></div>
+          <div className="heatmapTooltipRow"><span>p값</span><b>{formatPValue(tooltipItem.p_value)}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltipItem.n_observed.toLocaleString()}</b></div>
           <div className="heatmapTooltipRow"><span>등급</span><b>{TIER_LABEL[tooltipItem.confidence_tier]}</b></div>
         </div>

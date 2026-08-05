@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getScreeningHeatmap } from "@/lib/api";
+import { formatQValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfidenceTier, HeatmapMetric, HeatmapResponse } from "@/types/data";
 
@@ -67,11 +68,6 @@ function cellBackground(value: number, min: number, max: number, theme: "light" 
   const t = Math.min(1, clipped / (max || 1));
   const bg = mixHex(center, pos, t);
   return { bg, light: relativeLuminance(hexToRgb(pos)) * t + relativeLuminance(hexToRgb(center)) * (1 - t) < 0.45 };
-}
-
-function formatQ(q: number | null): string {
-  if (q == null) return "-";
-  return q < 0.001 ? q.toExponential(2) : q.toFixed(4);
 }
 
 export type HeatmapCellSelection = {
@@ -345,7 +341,7 @@ export default function CorrelationHeatmap({
       </div>
 
       <p className="heatmapCaption">
-        {`Config ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
+        {`Eq. ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
         표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
         <br />
         인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
@@ -356,7 +352,7 @@ export default function CorrelationHeatmap({
           <strong>{tooltip.feature} × {tooltip.target}</strong>
           <div className="heatmapTooltipRow"><span>{metric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltip.n.toLocaleString()}</b></div>
-          <div className="heatmapTooltipRow"><span>q</span><b>{formatQ(tooltip.q)}</b></div>
+          <div className="heatmapTooltipRow"><span>q</span><b>{formatQValue(tooltip.q)}</b></div>
           <div className="heatmapTooltipRow"><span>신뢰도</span><b>{tooltip.tier ? TIER_LABEL[tooltip.tier] : "-"}</b></div>
           <div className="heatmapTooltipRow"><span>FDR 통과</span><b>{tooltip.significant ? "예" : "아니오"}</b></div>
         </div>

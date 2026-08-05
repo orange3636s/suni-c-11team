@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { formatPValue } from "@/lib/numberFormat";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -544,7 +545,7 @@ export default function ScatterChart({
       <div className="scatterChartMeta">
         <span>n={data.n.toLocaleString()}</span>
         <span>ε²={data.eps2.toFixed(3)}</span>
-        <span>p-value {data.p_value.toFixed(3)}</span>
+        <span>p-value {formatPValue(data.p_value)}</span>
         <span>등급 {{ strong: "강함", moderate: "보통", weak: "약함", reference: "참고" }[data.confidence_tier]}</span>
       </div>
 
