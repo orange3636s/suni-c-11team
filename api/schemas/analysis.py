@@ -639,3 +639,24 @@ class ReliabilityResponse(BaseModel):
     thresholds_disclaimer: str = RELIABILITY_THRESHOLDS_DISCLAIMER
     target_fallback_tier: str  # "per_target" | "final_yield_only" | "unanalyzable"
     target_fallback_message: str | None
+
+
+class PreprocessingModeResultSchema(BaseModel):
+    mode: str  # "A" | "B" | "C"
+    label: str
+    r2: float
+    adopted: bool
+
+
+class PreprocessingComparisonResponse(BaseModel):
+    """전처리 방식 A/B/C 실시간 비교 (spec 설정 패널 신설 §E) -- 데이터셋마다
+    재계산된다. 실제 파이프라인이 채택하는 방식(B)과 이 표의 1위가 다를 수
+    있다 (§E-5-1)."""
+
+    dataset_id: str
+    dataset_label: str
+    results: list[PreprocessingModeResultSchema] = Field(default_factory=list)
+    winner: str
+    b_equals_c: bool
+    holdout_note: str
+    winner_note: str | None

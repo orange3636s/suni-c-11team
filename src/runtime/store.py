@@ -119,6 +119,15 @@ class RuntimeStore:
                     value_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS notify_sent_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dataset_id TEXT NOT NULL,
+                    wafer_id TEXT NOT NULL,
+                    grade TEXT NOT NULL,
+                    sent_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_notify_sent_log_lookup
+                ON notify_sent_log(dataset_id, wafer_id, sent_at DESC);
                 """
             )
 
@@ -464,6 +473,27 @@ class RuntimeStore:
         with _lock, self._connect() as connection:
             cursor = connection.execute("DELETE FROM app_state WHERE state_key=?", (state_key,))
             return cursor.rowcount > 0
+
+    # -- 알림 발송 이력 (spec 알림 연동 §C-7: 동일 (dataset, wafer, grade) 조합은
+    # 24시간 내 재발송하지 않는다) --
+
+    def recent_notifications(self, dataset_id: str, since_iso: str) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT wafer_id, grade, sent_at FROM notify_sent_log WHERE dataset_id=? AND sent_at>=?",
+                (dataset_id, since_iso),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_notifications_sent(self, dataset_id: str, entries: list[tuple[str, str]]) -> None:
+        if not entries:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.executemany(
+                "INSERT INTO notify_sent_log (dataset_id, wafer_id, grade, sent_at) VALUES (?,?,?,?)",
+                [(dataset_id, wafer_id, grade, now) for wafer_id, grade in entries],
+            )
 
 
 def safe_runtime_call(method: str, **values: Any) -> Any:

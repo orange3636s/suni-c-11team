@@ -21,6 +21,7 @@ import {
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
+  dispatchAlarmNotifications,
   getAlarms,
   getDatasetSchema,
   getMeasurementExpansion,
@@ -368,6 +369,11 @@ function RootCauseContent() {
           setAnalysis((previous) => (previous && previous.dataset === datasetId ? { ...previous, alarmGradeByWaferId } : previous));
         })
         .catch(() => {});
+      // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 신뢰도 게이트·
+      // 중복 발송 방지·연결된 채널 유무는 전부 서버(dispatch_alarm_notifications)
+      // 가 판단한다: 이 호출은 그저 "지금 막 분석이 끝났다"는 신호일 뿐이고,
+      // 실패해도 분석 결과 화면에는 아무 영향이 없어야 한다.
+      void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {});
       // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
       // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
       // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을

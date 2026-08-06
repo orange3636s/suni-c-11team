@@ -13,6 +13,7 @@ from api.schemas.state import (
     TrainingStateSaveRequest,
 )
 from api.settings import settings
+from src.notifications.settings_store import get_settings_summary
 from src.runtime.app_state import get_latest_state, save_state
 from src.runtime.store import RuntimeStore
 
@@ -30,11 +31,23 @@ def get_latest() -> dict[str, Any]:
     results in a single round trip so the frontend never needs to decide
     which ones to ask for.
     """
+    store = _store()
     try:
-        return get_latest_state(_store())
+        state = get_latest_state(store)
     except Exception:
         logger.warning("최근 결과 조회 실패", exc_info=True)
-        return {"training": None, "analysis": None, "alarms": None}
+        state = {"training": None, "analysis": None, "alarms": None}
+    try:
+        notifications = get_settings_summary(store)
+    except Exception:
+        logger.warning("알림 설정 조회 실패", exc_info=True)
+        notifications = {
+            "slack": {"connected": False, "target": None, "webhook_masked": None, "verified_at": None},
+            "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
+            "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
+            "conditions": {"grades": ["심각", "위험"], "timing": "on_analysis"},
+        }
+    return {**state, "notifications": notifications}
 
 
 @router.post("/training", response_model=StateSaveResponse)

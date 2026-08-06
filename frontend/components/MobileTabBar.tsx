@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { navigationItems, type NavigationLabel } from "@/components/Sidebar";
+import { usePanelState } from "@/components/PanelStateProvider";
 
 /** Replaces the left sidebar at ≤1023px (spec: JSON 보고서 버튼 제거 ·
  * 모바일 레이아웃 전환 §B-3) -- a floating navy pill bar, same visual
@@ -16,6 +17,7 @@ import { navigationItems, type NavigationLabel } from "@/components/Sidebar";
  */
 export default function MobileTabBar({ activeItem }: { activeItem: NavigationLabel }) {
   const activeRef = useRef<HTMLAnchorElement>(null);
+  const { settingsPanelOpen, setSettingsPanelOpen } = usePanelState();
 
   // Keeps the selected tab in view if the bar has scrolled (spec: "선택된
   // 항목이 화면 밖이면 자동으로 스크롤해 보이게 한다").
@@ -43,6 +45,18 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
             </Link>
           );
         })}
+        {/* 설정 패널 신설 §A-2: 좁은 폭에서는 사이드바 자체가 없으니 설정도
+            이 가로 탭바에 편입한다 (페이지 이동이 아니라 패널을 여는
+            버튼이라 다른 탭들과 달리 <Link>가 아니다). */}
+        <button
+          type="button"
+          className="mobileTab mobileTabButton"
+          role="tab"
+          aria-selected={settingsPanelOpen}
+          onClick={() => setSettingsPanelOpen((value) => !value)}
+        >
+          설정
+        </button>
       </div>
     </nav>
   );

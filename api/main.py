@@ -4,6 +4,8 @@ import os
 import time
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -16,8 +18,10 @@ from api.routes.data import (
 from api.routes.analysis import router as analysis_router
 from api.routes.chat import router as chat_router
 from api.routes.datasets import get_dataset_registry, router as datasets_router
+from api.routes.notify import router as notify_router, run_daily_dispatch_job
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
+from src.notifications.telegram_bot import run_polling_loop
 from src.runtime.datasets import BUNDLED_DATASET_FILES
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -103,7 +107,34 @@ async def lifespan(_: FastAPI):
             # Migration failures are recorded and logged, but readiness and
             # health endpoints must remain available for investigation.
             logger.exception("Startup Migration 실행 실패")
-    yield
+
+    # 알람 알림 연동 §C-3 Telegram -- 봇 토큰이 설정된 경우에만 long-polling
+    # 루프를 띄운다. 설정되지 않은 개발/테스트 환경에서는 조용히 건너뛴다.
+    telegram_stop_event = asyncio.Event()
+    telegram_task: asyncio.Task | None = None
+    if settings.telegram_bot_token:
+        telegram_task = asyncio.create_task(run_polling_loop(settings.telegram_bot_token, telegram_stop_event))
+        logger.info("Telegram 봇 polling 시작")
+    else:
+        logger.info("TELEGRAM_BOT_TOKEN이 설정되지 않아 Telegram 알림 연동을 건너뜁니다.")
+
+    # 알람 알림 연동 §C-4 "매일 오전 8시" -- n8n 대신 APScheduler로 처리한다
+    # (spec: "서비스가 늘면 메모리와 요금이 증가한다").
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_daily_dispatch_job, CronTrigger(hour=8, minute=0), id="daily_alarm_notification")
+    scheduler.start()
+
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+        if telegram_task is not None:
+            telegram_stop_event.set()
+            telegram_task.cancel()
+            try:
+                await telegram_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app = FastAPI(
@@ -152,6 +183,7 @@ app.include_router(analysis_router)
 app.include_router(chat_router)
 app.include_router(datasets_router)
 app.include_router(data_router)
+app.include_router(notify_router)
 app.include_router(state_router)
 
 

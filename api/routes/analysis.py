@@ -21,12 +21,13 @@ from api.schemas.analysis import (
     MeasurementExpansionResponse,
     ModelPerformanceResponse,
     ParetoRankingResponse,
+    PreprocessingComparisonResponse,
     RecommendationListResponse,
     ReliabilityResponse,
     ScreeningScatterResponse,
 )
 from api.settings import APP_VERSION, settings
-from src.analysis import alarm_gbdt, reliability, target_fallback, warning_line
+from src.analysis import alarm_gbdt, preprocessing_compare, reliability, target_fallback, warning_line
 from src.analysis.alarm_bands import classify_measured_bands, compute_factor_band
 from src.analysis.control_range import (
     compute_control_range,
@@ -446,6 +447,55 @@ def get_alarms(train: str = "train", eval: str = "test", grade: str | None = Non
     )
 
 
+def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, Any]] | None:
+    """알림 발송(src.notifications.dispatch)이 쓰는 알람 목록 -- `get_alarms`와
+    같은 파이프라인이지만 개선 권고는 제외한다 (발송 대상 등급은 항상
+    심각/위험/주의의 부분집합이라 개선 권고를 보낼 일이 없다). 데이터셋을
+    찾을 수 없으면 예외 대신 None을 반환한다 -- 알림 발송은 best-effort라
+    404로 스케줄러 잡 전체를 죽이면 안 된다.
+    """
+    try:
+        train_df = _dataframe_or_404(train)
+        eval_df = _dataframe_or_404(eval)
+    except HTTPException:
+        return None
+
+    prediction = _cached_bootstrap_prediction(train, eval)
+    if prediction is None:
+        return []
+
+    thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
+    scored = alarm_gbdt.score_alarms(eval_df, prediction, thresholds)
+
+    warning_lines = _cached_all_warning_lines(train)
+    id_column = "Lot_Wafer_ID"
+    eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
+
+    items: list[dict[str, Any]] = []
+    for score in scored:
+        if score.grade not in ("심각", "위험", "주의"):
+            continue
+        row = None
+        if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
+            match = eval_by_id.loc[score.lot_wafer_id]
+            row = match.iloc[0] if isinstance(match, pd.DataFrame) else match
+        reason = (
+            warning_line.build_alarm_reason(row, warning_lines)
+            if row is not None and warning_lines
+            else warning_line.NO_EXCEEDANCE_REASON
+        )
+        items.append(
+            {
+                "lot_wafer_id": score.lot_wafer_id,
+                "lot_id": score.lot_id,
+                "grade": score.grade,
+                "risk_percentile": score.risk_percentile,
+                "reason": reason,
+            }
+        )
+    return items
+
+
 def _factor_band_dict(band) -> dict[str, Any]:
     return {
         "feature": band.feature,
@@ -831,6 +881,52 @@ def _cached_reliability(dataset_id: str) -> dict[str, Any]:
         "target_fallback_tier": fallback.tier,
         "target_fallback_message": fallback.message,
     }
+
+
+PREPROCESSING_COMPARISON_CACHE_DATASETS = 8
+
+
+@lru_cache(maxsize=PREPROCESSING_COMPARISON_CACHE_DATASETS)
+def _cached_preprocessing_comparison(dataset_id: str) -> dict[str, Any] | None:
+    """설정 패널 신설 §E: 데이터셋마다 실측한 전처리 A/B/C 비교. 데이터셋당
+    한 번만 계산해 캐시한다(§E-6: "탭을 열 때마다 재계산하지 마라") -- LOT
+    70/30 홀드아웃 1회 × 3방식이라 4초 안팎이지만, 그 값을 매 탭 전환마다
+    다시 치르지 않는다.
+    """
+    df = _dataframe_or_404(dataset_id)
+    schema = parse_schema(df)
+    features = alarm_gbdt.feature_columns(schema)
+    registry = get_dataset_registry()
+    summary = registry.get_summary(dataset_id)
+    dataset_label = summary["original_filename"] if summary else dataset_id
+
+    comparison = preprocessing_compare.compute_preprocessing_comparison(
+        df, features, dataset_id=dataset_id, dataset_label=dataset_label
+    )
+    if comparison is None:
+        return None
+    return {
+        "dataset_id": comparison.dataset_id,
+        "dataset_label": comparison.dataset_label,
+        "results": [
+            {"mode": r.mode, "label": r.label, "r2": r.r2, "adopted": r.adopted} for r in comparison.results
+        ],
+        "winner": comparison.winner,
+        "b_equals_c": comparison.b_equals_c,
+        "holdout_note": comparison.holdout_note,
+        "winner_note": comparison.winner_note,
+    }
+
+
+@router.get("/training/preprocessing-comparison", response_model=PreprocessingComparisonResponse)
+def get_preprocessing_comparison(dataset: str) -> dict[str, Any]:
+    result = _cached_preprocessing_comparison(dataset)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="전처리 비교를 계산하기에 데이터가 부족합니다.",
+        )
+    return round_floats(result)
 
 
 @router.get("/analysis/reliability", response_model=ReliabilityResponse)

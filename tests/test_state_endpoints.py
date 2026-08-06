@@ -25,9 +25,17 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Simple
     return test_settings
 
 
+DEFAULT_NOTIFICATIONS = {
+    "slack": {"connected": False, "target": None, "webhook_masked": None, "verified_at": None},
+    "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
+    "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
+    "conditions": {"grades": ["심각", "위험"], "timing": "on_analysis"},
+}
+
+
 def test_get_latest_empty(isolated_settings: SimpleNamespace) -> None:
     result = state_routes.get_latest()
-    assert result == {"training": None, "analysis": None, "alarms": None}
+    assert result == {"training": None, "analysis": None, "alarms": None, "notifications": DEFAULT_NOTIFICATIONS}
 
 
 def test_save_and_restore_training(isolated_settings: SimpleNamespace) -> None:
@@ -74,4 +82,4 @@ def test_get_latest_never_raises_on_store_error(isolated_settings: SimpleNamespa
     """spec §3-3: 결과가 없으면 null, 실패해도 앱이 뜬다 (never a 500)."""
     monkeypatch.setattr(state_routes, "get_latest_state", lambda store: (_ for _ in ()).throw(OSError("db locked")))
     result = state_routes.get_latest()
-    assert result == {"training": None, "analysis": None, "alarms": None}
+    assert result == {"training": None, "analysis": None, "alarms": None, "notifications": DEFAULT_NOTIFICATIONS}

@@ -8,6 +8,7 @@ import type {
   DatasetSchemaResponse,
   DatasetUploadResponse,
   DeleteModelResponse,
+  DispatchResponse,
   HeatmapMetric,
   HeatmapResponse,
   LatestAlarmsPayload,
@@ -18,11 +19,15 @@ import type {
   ModelDetail,
   ModelListResponse,
   ModelPerformanceResponse,
+  NotificationConditions,
+  NotificationSettingsSummary,
   ParetoRankingResponse,
+  PreprocessingComparisonResponse,
   PreprocessResponse,
   RecommendationListResponse,
   ReliabilityResponse,
   ScreeningScatterResponse,
+  SendTestResponse,
   TrainResponse,
   TrainingJobCreateResponse,
   TrainingJobStatusResponse,
@@ -454,6 +459,55 @@ export function getAnalysisReport(dataset: string): Promise<AnalysisReportRespon
 
 export function getMeasurementExpansion(dataset: string): Promise<MeasurementExpansionResponse> {
   return getJson(`/api/analysis/measurement-expansion?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+export function getPreprocessingComparison(dataset: string): Promise<PreprocessingComparisonResponse> {
+  return getJson(`/api/training/preprocessing-comparison?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+// -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
+// state/latest가 마운트 시 1번에 알림 설정을 함께 실어 온다 (spec §D-3) --
+// 이 함수들은 사용자가 설정 패널에서 실제로 무언가를 바꿀 때만 호출된다.
+
+export function connectSlack(webhookUrl: string, channel: string | null): Promise<NotificationSettingsSummary> {
+  return postJson("/api/notify/slack", { webhook_url: webhookUrl, channel });
+}
+
+export function testSlack(webhookUrl: string): Promise<SendTestResponse> {
+  return postJson("/api/notify/slack/test", { webhook_url: webhookUrl });
+}
+
+export function verifyTelegramCode(code: string): Promise<NotificationSettingsSummary> {
+  return postJson("/api/notify/telegram/verify", { code });
+}
+
+export function testTelegram(): Promise<SendTestResponse> {
+  return postJson("/api/notify/telegram/test", {});
+}
+
+export function connectGmail(email: string): Promise<NotificationSettingsSummary> {
+  return postJson("/api/notify/gmail", { email });
+}
+
+export function testGmail(): Promise<SendTestResponse> {
+  return postJson("/api/notify/gmail/test", {});
+}
+
+export function saveNotificationConditions(conditions: NotificationConditions): Promise<NotificationSettingsSummary> {
+  return postJson("/api/notify/conditions", conditions);
+}
+
+export async function disconnectNotificationChannel(channel: "slack" | "telegram" | "gmail"): Promise<NotificationSettingsSummary> {
+  const response = await fetch(`${getApiBaseUrl()}/api/notify/${channel}`, { method: "DELETE" });
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json() as Promise<NotificationSettingsSummary>;
+}
+
+// 원인 분석 실행 직후 fire-and-forget으로 호출된다 (spec §C-4 "분석 실행
+// 직후") -- 실패해도 분석 결과 표시를 막으면 안 되므로 호출부에서 항상
+// `.catch(() => {})`로 무시한다.
+export function dispatchAlarmNotifications(trainDataset: string, evalDataset: string): Promise<DispatchResponse> {
+  return postJson("/api/notify/dispatch", { train_dataset: trainDataset, eval_dataset: evalDataset, dashboard_url: null });
 }
 
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------

@@ -12,6 +12,10 @@ type PanelStateValue = {
   setSidebarCollapsed: (value: BoolUpdater) => void;
   aiPanelOpen: boolean;
   setAiPanelOpen: (value: BoolUpdater) => void;
+  // 설정 패널 신설 §A-3: 챗봇 패널과 동시에 열리지 않는다 -- 둘 중 하나를
+  // 열면 다른 하나는 자동으로 닫힌다 (아래 setter들이 서로를 닫는다).
+  settingsPanelOpen: boolean;
+  setSettingsPanelOpen: (value: BoolUpdater) => void;
   // The dataset id that 원인 분석 last completed for, or null if no
   // analysis has finished yet (or it was invalidated by a dataset change).
   // SUNI's AI panel reads this to know whether it has anything to answer
@@ -53,6 +57,7 @@ export default function PanelStateProvider({
 }) {
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(initialSidebarCollapsed);
   const [aiPanelOpen, setAiPanelOpenState] = useState(initialAiPanelOpen);
+  const [settingsPanelOpen, setSettingsPanelOpenState] = useState(false);
   const [analysisDataset, setAnalysisDataset] = useState<string | null>(null);
   const [pendingChatRequest, setPendingChatRequest] = useState<PendingChatRequest | null>(null);
 
@@ -68,6 +73,18 @@ export default function PanelStateProvider({
     setAiPanelOpenState((previous) => {
       const next = typeof value === "function" ? value(previous) : value;
       writeCookie(AI_PANEL_COOKIE, next);
+      if (next) setSettingsPanelOpenState(false);
+      return next;
+    });
+  }, []);
+
+  const setSettingsPanelOpen = useCallback((value: BoolUpdater) => {
+    setSettingsPanelOpenState((previous) => {
+      const next = typeof value === "function" ? value(previous) : value;
+      if (next) {
+        setAiPanelOpenState(false);
+        writeCookie(AI_PANEL_COOKIE, false);
+      }
       return next;
     });
   }, []);
@@ -84,6 +101,8 @@ export default function PanelStateProvider({
       setSidebarCollapsed,
       aiPanelOpen,
       setAiPanelOpen,
+      settingsPanelOpen,
+      setSettingsPanelOpen,
       analysisDataset,
       setAnalysisDataset,
       pendingChatRequest,
@@ -95,6 +114,8 @@ export default function PanelStateProvider({
       setSidebarCollapsed,
       aiPanelOpen,
       setAiPanelOpen,
+      settingsPanelOpen,
+      setSettingsPanelOpen,
       analysisDataset,
       pendingChatRequest,
       requestChat,

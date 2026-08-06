@@ -623,6 +623,74 @@ export type ReliabilityResponse = {
   target_fallback_message: string | null;
 };
 
+// -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
+
+export type NotificationTiming = "on_analysis" | "daily_8am";
+export type NotificationGrade = "심각" | "위험" | "주의";
+
+export type SlackChannelSummary = {
+  connected: boolean;
+  target: string | null;
+  webhook_masked: string | null;
+  verified_at: string | null;
+};
+
+export type TelegramChannelSummary = {
+  connected: boolean;
+  target: string | null;
+  chat_id_masked: string | null;
+  verified_at: string | null;
+};
+
+export type GmailChannelSummary = {
+  connected: boolean;
+  pending: boolean;
+  email: string | null;
+  verified_at: string | null;
+};
+
+export type NotificationConditions = {
+  grades: NotificationGrade[];
+  timing: NotificationTiming;
+};
+
+export type NotificationSettingsSummary = {
+  slack: SlackChannelSummary;
+  telegram: TelegramChannelSummary;
+  gmail: GmailChannelSummary;
+  conditions: NotificationConditions;
+};
+
+export type SendTestResponse = { ok: boolean; error: string | null };
+
+export type DispatchResponse = {
+  skipped: boolean;
+  reason: string | null;
+  sent_count: number | null;
+  results: Record<string, { ok: boolean; error: string | null }> | null;
+};
+
+// -- 전처리 방식 A/B/C 실시간 비교 (설정 패널 신설 §E) ----------------------
+
+export type PreprocessingMode = "A" | "B" | "C";
+
+export type PreprocessingModeResult = {
+  mode: PreprocessingMode;
+  label: string;
+  r2: number;
+  adopted: boolean;
+};
+
+export type PreprocessingComparisonResponse = {
+  dataset_id: string;
+  dataset_label: string;
+  results: PreprocessingModeResult[];
+  winner: PreprocessingMode;
+  b_equals_c: boolean;
+  holdout_note: string;
+  winner_note: string | null;
+};
+
 export type FactorBandPoint = {
   count: number;
   mean_defect_rate: number | null;
@@ -814,6 +882,7 @@ export type LatestStateResponse = {
   training: LatestTrainingRecord | null;
   analysis: LatestAnalysisRecord | null;
   alarms: LatestAlarmsRecord | null;
+  notifications: NotificationSettingsSummary;
 };
 
 export type ReportFactorEntry = {

@@ -31,3 +31,6 @@ class LatestStateResponse(BaseModel):
     training: dict[str, Any] | None
     analysis: dict[str, Any] | None
     alarms: dict[str, Any] | None
+    # 알림 연동 §D-3: 앱 마운트 시 1번의 요청으로 알림 설정도 함께 복원한다
+    # -- 설정 패널을 위한 별도 요청을 만들지 않는다.
+    notifications: dict[str, Any]

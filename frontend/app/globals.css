@@ -10124,3 +10124,236 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
 .scatterAlarmLegendLabel{ font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-right: 4px; }
 .scatterAlarmLegendNote{ font-size: 11.5px; color: var(--text-muted); margin: 4px 0 0; line-height: 1.5; }
 
+/* ============================================================
+   설정 패널 신설 -- §A 사이드바 2분할, §B Theme 아이콘, §C/§D 설정 패널,
+   §E 전처리 비교 스켈레톤. 기존 .sidebarFooter/.themeTrigger 규칙 위에
+   덧씌우는 방식이다 (파일 앞쪽의 레거시 블록들과 직접 충돌하지 않도록
+   끝에 추가해 캐스케이드에서 이긴다).
+   ============================================================ */
+
+/* -- §A-2: Theme + 설정 2분할 -------------------------------------- */
+.sidebar .sidebarFooter{
+  display: flex !important;
+  flex-direction: row;
+  gap: 6px;
+  align-items: stretch;
+}
+.sidebar .themeTriggerCol{ position: relative; flex: 1 1 0; min-width: 0; }
+.sidebar .themeTriggerCol .themeTrigger,
+.sidebar .settingsTrigger{
+  width: 100%;
+  height: 100%;
+}
+.sidebar .settingsTrigger{
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+}
+.sidebar .settingsTrigger[aria-expanded="true"]{
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* 접힘 상태: 아이콘만 세로로 쌓는다 (spec §A-2 "접힘 상태에서는 아이콘만
+   세로로 쌓는다", 체크리스트 4번). 같은 마크업을 재사용하고 라벨/셰브론만
+   숨긴다 -- 분기를 늘리지 않는다. */
+.sidebar.collapsed .sidebarFooter{
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px !important;
+}
+.sidebar.collapsed .themeTriggerCol .themeTrigger,
+.sidebar.collapsed .settingsTrigger{
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  justify-content: center;
+  margin: 0 auto;
+}
+.sidebar.collapsed .themeTriggerLabel,
+.sidebar.collapsed .themeChevron{
+  display: none;
+}
+
+/* -- §B: Theme 옵션 아이콘 (lucide-react, 이모지 아님) ------------------ */
+.themeOptions button{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.themeOptionIcon{
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.themeOptions button.active .themeOptionIcon{
+  color: var(--accent);
+}
+
+/* -- §A-3/§C: 설정 패널 --------------------------------------------- */
+.settingsPanelBackdrop{
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(15, 23, 42, 0.32);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: calc(var(--header-height, 64px) + 16px) 16px 16px;
+}
+.settingsPanel{
+  width: 480px;
+  max-width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #fff);
+  color: var(--text-primary);
+  border-radius: 18px;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+  animation: settingsPanelIn 160ms ease;
+}
+@keyframes settingsPanelIn{
+  from{ opacity: 0; transform: translateY(-8px); }
+  to{ opacity: 1; transform: translateY(0); }
+}
+.settingsPanelHeader{
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid var(--border-card, rgba(0,0,0,.08));
+  flex: 0 0 auto;
+}
+.settingsPanelHeader h2{ margin: 0; font-size: 16px; font-weight: 700; }
+.settingsPanelClose{
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9px; border: none; background: transparent;
+  color: var(--text-secondary); cursor: pointer;
+}
+.settingsPanelClose:hover{ background: var(--surface-secondary); }
+.settingsPanelBody{
+  flex: 1 1 auto; overflow-y: auto; padding: 18px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.settingsSection h3{ margin: 0 0 4px; font-size: 14px; font-weight: 700; }
+.settingsSectionDesc{ margin: 0 0 12px; font-size: 12.5px; color: var(--text-secondary); }
+
+/* -- §C-2: 채널 카드 -------------------------------------------------- */
+.notifyChannelList{ display: flex; flex-direction: column; gap: 10px; }
+.notifyChannelCard{
+  border: 1px solid var(--border-card, rgba(0,0,0,.1)); border-radius: 14px; padding: 12px 14px;
+  background: var(--surface-secondary);
+}
+.notifyChannelHeaderRow{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.notifyChannelName{ font-size: 13.5px; font-weight: 700; }
+.notifyChannelStatus{
+  font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+}
+.notifyChannelStatus.connected{ background: var(--success-soft); color: var(--success); }
+.notifyChannelStatus.pending{ background: var(--warning-soft); color: var(--warning); }
+.notifyConnectButton{
+  font-size: 12.5px; font-weight: 600; padding: 6px 14px; border-radius: 9px;
+  border: 1px solid var(--border-card, rgba(0,0,0,.14)); background: var(--surface, #fff);
+  color: var(--text-primary); cursor: pointer;
+}
+.notifyConnectButton:hover{ background: var(--surface-secondary); }
+.notifyChannelConnectedRow{
+  display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;
+}
+.notifyChannelTarget{
+  font-size: 12.5px; color: var(--text-secondary); font-family: var(--font-mono, monospace);
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.notifyInlineButton{
+  font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 8px;
+  border: 1px solid var(--border-card, rgba(0,0,0,.14)); background: var(--surface, #fff);
+  color: var(--text-primary); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+}
+.notifyInlineButton:hover{ background: var(--surface-secondary); }
+.notifyInlineButton:disabled{ opacity: .5; cursor: not-allowed; }
+.notifyInlineButton.danger{ color: var(--danger); border-color: var(--danger-soft); }
+.notifyPrimaryButton{
+  font-size: 12.5px; font-weight: 700; padding: 7px 16px; border-radius: 9px; border: none;
+  background: var(--accent, #0e306d); color: #fff; cursor: pointer;
+}
+.notifyPrimaryButton:disabled{ opacity: .55; cursor: not-allowed; }
+
+.notifyConnectForm{
+  margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border-card, rgba(0,0,0,.12));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.notifyConnectSteps{
+  margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px; color: var(--text-secondary);
+}
+.notifyConnectSteps strong{ display: block; color: var(--text-primary); font-size: 12.5px; }
+.notifyConnectSteps span{ display: block; font-family: var(--font-mono, monospace); }
+.notifyChannelWarning{
+  margin: 0; padding: 8px 10px; border-radius: 9px; font-size: 11.5px; line-height: 1.5;
+  background: var(--warning-soft); color: var(--warning);
+}
+.notifyChannelNote{ margin: 0; font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; }
+.notifyChannelPendingNote{
+  margin: 8px 0 0; padding: 8px 10px; border-radius: 9px; font-size: 12px; line-height: 1.5;
+  background: var(--warning-soft); color: var(--warning);
+}
+.notifyFieldLabel{
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.notifyFieldLabel input,
+.notifyCodeInput{
+  min-height: 36px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--border-card, rgba(0,0,0,.16));
+  background: var(--surface, #fff); color: var(--text-primary); font: 500 13px/1 var(--font-ui, inherit);
+}
+.notifyCodeInput{ flex: 1 1 auto; min-width: 0; letter-spacing: 0.12em; text-align: center; }
+.notifyFieldError{ margin: 0; font-size: 11.5px; color: var(--danger); }
+.notifyTestResult{ margin: 0; font-size: 11.5px; line-height: 1.5; }
+.notifyTestResult.ok{ color: var(--success); }
+.notifyTestResult.error{ color: var(--danger); }
+.notifyFormActions{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* -- §C-4: 발송 조건 --------------------------------------------------- */
+.notifyConditions{ display: flex; flex-direction: column; gap: 14px; }
+.notifyConditionsRow{ display: flex; flex-direction: column; gap: 6px; }
+.notifyConditionsLabel{ font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+.notifyGradeToggles,
+.notifyTimingToggles{ display: flex; gap: 8px; flex-wrap: wrap; }
+.notifyGradeToggle,
+.notifyTimingToggle{
+  font-size: 12.5px; font-weight: 600; padding: 7px 14px; border-radius: 999px;
+  border: 1.5px solid var(--border-card, rgba(0,0,0,.16)); background: var(--surface, #fff);
+  color: var(--text-secondary); cursor: pointer;
+}
+.notifyGradeToggle.active{ border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
+.notifyTimingToggle.active{ border-color: var(--accent); color: var(--accent); background: rgba(14, 48, 109, 0.08); }
+.notifyReliabilityGateNote{
+  margin: 4px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+  background: var(--success-soft); color: var(--success);
+}
+
+html[data-theme="dark"] .notifyGradeToggle.active{ background: rgba(238, 107, 118, 0.16); }
+html[data-theme="dark"] .notifyTimingToggle.active{ background: rgba(123, 163, 232, 0.16); }
+
+@media (max-width: 640px){
+  .settingsPanelBackdrop{ padding: 0; align-items: flex-end; justify-content: center; }
+  .settingsPanel{ width: 100%; max-height: 90vh; border-radius: 18px 18px 0 0; }
+}
+
+/* -- §A-2 모바일 탭바: 설정 탭 (버튼, <a>가 아니므로 기본 스타일 리셋) --- */
+.mobileTabButton{ border: none; cursor: pointer; font: inherit; }
+
+/* -- §E-6: 전처리 비교 로딩 스켈레톤 ------------------------------------ */
+.benchmarkTableSkeleton{ display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.benchmarkTableSkeleton .skeletonRow{
+  height: 34px; border-radius: 8px;
+  background: linear-gradient(90deg, var(--surface-secondary) 25%, var(--border-card, rgba(0,0,0,.06)) 37%, var(--surface-secondary) 63%);
+  background-size: 400% 100%;
+  animation: skeletonShimmer 1.4s ease infinite;
+}
+@keyframes skeletonShimmer{
+  0%{ background-position: 100% 50%; }
+  100%{ background-position: 0 50%; }
+}
+.preprocessingWinnerNote,
+.preprocessingTieNote{ color: var(--text-muted); }
+

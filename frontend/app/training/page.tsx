@@ -13,6 +13,7 @@ import {
   downloadDatasetFile,
   getDatasetSchema,
   getModelPerformance,
+  getPreprocessingComparison,
   getScreeningHeatmap,
   getScreeningPareto,
   getTrainingJob,
@@ -22,7 +23,14 @@ import { kindLabel } from "@/lib/kindLabels";
 import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { formatQValue } from "@/lib/numberFormat";
 import { formatLastRun } from "@/lib/timeFormat";
-import type { DatasetSchemaResponse, DatasetSummary, ModelPerformanceResponse, ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
+import type {
+  DatasetSchemaResponse,
+  DatasetSummary,
+  ModelPerformanceResponse,
+  ParetoRankingItem,
+  ParetoRankingResponse,
+  PreprocessingComparisonResponse,
+} from "@/types/data";
 
 const BUNDLED_TRAIN_ID = "train";
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -39,14 +47,6 @@ function hasUsableResult(performance: ModelPerformanceResponse | null): boolean 
 
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 
-// train.CSV 한 번 실측한 고정 벤치마크다 (spec 문구 전수 검토 §A-3) --
-// 데이터셋마다 다시 도는 실험이 아니라 전처리 방식 자체를 비교하는
-// 표이므로 캡션으로 기준을 명시하고, 매 데이터셋마다 값을 바꾸지 않는다.
-const BENCHMARK_REFERENCE = [
-  { name: "A. 중앙값 대체 + 클리핑 (현행)", y: 0.114, adopted: false },
-  { name: "B. 전체 인자 + NaN 보존", y: 0.146, adopted: false },
-  { name: "C. 선정 인자 + dev + 마스크", y: 0.177, adopted: true },
-];
 
 
 export default function TrainingPage() {
@@ -218,6 +218,35 @@ export default function TrainingPage() {
       });
     return () => {
       cancelled = true;
+    };
+  }, [analysisDatasetId]);
+
+  // 설정 패널 신설 §E: 전처리 A/B/C 비교는 데이터셋마다 다시 실측해야 한다
+  // (고정 벤치마크였던 예전 표와 달리, train.CSV는 B가·mentorship_final은
+  // C가 1위로 나오는 등 순위 자체가 데이터셋마다 다르다 -- §E-2). 표시된
+  // 데이터셋(analysisDatasetId)이 바뀔 때만 다시 불러온다 -- 탭을
+  // 오가는 것만으로는 재요청하지 않는다(서버도 dataset당 lru_cache로
+  // 한 번만 계산한다, §E-6).
+  const [preprocessingComparison, setPreprocessingComparison] = useState<PreprocessingComparisonResponse | null>(null);
+  const [preprocessingLoading, setPreprocessingLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setPreprocessingLoading(true);
+      getPreprocessingComparison(analysisDatasetId)
+        .then((result) => {
+          if (!cancelled) setPreprocessingComparison(result);
+        })
+        .catch(() => {
+          if (!cancelled) setPreprocessingComparison(null);
+        })
+        .finally(() => {
+          if (!cancelled) setPreprocessingLoading(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [analysisDatasetId]);
 
@@ -394,27 +423,49 @@ export default function TrainingPage() {
             <h2>데이터 전처리</h2>
           </div>
         </div>
-        <p className="sectionCaption">전처리 방식 비교는 train.CSV 기준 1회 실측값이며, 선택한 데이터셋에 따라 달라지지 않습니다.</p>
-        <div className="tableWrap benchmarkTableWrap">
-          <table className="benchmarkTable">
-            <thead>
-              <tr>
-                <th>방식</th>
-                <th className="numCol">R²</th>
-                <th aria-hidden="true" />
-              </tr>
-            </thead>
-            <tbody>
-              {BENCHMARK_REFERENCE.map((row) => (
-                <tr key={row.name}>
-                  <td>{row.name}</td>
-                  <td className="numCol">{row.y.toFixed(3)}</td>
-                  <td>{row.adopted && <span className="confidenceBadge adopted">채택</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {preprocessingLoading ? (
+          <div className="tableWrap benchmarkTableWrap">
+            <div className="benchmarkTableSkeleton" aria-hidden="true">
+              <div className="skeletonRow" />
+              <div className="skeletonRow" />
+              <div className="skeletonRow" />
+            </div>
+          </div>
+        ) : preprocessingComparison ? (
+          <>
+            <p className="sectionCaption">{preprocessingComparison.holdout_note}</p>
+            <div className="tableWrap benchmarkTableWrap">
+              <table className="benchmarkTable">
+                <thead>
+                  <tr>
+                    <th>방식</th>
+                    <th className="numCol">R²</th>
+                    <th aria-hidden="true" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {preprocessingComparison.results.map((row) => (
+                    <tr key={row.mode}>
+                      <td>{row.label}</td>
+                      <td className="numCol">{row.r2.toFixed(3)}</td>
+                      <td>{row.adopted && <span className="confidenceBadge adopted">채택</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {preprocessingComparison.winner_note && (
+              <p className="sectionCaption preprocessingWinnerNote">{preprocessingComparison.winner_note}</p>
+            )}
+            {preprocessingComparison.b_equals_c && (
+              <p className="sectionCaption preprocessingTieNote">
+                B와 C의 차이가 없는 것은 트리 모델이 결측을 자체 처리하기 때문입니다.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="sectionCaption">전처리 비교를 계산할 데이터가 부족합니다.</p>
+        )}
       </section>
 
       <HeatmapParetoSection

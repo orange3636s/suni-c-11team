@@ -1,8 +1,10 @@
 "use client";
 
+import { Monitor, Moon, Settings, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 
@@ -25,6 +27,7 @@ type SidebarProps = {
 
 export default function Sidebar({ activeItem = "모델 학습", collapsed = false, onToggleCollapse }: SidebarProps) {
   const { theme, setTheme } = useTheme();
+  const { settingsPanelOpen, setSettingsPanelOpen } = usePanelState();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
 
@@ -94,73 +97,90 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
             })}
           </nav>
         ) : (
-          <>
-            <nav aria-label="주요 메뉴">
-              <ul className="navigationList">
-                {navigationItems.map((item) => {
-                  const isActive = item.label === activeItem;
-                  return (
-                    <li key={item.label}>
-                      <Link
-                        className={`navigationItem ${isActive ? "active" : ""}`}
-                        href={item.href}
-                        aria-current={isActive ? "page" : undefined}
-                      >
-                        <NavIcon name={item.icon} />
-                        <span>{item.label}</span>
-                        <i className="menuStatusDot ready" aria-label="사용 가능" />
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </nav>
-
-            <div className="sidebarFooter" ref={themeMenuRef}>
-              {themeMenuOpen && (
-                <div className="themeMenu" role="menu" aria-label="Theme 선택">
-                  <strong>Theme</strong>
-                  <div className="themeOptions">
-                    {(
-                      [
-                        ["system", "System"],
-                        ["light", "Light"],
-                        ["dark", "Dark"],
-                      ] as [ThemePreference, string][]
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={theme === value ? "active" : ""}
-                        onClick={() => {
-                          setTheme(value);
-                          setThemeMenuOpen(false);
-                        }}
-                        role="menuitemradio"
-                        aria-checked={theme === value}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <button
-                className="themeToggle themeTrigger"
-                type="button"
-                aria-expanded={themeMenuOpen}
-                aria-label="Theme 선택"
-                aria-haspopup="menu"
-                title="Theme 선택"
-                onClick={() => setThemeMenuOpen((open) => !open)}
-              >
-                <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
-                <span className="themeTriggerLabel">Theme</span>
-                <ChevronDown />
-              </button>
-            </div>
-          </>
+          <nav aria-label="주요 메뉴">
+            <ul className="navigationList">
+              {navigationItems.map((item) => {
+                const isActive = item.label === activeItem;
+                return (
+                  <li key={item.label}>
+                    <Link
+                      className={`navigationItem ${isActive ? "active" : ""}`}
+                      href={item.href}
+                      aria-current={isActive ? "page" : undefined}
+                    >
+                      <NavIcon name={item.icon} />
+                      <span>{item.label}</span>
+                      <i className="menuStatusDot ready" aria-label="사용 가능" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
         )}
+
+        {/* 설정 패널 신설 §A-2: Theme + 설정 2분할. 접힘 상태에서도 항상
+            렌더링하되(§A-2 체크리스트 4번: "접힘 상태에서 아이콘만 표시"),
+            .sidebar.collapsed 쪽 CSS가 라벨/셰브론을 숨기고 세로로 쌓는다 --
+            분기를 늘리는 대신 같은 마크업을 CSS로만 다르게 보이게 한다. */}
+        <div className="sidebarFooter">
+          <div className="themeTriggerCol" ref={themeMenuRef}>
+            {themeMenuOpen && (
+              <div className="themeMenu" role="menu" aria-label="Theme 선택">
+                <strong>Theme</strong>
+                <div className="themeOptions">
+                  {(
+                    [
+                      ["system", "System", Monitor],
+                      ["light", "Light", Sun],
+                      ["dark", "Dark", Moon],
+                    ] as [ThemePreference, string, typeof Monitor][]
+                  ).map(([value, label, Icon]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={theme === value ? "active" : ""}
+                      onClick={() => {
+                        setTheme(value);
+                        setThemeMenuOpen(false);
+                      }}
+                      role="menuitemradio"
+                      aria-checked={theme === value}
+                    >
+                      <Icon aria-hidden="true" className="themeOptionIcon" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button
+              className="themeToggle themeTrigger"
+              type="button"
+              aria-expanded={themeMenuOpen}
+              aria-label="Theme 선택"
+              aria-haspopup="menu"
+              title="Theme 선택"
+              onClick={() => setThemeMenuOpen((open) => !open)}
+            >
+              <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
+              <span className="themeTriggerLabel">Theme</span>
+              <ChevronDown />
+            </button>
+          </div>
+          <button
+            type="button"
+            className="themeToggle settingsTrigger"
+            aria-label="설정"
+            aria-haspopup="dialog"
+            aria-expanded={settingsPanelOpen}
+            title="설정"
+            onClick={() => setSettingsPanelOpen((open) => !open)}
+          >
+            <span className="themeTriggerIcon" aria-hidden="true"><Settings size={18} /></span>
+            <span className="themeTriggerLabel">설정</span>
+          </button>
+        </div>
       </div>
     </aside>
   );
@@ -175,13 +195,11 @@ function NavIcon({ name }: { name: string }) {
   return <svg className="navigationIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
+// 설정 패널 신설 §B: 이모지(🖥️☀️🌙) 대신 lucide-react 컴포넌트를 쓴다 --
+// OS/브라우저마다 이모지 모양이 달라지는 문제가 없다.
 function ThemeIcon({ theme }: { theme: ThemePreference }) {
-  const path = theme === "dark"
-    ? <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
-    : theme === "system"
-      ? <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></>
-      : <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></>;
-  return <svg className="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{path}</svg>;
+  const Icon = theme === "dark" ? Moon : theme === "system" ? Monitor : Sun;
+  return <Icon className="themeIcon" aria-hidden="true" />;
 }
 
 function ChevronDown() {

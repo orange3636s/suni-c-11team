@@ -9,10 +9,18 @@ import type {
   CategoricalScatterResponse,
   MeasurementExpansionResponse,
   ModelPerformanceResponse,
+  NotificationSettingsSummary,
   ParetoRankingResponse,
   RecommendationListResponse,
   ScreeningScatterResponse,
 } from "@/types/data";
+
+const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
+  slack: { connected: false, target: null, webhook_masked: null, verified_at: null },
+  telegram: { connected: false, target: null, chat_id_masked: null, verified_at: null },
+  gmail: { connected: false, pending: false, email: null, verified_at: null },
+  conditions: { grades: ["심각", "위험"], timing: "on_analysis" },
+};
 
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------
 // Two layers, per spec §4:
@@ -78,6 +86,11 @@ type AnalysisStateValue = {
   setAnalysis: (value: AnalysisState | ((previous: AnalysisState) => AnalysisState)) => void;
   alarms: AlarmsState;
   setAlarms: (value: AlarmsState | ((previous: AlarmsState) => AlarmsState)) => void;
+  // 설정 패널 신설 §D-3: state/latest가 마운트 시 1번에 실어 온 알림 설정.
+  // 설정 패널의 각 변경 액션(연결/해제/조건 저장)은 자기 응답으로 이 값을
+  // 갱신할 뿐, 별도 GET을 새로 만들지 않는다.
+  notifications: NotificationSettingsSummary;
+  setNotifications: (value: NotificationSettingsSummary) => void;
 };
 
 const AnalysisStateContext = createContext<AnalysisStateValue | null>(null);
@@ -87,6 +100,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [training, setTraining] = useState<TrainingState>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>(null);
   const [alarms, setAlarms] = useState<AlarmsState>(null);
+  const [notifications, setNotifications] = useState<NotificationSettingsSummary>(DEFAULT_NOTIFICATIONS);
   const hydrationStarted = useRef(false);
 
   useEffect(() => {
@@ -138,6 +152,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             recommendations: state.alarms.payload.recommendations,
           });
         }
+        if (state.notifications) {
+          setNotifications(state.notifications);
+        }
       })
       .catch(() => {
         // spec: 복원 실패가 앱을 막으면 안 된다 -- start empty, silently.
@@ -151,8 +168,8 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   }, []);
 
   const value = useMemo<AnalysisStateValue>(
-    () => ({ hydrated, training, setTraining, analysis, setAnalysis, alarms, setAlarms }),
-    [hydrated, training, analysis, alarms],
+    () => ({ hydrated, training, setTraining, analysis, setAnalysis, alarms, setAlarms, notifications, setNotifications }),
+    [hydrated, training, analysis, alarms, notifications],
   );
 
   return <AnalysisStateContext.Provider value={value}>{children}</AnalysisStateContext.Provider>;
