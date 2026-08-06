@@ -9,7 +9,7 @@ import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
-import ScatterChart, { type ScatterColorMode } from "@/components/ScatterChart";
+import ScatterChart, { type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { formatPValue } from "@/lib/numberFormat";
 import {
@@ -133,7 +133,23 @@ function RootCauseContent() {
   const [quickLookData, setQuickLookData] = useState<ScreeningScatterResponse | CategoricalScatterResponse | null>(null);
   const [quickLookError, setQuickLookError] = useState("");
   const [quickLookColorMode, setQuickLookColorMode] = useState<ColorMode>("default");
+  const [quickLookView, setQuickLookView] = useState<ScatterView>("scatter");
   const initialDeepLinkHandled = useRef(false);
+
+  // Unlike the main 5-card grid (each NumericFactorCard remounts on a new
+  // target/feature via its own `key`), this quick-look card is a single
+  // persistent instance reused across every heatmap-cell/Pareto-bar/alarm
+  // deep-link click -- so its view state needs an explicit reset back to
+  // Scatter Plot whenever the selected factor changes (spec §2-2/§8).
+  // Adjusting state during render (React's documented alternative to an
+  // effect for "reset when a prop changes") instead of useEffect, so it
+  // doesn't cause an extra cascading render pass.
+  const quickLookKey = quickLook ? `${quickLook.target}::${quickLook.feature}` : "";
+  const [prevQuickLookKey, setPrevQuickLookKey] = useState(quickLookKey);
+  if (quickLookKey !== prevQuickLookKey) {
+    setPrevQuickLookKey(quickLookKey);
+    setQuickLookView("scatter");
+  }
 
   // A dataset change invalidates every cached result -- back to "not yet run".
   useEffect(() => {
@@ -428,24 +444,35 @@ function RootCauseContent() {
         <>
           {quickLook && (
             <article id="heatmapQuickLook" className="resultCard factorChartCard">
-              <div className="factorChartMeta">
-                <div className="factorChartTitleBlock">
-                  <span className="sectionLabel">선택한 인자</span>
+              <div className="factorChartHeader">
+                <div className="factorChartHeaderRow">
                   <div className="factorChartTitleRow">
                     <h2>{quickLook.feature} vs {quickLook.target}</h2>
                     {!quickLook.isConfig && <ColorBySelect value={quickLookColorMode} onChange={setQuickLookColorMode} />}
                   </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    {!quickLook.isConfig && <ViewToggle value={quickLookView} onChange={setQuickLookView} />}
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => {
+                        setQuickLook(null);
+                        setQuickLookData(null);
+                      }}
+                    >
+                      닫기
+                    </button>
+                  </div>
                 </div>
-                <button
-                  className="button"
-                  type="button"
-                  onClick={() => {
-                    setQuickLook(null);
-                    setQuickLookData(null);
-                  }}
-                >
-                  닫기
-                </button>
+                <div className="factorChartHeaderRow meta">
+                  <span className="sectionLabel">선택한 인자</span>
+                  {quickLookNumeric && (
+                    <div className="factorChartMetaTwoLine">
+                      <span>n={quickLookNumeric.n.toLocaleString()} · ε²={quickLookNumeric.eps2.toFixed(3)}</span>
+                      <span>p-value {formatPValue(quickLookNumeric.p_value)} · 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}</span>
+                    </div>
+                  )}
+                </div>
               </div>
               {quickLookError && <p className="errorMessage">{quickLookError}</p>}
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
@@ -460,7 +487,7 @@ function RootCauseContent() {
                 </p>
               )}
               {quickLookNumeric ? (
-                <ScatterChart data={quickLookNumeric} colorMode={quickLookColorMode} onSelectWafer={setSelectedWafer} height={420} />
+                <ScatterChart data={quickLookNumeric} colorMode={quickLookColorMode} view={quickLookView} onSelectWafer={setSelectedWafer} height={420} />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={420} />
               ) : !quickLookError ? (
@@ -549,6 +576,27 @@ function RootCauseContent() {
   );
 }
 
+/** Scatter/Box view toggle (spec §1-3) -- lives in the card header, same
+ * row/height as the title, not inside ScatterChart itself: the toggle
+ * state is owned by whichever card renders the chart (spec §2-2:
+ * "산점도마다 독립적인 상태"), purely a client-side re-render of
+ * already-fetched points/bins, no new API call on switch. */
+function ViewToggle({ value, onChange }: { value: ScatterView; onChange: (view: ScatterView) => void }) {
+  return (
+    <div className="scatterViewToggleRow">
+      <span className="scatterViewToggleLabel">보기</span>
+      <div className="scatterViewToggle" role="group" aria-label="차트 보기 방식">
+        <button type="button" className={`scatterViewToggleBtn ${value === "scatter" ? "active" : ""}`} onClick={() => onChange("scatter")}>
+          Scatter Plot
+        </button>
+        <button type="button" className={`scatterViewToggleBtn ${value === "box" ? "active" : ""}`} onClick={() => onChange("box")}>
+          Box Plot
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** One dropdown per scatter card (spec §5-3) -- no server round-trip on
  * change, `lot_id`/`config` already ride along in the point data
  * ScatterChart already has. */
@@ -590,11 +638,14 @@ function NumericFactorCard({
   onCompare: (feature: string) => void;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
+  // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
+  // in a shared store/URL/localStorage -- resets for free whenever this
+  // card remounts on a new run/target (see its `key` at the call site).
+  const [view, setView] = useState<ScatterView>("scatter");
   return (
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
-      <div className="factorChartMeta">
-        <div className="factorChartTitleBlock">
-          <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
+      <div className="factorChartHeader">
+        <div className="factorChartHeaderRow">
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
@@ -608,15 +659,17 @@ function NumericFactorCard({
             </button>
             <ColorBySelect value={colorMode} onChange={setColorMode} />
           </div>
+          <ViewToggle value={view} onChange={setView} />
         </div>
-        {numericData && (
-          <small className="factorChartStats">
-            <span>n={numericData.n}</span>
-            <span>기여율={item.contribution_pct.toFixed(1)}%</span>
-            <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
-            <span>p-value {formatPValue(item.p_value)}</span>
-          </small>
-        )}
+        <div className="factorChartHeaderRow meta">
+          <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
+          {numericData && (
+            <div className="factorChartMetaTwoLine">
+              <span>n={numericData.n.toLocaleString()} · 기여율 {item.contribution_pct.toFixed(1)}% · <span className="metaCumulative">누적 {item.cumulative_pct.toFixed(1)}%</span></span>
+              <span>p-value {formatPValue(item.p_value)} · 등급 {TIER_LABEL[item.confidence_tier]}</span>
+            </div>
+          )}
+        </div>
       </div>
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
@@ -624,7 +677,7 @@ function NumericFactorCard({
         </p>
       )}
       {numericData ? (
-        <ScatterChart data={numericData} colorMode={colorMode} onSelectWafer={onSelectWafer} height={480} />
+        <ScatterChart data={numericData} colorMode={colorMode} view={view} onSelectWafer={onSelectWafer} height={480} />
       ) : (
         <p className="emptyMessage">불러오는 중…</p>
       )}

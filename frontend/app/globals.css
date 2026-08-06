@@ -8497,6 +8497,34 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 @container factorCard (max-width: 420px){
   .factorChartMeta{ flex-direction: column; align-items: flex-start; }
 }
+
+/* Numeric factor card header (spec §1) -- 2 stacked rows: row 1 is
+   제목 -> 등급 배지 -> Y1~Y5 비교 -> 색상 (left) plus the Scatter/Box 보기
+   토글 (right, same height as the title); row 2 is 순위·ε² (left) plus the
+   n/기여율/누적/p-value/등급 meta, now collapsed into one 2-line block
+   directly under the toggle instead of split across two separate
+   surfaces (card header vs. chart-internal meta line). */
+.factorChartHeader{ display: flex; flex-direction: column; gap: 4px; }
+.factorChartHeaderRow{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.factorChartHeaderRow.meta{ align-items: flex-start; }
+.factorChartMetaTwoLine{
+  display: flex; flex-direction: column; gap: 0; line-height: 1.3; text-align: right;
+  font-size: 10px; color: var(--text-secondary); flex: 0 0 auto; min-width: 0; max-width: 100%;
+}
+.factorChartMetaTwoLine span{ white-space: nowrap; }
+/* Never overflow the card (spec §1-5): shrink first, then let the
+   least-critical figure (누적) wrap rather than push the card wider. */
+@container factorCard (max-width: 640px){
+  .factorChartMetaTwoLine{ font-size: 9px; }
+}
+@container factorCard (max-width: 480px){
+  .factorChartMetaTwoLine .metaCumulative{ display: none; }
+}
+@container factorCard (max-width: 380px){
+  .factorChartHeaderRow.meta{ flex-direction: column; align-items: flex-start; gap: 2px; }
+  .factorChartMetaTwoLine{ text-align: left; }
+}
+
 .waferDetailPopover{
   position: fixed; z-index: 50; width: 320px; max-width: calc(100vw - 24px); border-radius: 16px;
   border: 1px solid var(--border-card, rgba(0,0,0,.1)); background: var(--surface-card, #fff);
@@ -8782,14 +8810,11 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
    renders through this one component so control-limit lines are never
    drawn differently on different screens. */
 .scatterChart{ display: flex; flex-direction: column; gap: 4px; }
-.scatterChartMeta{
-  display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary);
-  justify-content: flex-end; margin-bottom: 2px;
-}
-/* Scatter/Box view toggle (spec §2-1) -- own row directly under the meta
-   line, right-aligned segmented control matching .compareTriggerButton's
-   height/radius/font. */
-.scatterViewToggleRow{ display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
+/* Scatter/Box view toggle (spec §1-3) -- lives in the card header (see
+   ViewToggle in root-cause/page.tsx), same row/height as the title, not
+   inside this component. Segmented control matching
+   .compareTriggerButton's height/radius/font. */
+.scatterViewToggleRow{ display: flex; align-items: center; gap: 8px; }
 .scatterViewToggleLabel{ font-size: 12px; color: var(--text-secondary); }
 .scatterViewToggle{
   display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px;
@@ -8859,11 +8884,14 @@ html[data-theme="dark"] .scatterInterpretationTipLabel{ color: #93C5FD; }
 }
 html[data-theme="dark"] .scatterInterpretationTipBody{ color: #C7CFD9; }
 
-/* 산점도 범례 -- 2행 x 최대 4항목, 각 항목이 견본+굵은 라벨+작은 설명을
-   갖는 카드 (spec §3). 토글 가능한 카드(관리한계/최적 중심/권장 구간/구간
-   평균 불량률)는 <button>으로, 나머지는 <div>로 렌더링되지만 스타일은
-   공유한다. */
-.scatterRefLegend{ display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+/* 범례 (spec §5) -- 각 행이 최대 5항목, 견본+굵은 라벨(+있을 때만 작은
+   설명)을 갖는 카드. 토글 가능한 카드(관리한계/최적 중심/권장 구간/구간
+   평균 불량률, Box Plot의 개별 wafer/이상치 wafer)는 <button>으로, 상자/
+   중앙값/수염처럼 끌 수 없는 카드는 <div>로 렌더링되지만 스타일은 공유한다
+   (LegendCard, ScatterChart.tsx). Scatter/Box 두 보기 모두 같은
+   .scatterRefLegend/.scatterLegendRow를 쓰므로 기준선 4종 + 구간 평균
+   불량률 행은 두 보기에서 마크업까지 동일하다. */
+.scatterRefLegend{ display: flex; flex-direction: column; gap: 10px; margin-top: 12px; margin-bottom: 16px; }
 .scatterRefLegendDivider{ height: 1px; background: var(--border-card, var(--border)); opacity: 0.6; }
 .scatterLegendRow{ display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
 .scatterLegendCard{
@@ -8873,32 +8901,15 @@ html[data-theme="dark"] .scatterInterpretationTipBody{ color: #C7CFD9; }
 }
 .scatterLegendCard.interactive{ cursor: pointer; border-color: var(--border-card, var(--border)); }
 .scatterLegendCard.interactive.active{ background: var(--surface-secondary, var(--surface-muted)); }
+/* Clicked off (spec §4: "꺼진 항목은 불투명도 0.35로 흐리게") -- distinct
+   from `.disabled` (never clickable to begin with, e.g. 데이터 범위 밖):
+   this is a togglable card currently in its "off" state. */
+.scatterLegendCard.interactive:not(.active):not(.disabled){ opacity: 0.35; }
 .scatterLegendCard.interactive.disabled{ opacity: 0.35; cursor: not-allowed; }
 .scatterLegendCardSwatch{ flex: 0 0 auto; display: inline-flex; align-items: center; padding-top: 2px; }
 .scatterLegendCardText{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .scatterLegendCardText strong{ font-size: 11px; font-weight: 700; color: var(--text-primary); }
 .scatterLegendCardText small{ font-size: 9px; color: var(--text-secondary); }
-/* LOT별 Color By -- 최대 400개까지 순환하는 색을 견본으로 나열하는 대신
-   안내 문구 한 줄로 대체한다 (spec §5). */
-.scatterColorLegendNote{ margin: 0; align-self: center; font-size: 11px; color: var(--text-secondary); }
-.scatterHoverHint{ margin: 2px 0 0; text-align: center; font-size: 10px; color: var(--text-secondary); }
-
-/* Box Plot legend (spec §4) -- 2 rows x up to 5 read-only cards, each a
-   swatch + bold label + small description, closing with a centered green
-   callout. Not a toggle button set like .scatterLegendItem -- box mode
-   doesn't offer per-element visibility toggling. */
-.scatterBoxLegend{ margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
-.scatterBoxLegendRow{ display: flex; gap: 18px; flex-wrap: wrap; }
-.scatterBoxLegendItem{ display: flex; align-items: flex-start; gap: 8px; min-width: 150px; }
-.scatterBoxLegendSwatch{ flex: 0 0 auto; display: inline-flex; align-items: center; padding-top: 2px; }
-.scatterBoxLegendText{ display: flex; flex-direction: column; gap: 1px; }
-.scatterBoxLegendText strong{ font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
-.scatterBoxLegendText small{ font-size: 11px; color: var(--text-secondary); }
-.scatterBoxLegendNote{
-  margin: 2px 0 0; text-align: center; font-size: 12.5px; font-weight: 700;
-  color: #059669;
-}
-html[data-theme="dark"] .scatterBoxLegendNote{ color: #34D399; }
 
 /* Box mode point-hover tooltip "이상치" tag (spec §5). */
 .scatterOutlierTag{ color: #DC2626; }
