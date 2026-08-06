@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
+import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import {
@@ -13,9 +15,11 @@ import {
   getScreeningHeatmap,
   getScreeningPareto,
   getTrainingJob,
+  saveTrainingState,
 } from "@/lib/api";
 import { kindLabel } from "@/lib/kindLabels";
 import { formatQValue } from "@/lib/numberFormat";
+import { formatLastRun } from "@/lib/timeFormat";
 import type { DatasetSummary, ModelPerformanceResponse, ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
 
 const BUNDLED_TRAIN_ID = "train";
@@ -23,14 +27,6 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 
 const showMetric = (value?: number | null, digits = 3) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "-";
-
-function formatTrainedAt(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 /** A completed job with no usable payload is an error, not "not yet run" --
  * silently falling back to the empty state would hide a real failure
@@ -49,6 +45,12 @@ const BENCHMARK_REFERENCE = [
 
 export default function TrainingPage() {
   const router = useRouter();
+  // 학습 결과 상태 유지 (spec: 학습·분석 결과 상태 유지) -- performance/
+  // paretoByTarget/analysisReady/activeTarget all live in the shared
+  // AnalysisStateProvider context now, not local useState, so switching
+  // away to another tab and back renders instantly from memory with no
+  // network call (checklist §탭 이동 #1/#4).
+  const { training, setTraining, hydrated } = useAnalysisState();
   const [datasetId, setDatasetId] = useState(BUNDLED_TRAIN_ID);
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -56,55 +58,90 @@ export default function TrainingPage() {
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [performance, setPerformance] = useState<ModelPerformanceResponse | null>(null);
   const [performanceLoading, setPerformanceLoading] = useState(true);
   const [performanceError, setPerformanceError] = useState("");
 
-  const [activeTarget, setActiveTarget] = useState<string>("Y1");
-  const [paretoByTarget, setParetoByTarget] = useState<Record<string, ParetoRankingResponse>>({});
-  const [analysisReady, setAnalysisReady] = useState(false);
+  const performance = training?.performance ?? null;
+  const paretoByTarget = training?.paretoByTarget ?? {};
+  const analysisReady = training?.analysisReady ?? false;
+  const activeTarget = training?.activeTarget ?? "Y1";
+
+  function setActiveTarget(target: string) {
+    setTraining((previous) => (previous ? { ...previous, activeTarget: target } : previous));
+  }
+
+  // 재접속/새로고침으로 복원된 결과의 데이터셋을 셀렉터에도 반영한다 (spec
+  // §4-3) -- 하이드레이션이 끝난 뒤 한 번만, 사용자가 이미 고른 값을 덮어쓰지
+  // 않도록 이 컴포넌트 마운트당 정확히 한 번만 실행된다.
+  const trainedDatasetRef = useRef(datasetId);
+  const syncedFromRestore = useRef(false);
+  useEffect(() => {
+    if (!hydrated || syncedFromRestore.current) return;
+    syncedFromRestore.current = true;
+    if (!training) return;
+    const timer = window.setTimeout(() => setDatasetId(training.dataset), 0);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, training]);
+
+  // `training` is read through a ref inside loadPerformance below so the
+  // callback never closes over a stale snapshot without needing it in the
+  // dependency array (which would otherwise recreate it, and the polling
+  // effect below, on every context update).
+  const trainingRef = useRef(training);
+  useEffect(() => {
+    trainingRef.current = training;
+  }, [training]);
 
   // `requireResult` marks a load that follows a job the UI itself just
   // watched finish -- only then do we know for certain a result *should*
   // exist, so only then does an empty/missing payload count as an error
   // instead of the plain "not run yet" empty state.
-  const loadPerformance = useCallback(async (options?: { requireResult?: boolean }) => {
-    setPerformanceLoading(true);
-    try {
-      const result = await getModelPerformance();
-      setPerformance(result);
-      if (options?.requireResult && !hasUsableResult(result)) {
-        setPerformanceError("학습은 완료되었지만 결과를 불러오지 못했습니다.");
-      } else {
-        setPerformanceError("");
+  const loadPerformance = useCallback(
+    async (options?: { requireResult?: boolean; forDataset?: string }) => {
+      setPerformanceLoading(true);
+      try {
+        const result = await getModelPerformance();
+        if (options?.requireResult && !hasUsableResult(result)) {
+          setPerformanceError("학습은 완료되었지만 결과를 불러오지 못했습니다.");
+        } else {
+          setPerformanceError("");
+        }
+        if (hasUsableResult(result)) {
+          const forDataset = options?.forDataset ?? trainingRef.current?.dataset ?? datasetId;
+          setTraining((previous) =>
+            previous && previous.dataset === forDataset
+              ? { ...previous, performance: result }
+              : { dataset: forDataset, createdAt: result.trained_at ?? new Date().toISOString(), performance: result, paretoByTarget: {}, analysisReady: false, activeTarget: "Y1" },
+          );
+        }
+      } catch (loadError) {
+        if (options?.requireResult) {
+          setPerformanceError(loadError instanceof Error ? loadError.message : "결과를 불러오지 못했습니다.");
+        }
+      } finally {
+        setPerformanceLoading(false);
       }
-    } catch (loadError) {
-      setPerformance(null);
-      if (options?.requireResult) {
-        setPerformanceError(loadError instanceof Error ? loadError.message : "결과를 불러오지 못했습니다.");
-      }
-    } finally {
-      setPerformanceLoading(false);
-    }
-  }, []);
+    },
+    [datasetId, setTraining],
+  );
 
+  // Fallback only: if hydration has finished and there is still nothing
+  // in context (a fresh server session's app_state table is empty, or a
+  // model was promoted by some path that predates this feature), fall
+  // back to the old self-healing lookup -- exactly once, never on every
+  // tab visit (checklist §재접속 #4/#10, §탭 이동 #4).
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadPerformance(), 0);
-    return () => window.clearTimeout(timer);
-  }, [loadPerformance]);
-
-  // Switching datasets invalidates the heatmap/Pareto section -- back to
-  // "학습을 실행하면 표시됩니다" until retrained against the new dataset.
-  useEffect(() => {
+    if (!hydrated) return;
     const timer = window.setTimeout(() => {
-      setParetoByTarget({});
-      setAnalysisReady(false);
+      if (training) setPerformanceLoading(false);
+      else void loadPerformance();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [datasetId]);
+  }, [hydrated, training, loadPerformance]);
 
   useEffect(() => {
     if (!jobId) return;
+    const trainedDataset = trainedDatasetRef.current;
     const timer = window.setInterval(async () => {
       try {
         const job = await getTrainingJob(jobId);
@@ -117,16 +154,33 @@ export default function TrainingPage() {
           setProgress(99);
           try {
             const paretoResults = await Promise.all(
-              TARGETS.map((t) => getScreeningPareto(datasetId, t).then((response) => [t, response] as const)),
+              TARGETS.map((t) => getScreeningPareto(trainedDataset, t).then((response) => [t, response] as const)),
             );
-            setParetoByTarget(Object.fromEntries(paretoResults));
-            await getScreeningHeatmap(datasetId, "spearman").catch(() => {});
-            setAnalysisReady(true);
+            const paretoMap = Object.fromEntries(paretoResults) as Record<string, ParetoRankingResponse>;
+            await getScreeningHeatmap(trainedDataset, "spearman").catch(() => {});
+            setTraining((previous) => ({
+              dataset: trainedDataset,
+              createdAt: new Date().toISOString(),
+              performance: previous?.performance ?? { model_id: null, trained_at: null, source_filename: null, targets: [], final_yield: null },
+              paretoByTarget: paretoMap,
+              analysisReady: true,
+              activeTarget: previous?.activeTarget ?? "Y1",
+            }));
           } catch {
-            setAnalysisReady(false);
+            setTraining((previous) => (previous ? { ...previous, analysisReady: false } : previous));
           }
           setMessage("스크리닝 기반 Y1~Y5 GBDT 학습이 완료되었습니다.");
-          await loadPerformance({ requireResult: true });
+          await loadPerformance({ requireResult: true, forDataset: trainedDataset });
+          // 학습 완료 직후 저장 (spec §3-4) -- 실패해도 학습 자체는 이미
+          // 성공했으므로 조용히 무시한다 (spec §3-2).
+          try {
+            const latestPerformance = await getModelPerformance();
+            if (hasUsableResult(latestPerformance)) {
+              void saveTrainingState(trainedDataset, { performance: latestPerformance }).catch(() => {});
+            }
+          } catch {
+            // best-effort only
+          }
         } else if (job.status === "failed" || job.status === "interrupted") {
           window.clearInterval(timer);
           setJobId(null);
@@ -139,16 +193,19 @@ export default function TrainingPage() {
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [jobId, loadPerformance, datasetId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, loadPerformance]);
 
   async function train() {
     if (jobId) return;
     setError("");
     setMessage("");
-    setAnalysisReady(false);
-    setParetoByTarget({});
     setStage("학습 데이터셋을 불러오는 중입니다.");
     setProgress(0);
+    // Snapshot which dataset this run is actually for -- the selector
+    // stays interactive during a run, so the polling effect must not
+    // trust `datasetId` at completion time, only at submission time.
+    trainedDatasetRef.current = datasetId;
     try {
       const selected = datasets.find((item) => item.dataset_id === datasetId);
       const file = await downloadDatasetFile(datasetId, selected?.original_filename ?? "dataset.csv");
@@ -171,6 +228,9 @@ export default function TrainingPage() {
 
   const isRunning = Boolean(jobId);
   const hasResult = hasUsableResult(performance);
+  // 셀렉터를 바꿨는데 화면은 이전 데이터셋 결과인 경우 (spec §5-3) -- 결과를
+  // 지우지 않고 경고만 띄운다.
+  const datasetMismatch = Boolean(training && training.dataset !== datasetId);
 
   return (
     <DashboardShell activeItem="모델 학습">
@@ -186,8 +246,10 @@ export default function TrainingPage() {
             <span className="sectionLabel">DATASET</span>
             <h2>학습 데이터셋</h2>
           </div>
+          <LastRunNote createdAt={training?.createdAt} />
         </div>
         <DatasetSelector label="학습용 데이터셋" value={datasetId} onChange={setDatasetId} onDatasetsLoaded={setDatasets} />
+        <DatasetMismatchWarning mismatch={datasetMismatch} />
         {selectedDataset && selectedDataset.warnings.length > 0 && (
           <div className="datasetWarningBanner">
             <strong>주의</strong>
@@ -227,7 +289,7 @@ export default function TrainingPage() {
       )}
 
       {/* 학습 모델 요약바 (§1-2) + 타깃별 통합 테이블 (§1-3) */}
-      {isRunning || performanceLoading ? (
+      {isRunning || (performanceLoading && !hydrated) ? (
         <section className="trainingSummarySkeleton" role="status" aria-label="학습 결과 불러오는 중">
           <span className="trainingSummarySkeletonBar label" />
           <span className="trainingSummarySkeletonBar metrics" />
@@ -245,7 +307,7 @@ export default function TrainingPage() {
           <span className="trainingSummaryMetrics">
             <span>R² {showMetric(performance?.final_yield?.r2)}</span>
             <span>MAE {showMetric(performance?.final_yield?.mae)}</span>
-            <span>학습 시각 {formatTrainedAt(performance?.trained_at)}</span>
+            <span>학습 시각 {formatLastRun(performance?.trained_at)}</span>
           </span>
         </section>
       ) : (
@@ -330,7 +392,12 @@ export default function TrainingPage() {
       </section>
 
       <HeatmapParetoSection
-        datasetId={datasetId}
+        // The displayed result's own dataset (not the live selector value)
+        // -- keeps the heatmap in sync with paretoByTarget even while the
+        // selector points elsewhere (spec §5-3: don't auto-clear on a
+        // selector change, just warn; a stale heatmap fetch here would be
+        // exactly the "다른 데이터셋의 결과를 보게 된다" bug that guards against).
+        datasetId={training?.dataset ?? datasetId}
         enabled={analysisReady}
         paretoByTarget={paretoByTarget}
         activeTarget={activeTarget}

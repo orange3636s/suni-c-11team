@@ -2,11 +2,13 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
+import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
@@ -21,6 +23,7 @@ import {
   getScreeningPareto,
   getScreeningScatter,
   getScreeningScatterCategorical,
+  saveAnalysisState,
 } from "@/lib/api";
 import type {
   CategoricalScatterResponse,
@@ -34,6 +37,12 @@ import type {
 } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
+// Stable empty-object fallbacks (spec: avoid a fresh `{}` literal every
+// render feeding a useMemo/useEffect dependency array, which would defeat
+// memoization and refire effects needlessly).
+const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
+const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
+const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
 const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중"];
 
@@ -96,6 +105,37 @@ function buildCategoricalSpec(data: CategoricalScatterResponse) {
   };
 }
 
+/** Step 2 of a run (or a restore's background point-fill, spec §3-1/§4-2):
+ * fetch every displayed factor's full scatter/categorical data for all 5
+ * targets' Pareto items. Shared so a live run and a restored-but-lean
+ * result refill through the exact same code path. */
+async function fetchAllScatterData(
+  dataset: string,
+  paretoByTarget: Record<string, ParetoRankingResponse>,
+): Promise<{
+  scatterMap: Record<string, ScreeningScatterResponse>;
+  categoricalMap: Record<string, CategoricalScatterResponse>;
+}> {
+  const fetched = await Promise.all(
+    TARGETS.flatMap((t) =>
+      (paretoByTarget[t]?.items ?? []).map(async (item) => {
+        const key = `${t}::${item.feature}`;
+        if (item.kind === "Config") {
+          return { key, type: "categorical" as const, data: await getScreeningScatterCategorical(dataset, t, item.feature) };
+        }
+        return { key, type: "numeric" as const, data: await getScreeningScatter(dataset, t, item.feature) };
+      }),
+    ),
+  );
+  const scatterMap: Record<string, ScreeningScatterResponse> = {};
+  const categoricalMap: Record<string, CategoricalScatterResponse> = {};
+  for (const result of fetched) {
+    if (result.type === "categorical") categoricalMap[result.key] = result.data;
+    else scatterMap[result.key] = result.data;
+  }
+  return { scatterMap, categoricalMap };
+}
+
 export default function RootCausePage() {
   return (
     <Suspense fallback={null}>
@@ -108,6 +148,13 @@ function RootCauseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setAnalysisDataset } = usePanelState();
+  // 원인 분석 결과 상태 유지 (spec: 학습·분석 결과 상태 유지) -- the actual
+  // result (Pareto/스크리닝/산점도) lives in the shared AnalysisStateProvider
+  // context, not local useState, so tab switching renders it from memory
+  // with zero network calls (checklist §탭 이동 #1/#4), and a page
+  // reload/reconnect restores a lean (points-less) version of it via
+  // GET /api/state/latest.
+  const { analysis, setAnalysis, hydrated } = useAnalysisState();
   const [datasetId, setDatasetId] = useState("train");
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
@@ -126,9 +173,11 @@ function RootCauseContent() {
   const [reportSaving, setReportSaving] = useState(false);
   const [reportToast, setReportToast] = useState("");
 
-  const [paretoByTarget, setParetoByTarget] = useState<Record<string, ParetoRankingResponse>>({});
-  const [scatterByKey, setScatterByKey] = useState<Record<string, ScreeningScatterResponse>>({});
-  const [categoricalByKey, setCategoricalByKey] = useState<Record<string, CategoricalScatterResponse>>({});
+  const paretoByTarget = analysis?.paretoByTarget ?? EMPTY_PARETO_BY_TARGET;
+  const scatterByKey = analysis?.scatterByKey ?? EMPTY_SCATTER_BY_KEY;
+  const categoricalByKey = analysis?.categoricalByKey ?? EMPTY_CATEGORICAL_BY_KEY;
+  // 셀렉터를 바꿨는데 화면은 이전 데이터셋 결과인 경우 (spec §5-3).
+  const datasetMismatch = Boolean(analysis && analysis.dataset !== datasetId);
 
   const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string; isConfig: boolean } | null>(null);
@@ -153,22 +202,65 @@ function RootCauseContent() {
     setQuickLookView("scatter");
   }
 
-  // A dataset change invalidates every cached result -- back to "not yet run".
+  // A dataset change no longer wipes the displayed result (spec §5-3:
+  // "결과를 자동으로 지우지 마라") -- only the quick-look popover, which is
+  // scoped to whatever factor/dataset it was opened for and would show a
+  // stale chart otherwise. The mismatch banner (datasetMismatch, above)
+  // is what tells the user the selector and the result have diverged.
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setParetoByTarget({});
-      setScatterByKey({});
-      setCategoricalByKey({});
       setQuickLook(null);
       setQuickLookData(null);
-      setRunState("idle");
-      setRunError("");
-      setRunErrorDetail("");
-      setAnalysisDataset(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [datasetId]);
+
+  // 재접속/새로고침 복원, 그리고 탭을 옮겼다 돌아온 경우 모두 이 마운트
+  // 이펙트가 처리한다 -- `hydrated`는 앱 전체에서 한 번만 false->true로
+  // 바뀌므로, 이미 하이드레이션이 끝난 뒤에 이 페이지가 (재)마운트되면
+  // 즉시 실행된다. 셀렉터/타깃/실행 상태를 컨텍스트의 결과에 맞춰 한 번만
+  // 동기화한다 (spec §4-3) -- 이후 사용자가 셀렉터를 바꿔도 다시 개입하지
+  // 않는다.
+  const syncedFromRestore = useRef(false);
+  useEffect(() => {
+    if (!hydrated || syncedFromRestore.current) return;
+    syncedFromRestore.current = true;
+    if (!analysis) return;
+    const timer = window.setTimeout(() => {
+      setDatasetId(analysis.dataset);
+      if (!searchParams.get("target")) setActiveTarget(analysis.activeTarget);
+      setRunState("done");
+      setAnalysisDataset(analysis.dataset);
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetId]);
+  }, [hydrated, analysis]);
+
+  // 복원된 결과는 산점도 좌표를 담고 있지 않다 (spec §3-1) -- 배경에서 한
+  // 번 다시 채운다. 채우는 동안에도 스크리닝 표/Pareto/비교 카드 등 좌표가
+  // 필요 없는 부분은 이미 즉시 보인다.
+  useEffect(() => {
+    if (!analysis || analysis.pointsComplete) return;
+    let cancelled = false;
+    const { dataset, paretoByTarget: restoredPareto } = analysis;
+    void (async () => {
+      try {
+        const { scatterMap, categoricalMap } = await fetchAllScatterData(dataset, restoredPareto);
+        if (cancelled) return;
+        setAnalysis((previous) =>
+          previous && previous.dataset === dataset
+            ? { ...previous, scatterByKey: scatterMap, categoricalByKey: categoricalMap, pointsComplete: true }
+            : previous,
+        );
+      } catch {
+        // Best-effort background fill -- the user can always click "다시
+        // 실행" if this silently fails.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [analysis, setAnalysis]);
 
   async function runAnalysis() {
     setRunState("running");
@@ -189,23 +281,7 @@ function RootCauseContent() {
       const paretoMap: Record<string, ParetoRankingResponse> = Object.fromEntries(paretoResults);
 
       setRunStageIndex(2);
-      const fetched = await Promise.all(
-        TARGETS.flatMap((t) =>
-          (paretoMap[t]?.items ?? []).map(async (item) => {
-            const key = `${t}::${item.feature}`;
-            if (item.kind === "Config") {
-              return { key, type: "categorical" as const, data: await getScreeningScatterCategorical(datasetId, t, item.feature) };
-            }
-            return { key, type: "numeric" as const, data: await getScreeningScatter(datasetId, t, item.feature) };
-          }),
-        ),
-      );
-      const scatterMap: Record<string, ScreeningScatterResponse> = {};
-      const categoricalMap: Record<string, CategoricalScatterResponse> = {};
-      for (const result of fetched) {
-        if (result.type === "categorical") categoricalMap[result.key] = result.data;
-        else scatterMap[result.key] = result.data;
-      }
+      const { scatterMap, categoricalMap } = await fetchAllScatterData(datasetId, paretoMap);
 
       setRunStageIndex(3);
       // Warms the server-side cache with the same computation the
@@ -213,17 +289,28 @@ function RootCauseContent() {
       // a second (cheap, cached) round trip.
       await getScreeningHeatmap(datasetId, "spearman").catch(() => {});
 
-      setParetoByTarget(paretoMap);
-      setScatterByKey(scatterMap);
-      setCategoricalByKey(categoricalMap);
+      setAnalysis({
+        dataset: datasetId,
+        createdAt: new Date().toISOString(),
+        activeTarget,
+        paretoByTarget: paretoMap,
+        scatterByKey: scatterMap,
+        categoricalByKey: categoricalMap,
+        pointsComplete: true,
+      });
       setRunState("done");
       setAnalysisDataset(datasetId);
+      // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
+      // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
+      // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을
+      // 넘는다 -- 어차피 복원 직후 배경에서 fetchAllScatterData로 다시
+      // 채우므로(위 useEffect), 서버에는 화면 목록 구성에 꼭 필요한
+      // Pareto만 남긴다.
+      void saveAnalysisState(datasetId, { activeTarget, paretoByTarget: paretoMap }).catch(() => {});
     } catch (failure) {
       // Never leave a stale result on screen after a failure -- it could
       // be mistaken for the new run's output (spec §5-2).
-      setParetoByTarget({});
-      setScatterByKey({});
-      setCategoricalByKey({});
+      setAnalysis(null);
       const { kind, detail } = classifyAnalysisFailure(failure);
       console.error("원인 분석 실행 실패:", failure);
       setRunError(ANALYSIS_FAILURE_MESSAGE[kind]);
@@ -281,6 +368,10 @@ function RootCauseContent() {
   function selectTarget(target: string) {
     setActiveTarget(target);
     updateUrl(target);
+    // Keeps the persisted-for-restore activeTarget in sync with whatever
+    // the user is actually looking at, not frozen at whatever it was
+    // when the run/restore first completed.
+    setAnalysis((previous) => (previous ? { ...previous, activeTarget: target } : previous));
   }
 
   function openFactor(target: string, feature: string) {
@@ -377,12 +468,16 @@ function RootCauseContent() {
         <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr)" }}>
           <DatasetSelector label="분석 데이터셋" value={datasetId} onChange={setDatasetId} />
         </div>
+        <DatasetMismatchWarning mismatch={datasetMismatch} />
       </section>
 
       <section className="uploadCard">
         <div className="paretoRunBar">
           <div>
-            <h2 style={{ margin: 0, fontSize: "var(--text-section, 17px)" }}>원인 분석 실행</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h2 style={{ margin: 0, fontSize: "var(--text-section, 17px)" }}>원인 분석 실행</h2>
+              <LastRunNote createdAt={analysis?.createdAt} />
+            </div>
             <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
               {runState === "done"
                 ? "완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다."

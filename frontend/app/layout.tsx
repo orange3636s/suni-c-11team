@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 
+import AnalysisStateProvider from "@/components/AnalysisStateProvider";
 import PanelStateProvider from "@/components/PanelStateProvider";
 import ThemeProvider from "@/components/ThemeProvider";
 
@@ -47,7 +48,7 @@ export default async function RootLayout({
             initialSidebarCollapsed={initialSidebarCollapsed}
             initialAiPanelOpen={initialAiPanelOpen}
           >
-            {children}
+            <AnalysisStateProvider>{children}</AnalysisStateProvider>
           </PanelStateProvider>
         </ThemeProvider>
       </body>

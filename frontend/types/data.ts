@@ -708,6 +708,64 @@ export type ModelPerformanceResponse = {
   final_yield: TargetPerformance | null;
 };
 
+// -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------
+// Server-persisted "latest result" for each of the 3 long-running tabs.
+// `points` is never present on a restored ScreeningScatterResponse --
+// see GET /api/state/latest's docstring (src/runtime/app_state.py) --
+// so a restored entry is always `points: []` until the page independently
+// refetches it.
+
+export type LatestTrainingPayload = {
+  performance: ModelPerformanceResponse;
+};
+
+export type LatestTrainingRecord = {
+  schema_version: number;
+  created_at: string;
+  dataset: string;
+  payload: LatestTrainingPayload;
+};
+
+// Deliberately narrow (spec §6: 세 종류 합쳐 100KB 미만) -- per-factor
+// scatter/categorical detail (관리한계·권장구간·최적중심 등) is NOT part of
+// what gets persisted, even with points stripped: 25 factors' worth of
+// reference lines/bins/methods comparison alone measured ~105KB against
+// train.CSV, well over budget on its own. `paretoByTarget` is what the
+// screening table/Pareto bars render from and is cheap (a few KB); the
+// scatter detail is refetched via the same per-factor calls a live run
+// already makes (frontend's fetchAllScatterData), same as points always were.
+export type LatestAnalysisPayload = {
+  activeTarget: string;
+  paretoByTarget: Record<string, ParetoRankingResponse>;
+};
+
+export type LatestAnalysisRecord = {
+  schema_version: number;
+  created_at: string;
+  dataset: string;
+  payload: LatestAnalysisPayload;
+};
+
+export type LatestAlarmsPayload = {
+  summary: AlarmSummaryResponse;
+  alarms: AlarmListResponse;
+  recommendations: RecommendationListResponse;
+};
+
+export type LatestAlarmsRecord = {
+  schema_version: number;
+  created_at: string;
+  train_dataset: string;
+  eval_dataset: string;
+  payload: LatestAlarmsPayload;
+};
+
+export type LatestStateResponse = {
+  training: LatestTrainingRecord | null;
+  analysis: LatestAnalysisRecord | null;
+  alarms: LatestAlarmsRecord | null;
+};
+
 export type ReportFactorEntry = {
   feature: string;
   kind: string;

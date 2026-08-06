@@ -10,6 +10,10 @@ import type {
   DeleteModelResponse,
   HeatmapMetric,
   HeatmapResponse,
+  LatestAlarmsPayload,
+  LatestAnalysisPayload,
+  LatestStateResponse,
+  LatestTrainingPayload,
   ModelDetail,
   ModelListResponse,
   ModelPerformanceResponse,
@@ -348,6 +352,29 @@ async function getJson<T>(path: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise
   return response.json() as Promise<T>;
 }
 
+async function postJson<T>(path: string, body: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new ApiTimeoutError();
+    rethrowApiConfigurationError(error);
+    throw new ApiNetworkError();
+  } finally {
+    window.clearTimeout(timer);
+  }
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json() as Promise<T>;
+}
+
 export function getDatasets(): Promise<DatasetListResponse> {
   return getJson("/api/datasets");
 }
@@ -417,6 +444,35 @@ export function getScreeningPareto(dataset: string, target: string): Promise<Par
 
 export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {
   return getJson(`/api/analysis/report?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+// -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------
+// Called once on app mount by AnalysisStateProvider (spec §4-2/§6) --
+// never per tab-switch. A short timeout keeps a slow/unreachable API from
+// stalling first paint; the provider treats any failure the same as "no
+// saved result yet" (spec: "복원 실패가 앱을 막으면 안 된다").
+export function getLatestState(): Promise<LatestStateResponse> {
+  return getJson("/api/state/latest", 15_000);
+}
+
+// Fire-and-forget from the caller's point of view (spec §3-2: a save
+// failure must never surface as an analysis/training failure) -- these
+// still return a Promise so a caller that wants to log a failure can,
+// but every call site here is expected to `.catch(() => {})`.
+export function saveTrainingState(dataset: string, payload: LatestTrainingPayload): Promise<{ saved: boolean }> {
+  return postJson("/api/state/training", { dataset, payload }, 15_000);
+}
+
+export function saveAnalysisState(dataset: string, payload: LatestAnalysisPayload): Promise<{ saved: boolean }> {
+  return postJson("/api/state/analysis", { dataset, payload }, 15_000);
+}
+
+export function saveAlarmsState(
+  trainDataset: string,
+  evalDataset: string,
+  payload: LatestAlarmsPayload,
+): Promise<{ saved: boolean }> {
+  return postJson("/api/state/alarms", { train_dataset: trainDataset, eval_dataset: evalDataset, payload }, 15_000);
 }
 
 export type ChatMode = "report" | "chat";

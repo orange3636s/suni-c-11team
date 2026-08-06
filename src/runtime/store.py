@@ -114,6 +114,11 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_datasets_uploaded
                 ON datasets(uploaded_at DESC);
+                CREATE TABLE IF NOT EXISTS app_state (
+                    state_key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -411,6 +416,53 @@ class RuntimeStore:
     def delete_dataset(self, dataset_id: str) -> bool:
         with _lock, self._connect() as connection:
             cursor = connection.execute("DELETE FROM datasets WHERE dataset_id=?", (dataset_id,))
+            return cursor.rowcount > 0
+
+    # -- Generic key-value state (학습/원인 분석/사전 알람 "최근 결과 1개"
+    # persistence -- one row per kind, overwritten on every fresh save, no
+    # dedicated table per kind by design). --
+
+    def set_app_state(self, state_key: str, value: dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO app_state (state_key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at""",
+                (state_key, self._json(value), now),
+            )
+
+    def get_app_state(self, state_key: str) -> dict[str, Any] | None:
+        with _lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT value_json FROM app_state WHERE state_key=?", (state_key,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["value_json"])
+        except json.JSONDecodeError:
+            return None
+
+    def get_all_app_state(self, state_keys: list[str]) -> dict[str, dict[str, Any] | None]:
+        if not state_keys:
+            return {}
+        with _lock, self._connect() as connection:
+            placeholders = ",".join("?" for _ in state_keys)
+            rows = connection.execute(
+                f"SELECT state_key, value_json FROM app_state WHERE state_key IN ({placeholders})",
+                state_keys,
+            ).fetchall()
+        found: dict[str, dict[str, Any] | None] = {}
+        for row in rows:
+            try:
+                found[row["state_key"]] = json.loads(row["value_json"])
+            except json.JSONDecodeError:
+                found[row["state_key"]] = None
+        return {key: found.get(key) for key in state_keys}
+
+    def delete_app_state(self, state_key: str) -> bool:
+        with _lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM app_state WHERE state_key=?", (state_key,))
             return cursor.rowcount > 0
 
 

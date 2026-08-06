@@ -8422,6 +8422,16 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 }
 .datasetWarningBanner ul{ margin: 4px 0 0; padding-left: 18px; }
 
+/* 학습·분석 결과 상태 유지 -- "마지막 실행" 표시 (spec §5-1/§5-2) 및
+   데이터셋 불일치 경고 (spec §5-3). */
+.lastRunNote{ font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
+.lastRunStale{ color: var(--warning); }
+.datasetMismatchWarning{
+  margin: 8px 0 0; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-card, rgba(0,0,0,.1)));
+  background: var(--warning-soft); color: var(--warning);
+}
+
 /* Target segmented control with factor-count badges (원인분석 tab) */
 /* Shared by 모델 학습 and 원인 분석 (spec §2): centered between the heatmap
    and Pareto cards with equal margin on both sides -- a single margin

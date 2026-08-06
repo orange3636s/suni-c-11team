@@ -10,6 +10,7 @@ RuntimeStore. Deleting an upload removes both.
 from __future__ import annotations
 
 import io
+import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -20,8 +21,11 @@ import pandas as pd
 
 from src.analysis.screening.schema import Schema, parse_schema
 from src.dataset_normalization import normalize_dataset
+from src.runtime.app_state import invalidate_state_for_dataset
 from src.runtime.store import RuntimeStore
 from src.upload_limits import max_row_count, max_upload_size_bytes, max_upload_size_mb
+
+logger = logging.getLogger(__name__)
 
 LOW_ROW_COUNT_THRESHOLD = 1000
 UNSTABLE_ROW_COUNT_THRESHOLD = 2000
@@ -322,3 +326,10 @@ class DatasetRegistry:
         if path.is_file():
             path.unlink()
         self.store.delete_dataset(dataset_id)
+        # A deleted dataset's saved 학습/원인 분석/사전 알람 results would
+        # otherwise keep pointing a selector at data that no longer exists
+        # (spec §3-5) -- best-effort, deletion itself already succeeded above.
+        try:
+            invalidate_state_for_dataset(self.store, dataset_id)
+        except Exception:
+            logger.warning("데이터셋 삭제에 따른 최근 결과 무효화 실패: %s", dataset_id, exc_info=True)

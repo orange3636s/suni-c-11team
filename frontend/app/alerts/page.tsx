@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import {
@@ -13,16 +14,15 @@ import {
   useTableSearchSort,
   type SortOption,
 } from "@/components/DataTablePanel";
+import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { niceTicks } from "@/lib/niceTicks";
-import { getAlarmSummary, getAlarms, getRecommendations } from "@/lib/api";
+import { getAlarmSummary, getAlarms, getRecommendations, saveAlarmsState } from "@/lib/api";
 import type {
   AlarmItem,
-  AlarmListResponse,
   AlarmSummaryResponse,
   FactorBand,
   RecommendationItem,
-  RecommendationListResponse,
 } from "@/types/data";
 
 const SEVERITY_LABEL: Record<string, string> = { low: "낮음", medium: "중간", high: "높음" };
@@ -113,16 +113,37 @@ const RECOMMENDATION_SORT_OPTIONS: SortOption<RecommendationItem>[] = [
 
 export default function AlertsPage() {
   const { analysisDataset, requestChat } = usePanelState();
+  // 사전 알람 결과 상태 유지 (spec: 학습·분석 결과 상태 유지) -- summary/
+  // alarms/recommendations live in the shared context now, so tab
+  // switching renders instantly with no refetch, and a reload restores
+  // the last-fetched result from the server (spec §3-1: 산점도 좌표가
+  // 없는 다른 두 결과와 달리, 이 결과는 애초에 좌표를 담지 않으므로
+  // 복원이 항상 완전하다 -- 별도의 배경 재요청이 필요 없다).
+  const { alarms: alarmsState, setAlarms: setAlarmsState, hydrated } = useAnalysisState();
   const [trainDataset, setTrainDataset] = useState("train");
   const [evalDataset, setEvalDataset] = useState("test");
-  const [summary, setSummary] = useState<AlarmSummaryResponse | null>(null);
-  const [alarms, setAlarms] = useState<AlarmListResponse | null>(null);
-  const [recommendations, setRecommendations] = useState<RecommendationListResponse | null>(null);
   const [severityFilter, setSeverityFilter] = useState("");
   const [showReferenceTag, setShowReferenceTag] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [factorBandIndex, setFactorBandIndex] = useState(0);
+
+  const summary = alarmsState?.summary ?? null;
+  const alarms = alarmsState?.alarms ?? null;
+  const recommendations = alarmsState?.recommendations ?? null;
+  // 셀렉터(train/eval) 중 하나라도 표시 중인 결과와 다르면 경고 (spec
+  // §4-3/§5-3) -- 자동으로 결과를 지우거나 다시 불러오지 않는다.
+  const datasetMismatch = Boolean(
+    alarmsState && (alarmsState.trainDataset !== trainDataset || alarmsState.evalDataset !== evalDataset),
+  );
+
+  // 심각성 필터는 이미 불러온 alarms.items를 클라이언트에서 거를 뿐, 서버를
+  // 다시 부르지 않는다 -- 필터를 바꿔도 "탭 전환 시 API 재호출 금지"와
+  // 같은 원칙(불필요한 네트워크 요청 최소화)을 지키면서 즉시 반응한다.
+  const severityFilteredAlarmItems = useMemo(() => {
+    const items = alarms?.items ?? [];
+    return severityFilter ? items.filter((item) => item.severity === severityFilter) : items;
+  }, [alarms, severityFilter]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,27 +151,65 @@ export default function AlertsPage() {
     try {
       const [summaryResponse, alarmsResponse, recommendationsResponse] = await Promise.all([
         getAlarmSummary(trainDataset, evalDataset),
-        getAlarms(trainDataset, evalDataset, severityFilter || undefined),
+        getAlarms(trainDataset, evalDataset),
         getRecommendations(trainDataset, evalDataset),
       ]);
-      setSummary(summaryResponse);
-      setAlarms(alarmsResponse);
-      setRecommendations(recommendationsResponse);
+      setAlarmsState({
+        trainDataset,
+        evalDataset,
+        createdAt: new Date().toISOString(),
+        summary: summaryResponse,
+        alarms: alarmsResponse,
+        recommendations: recommendationsResponse,
+      });
       setFactorBandIndex(0);
+      // 조회 성공 직후 저장 (spec §3-4) -- 실패해도 방금 불러온 결과는
+      // 이미 화면에 반영되어 있다 (spec §3-2).
+      void saveAlarmsState(trainDataset, evalDataset, {
+        summary: summaryResponse,
+        alarms: alarmsResponse,
+        recommendations: recommendationsResponse,
+      }).catch(() => {});
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "알람 로그를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [trainDataset, evalDataset, severityFilter]);
+  }, [trainDataset, evalDataset, setAlarmsState]);
 
+  // 재접속/새로고침, 그리고 탭을 옮겼다 돌아온 경우 모두 이 마운트
+  // 이펙트가 처리한다 (spec §4-2/§4-3) -- 셀렉터를 컨텍스트의 결과에 맞춰
+  // 한 번만 동기화한다.
+  const syncedFromRestore = useRef(false);
   useEffect(() => {
+    if (!hydrated || syncedFromRestore.current) return;
+    syncedFromRestore.current = true;
+    if (!alarmsState) return;
+    const timer = window.setTimeout(() => {
+      setTrainDataset(alarmsState.trainDataset);
+      setEvalDataset(alarmsState.evalDataset);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, alarmsState]);
+
+  // Fallback only: nothing restored/cached yet -- load once with
+  // whatever the default train/eval selection is, matching this page's
+  // original always-auto-load behavior for a genuinely first visit.
+  // Never refires just because a selector changes afterward (spec §5-3:
+  // "결과를 자동으로 지우지 마라" / "사용자가 실행 버튼을 눌러야 갱신된다"),
+  // and never on a tab revisit (checklist §탭 이동 #4).
+  const autoLoaded = useRef(false);
+  useEffect(() => {
+    if (!hydrated || autoLoaded.current) return;
+    autoLoaded.current = true;
+    if (alarmsState) return;
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, alarmsState]);
 
   const alarmTable = useTableSearchSort(
-    alarms?.items ?? [],
+    severityFilteredAlarmItems,
     (item) => `${item.lot_wafer_id} ${item.feature} ${item.target}`,
     ALARM_SORT_OPTIONS,
     "severity",
@@ -179,10 +238,11 @@ export default function AlertsPage() {
         <span className="eyebrow">PRE-ALERT LOG</span>
         <h1>사전 알람 로그</h1>
         <p>학습 데이터셋에서 산출한 정상범위를 평가 데이터셋에 적용해 이탈 여부를 판정합니다.</p>
+        <LastRunNote createdAt={alarmsState?.createdAt} />
       </section>
 
       <section className="uploadCard">
-        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(200px,1fr) minmax(200px,1fr) minmax(140px,.6fr)" }}>
+        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(200px,1fr) minmax(200px,1fr) minmax(140px,.6fr) auto" }}>
           <DatasetSelector label="정상범위 산출 (train)" value={trainDataset} onChange={setTrainDataset} />
           <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
           <div className="fieldGroup">
@@ -194,7 +254,11 @@ export default function AlertsPage() {
               <option value="high">높음</option>
             </select>
           </div>
+          <button type="button" className="button primary" disabled={loading} onClick={() => void load()} style={{ alignSelf: "end" }}>
+            {loading ? "조회 중…" : summary ? "다시 조회" : "조회"}
+          </button>
         </div>
+        <DatasetMismatchWarning mismatch={datasetMismatch} />
         {error && <p className="errorMessage">{error}</p>}
       </section>
 
@@ -260,9 +324,9 @@ export default function AlertsPage() {
         <div className="sectionHeading compact">
           <div>
             <span className="sectionLabel">ALARMS</span>
-            <h2>알람 목록 ({alarms?.total ?? 0}건)</h2>
+            <h2>알람 목록 ({severityFilteredAlarmItems.length}건)</h2>
           </div>
-          {alarms && alarms.items.length > 0 && (
+          {alarms && severityFilteredAlarmItems.length > 0 && (
             <TableToolbar
               search={alarmTable.search}
               onSearchChange={alarmTable.setSearch}
@@ -274,10 +338,10 @@ export default function AlertsPage() {
           )}
         </div>
         {loading && <p className="emptyMessage">불러오는 중…</p>}
-        {!loading && alarms && alarms.items.length === 0 && (
+        {!loading && alarms && severityFilteredAlarmItems.length === 0 && (
           <p className="emptyMessage">조건에 맞는 알람이 없습니다.</p>
         )}
-        {!loading && alarms && alarms.items.length > 0 && alarmTable.sorted.length === 0 && (
+        {!loading && alarms && severityFilteredAlarmItems.length > 0 && alarmTable.sorted.length === 0 && (
           <NoSearchResults onClear={() => alarmTable.setSearch("")} />
         )}
         {!loading && alarms && alarmTable.sorted.length > 0 && (
