@@ -1,0 +1,21 @@
+#!/bin/sh
+# 비밀값 커밋 방지 (README.md "비밀값 취급" 참고). scripts/install-hooks.sh
+# 또는 scripts/install-hooks.ps1 로 .git/hooks/pre-commit 에 설치한다 --
+# .git/hooks/ 는 저장소에 포함되지 않으므로 이 파일 자체를 직접 커밋해
+# 각자 설치할 수 있게 한다.
+#
+# 값의 "진짜 여부"가 아니라 구조를 본다 -- GitHub Secret Scanning도 같은
+# 방식으로 판단한다(예: Slack Webhook은 URL이 T{8~10자}/B{8~10자}/{20자+}
+# 형태이기만 하면 값이 전부 더미여도 차단한다). 테스트에는 이 구조 자체를
+# 흉내 내지 않는 더미 값을 쓴다(README 참고).
+PATTERN='[0-9]{8,10}:[A-Za-z0-9_-]{30,}|hooks\.slack\.com/services/T[A-Za-z0-9_]{8,10}/B[A-Za-z0-9_]{8,10}/[A-Za-z0-9_]{20,}|(up_|sk-)[A-Za-z0-9]{20,}'
+
+matches=$(git diff --cached | grep -nE "$PATTERN")
+if [ -n "$matches" ]; then
+  echo "커밋에 비밀값으로 보이는 문자열이 있습니다:"
+  echo "$matches"
+  echo "제거 후 다시 커밋하세요. (진짜 값이 아니라 형태만 비슷해도 차단됩니다 -- 테스트에는 README.md \"비밀값 취급\"의 더미 값 규칙을 따르세요.)"
+  exit 1
+fi
+
+exit 0

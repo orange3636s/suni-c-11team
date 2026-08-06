@@ -208,6 +208,38 @@ UPSTAGE_MODEL=solar-pro3
 
 기본 주소는 Next.js `http://localhost:3000`, FastAPI `http://127.0.0.1:8000`, Swagger `http://127.0.0.1:8000/docs`입니다.
 
+알림 연동(Slack/Telegram/Gmail)을 쓰려면 아래 환경변수도 추가합니다(`.env.example` 참고, 전부 선택값입니다). 설정하지 않으면 해당 채널은 UI에서 "연결하기"를 눌러도 실제 발송은 되지 않습니다.
+
+```env
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_BOT_USERNAME=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=
+```
+
+## 비밀값 취급
+
+- API 키·토큰·Webhook URL을 코드에 직접 쓰지 않습니다
+- 테스트에는 더미 값 또는 `monkeypatch`를 씁니다. 더미 값이라도 실제 서비스의 자격 증명과 같은 **형태**(예: Slack Webhook의 `T{8~10자}/B{8~10자}/{24자}` 구조)를 그대로 흉내 내지 않습니다 — GitHub Secret Scanning은 값의 진위가 아니라 구조를 보고 차단합니다
+- 실제 값은 `.env`(로컬)와 Railway Variables(배포)에만 둡니다
+- `.env`는 절대 커밋하지 않습니다 — `.gitignore`에 `.env`, `.env.*`(단 `.env.example`은 예외)가 있는지 새 환경변수를 추가할 때마다 확인합니다
+- 커밋 전 자동 검사가 필요하면 아래로 pre-commit 훅을 설치합니다(`.git/hooks/`는 저장소에 포함되지 않으므로 각자 한 번씩 설치해야 합니다):
+
+  ```powershell
+  # PowerShell
+  .\scripts\install-hooks.ps1
+  ```
+
+  ```bash
+  # bash/WSL/git bash
+  ./scripts/install-hooks.sh
+  ```
+
+  설치 후에는 커밋 내용에 Slack Webhook·Telegram 봇 토큰·`up_`/`sk-` 형태의 API 키가 포함되면 커밋 자체가 거부됩니다.
+
 ## API
 
 - 상태 확인: `GET /health`, `GET /ready`, `GET /`
