@@ -107,6 +107,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "relation_shape": data.relation_shape,
         "n": data.n,
         "axis": data.axis,
+        "methods": round_floats(data.methods),
     }
 
 

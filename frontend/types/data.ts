@@ -458,6 +458,36 @@ export type BinProfile = {
   sparse: boolean;
 };
 
+/** One method's (SPC or ML) 권장구간 fit + the F2 x 안정성 score it was
+ * judged on -- spec "SPC / ML 방식 전환". `window`/`optimal_center` drive
+ * the chart band when this method is selected; the rest backs the
+ * comparison card's numbers only. */
+export type MethodWindow = {
+  window: [number, number];
+  optimal_center: number;
+  recall: number;
+  precision: number;
+  f2: number;
+  width_sd: number;
+  stability: number;
+  score: number;
+  /** Whether the control range actually cut into this method's raw
+   * (unclamped) window -- drives the "(관리한계에 맞춰 조정됨)" tooltip. */
+  clamped: boolean;
+};
+
+export type WindowMethod = "spc" | "ml";
+
+export type MethodComparison = {
+  spc: MethodWindow | null;
+  ml: MethodWindow | null;
+  /** Which method's window backs the alarm log / 개선 권장 목록 everywhere
+   * else in the app -- the SPC/ML toggle only changes what's *displayed*
+   * on this chart, never this (spec §2-2/§5). */
+  adopted: WindowMethod;
+  adopted_reason: string;
+};
+
 export type ScreeningScatterResponse = {
   points: ScatterPoint[];
   reference_lines: ReferenceLine[];
@@ -478,6 +508,8 @@ export type ScreeningScatterResponse = {
   relation_shape: RelationShape;
   n: number;
   axis: { x_label: string; y_label: string };
+  /** null for Config factors (no numeric x to fit either method on). */
+  methods: MethodComparison | null;
 };
 
 export type CategoricalGroup = {

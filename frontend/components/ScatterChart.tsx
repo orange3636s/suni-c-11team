@@ -5,7 +5,7 @@ import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { ReferenceLine, RelationShape, ScatterPoint, ScreeningScatterResponse } from "@/types/data";
+import type { ReferenceLine, RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
 export type ScatterView = "scatter" | "box";
@@ -278,43 +278,26 @@ function categoryPositionForValue(value: number, bins: BoxBin[]): number {
   return bins.length;
 }
 
-/** "권장 구간" has no backend field -- it's derived entirely from data
- * already sent to the client (`points`, `bins`), not a new server-side
- * statistic: the x-quantile span of the contiguous run of quantile bins
- * (the same 12-bin profile driving the 구간 평균 불량률 curve) whose
- * average defect rate sits at/below the factor's overall mean defect
- * rate. Verified against train.CSV against all 5 spec worked examples
- * (within ±0.1 of the given values). */
-function recommendedRange(
-  points: ScatterPoint[],
-  bins: ScreeningScatterResponse["bins"],
-): [number, number] | null {
-  if (bins.length === 0 || points.length === 0) return null;
-  const threshold = points.reduce((sum, p) => sum + p.y, 0) / points.length;
-  const qualifying: number[] = [];
-  bins.forEach((bin, index) => {
-    if (bin.y_mean <= threshold) qualifying.push(index);
-  });
-  if (qualifying.length === 0) return null;
-  const first = qualifying[0];
-  const last = qualifying[qualifying.length - 1];
-  const xs = points.map((p) => p.x).sort((a, b) => a - b);
-  const nb = bins.length;
-  return [quantileOf(xs, first / nb), quantileOf(xs, (last + 1) / nb)];
-}
-
 const LINE_COLOR: Record<string, { light: string; dark: string }> = {
   iqr: { light: "#0E306D", dark: "#7BA3E8" },
-  optimal: { light: "#059669", dark: "#34D399" },
-  recommended: { light: "#059669", dark: "#34D399" },
 };
+// SPC/ML 방식 전환 (spec §3-4) -- 권장 구간 밴드/경계선/최적 중심/Box Plot
+// 구간-내 박스 테두리가 전부 이 한 쌍을 공유한다. SPC는 사전 알람 로그의
+// 기존 초록 토큰(#0D9668/#34D399, globals.css --band-inrec-*)과 동일해 두
+// 화면이 시각적으로 일치하고, ML은 산점도의 파란 점(#1D4ED8/#60A5FA)·빨간
+// 트렌드선(#DC2626)과 충분히 구분되도록 고른 보라(#9333EA/#C084FC)다.
+const METHOD_COLOR: Record<WindowMethod, { light: string; dark: string }> = {
+  spc: { light: "#0D9668", dark: "#34D399" },
+  ml: { light: "#9333EA", dark: "#C084FC" },
+};
+const METHOD_LABEL: Record<WindowMethod, string> = { spc: "SPC", ml: "ML" };
 const TREND_COLOR = { light: "#DC2626", dark: "#F87171" };
 
 // Box-plot-only palette (spec §3-2/§3-3) -- box border color depends on
-// whether the bin's x-mean sits inside the recommended range, everything
+// whether the bin's x-mean sits inside the recommended range (in which
+// case it takes the active method's color, see METHOD_COLOR), everything
 // else is fixed per element.
 const BOX_COLOR = {
-  boxIn: { light: "#0D9668", dark: "#34D399" },
   boxOut: { light: "#0E306D", dark: "#7BA3E8" },
   median: { light: "#DC2626", dark: "#F87171" },
   whisker: { light: "#0E306D", dark: "#7BA3E8" },
@@ -596,6 +579,7 @@ export default function ScatterChart({
   data,
   colorMode,
   view,
+  method,
   onSelectWafer,
   height = HEIGHT,
 }: {
@@ -605,9 +589,16 @@ export default function ScatterChart({
   // same row as the title) -- this component only reads it to decide what
   // to render, it never renders the toggle buttons itself.
   view: ScatterView;
+  // Which of data.methods.{spc,ml} drives the recommended-range band and
+  // optimal-center line (spec §3) -- same "caller owns the toggle state"
+  // pattern as `view`. Defaults to "spc" when the caller hasn't resolved
+  // data.methods.adopted yet (first render before the toggle mounts).
+  method?: WindowMethod;
   onSelectWafer: (point: ScatterPoint) => void;
   height?: number;
 }) {
+  const activeMethod: WindowMethod = method ?? "spc";
+  const methodColor = METHOD_COLOR[activeMethod];
   const theme = useResolvedTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -729,30 +720,35 @@ export default function ScatterChart({
   const iqrLo = data.reference_lines.find((l) => l.key === "iqr_lo");
   const iqrHi = data.reference_lines.find((l) => l.key === "iqr_hi");
   const iqrFullyNonDrawable = !iqrLo?.drawable && !iqrHi?.drawable;
+  // The active method's own window/center (spec §3) -- null when
+  // data.methods is null (Config factors, never routed through this
+  // component in practice) or that method couldn't fit a window at all.
+  const activeMethodWindow = data.methods?.[activeMethod] ?? null;
+
   // shape.py only ever sets optimal_center for a u_shape relation -- a
   // monotonic factor (e.g. Step1_D1) genuinely has no interior optimum,
   // not just one that fell outside the drawable range (spec §4-2/§4-3).
+  // This gate is intentionally method-independent: whether a factor has
+  // a genuine U-shaped optimum at all doesn't change when the SPC/ML
+  // toggle flips, only *where* that optimum sits does.
   const optimalAvailable = data.optimal_center != null;
   // A classified center that got dropped downstream (fell outside its
   // own recommended window after control-range clamping, or was picked
   // from a sparse/outlier-widened bin) gets its own specific reason
   // instead of the generic "단조 관계라..." message (spec §3-3/§3-4).
   const optimalUnavailableReason = data.optimal_center_dropped_reason ?? "단조 관계라 최적 중심이 없습니다";
+  // The displayed center value follows the active method once one is
+  // available server-side; falls back to the legacy client-only value
+  // (identical to methods.spc.optimal_center in practice, see
+  // window_methods.py) if `data.methods` is missing for some reason.
+  const displayedOptimalCenter = activeMethodWindow?.optimal_center ?? data.optimal_center;
 
-  // Recommended range is clamped into the control-limit range (spec §5-3)
-  // so it never contradicts the alarm boundaries -- if clamping collapses
-  // the range entirely, the recommendation is suppressed (null), same as
-  // the "no qualifying bins" case. `recommendedClamped` drives the
-  // "관리한계에 맞춰 조정됨" tooltip note, true only when clamping actually
-  // narrowed the raw range.
-  const { value: recommendedRangeValue, clamped: recommendedClamped } = useMemo(() => {
-    const raw = recommendedRange(data.points, data.bins);
-    if (!raw) return { value: null as [number, number] | null, clamped: false };
-    const lo = data.normal_range.lo != null ? Math.max(raw[0], data.normal_range.lo) : raw[0];
-    const hi = data.normal_range.hi != null ? Math.min(raw[1], data.normal_range.hi) : raw[1];
-    if (lo >= hi) return { value: null as [number, number] | null, clamped: false };
-    return { value: [lo, hi] as [number, number], clamped: lo !== raw[0] || hi !== raw[1] };
-  }, [data.points, data.bins, data.normal_range.lo, data.normal_range.hi]);
+  // Recommended range/최적중심 come straight from the backend's SPC/ML
+  // comparison (spec §2-1/§3-3) -- already clamped into the control
+  // range there, so no client-side re-derivation or re-clamping needed.
+  // `recommendedClamped` drives the "관리한계에 맞춰 조정됨" tooltip note.
+  const recommendedRangeValue: [number, number] | null = activeMethodWindow ? activeMethodWindow.window : null;
+  const recommendedClamped = activeMethodWindow?.clamped ?? false;
 
   const displayLines = useMemo<DisplayLine[]>(() => {
     const lines: DisplayLine[] = [];
@@ -770,14 +766,14 @@ export default function ScatterChart({
         greyedOut: !iqrHi.alarm_relevant,
       });
     }
-    if (data.optimal_center != null) {
+    if (displayedOptimalCenter != null) {
       lines.push({
-        key: "optimal", value: data.optimal_center, shortLabel: "최적 중심",
-        color: LINE_COLOR.optimal, dash: "4 3", strokeWidth: 1.8, greyedOut: false,
+        key: "optimal", value: displayedOptimalCenter, shortLabel: "최적 중심",
+        color: methodColor, dash: "4 3", strokeWidth: 1.9, greyedOut: false,
       });
     }
     return lines;
-  }, [iqrLo, iqrHi, data.optimal_center]);
+  }, [iqrLo, iqrHi, displayedOptimalCenter, methodColor]);
 
   const labelLayout = useMemo(
     () => layoutLabels(displayLines.map((line) => ({ line, xPixel: plotX(line.value) }))),
@@ -1092,17 +1088,36 @@ export default function ScatterChart({
           })()}
           {visibleGroups.has("recommended") && recommendedRangeValue && (() => {
             const [lo, hi] = recommendedRangeValue;
-            const x1 = plotX(lo);
-            const x2 = plotX(hi);
+            const x1 = Math.min(plotX(lo), plotX(hi));
+            const x2 = Math.max(plotX(lo), plotX(hi));
+            const fill = theme === "dark" ? methodColor.dark : methodColor.light;
             return (
-              <rect
-                x={Math.min(x1, x2)} y={0} width={Math.abs(x2 - x1)} height={plotHeight}
-                className="scatterRecommendedBand"
-                style={{ fill: theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light }}
-                onMouseEnter={(event) => setLineHover({ key: "recommended", x: event.clientX, y: event.clientY })}
-                onMouseMove={(event) => setLineHover({ key: "recommended", x: event.clientX, y: event.clientY })}
-                onMouseLeave={() => setLineHover(null)}
-              />
+              <>
+                <rect
+                  x={x1} y={0} width={x2 - x1} height={plotHeight}
+                  className="scatterRecommendedBand"
+                  style={{ fill }}
+                  onMouseEnter={(event) => setLineHover({ key: "recommended", x: event.clientX, y: event.clientY })}
+                  onMouseMove={(event) => setLineHover({ key: "recommended", x: event.clientX, y: event.clientY })}
+                  onMouseLeave={() => setLineHover(null)}
+                />
+                {/* 2px 경계선 -- alpha만으로는 그 안의 점이 묻히므로 두께로
+                    보완한다 (spec §3-4: "밴드 알파를 0.15보다 올리지 마라"). */}
+                <rect
+                  x={x1} y={0} width={x2 - x1} height={plotHeight}
+                  fill="none" stroke={fill} strokeWidth={2} pointerEvents="none"
+                />
+                {x2 - x1 > 60 && (
+                  <text
+                    x={(x1 + x2) / 2} y={16} textAnchor="middle"
+                    className="scatterBandLabel"
+                    style={{ fill }}
+                    pointerEvents="none"
+                  >
+                    {`권장 구간 (${METHOD_LABEL[activeMethod]})`}
+                  </text>
+                )}
+              </>
             );
           })()}
 
@@ -1140,8 +1155,8 @@ export default function ScatterChart({
             : boxBins.map((bin) => {
                 const inRecommended = recommendedRangeValue != null && bin.xMean >= recommendedRangeValue[0] && bin.xMean <= recommendedRangeValue[1];
                 const boxColor = theme === "dark"
-                  ? (inRecommended ? BOX_COLOR.boxIn.dark : BOX_COLOR.boxOut.dark)
-                  : (inRecommended ? BOX_COLOR.boxIn.light : BOX_COLOR.boxOut.light);
+                  ? (inRecommended ? methodColor.dark : BOX_COLOR.boxOut.dark)
+                  : (inRecommended ? methodColor.light : BOX_COLOR.boxOut.light);
                 const whiskerColor = theme === "dark" ? BOX_COLOR.whisker.dark : BOX_COLOR.whisker.light;
                 const medianColor = theme === "dark" ? BOX_COLOR.median.dark : BOX_COLOR.median.light;
                 // Outliers are always this fixed red, regardless of Color By
@@ -1306,7 +1321,7 @@ export default function ScatterChart({
         {view === "box" && (
           <div className="scatterLegendRow">
             <LegendCard
-              icon={<IconBoxWhisker boxColor={theme === "dark" ? BOX_COLOR.boxIn.dark : BOX_COLOR.boxIn.light} medianColor={theme === "dark" ? BOX_COLOR.median.dark : BOX_COLOR.median.light} />}
+              icon={<IconBoxWhisker boxColor={theme === "dark" ? methodColor.dark : methodColor.light} medianColor={theme === "dark" ? BOX_COLOR.median.dark : BOX_COLOR.median.light} />}
               label="상자 (Q1~Q3)"
             />
             <LegendCard
@@ -1348,8 +1363,8 @@ export default function ScatterChart({
           />
           {showOptimalLegendCard && (
             <LegendCard
-              icon={<IconDashedLine color={theme === "dark" ? LINE_COLOR.optimal.dark : LINE_COLOR.optimal.light} dotted />}
-              label={optimalAvailable ? `최적 중심  ${formatNum1(data.optimal_center as number)}` : "최적 중심"}
+              icon={<IconDashedLine color={theme === "dark" ? methodColor.dark : methodColor.light} dotted />}
+              label={optimalAvailable ? `최적 중심  ${formatNum1(displayedOptimalCenter as number)}` : "최적 중심"}
               desc={optimalAvailable ? "불량률이 가장 낮은 지점" : optimalUnavailableReason}
               onClick={(event) => toggleGroup("optimal", event)}
               active={visibleGroups.has("optimal") && optimalAvailable}
@@ -1358,8 +1373,12 @@ export default function ScatterChart({
             />
           )}
           <LegendCard
-            icon={<IconBand color={theme === "dark" ? LINE_COLOR.recommended.dark : LINE_COLOR.recommended.light} />}
-            label={recommendedRangeValue ? `권장 구간  ${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])}` : "권장 구간"}
+            icon={<IconBand color={theme === "dark" ? methodColor.dark : methodColor.light} />}
+            label={
+              recommendedRangeValue
+                ? `권장 구간 (${METHOD_LABEL[activeMethod]})  ${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])}`
+                : "권장 구간"
+            }
             desc={
               recommendedRangeValue
                 ? `이 범위로 관리 권장${recommendedClamped ? " (관리한계에 맞춰 조정됨)" : ""}`
@@ -1387,11 +1406,11 @@ export default function ScatterChart({
 
       {lineHover && (() => {
         if (lineHover.key === "optimal") {
-          if (data.optimal_center == null) return null;
+          if (displayedOptimalCenter == null) return null;
           return (
             <div className="heatmapTooltip" style={{ left: lineHover.x + 14, top: lineHover.y + 14 }}>
               <strong>최적 중심</strong>
-              <div className="heatmapTooltipRow"><span>값</span><b>{formatNum1(data.optimal_center)}</b></div>
+              <div className="heatmapTooltipRow"><span>값</span><b>{formatNum1(displayedOptimalCenter)}</b></div>
               <div className="heatmapTooltipRow"><span>의미</span><b>구간 평균 불량률 최저 지점</b></div>
             </div>
           );

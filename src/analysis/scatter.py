@@ -18,6 +18,7 @@ from src.analysis.control_range import ControlRange, compute_control_range
 from src.analysis.recommendations import compute_factor_recommendation
 from src.analysis.screening.quantile_profile import quantile_bins
 from src.analysis.screening.selector import ParetoFactor, confidence_tier
+from src.analysis.window_methods import compare_methods
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,32 @@ def _resolve_optimal_center(
     return factor.optimal_center, None
 
 
+def _compute_methods(
+    train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange
+) -> dict[str, Any] | None:
+    """SPC/ML comparison for the 방식 토글 (spec §3) -- train-derived, same
+    x/y pair `compute_control_range`/`compute_factor_recommendation` use.
+    `None` for Config factors (no numeric x to fit either method on).
+    """
+    if factor.kind == "Config" or factor.feature not in train_df.columns:
+        return None
+    x = pd.to_numeric(train_df[factor.feature], errors="coerce")
+    y = pd.to_numeric(train_df[factor.target], errors="coerce")
+    valid = x.notna() & y.notna()
+    if not valid.any():
+        return None
+    comparison = compare_methods(
+        x[valid], y[valid], control_range.lower, control_range.upper,
+        cache_key=(id(train_df), factor.feature, factor.target),
+    )
+    return {
+        "spc": comparison.spc.as_dict() if comparison.spc is not None else None,
+        "ml": comparison.ml.as_dict() if comparison.ml is not None else None,
+        "adopted": comparison.adopted,
+        "adopted_reason": comparison.adopted_reason,
+    }
+
+
 @dataclass
 class ScatterData:
     points: list[dict[str, Any]]
@@ -104,6 +131,7 @@ class ScatterData:
     relation_shape: str
     n: int
     axis: dict[str, str]
+    methods: dict[str, Any] | None
 
 
 def build_scatter_data(
@@ -118,6 +146,7 @@ def build_scatter_data(
     """
     control_range = compute_control_range(train_df, factor)
     optimal_center, optimal_center_dropped_reason = _resolve_optimal_center(train_df, factor, control_range)
+    methods = _compute_methods(train_df, factor, control_range)
 
     config_column = _config_column_for(factor.feature, eval_df)
     frame = pd.DataFrame(
@@ -174,6 +203,7 @@ def build_scatter_data(
         significant=factor.significant,
         confidence_tier=confidence_tier(factor.eps2, factor.p_value),
         relation_shape=factor.relation_shape,
+        methods=methods,
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · {_kind_label(factor.kind)})",

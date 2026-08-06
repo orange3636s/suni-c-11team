@@ -26,6 +26,7 @@ from src.analysis.control_range import ControlRange, WaferAlarm, compute_control
 from src.analysis.screening.quantile_profile import quantile_bins, window_from_bins
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import ParetoFactor, confidence_tier
+from src.analysis.window_methods import MethodComparison, compare_methods
 
 GRADE_TAG = {
     "strong": "priority",
@@ -42,10 +43,13 @@ REPORT_TAG_TIERS = ("strong", "moderate")
 
 def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | None:
     """The x-quantile span of the contiguous run of 12 quantile bins (the
-    same profile the 구간 평균 불량률 curve is built from) whose average
-    y sits at/below the factor's overall (train) mean y. See
-    ScatterChart.tsx's `recommendedRange` -- same algorithm, kept in sync
-    deliberately so the chart's green band and this list agree.
+    same profile the 구간 평균 불량률 curve is built from) whose average y
+    sits at/below the factor's overall (train) mean y -- the SPC method's
+    window on its own, without the F2/stability scoring machinery.
+    `compute_factor_recommendation` below no longer calls this directly
+    (it goes through `window_methods.compare_methods` so ML gets a fair
+    shot too); kept here as the standalone SPC-only primitive that
+    llm_stats.py's per-chamber breakdown still needs.
     """
     bins = quantile_bins(x, y)
     if not bins:
@@ -71,6 +75,7 @@ class FactorRecommendation:
     mean_overall: float
     ratio: float | None
     n_in_window: int
+    methods: MethodComparison
 
 
 @dataclass
@@ -106,19 +111,17 @@ def compute_factor_recommendation(
         return None
     x, y = x[valid], y[valid]
 
-    raw = _recommended_range_raw(x, y)
-    if raw is None:
+    methods = compare_methods(
+        x, y, control_range.lower, control_range.upper,
+        cache_key=(id(train_df), factor.feature, factor.target),
+    )
+    winner = methods.ml if methods.adopted == "ml" else methods.spc
+    if winner is None:
+        # Spec §5-3: both methods' windows disappeared under clamping (or
+        # couldn't be fit at all) -- no recommendation for this factor.
         return None
-    raw_lo, raw_hi = raw
-
-    lcl = control_range.lower if control_range.lower is not None else raw_lo
-    ucl = control_range.upper if control_range.upper is not None else raw_hi
-    clamped_lo, clamped_hi = max(raw_lo, lcl), min(raw_hi, ucl)
-    clamped = (clamped_lo, clamped_hi) != (raw_lo, raw_hi)
-    if clamped_lo >= clamped_hi:
-        # Spec §5-3: the range disappeared under clamping -- no
-        # recommendation for this factor, not a degenerate zero-width one.
-        return None
+    clamped_lo, clamped_hi = winner.lo, winner.hi
+    clamped = winner.clamped
 
     overall_mean = float(y.mean())
     in_range_mask = (x >= clamped_lo) & (x <= clamped_hi)
@@ -144,6 +147,7 @@ def compute_factor_recommendation(
         mean_overall=overall_mean,
         ratio=ratio,
         n_in_window=int(in_range_mask.sum()),
+        methods=methods,
     )
 
 

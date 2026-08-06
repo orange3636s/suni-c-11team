@@ -25,10 +25,12 @@ import {
 import type {
   CategoricalScatterResponse,
   ConfidenceTier,
+  MethodComparison,
   ParetoRankingItem,
   ParetoRankingResponse,
   ScatterPoint,
   ScreeningScatterResponse,
+  WindowMethod,
 } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -597,6 +599,89 @@ function ViewToggle({ value, onChange }: { value: ScatterView; onChange: (view: 
   );
 }
 
+/** SPC/ML 권장구간 산출 방식 토글 -- 보기 토글 바로 아래, 같은 좌측 라벨
+ * 폭(스타일 재사용)으로 세로 정렬된다. 전환은 산점도/박스플롯의 보기
+ * 전용이며 (spec §2-2/§3-3) 알람 로그·개선 권장 목록은 절대 건드리지
+ * 않는다 -- `adopted` 쪽에는 작은 채택 배지를 붙여 기본 선택이 왜 그
+ * 값인지 알 수 있게 한다. */
+function MethodToggle({
+  value,
+  adopted,
+  onChange,
+}: {
+  value: WindowMethod;
+  adopted: WindowMethod | null;
+  onChange: (method: WindowMethod) => void;
+}) {
+  return (
+    <div className="scatterViewToggleRow">
+      <span className="scatterViewToggleLabel">방식</span>
+      <div className="scatterViewToggle" role="group" aria-label="권장 구간 산출 방식">
+        <button type="button" className={`scatterViewToggleBtn ${value === "spc" ? "active" : ""}`} onClick={() => onChange("spc")}>
+          SPC{adopted === "spc" && <span className="methodAdoptedBadge" title="채택된 방식">✓</span>}
+        </button>
+        <button type="button" className={`scatterViewToggleBtn ${value === "ml" ? "active" : ""}`} onClick={() => onChange("ml")}>
+          ML{adopted === "ml" && <span className="methodAdoptedBadge" title="채택된 방식">✓</span>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 권장 구간 산출 방식 비교 카드 (spec §4) -- 표시 전용, 여기서 방식을
+ * 선택할 수 없다 (전환은 오직 위 MethodToggle로만). SPC가 채택돼도 배지는
+ * 같은 자리에 붙는다. */
+function MethodComparisonCard({ methods }: { methods: MethodComparison }) {
+  const rows: { key: WindowMethod; title: string; subtitle: string }[] = [
+    { key: "spc", title: "SPC", subtitle: "12분위 규칙" },
+    { key: "ml", title: "ML", subtitle: "결정트리 학습" },
+  ];
+  return (
+    <div className="methodComparisonCard">
+      <div className="methodComparisonHeader">
+        <span className="methodComparisonKicker">RECOMMENDED RANGE</span>
+        <h3>권장 구간 산출 방식</h3>
+        <span className="methodComparisonSource">train.CSV 기준 · 재현율 2배 가중 F2 × 안정성</span>
+      </div>
+      <div className="methodComparisonGrid">
+        {rows.map(({ key, title, subtitle }) => {
+          const m = methods[key];
+          const isAdopted = methods.adopted === key;
+          return (
+            <div key={key} className={`methodComparisonCell ${isAdopted ? `adopted-${key}` : ""}`}>
+              <div className="methodComparisonCellTitle">
+                <span className={`methodComparisonName method-${key}`}>{title}</span>
+                <span className="methodComparisonSubtitle">{subtitle}</span>
+                {isAdopted && <span className="methodComparisonBadge">채택</span>}
+              </div>
+              {m ? (
+                <>
+                  <div className="methodComparisonRange">{formatNum1(m.window[0])} ~ {formatNum1(m.window[1])}</div>
+                  <div className="methodComparisonStats">
+                    <div><b>{m.recall.toFixed(1)}%</b><span>재현율</span></div>
+                    <div><b>{m.precision.toFixed(1)}%</b><span>정밀도</span></div>
+                    <div><b>{m.f2.toFixed(1)}</b><span>F2</span></div>
+                    <div><b>{m.stability.toFixed(2)}</b><span>안정성</span></div>
+                  </div>
+                  <div className="methodComparisonScore">점수 {m.score.toFixed(1)}</div>
+                </>
+              ) : (
+                <div className="methodComparisonRange methodComparisonUnavailable">산출 불가</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="methodComparisonReason">{methods.adopted_reason}</p>
+      <p className="methodComparisonFootnote">점수는 재현율에 2배 가중한 F2에 구간 안정성을 반영한 값입니다.</p>
+    </div>
+  );
+}
+
+function formatNum1(value: number): string {
+  return value.toFixed(1);
+}
+
 /** One dropdown per scatter card (spec §5-3) -- no server round-trip on
  * change, `lot_id`/`config` already ride along in the point data
  * ScatterChart already has. */
@@ -642,6 +727,17 @@ function NumericFactorCard({
   // in a shared store/URL/localStorage -- resets for free whenever this
   // card remounts on a new run/target (see its `key` at the call site).
   const [view, setView] = useState<ScatterView>("scatter");
+  // SPC/ML 토글 상태 (spec §3-2): 기본 선택은 이 인자의 `methods.adopted`를
+  // 따른다. `numericData`는 비동기로 한 번만 채워지므로 (같은 카드 인스턴스가
+  // 다른 인자 데이터로 바뀌는 일은 없다 -- 위 key가 매 실행/타깃/인자 조합마다
+  // 새로 발급된다) "처음 도착했을 때 한 번 반영" 패턴을 useEffect 대신
+  // 렌더 중 상태 조정으로 처리한다 (quickLookView가 쓰는 것과 같은 패턴).
+  const [method, setMethod] = useState<WindowMethod>("spc");
+  const [methodInitialized, setMethodInitialized] = useState(false);
+  if (!methodInitialized && numericData?.methods) {
+    setMethodInitialized(true);
+    setMethod(numericData.methods.adopted);
+  }
   return (
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
       <div className="factorChartHeader">
@@ -659,7 +755,12 @@ function NumericFactorCard({
             </button>
             <ColorBySelect value={colorMode} onChange={setColorMode} />
           </div>
-          <ViewToggle value={view} onChange={setView} />
+          <div className="factorChartToggleStack">
+            <ViewToggle value={view} onChange={setView} />
+            {numericData?.methods && (
+              <MethodToggle value={method} adopted={numericData.methods.adopted} onChange={setMethod} />
+            )}
+          </div>
         </div>
         <div className="factorChartHeaderRow meta">
           <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
@@ -677,7 +778,10 @@ function NumericFactorCard({
         </p>
       )}
       {numericData ? (
-        <ScatterChart data={numericData} colorMode={colorMode} view={view} onSelectWafer={onSelectWafer} height={480} />
+        <>
+          <ScatterChart data={numericData} colorMode={colorMode} view={view} method={method} onSelectWafer={onSelectWafer} height={480} />
+          {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
+        </>
       ) : (
         <p className="emptyMessage">불러오는 중…</p>
       )}

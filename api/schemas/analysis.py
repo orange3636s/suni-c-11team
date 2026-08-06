@@ -67,6 +67,28 @@ class BinProfileSchema(BaseModel):
     sparse: bool
 
 
+class MethodWindowSchema(BaseModel):
+    window: list[float]  # [lo, hi]
+    optimal_center: float
+    recall: float
+    precision: float
+    f2: float
+    width_sd: float
+    stability: float
+    score: float
+    clamped: bool
+
+
+class MethodComparisonSchema(BaseModel):
+    spc: MethodWindowSchema | None
+    ml: MethodWindowSchema | None
+    # "spc" | "ml" -- which method's window backs `normal_range`-adjacent
+    # consumers everywhere else in the app (alarm log, 개선 권장 목록); the
+    # SPC/ML toggle only changes which method is *displayed*, never this.
+    adopted: str
+    adopted_reason: str
+
+
 class ScreeningScatterResponse(BaseModel):
     points: list[ScatterPointSchema]
     reference_lines: list[ReferenceLineSchema]
@@ -87,6 +109,9 @@ class ScreeningScatterResponse(BaseModel):
     relation_shape: str
     n: int
     axis: dict[str, str]
+    # SPC vs ML 권장구간 비교 (spec: "SPC/ML 방식 전환") -- None for Config
+    # factors, which have no numeric x to fit either method on.
+    methods: MethodComparisonSchema | None
 
 
 class CategoricalGroupSchema(BaseModel):
