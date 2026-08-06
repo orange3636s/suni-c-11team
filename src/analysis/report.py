@@ -29,6 +29,7 @@ from src.analysis.control_range import (
     evaluate_alarms,
     summarize_wafer_status,
 )
+from src.analysis.display_text import add_display_text
 from src.analysis.llm_stats import (
     band_stability,
     chamber_interaction_p,
@@ -73,7 +74,7 @@ _INTERPRETATION_BY_SHAPE = {
 LIMITATIONS = [
     "해당 인자가 계측된 wafer만 분석 대상이다. R은 전체의 15%, D는 5%다.",
     "평가 대상 wafer 중 상당수는 선정 인자가 하나도 계측되지 않아 판정할 수 없다.",
-    "eps2는 통계적 연관성이며 인과가 아니다. 공정 순서상 선행·후행 관계나 교락 인자는 반영되지 않았다.",
+    "설명력 지표는 통계적 연관성이며 인과가 아니다. 공정 순서상 선행·후행 관계나 교락 인자는 반영되지 않았다.",
     "Config는 장비당 표본이 적어 검출력이 부족할 수 있다. p<0.05를 만족하지 못한 것이 영향이 없다는 뜻은 아니다.",
     "관리한계는 '평소와 다른가'를 판정하며 '수율이 좋은가'를 보장하지 않는다.",
 ]
@@ -569,4 +570,13 @@ def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
         "records_total": len(recommendation_records),
     }
 
-    return {**report, "targets": targets_out, "alarms": alarms_out, "recommendations": recommendations_out}
+    context = {**report, "targets": targets_out, "alarms": alarms_out, "recommendations": recommendations_out}
+
+    # `_text` companions (spec "LLM 답변·보고서 서술 다듬기" §7) -- pre-round
+    # and pre-phrase every field the chat/report prompts are prone to
+    # mis-render on their own (raw booleans, bracket-style ranges,
+    # scientific-notation p-values, more decimals than the screen shows).
+    # Both `/api/chat` modes read this same function's output (see
+    # `_context_user_message` in api/routes/chat.py), so one call here
+    # covers both prompts.
+    return add_display_text(context)
