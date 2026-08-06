@@ -10012,3 +10012,48 @@ html[data-theme="dark"]{
   .scatterChartSvg{ touch-action: pan-y; }
 }
 
+.sectionCaption{ font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin: 4px 0 12px; }
+
+/* -- 계측 확대 권고 카드 (spec 문구 전수 검토 PART B) --------------------- */
+.measurementExpansionCollapsed{ color: var(--text-secondary); font-size: 13px; }
+
+.meMetricRow{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.meMetricTile{ display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-secondary); min-width: 0; }
+.meMetricTileEmphasis{ border-color: #0891B2; background: color-mix(in srgb, #0891B2 8%, var(--surface)); }
+.meMetricLabel{ font-size: 12px; color: var(--text-secondary); }
+.meMetricValue{ font-size: 24px; font-weight: 650; color: var(--text-primary); line-height: 1.2; }
+.meMetricSub{ font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; }
+
+.meFootnote{ font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; margin: 12px 0; }
+.meFootnoteFinal{ margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+.meTable{ table-layout: fixed; width: 100%; }
+.meTable th, .meTable td{ padding: 8px 10px; font-size: 12.5px; word-break: keep-all; overflow-wrap: break-word; }
+.meTable th:nth-child(1), .meTable td:nth-child(1){ width: 18%; }
+.meTable th:nth-child(2), .meTable td:nth-child(2){ width: 10%; }
+.meTable th:nth-child(3), .meTable td:nth-child(3){ width: 10%; }
+.meTable th:nth-child(4), .meTable td:nth-child(4){ width: 32%; }
+.meTable th:nth-child(5), .meTable td:nth-child(5){ width: 15%; }
+.meTable th:nth-child(6), .meTable td:nth-child(6){ width: 15%; }
+.meReasonCell{ color: var(--text-secondary); }
+.meRowMuted{ color: var(--text-muted); }
+.meRowMuted td{ color: var(--text-muted); }
+.meRowFlagged{ background: var(--warning-soft); }
+.meRowFlagged td{ font-weight: 600; color: var(--text-primary); }
+.meRateLowest{ color: var(--danger); font-weight: 700; }
+
+.meRecommendationBadge{ display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--danger-soft); color: var(--danger); }
+.meRecommendationMaintain{ background: var(--surface-tertiary); color: var(--text-muted); font-weight: 500; }
+
+.meSideEffectRow{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+.meSideEffectCard{ padding: 14px 16px; border-radius: 12px; border: 1.5px solid; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.meSideEffectCard strong{ font-size: 13.5px; }
+.meSideEffectSubtitle{ font-size: 12px; color: var(--text-secondary); }
+.meSideEffectCard p{ font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; margin: 2px 0 0; }
+
+@media (max-width: 767px){
+  .meMetricRow{ grid-template-columns: 1fr; }
+}
+
+.rootCauseIntro{ word-break: keep-all; }
+

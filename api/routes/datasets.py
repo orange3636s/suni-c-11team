@@ -107,6 +107,17 @@ def get_dataset_schema(dataset_id: str) -> dict[str, Any]:
         column: float(df[column].isna().mean())
         for column in [*schema.r_cols, *schema.d_cols, *schema.config_cols]
     }
+
+    def _measurement_rate(columns: list[str]) -> float | None:
+        # Mean of *per-column* rates (spec: "인자별 계측률의 평균을 쓴다.
+        # 전체 셀 기준이 아니다") -- averaging over columns first, not
+        # flattening every cell into one pool, so columns with very
+        # different row-level measurement patterns don't let a handful of
+        # densely-measured columns hide the rest.
+        if not columns:
+            return None
+        return float(df[columns].notna().mean().mean() * 100.0)
+
     return {
         "dataset_id": dataset_id,
         "steps_present": schema.steps_present,
@@ -117,4 +128,6 @@ def get_dataset_schema(dataset_id: str) -> dict[str, Any]:
         "target_columns": schema.target_cols,
         "unmapped_columns": schema.unmapped,
         "missing_rates": missing_rates,
+        "r_measurement_rate": _measurement_rate(schema.r_cols),
+        "d_measurement_rate": _measurement_rate(schema.d_cols),
     }

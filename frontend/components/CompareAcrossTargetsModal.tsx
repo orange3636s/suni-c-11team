@@ -104,12 +104,15 @@ function buildInterpretation(feature: string, entries: KnownEntry[]): string[] |
     ];
   }
 
+  // 인과 표현 금지 (spec 문구 전수 검토 §A-7, prompts/report_system.md
+  // "절대 규칙 2"와 동일 기준) -- "작용함을 뜻합니다"/"영향을 주면서"는 관측된
+  // 상관관계를 인과로 읽히게 하므로, "함께 나타남" 식 서술로 통일한다.
   if (strong.length === 1) {
     const main = strong[0].target;
     const others = TARGETS.filter((t) => t !== main);
     return [
       `${others.join(", ")}에서는 값이 변해도 불량률이 거의 일정합니다.`,
-      `${main}에서만 곡선이 뚜렷하게 휘어, ${feature}${featureParticle} ${main} 불량에 선택적으로 작용함을 뜻합니다.`,
+      `${main}에서만 곡선이 뚜렷하게 휘어, ${feature}${featureParticle} ${main} 불량과만 뚜렷하게 함께 나타남을 뜻합니다.`,
     ];
   }
 
@@ -118,14 +121,14 @@ function buildInterpretation(feature: string, entries: KnownEntry[]): string[] |
     const direction = classifyDirection(strong);
     return [
       `${others.join(", ")}에서 불량률이 함께 ${CHANGE_VERB[direction]}, ${top.target}에서 가장 뚜렷합니다.`,
-      `${feature}${featureParticle} 여러 불량 유형에 영향을 주면서 ${top.target}에 특히 크게 작용함을 뜻합니다.`,
+      `${feature}${featureParticle} 여러 불량 유형과 함께 나타나며 ${top.target}에서 특히 뚜렷하게 관측됨을 뜻합니다.`,
     ];
   }
 
   const direction = classifyDirection(strong);
   return [
     `${TARGETS.join(", ")} 모두에서 ${DIRECTION_PHRASE[direction]}.`,
-    `${feature}${featureParticle} 특정 불량 유형이 아니라 전반에 걸쳐 작용함을 뜻합니다.`,
+    `${feature}${featureParticle} 특정 불량 유형이 아니라 전반에 걸쳐 함께 나타남을 뜻합니다.`,
   ];
 }
 

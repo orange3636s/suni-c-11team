@@ -180,28 +180,92 @@ def config_main_effect_screening(
     )
 
 
-def measurement_bias_p(df: pd.DataFrame, schema: Schema, target_col: str = "Y") -> float | None:
-    """t-test (spec §1-8): does final yield differ between wafers with at
-    least one R or D sensor reading present vs. wafers with none at all?
-    Scoped to the full R+D pool (not just the report's 5 narrative factors)
-    -- each individual R/D column is itself only ~5-15% populated, so
-    almost every wafer has *some* reading; this asks whether the tiny
-    "nothing at all measured" group's yield looks different. None when the
-    final-yield column is absent or either group is too small to test.
+@dataclass
+class FactorMeasurementBias:
+    feature: str
+    target: str
+    mean_measured: float
+    mean_unmeasured: float
+    diff: float  # mean_measured - mean_unmeasured
+    p_value: float
+    q_value: float
+
+
+def per_factor_measurement_bias(
+    df: pd.DataFrame, factors: list, fdr_alpha: float = 0.05
+) -> list[FactorMeasurementBias]:
+    """Per-primary-factor measurement-selection check (spec: 문구 전수 검토
+    §A-7) -- for each of the report's primary factors, does that factor's
+    *own target* defect rate differ between wafers where the factor was
+    measured vs not? This replaced an earlier whole-wafer "any R/D
+    reading at all vs none at all" aggregate test: the aggregate can
+    average away a real per-factor selection effect (e.g. every
+    individual factor biased low, but not all in the same wafers), which
+    is exactly what happened on train.CSV -- the old aggregate test found
+    no significant difference while every one of the 5 primary factors
+    did. `factors` is the caller's own list of ParetoFactor (feature/target
+    pairs) -- same primary-factor set report.py
+    already narrates, not recomputed here.
     """
-    if target_col not in df.columns:
+    rows: list[dict] = []
+    for factor in factors:
+        feature, target = factor.feature, factor.target
+        if feature not in df.columns or target not in df.columns:
+            continue
+        measured = df[feature].notna()
+        y = pd.to_numeric(df[target], errors="coerce")
+        group_measured = y[measured & y.notna()]
+        group_unmeasured = y[~measured & y.notna()]
+        if len(group_measured) < 2 or len(group_unmeasured) < 2:
+            continue
+        _, p_value = stats.ttest_ind(group_measured, group_unmeasured, equal_var=False)
+        rows.append(
+            {
+                "feature": feature,
+                "target": target,
+                "mean_measured": float(group_measured.mean()),
+                "mean_unmeasured": float(group_unmeasured.mean()),
+                "p_value": float(p_value),
+            }
+        )
+    if not rows:
+        return []
+    q_values = benjamini_hochberg([r["p_value"] for r in rows])
+    return [
+        FactorMeasurementBias(
+            feature=r["feature"],
+            target=r["target"],
+            mean_measured=r["mean_measured"],
+            mean_unmeasured=r["mean_unmeasured"],
+            diff=r["mean_measured"] - r["mean_unmeasured"],
+            p_value=r["p_value"],
+            q_value=q,
+        )
+        for r, q in zip(rows, q_values)
+    ]
+
+
+def summarize_measurement_bias(rows: list[FactorMeasurementBias]) -> dict | None:
+    """Collapses `per_factor_measurement_bias`'s per-factor rows into the
+    3 numbers a caller actually narrates (spec 문구 전수 검토 §A-7): how
+    many factors were testable, how many showed a significant
+    (q<0.05) measured-vs-unmeasured gap, and whether that gap points the
+    same direction everywhere. `None` when there was nothing testable at
+    all (not the same as "tested and found no bias" -- callers should
+    keep those two cases visually distinct).
+    """
+    if not rows:
         return None
-    factor_cols = [c for c in (*schema.r_cols, *schema.d_cols) if c in df.columns]
-    if not factor_cols:
-        return None
-    measured = df[factor_cols].notna().any(axis=1)
-    y = pd.to_numeric(df[target_col], errors="coerce")
-    group_measured = y[measured & y.notna()]
-    group_unmeasured = y[~measured & y.notna()]
-    if len(group_measured) < 2 or len(group_unmeasured) < 2:
-        return None
-    _, p_value = stats.ttest_ind(group_measured, group_unmeasured)
-    return float(p_value)
+    significant = [r for r in rows if r.q_value < 0.05]
+    direction: str | None = None
+    if significant:
+        directions = {"low" if r.diff < 0 else "high" for r in significant}
+        direction = directions.pop() if len(directions) == 1 else "mixed"
+    return {
+        "tested_count": len(rows),
+        "significant_count": len(significant),
+        "direction": direction,
+    }
 
 
 def judge_confidence(eps2: float, p_value: float, band_stability_value: float | None, band_width: float | None) -> str:

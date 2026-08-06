@@ -140,6 +140,7 @@ def _evaluate_all_factors(
                 "n_observed": result.n_observed,
                 "pearson_r": result.pearson_r,
                 "spearman_r": result.spearman_r,
+                "k_groups": result.k_groups,
             }
         )
 
@@ -157,6 +158,7 @@ def _evaluate_all_factors(
                 "n_observed": result.n_observed,
                 "pearson_r": None,
                 "spearman_r": None,
+                "k_groups": result.k_groups,
             }
         )
 

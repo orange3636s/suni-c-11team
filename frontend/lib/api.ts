@@ -14,6 +14,7 @@ import type {
   LatestAnalysisPayload,
   LatestStateResponse,
   LatestTrainingPayload,
+  MeasurementExpansionResponse,
   ModelDetail,
   ModelListResponse,
   ModelPerformanceResponse,
@@ -444,6 +445,10 @@ export function getScreeningPareto(dataset: string, target: string): Promise<Par
 
 export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {
   return getJson(`/api/analysis/report?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+export function getMeasurementExpansion(dataset: string): Promise<MeasurementExpansionResponse> {
+  return getJson(`/api/analysis/measurement-expansion?${new URLSearchParams({ dataset }).toString()}`);
 }
 
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------

@@ -395,6 +395,8 @@ export type DatasetSchemaResponse = {
   target_columns: string[];
   unmapped_columns: string[];
   missing_rates: Record<string, number>;
+  r_measurement_rate: number | null;
+  d_measurement_rate: number | null;
 };
 
 export type RelationShape = "monotonic_increasing" | "monotonic_decreasing" | "u_shape" | "unclear";
@@ -615,8 +617,16 @@ export type AlarmSummaryResponse = {
     unmeasured: number | null;
   };
   top_lots: Array<{ lot_id: string; alarm_count: number }>;
-  measurement_bias_p: number | null;
+  measurement_bias: MeasurementBiasSummary | null;
   factor_bands: FactorBand[];
+};
+
+// 인자별 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- 전체 wafer 집계가
+// 아니라 선정 인자별로 "계측군 vs 미계측군" 불량률 차이를 검정한 요약.
+export type MeasurementBiasSummary = {
+  tested_count: number;
+  significant_count: number;
+  direction: "low" | "high" | "mixed" | null;
 };
 
 export type RecommendationTag = "priority" | "recommended" | "reference";
@@ -737,6 +747,7 @@ export type LatestTrainingRecord = {
 export type LatestAnalysisPayload = {
   activeTarget: string;
   paretoByTarget: Record<string, ParetoRankingResponse>;
+  measurementExpansion?: MeasurementExpansionResponse | null;
 };
 
 export type LatestAnalysisRecord = {
@@ -871,5 +882,34 @@ export type AnalysisReportResponse = {
     median_n_per_group: number | null;
   };
   limitations: string[];
+};
+
+export type FactorPriority = {
+  feature: string;
+  target: string;
+  measurement_rate: number;
+  recommendation: string; // "+10%p" | "+15%p" | "유지"
+  reason: string;
+  additional_judged: number;
+  yield_contribution_pp: number | null;
+};
+
+export type NewFactorDiscovery = {
+  feature: string;
+  target: string;
+  kind: string;
+};
+
+export type MeasurementExpansionResponse = {
+  train_dataset_id: string;
+  eval_dataset_id: string;
+  action_blocked_wafers: number;
+  total_wafers: number;
+  additional_judged: number;
+  action_target: number;
+  expected_yield_gain_pp: number | null;
+  show_full_card: boolean;
+  priorities: FactorPriority[];
+  new_factor_discoveries: NewFactorDiscovery[];
 };
 

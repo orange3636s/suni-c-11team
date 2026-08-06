@@ -35,8 +35,9 @@ from src.analysis.llm_stats import (
     chamber_interaction_p,
     config_main_effect_screening,
     judge_confidence,
-    measurement_bias_p,
     per_chamber_window,
+    per_factor_measurement_bias,
+    summarize_measurement_bias,
 )
 from src.analysis.recommendations import REPORT_TAG_TIERS, compute_factor_recommendation, compute_recommendations
 from src.analysis.rounding import round_floats
@@ -71,13 +72,43 @@ _INTERPRETATION_BY_SHAPE = {
     "unclear": "뚜렷한 단조 또는 U자 패턴이 확인되지 않았다. 방향성을 단정하지 말고 개별 구간별 양상을 함께 검토할 것.",
 }
 
+# Non-dataset-specific limitations -- the measurement-rate sentence
+# (dataset-dependent, was hardcoded "R은 전체의 15%, D는 5%다" here, which
+# is only ever true for train.CSV) is built separately by
+# `_measurement_rate_limitation` and prepended per-dataset instead.
 LIMITATIONS = [
-    "해당 인자가 계측된 wafer만 분석 대상이다. R은 전체의 15%, D는 5%다.",
     "평가 대상 wafer 중 상당수는 선정 인자가 하나도 계측되지 않아 판정할 수 없다.",
     "설명력 지표는 통계적 연관성이며 인과가 아니다. 공정 순서상 선행·후행 관계나 교락 인자는 반영되지 않았다.",
     "Config는 장비당 표본이 적어 검출력이 부족할 수 있다. p<0.05를 만족하지 못한 것이 영향이 없다는 뜻은 아니다.",
     "관리한계는 '평소와 다른가'를 판정하며 '수율이 좋은가'를 보장하지 않는다.",
 ]
+
+# Below this measurement rate, "~만 분석 대상이다" (only the measured
+# subset) reads accurately; at/above it, most wafers already have a
+# reading, so the softer "~를 분석 대상으로 한다" avoids overstating how
+# exclusionary the dataset actually is (spec: 문구 전수 검토 §A-1).
+_HIGH_MEASUREMENT_RATE_THRESHOLD = 60.0
+
+
+def _measurement_rate_limitation(df: pd.DataFrame, schema: Schema) -> str:
+    """Real per-dataset R/D measurement rate (spec §A-1) -- mean of each
+    column's own non-null rate, not a flat cell-count fraction, so a
+    dataset with a few densely-measured columns and many sparse ones
+    isn't misrepresented as "well measured" on average.
+    """
+    r_rate = float(df[schema.r_cols].notna().mean().mean() * 100.0) if schema.r_cols else None
+    d_rate = float(df[schema.d_cols].notna().mean().mean() * 100.0) if schema.d_cols else None
+    parts = []
+    if r_rate is not None:
+        parts.append(f"Response는 전체의 {r_rate:.1f}%")
+    if d_rate is not None:
+        parts.append(f"Defect는 전체의 {d_rate:.1f}%")
+    if not parts:
+        return "해당 인자가 계측된 wafer만 분석 대상이다."
+    rates = [r for r in (r_rate, d_rate) if r is not None]
+    if all(r >= _HIGH_MEASUREMENT_RATE_THRESHOLD for r in rates):
+        return f"해당 인자가 계측된 wafer를 분석 대상으로 한다. {', '.join(parts)}에서 관측되었다."
+    return f"해당 인자가 계측된 wafer만 분석 대상이다. {', '.join(parts)}에서 관측되었다."
 
 
 def _binned_profile(x: pd.Series, y: pd.Series, bins: int = BINNED_PROFILE_BINS) -> list[dict[str, float]]:
@@ -397,13 +428,30 @@ def build_analysis_report(
     recommendation_records.sort(key=lambda item: item["lot_wafer_id"])
 
     config_screening = config_main_effect_screening(train_df, schema)
-    bias_p = measurement_bias_p(train_df, schema)
-    limitations = list(LIMITATIONS)
-    if bias_p is not None:
+    limitations = [_measurement_rate_limitation(train_df, schema), *LIMITATIONS]
+
+    # 계측 편향 재검토 (spec 문구 전수 검토 §A-7): the old whole-wafer
+    # aggregate test ("any R/D reading at all" vs "none") can be
+    # non-significant while every individual primary factor is -- exactly
+    # what happens on train.CSV, where the aggregate found p=0.74 (no
+    # bias) but all 5 primary factors individually show a
+    # measured-vs-unmeasured defect-rate gap at q<0.0001. Report the
+    # per-factor check instead, since it's the one that actually reflects
+    # what "선정 인자" narrows the analysis to.
+    factor_bias = per_factor_measurement_bias(train_df, included_factors)
+    bias_summary = summarize_measurement_bias(factor_bias)
+    if bias_summary is None:
+        pass  # too few observations to test either direction -- say nothing rather than guess
+    elif bias_summary["significant_count"] == 0:
+        limitations.append("계측 대상 선정에 따른 편향은 관측되지 않았다.")
+    else:
+        direction_word = {"low": "낮게", "high": "높게", "mixed": "다르게"}[bias_summary["direction"]]
+        tested, significant = bias_summary["tested_count"], bias_summary["significant_count"]
+        scope = f"선정 인자 {significant}개 모두에서" if significant == tested else f"선정 인자 {tested}개 중 {significant}개에서"
         limitations.append(
-            "R/D 계측이 하나도 없는 wafer와 하나 이상 계측된 wafer의 최종 수율(Y) 차이는 "
-            f"t-검정 결과 p={bias_p:.4f}로, 이 데이터셋에서는 통계적으로 유의하지 않다. "
-            "계측 편향이 관측되지 않았다는 뜻이지, 다른 데이터셋에도 성립한다는 보장은 아니다."
+            "계측 대상이 무작위로 선정되지 않았을 가능성이 있다. "
+            f"{scope} 계측된 wafer의 불량률이 미계측 wafer보다 {direction_word} 관측되었다. "
+            "따라서 이 분석의 결과를 미계측 wafer로 일반화할 때는 주의가 필요하다."
         )
 
     report = {

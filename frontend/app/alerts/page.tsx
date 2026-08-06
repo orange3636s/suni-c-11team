@@ -22,6 +22,7 @@ import type {
   AlarmItem,
   AlarmSummaryResponse,
   FactorBand,
+  MeasurementBiasSummary,
   RecommendationItem,
 } from "@/types/data";
 
@@ -643,9 +644,15 @@ function BandTrack({
 function BandStatsRow({
   stats,
   arrowTone,
+  pctDenominatorLabel,
 }: {
   stats: { name: string; tone: BandTone; value: number | null; count: number; pct: number }[];
   arrowTone: "yield" | "defect";
+  // 이 %의 분모가 무엇인지 (spec 문구 전수 검토 §A-6-1) -- 요약 카드 상단은
+  // 전체 wafer 기준, 이 행은 판정 완료(계측) wafer 기준으로 분모가 서로
+  // 다르므로, 같은 count(예: alarm 225장)가 화면마다 다른 %로 보일 때
+  // 혼동하지 않도록 분모를 명시한다.
+  pctDenominatorLabel?: string;
 }) {
   return (
     <div className="yieldBandStats">
@@ -654,7 +661,9 @@ function BandStatsRow({
           <div className={`yieldBandStatCol seg-${stat.tone}`}>
             <span className="yieldBandStatName">{stat.name}</span>
             <strong className="yieldBandStatValue">{stat.value != null ? stat.value.toFixed(2) : "-"}</strong>
-            <span className="yieldBandStatSub">{stat.count.toLocaleString()}장 · {stat.pct.toFixed(1)}%</span>
+            <span className="yieldBandStatSub">
+              {stat.count.toLocaleString()}장 · {stat.pct.toFixed(1)}%{pctDenominatorLabel ? ` (${pctDenominatorLabel})` : ""}
+            </span>
           </div>
           {index < stats.length - 1 && (
             <div className={`yieldBandArrowGap tone-${arrowTone}`}>
@@ -716,7 +725,7 @@ function ConceptYieldBandCard({ summary }: { summary: AlarmSummaryResponse }) {
         <span className="yieldBandCardMeta">{measured.toLocaleString()}장 판정 완료</span>
       </div>
       <BandTrack segments={segments} lines={lines} lclPct={20} uclPct={80} recLoPct={40} recHiPct={60} />
-      <BandStatsRow stats={stats} arrowTone="yield" />
+      <BandStatsRow stats={stats} arrowTone="yield" pctDenominatorLabel="판정 완료 기준" />
     </section>
   );
 }
@@ -815,8 +824,33 @@ function FactorYieldBandCard({
  * 분리해 90.24가 "최고 구간"으로 오독되지 않게 한다. 비율은 표기하지
  * 않는다(분모가 다르다). p값은 데이터셋별로 갱신되며, 검정이 불가능하면
  * 그 문장을 생략한다. */
+/** 인자별 계측 편향 검정 결과를 사람이 읽을 문장으로 바꾼다 (spec 문구 전수
+ * 검토 §A-7) -- 전체 wafer를 뭉뚱그린 이전 집계 검정("R/D 계측이 하나도
+ * 없는 wafer" vs "하나 이상 계측된 wafer")은 인자별로 보면 실제로 존재하는
+ * 편향을 평균 내 지워버릴 수 있어(실측: train.CSV에서 집계 검정은
+ * p=0.74로 "편향 없음"이었지만 선정 인자 5개는 전부 q<0.0001로 유의했다),
+ * 백엔드가 이미 인자별로 재검정한 요약(`MeasurementBiasSummary`)을 그대로
+ *문장으로 옮긴다 -- 여기서 다시 계산하지 않는다. */
+function describeMeasurementBias(bias: MeasurementBiasSummary | null): string | null {
+  if (!bias) return null;
+  if (bias.significant_count === 0) {
+    return "계측 대상 선정에 따른 편향은 관측되지 않았습니다.";
+  }
+  const directionWord = { low: "낮게", high: "높게", mixed: "다르게" }[bias.direction ?? "mixed"];
+  const scope =
+    bias.significant_count === bias.tested_count
+      ? `선정 인자 ${bias.significant_count}개 모두에서`
+      : `선정 인자 ${bias.tested_count}개 중 ${bias.significant_count}개에서`;
+  return (
+    `계측 대상이 무작위로 선정되지 않았을 가능성이 있습니다. ${scope} 계측된 wafer의 불량률이 ` +
+    `미계측 wafer보다 ${directionWord} 관측되었습니다. 이 분석 결과를 미계측 wafer로 ` +
+    `일반화할 때는 주의가 필요합니다.`
+  );
+}
+
 function UnmeasuredCard({ summary }: { summary: AlarmSummaryResponse }) {
   const avgYield = summary.band_yield.unmeasured;
+  const biasText = describeMeasurementBias(summary.measurement_bias);
   return (
     <section className="unmeasuredCard">
       <p>
@@ -825,9 +859,7 @@ function UnmeasuredCard({ summary }: { summary: AlarmSummaryResponse }) {
         </strong>
       </p>
       <p>선정 인자가 계측되지 않아 판정할 수 없는 wafer입니다.</p>
-      {summary.measurement_bias_p != null && (
-        <p>계측 편향 검정 결과 유의한 차이는 없었습니다 (p = {summary.measurement_bias_p.toFixed(2)}).</p>
-      )}
+      {biasText && <p>{biasText}</p>}
     </section>
   );
 }

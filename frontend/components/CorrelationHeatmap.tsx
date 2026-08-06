@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getScreeningHeatmap } from "@/lib/api";
-import { formatQValue } from "@/lib/numberFormat";
+import { formatEps2, formatQValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfidenceTier, HeatmapMetric, HeatmapResponse } from "@/types/data";
 
@@ -341,7 +341,8 @@ export default function CorrelationHeatmap({
       </div>
 
       <p className="heatmapCaption">
-        {`Eq. ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
+        {data.excluded_configs > 0 &&
+          `Eq. ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
         표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
         <br />
         인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
@@ -445,9 +446,9 @@ function FragmentRow({
               })
             }
             onClick={() => onSelectCell({ target, feature, significant, qValue: q })}
-            aria-label={`${feature}, ${target}, ${metric === "spearman" ? "rho" : "eps2"} ${value != null ? value.toFixed(2) : "표본 부족"}`}
+            aria-label={`${feature}, ${target}, ${metric === "spearman" ? "rho" : "eps2"} ${value != null ? formatEps2(value) : "표본 부족"}`}
           >
-            {masked ? "" : value!.toFixed(2)}
+            {masked ? "" : formatEps2(value)}
           </button>
         );
       })}

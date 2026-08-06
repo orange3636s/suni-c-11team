@@ -52,3 +52,10 @@ class DatasetSchemaResponse(BaseModel):
     target_columns: list[str]
     unmapped_columns: list[str]
     missing_rates: dict[str, float]
+    # Mean per-column measurement (non-null) rate, 0-100 -- the "R은
+    # 전체의 X%, D는 Y%입니다" disclaimer figure. None when the dataset has
+    # no columns of that kind (e.g. mentorship_dataset_v7_killing_event
+    # has zero Config columns; d_columns can't be empty by construction
+    # today, but r/d are computed the same way for symmetry).
+    r_measurement_rate: float | None
+    d_measurement_rate: float | None

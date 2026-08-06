@@ -6,6 +6,7 @@ import type {
   AlarmListResponse,
   AlarmSummaryResponse,
   CategoricalScatterResponse,
+  MeasurementExpansionResponse,
   ModelPerformanceResponse,
   ParetoRankingResponse,
   RecommendationListResponse,
@@ -46,6 +47,10 @@ export type AnalysisState = {
   // point-fill fetch) -- false right after a server restore, before that
   // fetch resolves.
   pointsComplete: boolean;
+  // '계측 확대 권고' 카드 (spec 문구 전수 검토 PART B) -- 분석 실행 시 한
+  // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
+  // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
+  measurementExpansion: MeasurementExpansionResponse | null;
 } | null;
 
 export type AlarmsState = {
@@ -109,6 +114,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             scatterByKey: {},
             categoricalByKey: {},
             pointsComplete: false,
+            // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
+            // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
+            measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
           });
         }
         if (state.alarms) {

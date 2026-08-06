@@ -11,6 +11,7 @@ import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import {
   createTrainingJob,
   downloadDatasetFile,
+  getDatasetSchema,
   getModelPerformance,
   getScreeningHeatmap,
   getScreeningPareto,
@@ -18,9 +19,10 @@ import {
   saveTrainingState,
 } from "@/lib/api";
 import { kindLabel } from "@/lib/kindLabels";
+import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { formatQValue } from "@/lib/numberFormat";
 import { formatLastRun } from "@/lib/timeFormat";
-import type { DatasetSummary, ModelPerformanceResponse, ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
+import type { DatasetSchemaResponse, DatasetSummary, ModelPerformanceResponse, ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
 
 const BUNDLED_TRAIN_ID = "train";
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -37,11 +39,15 @@ function hasUsableResult(performance: ModelPerformanceResponse | null): boolean 
 
 const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 
+// train.CSV 한 번 실측한 고정 벤치마크다 (spec 문구 전수 검토 §A-3) --
+// 데이터셋마다 다시 도는 실험이 아니라 전처리 방식 자체를 비교하는
+// 표이므로 캡션으로 기준을 명시하고, 매 데이터셋마다 값을 바꾸지 않는다.
 const BENCHMARK_REFERENCE = [
   { name: "A. 중앙값 대체 + 클리핑 (현행)", y: 0.114, adopted: false },
   { name: "B. 전체 인자 + NaN 보존", y: 0.146, adopted: false },
   { name: "C. 선정 인자 + dev + 마스크", y: 0.177, adopted: true },
 ];
+
 
 export default function TrainingPage() {
   const router = useRouter();
@@ -60,6 +66,10 @@ export default function TrainingPage() {
   const [error, setError] = useState("");
   const [performanceLoading, setPerformanceLoading] = useState(true);
   const [performanceError, setPerformanceError] = useState("");
+  // 해석 시 한계 문구의 계측률/Config 문구는 데이터셋마다 다르므로 (spec 문구
+  // 전수 검토 §A-1) 하드코딩 대신 실제 분석 대상 데이터셋의 스키마를 불러와
+  // 반영한다.
+  const [analysisSchema, setAnalysisSchema] = useState<DatasetSchemaResponse | null>(null);
 
   const performance = training?.performance ?? null;
   const paretoByTarget = training?.paretoByTarget ?? {};
@@ -195,6 +205,21 @@ export default function TrainingPage() {
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, loadPerformance]);
+
+  const analysisDatasetId = training?.dataset ?? datasetId;
+  useEffect(() => {
+    let cancelled = false;
+    getDatasetSchema(analysisDatasetId)
+      .then((result) => {
+        if (!cancelled) setAnalysisSchema(result);
+      })
+      .catch(() => {
+        if (!cancelled) setAnalysisSchema(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisDatasetId]);
 
   async function train() {
     if (jobId) return;
@@ -369,6 +394,7 @@ export default function TrainingPage() {
             <h2>데이터 전처리</h2>
           </div>
         </div>
+        <p className="sectionCaption">전처리 방식 비교는 train.CSV 기준 1회 실측값이며, 선택한 데이터셋에 따라 달라지지 않습니다.</p>
         <div className="tableWrap benchmarkTableWrap">
           <table className="benchmarkTable">
             <thead>
@@ -450,9 +476,13 @@ export default function TrainingPage() {
       <section className="analysisDisclaimers">
         <strong>해석 시 한계</strong>
         <ul>
-          <li>이 분석은 해당 인자가 계측된 wafer만 대상으로 합니다. R은 전체의 15%, D는 5%입니다. 미계측 wafer로의 일반화는 보장되지 않습니다.</li>
+          <li>{measurementRateDisclaimer(analysisSchema)}</li>
           <li>ε²는 통계적 연관성이지 인과가 아닙니다. 공정 순서상 선행/후행 관계나 교락 인자는 반영되지 않았습니다.</li>
-          <li>Eq.(장비)에서 유의 인자가 검출되지 않은 것은 &quot;장비 영향이 없다&quot;가 아니라 &quot;현재 표본으로는 검출되지 않는다&quot;는 뜻입니다. 장비당 표본이 278장 수준이라 ε² 0.01 미만의 효과는 검출력이 부족합니다.</li>
+          {(analysisSchema?.config_columns.length ?? 0) > 0 && (
+            <li>
+              Eq.(장비)에서 유의 인자가 검출되지 않은 것은 &quot;장비 영향이 없다&quot;가 아니라 &quot;현재 표본으로는 검출되지 않는다&quot;는 뜻입니다. 장비당 표본 수가 적으면 ε² 0.01 미만의 효과는 검출력이 부족합니다.
+            </li>
+          )}
         </ul>
       </section>
     </DashboardShell>

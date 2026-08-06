@@ -18,6 +18,7 @@ from api.schemas.analysis import (
     CategoricalScatterResponse,
     ControlRangeListResponse,
     HeatmapResponse,
+    MeasurementExpansionResponse,
     ModelPerformanceResponse,
     ParetoRankingResponse,
     RecommendationListResponse,
@@ -30,7 +31,8 @@ from src.analysis.control_range import (
     evaluate_alarms,
     summarize_wafer_status,
 )
-from src.analysis.llm_stats import measurement_bias_p
+from src.analysis.llm_stats import per_factor_measurement_bias, summarize_measurement_bias
+from src.analysis.measurement_expansion import MIN_ACTION_BLOCKED_SHARE, compute_measurement_expansion
 from src.analysis.recommendations import compute_recommendations
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
@@ -46,6 +48,7 @@ from src.analysis.screening.selector import (
     select_primary_factor,
 )
 from src.analysis.screening.selector import _ranked_rows_with_contribution as _ranked_rows
+from src.analysis.screening.selector import _row_to_factor
 from src.ml.inference import get_latest_model_metadata
 from src.runtime.datasets import DatasetNotFoundError
 from src.runtime.store import RuntimeStore
@@ -386,16 +389,21 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
     # one per target -- the same "1위 인자" concept used everywhere else
     # (training summary, 개선 권장 목록), not the full alarm-eligible set.
     factor_bands: list[dict[str, Any]] = []
+    primary_factors: list[ParetoFactor] = []
     for target in schema.target_cols:
         primary = select_primary_factor(train_df, schema, target)
         if primary is None:
             continue
+        primary_factors.append(primary)
         primary_control_range = compute_control_range(train_df, primary)
         band = compute_factor_band(train_df, eval_df, primary, primary_control_range)
         if band is not None:
             factor_bands.append(_factor_band_dict(band))
 
-    bias_p = measurement_bias_p(train_df, schema)
+    # 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- per-factor check, not
+    # the old whole-wafer aggregate (see report.py's identical comment for
+    # why the aggregate can hide a real per-factor selection effect).
+    measurement_bias = summarize_measurement_bias(per_factor_measurement_bias(train_df, primary_factors))
 
     return round_floats(
         {
@@ -416,7 +424,7 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
                 "unmeasured": bands.unmeasured.mean_yield,
             },
             "top_lots": top_lots,
-            "measurement_bias_p": bias_p,
+            "measurement_bias": measurement_bias,
             "factor_bands": factor_bands,
         }
     )
@@ -517,6 +525,124 @@ def get_analysis_report(dataset: str = "train", *, response: Response) -> dict[s
     """
     response.headers["Content-Disposition"] = f'attachment; filename="analysis_report_{dataset}.json"'
     return _build_report_payload(dataset)
+
+
+@router.get("/analysis/measurement-expansion", response_model=MeasurementExpansionResponse)
+def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
+    """'계측 확대 권고' 카드 (spec 문구 전수 검토 PART B) -- 원인 분석 탭이
+    "원인 분석 실행" 직후 한 번만 호출해 결과를 상태에 저장한다 (spec §B-7:
+    "카드를 열 때마다 재계산하지 마라").
+
+    JSON 보고서와 달리 eval을 고정된 REPORT_EVAL_DATASET_ID("test")로 두지
+    않고 선택된 데이터셋 자기 자신을 판정 대상으로 삼는다. 이 카드가 답하는
+    질문은 "이 데이터셋 자체의 계측을 늘리면 어떻게 되는가"이므로, 인자
+    구성이 아예 다른 다른 데이터셋(예: mentorship_dataset_final의
+    Step20_D1은 test.csv에 없는 컬럼이다)을 판정 기준으로 쓰면 그 데이터셋의
+    실제 계측률과 무관하게 전량 "판정불가"로 나와 §B-6 축소 조건이 항상
+    빗나간다 -- 원인 분석 탭 자체가 데이터셋 선택기 하나뿐이라는 점과도
+    맞는다.
+    """
+    train_df = _dataframe_or_404(dataset)
+    eval_df = train_df
+    schema = parse_schema(train_df)
+
+    # 타깃당 전체 R+D+Config 풀 스코어링(88개 인자 x ANOVA)을 한 번씩만
+    # 돌려 재사용한다 -- select_primary_factor/select_fdr_significant_factors/
+    # score_all_factors를 각각 부르면 같은 스코어링을 3번 반복하게 되어
+    # (원인 분석 실행이 이미 호출한 /api/screening/pareto와도 별개로) 이
+    # 카드 하나 때문에 원인 분석 실행이 수십 초 느려진다. `_cached_ranked_rows`는
+    # (dataset, target) 기준 프로세스 전역 캐시라 Pareto 화면이 이미 조회한
+    # 타깃이면 사실상 즉시 반환된다.
+    rows_by_target: dict[str, list[dict]] = {
+        target: list(_cached_ranked_rows(dataset, target)) for target in schema.target_cols
+    }
+
+    # "판정 가능 여부"(조치 불가/추가 판정)는 알람 목록과 동일한 FDR-유의
+    # 인자 전체 집합으로 판단한다 -- get_alarm_summary가 쓰는 것과 같은
+    # 개념(_alarm_factors). 타깃마다 1위 인자 하나만 쓰면(select_primary_factor)
+    # 여러 타깃이 같은 인자를 1위로 뽑는 데이터셋(예:
+    # mentorship_dataset_final은 5개 타깃 모두 Step20_D1이 1위)에서 사실상
+    # 서로 다른 컬럼 1개만 보는 셈이 되어, 그 인자 하나의 계측률만으로
+    # "조치 불가"가 결정돼 데이터셋 전체 계측률과 동떨어진 값이 나온다.
+    judgment_factors: list[ParetoFactor] = [
+        _row_to_factor(train_df, target, row)
+        for target, rows in rows_by_target.items()
+        for row in rows
+        if row["significant"]
+    ]
+    control_ranges = [compute_control_range(train_df, factor) for factor in judgment_factors]
+    alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
+    verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
+    alarm_ids = [v.lot_wafer_id for v in verdicts if v.status == "alarm"]
+    normal_ids = [v.lot_wafer_id for v in verdicts if v.status == "normal"]
+    unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
+    total_wafers = len(verdicts)
+
+    # §B-6 축소 조건은 여기서 이미 판정 가능하다 (unmeasured_ids까지만
+    # 있으면 됨) -- 카드가 어차피 한 줄로 축소될 데이터셋(계측률이 충분한
+    # mentorship_dataset_final 등)에서 아래 권장구간 계산(SPC/ML 부트스트랩,
+    # 인자 수가 많으면 수십 초)까지 돌리는 건 낭비다.
+    show_full_card = total_wafers > 0 and (len(unmeasured_ids) / total_wafers) >= MIN_ACTION_BLOCKED_SHARE
+
+    if not show_full_card:
+        summary = compute_measurement_expansion(
+            train_df, eval_df, {}, {}, {}, classify_measured_bands(
+                train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, [], []
+            ), [], total_wafers=total_wafers,
+        )
+    else:
+        bands = classify_measured_bands(
+            train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, judgment_factors, control_ranges
+        )
+
+        # B-3 인자별 우선순위 표는 스펙 예시("Step1_D1 -> Y3")대로 타깃당
+        # 1위 인자 하나씩, 5행으로 보여준다 -- 위 판정 가능 여부 집합과는
+        # 별개다.
+        primary_factors: dict[str, ParetoFactor] = {
+            target: _row_to_factor(train_df, target, rows[0]) for target, rows in rows_by_target.items() if rows
+        }
+
+        _rows, factor_summaries = compute_recommendations(train_df, eval_df, schema, primary_factors=primary_factors)
+
+        judgment_features = [factor.feature for factor in judgment_factors]
+        summary = compute_measurement_expansion(
+            train_df,
+            eval_df,
+            rows_by_target,
+            primary_factors,
+            factor_summaries,
+            bands,
+            judgment_features,
+            total_wafers=total_wafers,
+        )
+
+    return round_floats(
+        {
+            "train_dataset_id": dataset,
+            "eval_dataset_id": dataset,
+            "action_blocked_wafers": summary.action_blocked_wafers,
+            "total_wafers": summary.total_wafers,
+            "additional_judged": summary.additional_judged,
+            "action_target": summary.action_target,
+            "expected_yield_gain_pp": summary.expected_yield_gain_pp,
+            "show_full_card": summary.show_full_card,
+            "priorities": [
+                {
+                    "feature": p.feature,
+                    "target": p.target,
+                    "measurement_rate": p.measurement_rate,
+                    "recommendation": p.recommendation,
+                    "reason": p.reason,
+                    "additional_judged": p.additional_judged,
+                    "yield_contribution_pp": p.yield_contribution_pp,
+                }
+                for p in summary.priorities
+            ],
+            "new_factor_discoveries": [
+                {"feature": d.feature, "target": d.target, "kind": d.kind} for d in summary.new_factor_discoveries
+            ],
+        }
+    )
 
 
 @router.get("/analysis/context", response_model=AnalysisContextResponse)

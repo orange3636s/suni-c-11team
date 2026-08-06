@@ -122,11 +122,15 @@ function buildInterpretationTip(
   }
   if (category === "flat") return first;
   if (view === "box") {
-    return `${first} 상자가 낮고 짧을수록 좋습니다 — 평균이 낮고 흩어짐도 작다는 뜻입니다.`;
+    return `${first} 상자가 낮고 짧을수록 평균이 낮고 흩어짐도 작다는 뜻입니다.`;
   }
-  if (category === "u_shape") return `${first} 양쪽 끝이 모두 나쁘므로 한 방향으로만 조절하면 안 됩니다.`;
-  if (category === "monotonic_increasing") return `${first} 낮게 유지하는 방향이 유리합니다.`;
-  if (category === "monotonic_decreasing") return `${first} 높게 유지하는 방향이 유리합니다.`;
+  // 인과/조작 표현 금지 (spec 문구 전수 검토 §A-7, prompts/report_system.md
+  // "절대 규칙 2"와 동일 기준) -- "~하면 유리합니다"/"조절하면 안 됩니다"는
+  // 관찰된 상관관계를 개입 처방으로 읽히게 하므로, LLM 프롬프트가 이미 쓰는
+  // "~구간에서 낮게/높게 관측된다" 식 서술로 통일한다.
+  if (category === "u_shape") return `${first} 관측된 범위 양쪽 끝 모두에서 ${targetLabel} 불량률이 높게 나타납니다.`;
+  if (category === "monotonic_increasing") return `${first} 낮은 구간에서 ${targetLabel} 불량률이 낮게 관측됩니다.`;
+  if (category === "monotonic_decreasing") return `${first} 높은 구간에서 ${targetLabel} 불량률이 낮게 관측됩니다.`;
   return first;
 }
 

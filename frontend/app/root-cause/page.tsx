@@ -9,16 +9,20 @@ import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
+import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { formatPValue } from "@/lib/numberFormat";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
+  getDatasetSchema,
+  getMeasurementExpansion,
   getScreeningHeatmap,
   getScreeningPareto,
   getScreeningScatter,
@@ -28,6 +32,7 @@ import {
 import type {
   CategoricalScatterResponse,
   ConfidenceTier,
+  DatasetSchemaResponse,
   MethodComparison,
   ParetoRankingItem,
   ParetoRankingResponse,
@@ -44,7 +49,7 @@ const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
 const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
-const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중"];
+const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중", "계측 확대 시뮬레이션 중"];
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
@@ -159,6 +164,9 @@ function RootCauseContent() {
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
   const [datasetId, setDatasetId] = useState("train");
+  // 해석 시 한계 문구의 계측률 수치는 데이터셋마다 다르므로 (spec 문구 전수
+  // 검토 §A-1) 하드코딩 대신 실제 스키마를 불러와 반영한다.
+  const [analysisSchema, setAnalysisSchema] = useState<DatasetSchemaResponse | null>(null);
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
   const [compareFeature, setCompareFeature] = useState<string | null>(null);
@@ -179,6 +187,20 @@ function RootCauseContent() {
   const categoricalByKey = analysis?.categoricalByKey ?? EMPTY_CATEGORICAL_BY_KEY;
   // 셀렉터를 바꿨는데 화면은 이전 데이터셋 결과인 경우 (spec §5-3).
   const datasetMismatch = Boolean(analysis && analysis.dataset !== datasetId);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDatasetSchema(datasetId)
+      .then((result) => {
+        if (!cancelled) setAnalysisSchema(result);
+      })
+      .catch(() => {
+        if (!cancelled) setAnalysisSchema(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [datasetId]);
 
   const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string; isConfig: boolean } | null>(null);
@@ -290,6 +312,12 @@ function RootCauseContent() {
       // a second (cheap, cached) round trip.
       await getScreeningHeatmap(datasetId, "spearman").catch(() => {});
 
+      setRunStageIndex(4);
+      // '계측 확대 권고' 카드 (spec §B-7) -- 분석 실행 시 한 번만 계산해
+      // 결과에 포함시킨다. 실패해도 분석 자체는 이미 성공했으므로 카드
+      // 없이 나머지를 보여준다.
+      const measurementExpansion = await getMeasurementExpansion(datasetId).catch(() => null);
+
       setAnalysis({
         dataset: datasetId,
         createdAt: new Date().toISOString(),
@@ -298,6 +326,7 @@ function RootCauseContent() {
         scatterByKey: scatterMap,
         categoricalByKey: categoricalMap,
         pointsComplete: true,
+        measurementExpansion,
       });
       setRunState("done");
       setAnalysisDataset(datasetId);
@@ -306,8 +335,8 @@ function RootCauseContent() {
       // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을
       // 넘는다 -- 어차피 복원 직후 배경에서 fetchAllScatterData로 다시
       // 채우므로(위 useEffect), 서버에는 화면 목록 구성에 꼭 필요한
-      // Pareto만 남긴다.
-      void saveAnalysisState(datasetId, { activeTarget, paretoByTarget: paretoMap }).catch(() => {});
+      // Pareto와, 그 자체로 작은 계측 확대 권고 결과만 남긴다.
+      void saveAnalysisState(datasetId, { activeTarget, paretoByTarget: paretoMap, measurementExpansion }).catch(() => {});
     } catch (failure) {
       // Never leave a stale result on screen after a failure -- it could
       // be mistaken for the new run's output (spec §5-2).
@@ -432,7 +461,16 @@ function RootCauseContent() {
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">ROOT CAUSE</span>
         <h1>원인 분석</h1>
-        <p>타깃(Y1~Y5)별로 전체 인자 풀 기준 Pareto 상위 5개 인자와 산점도를 확인합니다.</p>
+        {/* 3줄 고정 (spec 문구 전수 검토 PART C) -- Box Plot, SPC/ML 비교,
+            계측 확대 권고를 언급한다. 원인 분석 탭에 새 기능이 추가되거나
+            제거되면 이 문구도 함께 갱신해야 한다. */}
+        <p className="rootCauseIntro">
+          타깃(Y1~Y5)별로 전체 인자 풀 기준 Pareto 상위 5개 인자를 확인합니다.
+          <br />
+          산점도와 Box Plot으로 분포를 살펴보고, 권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
+          <br />
+          하단에서 계측 확대 시 기대 효과를 확인할 수 있습니다.
+        </p>
       </section>
 
       <section className="uploadCard">
@@ -504,7 +542,13 @@ function RootCauseContent() {
                 <div className="factorChartHeaderRow">
                   <div className="factorChartTitleRow">
                     <h2>{quickLook.feature} vs {quickLook.target}</h2>
-                    {!quickLook.isConfig && <ColorBySelect value={quickLookColorMode} onChange={setQuickLookColorMode} />}
+                    {!quickLook.isConfig && (
+                      <ColorBySelect
+                        value={quickLookColorMode}
+                        onChange={setQuickLookColorMode}
+                        hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
+                      />
+                    )}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     {!quickLook.isConfig && <ViewToggle value={quickLookView} onChange={setQuickLookView} />}
@@ -566,6 +610,7 @@ function RootCauseContent() {
                     numericData={scatterByKey[key]}
                     onSelectWafer={setSelectedWafer}
                     onCompare={setCompareFeature}
+                    hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
                   />
                 );
               }
@@ -606,17 +651,24 @@ function RootCauseContent() {
         </>
       )}
 
+      {runState === "done" && <MeasurementExpansionCard data={analysis?.measurementExpansion ?? null} />}
+
       <section className="analysisDisclaimers">
         <strong>해석 시 한계</strong>
         <ul>
-          <li>이 분석은 해당 인자가 계측된 wafer만 대상으로 합니다. R은 전체의 15%, D는 5%입니다. 미계측 wafer로의 일반화는 보장되지 않습니다.</li>
+          <li>{measurementRateDisclaimer(analysisSchema)}</li>
           <li>ε²는 통계적 연관성이지 인과가 아닙니다. 공정 순서상 선행/후행 관계나 교락 인자는 반영되지 않았습니다.</li>
           <li>&ldquo;약함&rdquo;·&ldquo;참고&rdquo; 등급 인자는 통계적 신뢰도가 낮아 원인으로 단정할 근거가 부족합니다. 사전 알람은 p&lt;0.05(강함·보통 등급) 인자에서만 생성됩니다.</li>
         </ul>
       </section>
 
       {selectedWafer && (
-        <WaferDetailPopover point={selectedWafer} target={activeTarget} onClose={() => setSelectedWafer(null)} />
+        <WaferDetailPopover
+          point={selectedWafer}
+          target={activeTarget}
+          onClose={() => setSelectedWafer(null)}
+          hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
+        />
       )}
       {compareFeature && (
         <CompareAcrossTargetsModal
@@ -738,7 +790,18 @@ function formatNum1(value: number): string {
 /** One dropdown per scatter card (spec §5-3) -- no server round-trip on
  * change, `lot_id`/`config` already ride along in the point data
  * ScatterChart already has. */
-function ColorBySelect({ value, onChange }: { value: ColorMode; onChange: (mode: ColorMode) => void }) {
+function ColorBySelect({
+  value,
+  onChange,
+  hasConfig = true,
+}: {
+  value: ColorMode;
+  onChange: (mode: ColorMode) => void;
+  // Config 컬럼이 0개인 데이터셋(mentorship_dataset_v7_killing_event)에서는
+  // "Eq. 모델별" 색상 옵션이 고를 수 있는 값 자체가 없으므로 숨긴다 (spec
+  // 문구 전수 검토 §A-5).
+  hasConfig?: boolean;
+}) {
   return (
     <label className="colorBySelectField">
       <span>색상</span>
@@ -748,7 +811,7 @@ function ColorBySelect({ value, onChange }: { value: ColorMode; onChange: (mode:
         onChange={(event) => onChange(event.target.value as ColorMode)}
       >
         <option value="default">기본</option>
-        <option value="config_model">Eq. 모델별</option>
+        {hasConfig && <option value="config_model">Eq. 모델별</option>}
         <option value="lot">LOT별</option>
         <option value="alarm">알람 여부</option>
       </select>
@@ -767,6 +830,7 @@ function NumericFactorCard({
   numericData,
   onSelectWafer,
   onCompare,
+  hasConfig,
 }: {
   item: ParetoRankingItem;
   index: number;
@@ -774,6 +838,7 @@ function NumericFactorCard({
   numericData: ScreeningScatterResponse | undefined;
   onSelectWafer: (point: ScatterPoint) => void;
   onCompare: (feature: string) => void;
+  hasConfig: boolean;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
@@ -810,7 +875,7 @@ function NumericFactorCard({
             >
               ⊞ Y1~Y5 비교
             </button>
-            <ColorBySelect value={colorMode} onChange={setColorMode} />
+            <ColorBySelect value={colorMode} onChange={setColorMode} hasConfig={hasConfig} />
           </div>
           <div className="factorChartToggleStack">
             <ViewToggle value={view} onChange={setView} />
@@ -850,10 +915,15 @@ function WaferDetailPopover({
   point,
   target,
   onClose,
+  hasConfig,
 }: {
   point: ScatterPoint;
   target: string;
   onClose: () => void;
+  // 데이터셋에 Config 컬럼이 아예 없으면(mentorship_dataset_v7_killing_event)
+  // 모든 wafer가 "미계측"으로만 표시되어 "계측 안 됨"인지 "그런 항목 자체가
+  // 없음"인지 구분이 안 되므로, 행 자체를 숨긴다 (spec 문구 전수 검토 §A-5).
+  hasConfig: boolean;
 }) {
   return (
     <div className="waferDetailPopover" style={{ right: 24, bottom: 24 }} role="dialog" aria-label="wafer 상세">
@@ -869,7 +939,11 @@ function WaferDetailPopover({
         <dt>{target}</dt><dd>{point.y.toFixed(2)}</dd>
         <dt>인자값</dt><dd>{point.x.toFixed(2)}</dd>
         <dt>정상범위 내</dt><dd>{point.in_range ? "예" : "아니오 (알람)"}</dd>
-        <dt>Eq.</dt><dd>{point.config ?? "미계측"}</dd>
+        {hasConfig && (
+          <>
+            <dt>Eq.</dt><dd>{point.config ?? "미계측"}</dd>
+          </>
+        )}
       </dl>
     </div>
   );

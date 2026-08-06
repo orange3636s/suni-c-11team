@@ -240,6 +240,13 @@ class FactorBandSchema(BaseModel):
     in_recommended: FactorBandPointSchema
 
 
+class MeasurementBiasSummary(BaseModel):
+    tested_count: int
+    significant_count: int
+    # "low" | "high" | "mixed" -- only meaningful when significant_count > 0
+    direction: str | None
+
+
 class AlarmSummaryResponse(BaseModel):
     train_dataset_id: str
     eval_dataset_id: str
@@ -248,7 +255,7 @@ class AlarmSummaryResponse(BaseModel):
     counts: WaferStatusCounts
     band_yield: BandYieldSchema
     top_lots: list[LotAlarmCount] = Field(default_factory=list)
-    measurement_bias_p: float | None
+    measurement_bias: MeasurementBiasSummary | None
     factor_bands: list[FactorBandSchema] = Field(default_factory=list)
 
 
@@ -553,3 +560,32 @@ class AnalysisContextResponse(BaseModel):
     recommendations: ContextRecommendationsSchema
     config_screening: ReportConfigScreeningSchema
     limitations: list[str]
+
+
+class FactorPrioritySchema(BaseModel):
+    feature: str
+    target: str
+    measurement_rate: float
+    recommendation: str  # "+10%p" | "+15%p" | "유지"
+    reason: str
+    additional_judged: int
+    yield_contribution_pp: float | None
+
+
+class NewFactorDiscoverySchema(BaseModel):
+    feature: str
+    target: str
+    kind: str
+
+
+class MeasurementExpansionResponse(BaseModel):
+    train_dataset_id: str
+    eval_dataset_id: str
+    action_blocked_wafers: int
+    total_wafers: int
+    additional_judged: int
+    action_target: int
+    expected_yield_gain_pp: float | None
+    show_full_card: bool
+    priorities: list[FactorPrioritySchema] = Field(default_factory=list)
+    new_factor_discoveries: list[NewFactorDiscoverySchema] = Field(default_factory=list)
