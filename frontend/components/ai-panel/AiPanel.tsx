@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ChatErrorKind, type ChatHistoryTurn, type ChatMode, streamChat } from "@/lib/api";
+import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
 
 type MessageStatus = "streaming" | "done" | "error";
 
@@ -69,11 +70,49 @@ export default function AiPanel({
 }) {
   const { analysisDataset, pendingChatRequest, clearPendingChatRequest, setAiPanelOpen } = usePanelState();
   const reducedMotion = usePrefersReducedMotion();
+  // ≥1024px: unchanged floating circle<->320px panel (spec §B-5 row 1).
+  // 768~1023px: overlay drawer, 768px 이하로는 못 내려간다 -- see CSS.
+  // ≤767px: full-screen drawer.
+  const isTabBarLayout = useIsTabBarLayout();
+  const isMobileLayout = useIsMobileLayout();
+  const layout: "desktop" | "overlay" | "fullscreen" = isMobileLayout ? "fullscreen" : isTabBarLayout ? "overlay" : "desktop";
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [lastRequest, setLastRequest] = useState<{ message: string; mode: ChatMode } | null>(null);
+
+  // Locks background scroll while the drawer covers the screen (spec
+  // §B-5: "열리면 뒤 본문 스크롤을 잠근다") -- desktop's fixed-width side
+  // panel never scrolls the body regardless, so this only ever applies
+  // for overlay/fullscreen.
+  useEffect(() => {
+    if (layout === "desktop" || !open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [layout, open]);
+
+  // `open`'s default comes from a cookie written by (and defaulting true
+  // for) the desktop side panel, which used to be easy to ignore -- as a
+  // full-screen/overlay takeover that same default would otherwise cover
+  // the entire first paint on every fresh mobile visit before the user
+  // has done anything. Closes it exactly once, the first time `layout`
+  // is actually confirmed non-desktop (not on the transient SSR-safe
+  // "desktop" guess useMediaQuery starts every render with -- see that
+  // hook's own comment) while still sitting on the inherited default;
+  // `autoClosedOnce` marks completion only once the close has actually
+  // happened, so a user reopening it afterward is never refought.
+  const autoClosedOnce = useRef(false);
+  useEffect(() => {
+    if (autoClosedOnce.current) return;
+    if (layout !== "desktop" && open) {
+      autoClosedOnce.current = true;
+      onToggle();
+    }
+  }, [layout, open, onToggle]);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -261,26 +300,51 @@ export default function AiPanel({
     URL.revokeObjectURL(url);
   }
 
-  return (
-    <aside className={`aiPanel ${open ? "" : "collapsed"}`} aria-label="SUNI AI 어시스턴트">
-      <div className="aiPanelSurface">
-        <button
-          type="button"
-          className="shellLogoBlock"
-          onClick={onToggle}
-          aria-label={open ? "SUNI 접기" : "SUNI 펼치기"}
-          aria-expanded={open}
-        >
-          <SuniAvatar size={open ? 28 : 32} />
-          {open && <span className="shellLogoBlockTitle">SUNI AI 어시스턴트</span>}
-          <span className="shellLogoBlockChevron" aria-hidden="true">
-            <ChevronIcon direction={open ? "right" : "left"} />
-          </span>
-        </button>
+  // Overlay/fullscreen: the header's own SUNI button is the only way to
+  // open (spec §B-5) -- there is no floating circle to render while
+  // closed, unlike the desktop panel which stays visible collapsed.
+  if (layout !== "desktop" && !open) return null;
 
-        {open && (
-          <>
-            <div className="aiPanelBody" ref={bodyRef}>
+  const isDrawer = layout !== "desktop";
+
+  return (
+    <>
+      {/* Overlay (768~1023px) gets a dismiss-on-tap backdrop; full-screen
+          (≤767px) covers everything itself, no backdrop needed. */}
+      {layout === "overlay" && <div className="aiPanelBackdrop" onClick={onToggle} aria-hidden="true" />}
+      <aside
+        className={`aiPanel ${layout === "desktop" && !open ? "collapsed" : ""} ${layout === "overlay" ? "aiPanelOverlay" : ""} ${layout === "fullscreen" ? "aiPanelFullscreen" : ""}`}
+        aria-label="SUNI AI 어시스턴트"
+        role={isDrawer ? "dialog" : undefined}
+        aria-modal={isDrawer ? true : undefined}
+      >
+        <div className="aiPanelSurface">
+          {isDrawer ? (
+            <div className="aiPanelMobileHeader">
+              <button type="button" className="aiPanelBackButton" onClick={onToggle} aria-label="닫기">
+                <BackIcon />
+              </button>
+              <span className="aiPanelMobileTitle">SUNI AI 어시스턴트</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="shellLogoBlock"
+              onClick={onToggle}
+              aria-label={open ? "SUNI 접기" : "SUNI 펼치기"}
+              aria-expanded={open}
+            >
+              <SuniAvatar size={open ? 28 : 32} />
+              {open && <span className="shellLogoBlockTitle">SUNI AI 어시스턴트</span>}
+              <span className="shellLogoBlockChevron" aria-hidden="true">
+                <ChevronIcon direction={open ? "right" : "left"} />
+              </span>
+            </button>
+          )}
+
+          {open && (
+            <>
+              <div className="aiPanelBody" ref={bodyRef}>
               <div className="aiPanelMessages" ref={messagesRef} onScroll={handleMessagesScroll}>
               {messages.map((message, index) => {
                 const showAvatar = message.from === "suni" && messages[index - 1]?.from !== "suni";
@@ -410,8 +474,9 @@ export default function AiPanel({
             </div>
           </>
         )}
-      </div>
-    </aside>
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -519,6 +584,14 @@ function ChevronIcon({ direction }: { direction: "left" | "right" }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d={direction === "left" ? "m15 6-6 6 6 6" : "m9 6 6 6-6 6"} />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m15 6-6 6 6 6" />
     </svg>
   );
 }

@@ -7956,7 +7956,23 @@ html[data-theme="dark"]{
   .dashboardGrid{ transition: none; }
 }
 @media (max-width: 1280px){
-  .dashboardGrid{ grid-template-columns: 1fr; }
+  /* BUG FIX (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃 전환 §B-4):
+     `.dashboardGrid[data-sidebar="collapsed"]` etc. above are unconditional
+     (attribute selectors, higher specificity than the plain `.dashboardGrid`
+     this media query was relying on) -- so collapsing the sidebar below
+     1280px re-asserted the desktop 3-column `grid-template-columns`
+     (rail-width | 1fr | ai-width) instead of collapsing to a single column,
+     squeezing/overflowing `.contentShell` into a column narrower than the
+     viewport actually needs (visually "본문이 화면 밖으로 나간다"). Every
+     attribute-qualified variant is repeated here, at equal specificity and
+     later in source order, so each one is properly overridden inside this
+     media query regardless of sidebar/AI-panel state. */
+  .dashboardGrid,
+  .dashboardGrid[data-sidebar="collapsed"],
+  .dashboardGrid[data-ai="open"],
+  .dashboardGrid[data-sidebar="collapsed"][data-ai="open"]{
+    grid-template-columns: 1fr;
+  }
   .dashboardGrid > .sidebar{ position: fixed; z-index: var(--z-panel); }
   .dashboardGrid > .aiPanel{ position: fixed; right: 0; top: var(--panel-top-offset); z-index: var(--z-panel); }
 }
@@ -9050,39 +9066,6 @@ html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
   word-break: keep-all;
 }
 
-/* JSON report button, next to the root-cause "실행" button. */
-.reportButton{
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 16px; height: 40px; border-radius: 10px;
-  font-size: 13px; font-weight: 600;
-  border: 1px solid var(--border);
-  background: transparent; color: var(--text-primary);
-  cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease;
-}
-.reportButton:hover:not(:disabled){ background: var(--surface-secondary, var(--surface-muted)); border-color: var(--brand-navy-text); }
-.reportButton:disabled{
-  cursor: not-allowed;
-  color: var(--text-secondary);
-  background: var(--surface-secondary, var(--surface-muted));
-  border-color: var(--border);
-  opacity: 0.7;
-}
-.reportButtonCaption{ font-size: 12px; color: var(--text-secondary); margin: 6px 0 0; }
-
-.jsonReportToast{
-  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
-  padding: 12px 20px; border-radius: 12px;
-  background: var(--brand-navy, #0e306d); color: rgba(255, 255, 255, 0.95);
-  font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25);
-  z-index: 200; animation: jsonReportToastIn 180ms ease;
-}
-@keyframes jsonReportToastIn{
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-@media (prefers-reduced-motion: reduce){
-  .jsonReportToast{ animation: none; }
-}
 
 /* Y1~Y5 비교 모달: 인자 하나 고정, 타깃 5개를 가로 1행으로 비교. */
 .compareModalBackdrop{
@@ -9756,6 +9739,276 @@ html[data-theme="dark"]{
 @media (max-width: 1279px){
   .headerLogo{ height: 24px; }
 }
-@media (max-width: 1023px){
-  .headerLogoLink{ display: none; }
+/* ≤767px: Header.tsx swaps the wordmark <Image> for a compact SuniAvatar
+   icon in JS (spec §B-7) rather than hiding the link -- the old
+   `display:none` rule this replaced left the header logo slot empty
+   between 768-1023px too, which is no longer the intended behavior (the
+   wordmark should still show, just at the existing 24px height above). */
+
+/* ===================================================================
+   모바일 · 축소 화면 레이아웃 (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
+   전환 §B). Additive block, appended at the very end of the file on
+   purpose -- globals.css has several dead pre-v2-shell layout blocks
+   earlier on (see the `@media(max-width:1280px)` specificity fix above
+   for one example); editing any of them has no effect on what actually
+   renders, only adding rules *after* the live v2-shell section
+   (§7877+) reliably wins the cascade. Breakpoints:
+     1280px+          unchanged (spec: "절대 바꾸지 마라")
+     1024px~1279px    existing collapsible sidebar/panel, just narrower
+     768px~1023px     sidebar -> MobileTabBar, AiPanel -> overlay drawer
+     ≤767px           MobileTabBar, AiPanel -> full-screen drawer, 1-col
+   =================================================================== */
+:root{
+  --touch-target-min: 44px;
 }
+
+/* BUG FIX: .topHeader has no `position`/`top` declared in the live v2-shell
+   section, so it was still inheriting `position:sticky` from a dead legacy
+   block (globals.css ~L3699, `top:0`) -- itself then overridden again for
+   `top` alone by two MORE dead breakpoint-specific blocks (~L4941's
+   `top:101px`, ~L6532's `top:122px`), because plain `.topHeader{ top: … }`
+   rules keep winning per-property regardless of which layout system they
+   were written for. At ≤1023px this made the header stick 101-122px down
+   the page instead of at 0, so .mobileTabBar (sticky at `top:
+   var(--header-height)`, i.e. right below where the header *should* sit)
+   ended up overlapping/rendering above it instead of under it. Authoritative
+   here, last in source order, wins for exactly these two properties. */
+.topHeader{ position: sticky; top: 0; z-index: var(--z-header); }
+
+/* -- 상단 가로 탭바 (≤1023px, MobileTabBar.tsx) --------------------------
+   Same floating-navy-card language as .sidebarSurface: same background
+   var, same 16px radius, its own shadow -- spec §B-3/§8-1/§8-2. Only
+   ever mounted (not just styled) at ≤1023px, so no @media gate is
+   needed for existence, only for the parts that must react to width
+   further (the fade-scroll mask width, tab font-size) once the whole
+   file is skimmed for a breakpoint list. */
+.mobileTabBar{
+  position: sticky;
+  top: var(--header-height);
+  z-index: var(--z-panel);
+  margin: 12px 16px;
+  padding: 8px;
+  border-radius: 16px;
+  background: var(--brand-navy, #0e306d);
+  box-shadow: 0 4px 16px rgba(14, 48, 109, 0.18);
+}
+.mobileTabBarScroll{
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* Fades the two scroll edges into the navy background instead of a hard
+     clip (spec §B-3: "좌우 끝에 mask-image 페이드 12px"). */
+  mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
+}
+.mobileTabBarScroll::-webkit-scrollbar{ display: none; }
+.mobileTab{
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* Spec's own mockup gives the pill a 32px height; bumped to the
+     44px touch-target floor instead (spec §B-8 is the harder
+     requirement of the two -- an inaccessible 32px tap target isn't an
+     acceptable tradeoff for matching a reference screenshot exactly). */
+  min-height: var(--touch-target-min);
+  padding: 0 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.mobileTab[aria-selected="true"]{ background: #FFFFFF; color: var(--brand-navy, #0e306d); }
+.mobileTab[aria-selected="false"]{ background: transparent; color: rgba(255, 255, 255, 0.72); }
+.mobileTabStatusDot{
+  width: 4px; height: 4px; border-radius: 50%;
+  background: #34C759; flex: 0 0 auto;
+}
+
+/* -- 헤더 SUNI 버튼 (≤1023px, Header.tsx) -------------------------------
+   The only way to open AiPanel once it stops rendering its own always-
+   visible floating circle (spec §B-5/§B-7). */
+.headerSuniButton{
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--touch-target-min); height: var(--touch-target-min);
+  border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface-secondary, var(--surface-muted));
+  cursor: pointer; flex: 0 0 auto;
+}
+.headerSuniButton:hover{ background: var(--surface-tertiary); }
+
+/* -- AiPanel: overlay (768~1023px) / full-screen (≤767px) 드로어 --------
+   spec §B-5. Both variants ignore the desktop grid column entirely
+   (`position:fixed`) and are only ever mounted while `open` (see
+   AiPanel.tsx's early `return null`) -- there is no collapsed-circle
+   state to style here, unlike the desktop `.aiPanel.collapsed` variant. */
+.aiPanelBackdrop{
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: var(--z-panel);
+}
+.aiPanel.aiPanelOverlay,
+.aiPanel.aiPanelFullscreen{
+  position: fixed;
+  top: 0; bottom: 0; right: 0; left: auto;
+  margin: 0;
+  height: 100dvh; max-height: 100dvh;
+  border-radius: 0;
+  z-index: calc(var(--z-panel) + 1);
+  transition: none; /* slide-in isn't required by spec; avoid animating a full-height fixed panel's layout properties */
+}
+.aiPanel.aiPanelOverlay{ width: min(85%, 360px); }
+.aiPanel.aiPanelFullscreen{ width: 100%; }
+.aiPanel.aiPanelOverlay .aiPanelSurface,
+.aiPanel.aiPanelFullscreen .aiPanelSurface{
+  border-radius: 0;
+  /* Desktop's translucent-glass background (--shell-panel-bg, ~82% opacity
+     + blur) is meant for a small panel floating over visible page content
+     -- at drawer/full-screen size that same translucency let the page
+     underneath show (and its text overlap the drawer's own header) through
+     the blur. A drawer needs to read as its own opaque screen. */
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.aiPanelMobileHeader{
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid var(--shell-panel-border);
+}
+.aiPanelBackButton{
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--touch-target-min); height: var(--touch-target-min);
+  margin-left: -10px;
+  border-radius: 10px; border: none; background: transparent;
+  color: var(--text-primary); cursor: pointer;
+}
+.aiPanelBackButton:hover{ background: var(--shell-logo-hover-bg); }
+.aiPanelMobileTitle{ font-size: 15px; font-weight: 700; }
+
+/* 흐르는 칩: 폭이 좁아 빠르게 느껴지므로 한 바퀴 36초로 늦춘다 (spec §B-5,
+   기본 28s에서 재정의 -- .reverse도 duration은 그대로 상속되므로 별도 규칙
+   불필요). */
+@media (max-width: 1023px){
+  .aiPanelMarqueeTrack{ animation-duration: 36s; }
+}
+
+/* -- 본문 컨텐츠: ≤767px 세로 1열, 좌우 16px --------------------------- */
+@media (max-width: 767px){
+  .mainContent.uploadPage{ padding-left: 16px; padding-right: 16px; }
+}
+
+/* BUG FIX: 사전 알람 로그의 train/eval 셀렉터 + 심각성 + 조회 버튼 행은
+   `.rcControlBar` 위에 인라인 `style={{gridTemplateColumns:...}}`로
+   4컬럼을 직접 지정하고 있었다 -- 인라인 스타일은 어떤 `@media` 규칙보다도
+   우선하므로, `.rcControlBar`가 이미 갖고 있던 1050px/640px 반응형
+   그리드(위 §165/176)가 전혀 적용되지 못했고, `minmax(200px,1fr)`이 두 번
+   들어간 채로 375px 화면에 그대로 고정돼 가로 스크롤을 만들었다 (spec
+   §B-4/§15의 "가로 스크롤이 생기면 안 된다"). 인라인 스타일을 제거하고
+   이 전용 클래스로 옮겨, 아래 미디어쿼리가 정상적으로 이길 수 있게 한다. */
+.alarmControlBar{ grid-template-columns: minmax(200px, 1fr) minmax(200px, 1fr) minmax(140px, .6fr) auto; }
+@media (max-width: 767px){
+  /* `display:flex` (not `grid-template-columns:1fr`) so this can't be
+     re-contested by any other still-live `.rcControlBar` grid rule --
+     and `.datasetSelector`'s own hard-coded `min-width:260px` (unrelated
+     to this container entirely) is what actually forced the 2-up layout
+     regardless of the parent's column count, so it needs its own reset
+     here too. */
+  .alarmControlBar{ display: flex; flex-direction: column; gap: 10px; }
+  .alarmControlBar > *{ width: 100%; }
+  .alarmControlBar .datasetSelector{ min-width: 0; }
+  .alarmControlBar .button{ width: 100%; }
+}
+
+/* -- 집계 카드 2x2 (사전 알람 로그, ≤767px) ------------------------------
+   4개를 가로 1행으로 두면 너무 좁다 (spec §B-6). */
+@media (max-width: 767px){
+  .alarmSummaryGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* -- 터치 대상 최소 44x44px (spec §B-8) ---------------------------------
+   Buttons/badges that were sized for a mouse cursor (severity/recommendation
+   tags, the compact confidence badge, the 해설 icon button) grow their
+   *tappable* box via padding on ≤767px without changing their visual
+   density on larger screens -- min-height/min-width only, so a badge's
+   text doesn't suddenly look oversized, just gets more breathing room. */
+@media (max-width: 767px){
+  .severityBadge,
+  .recommendationTag,
+  .confidenceBadge,
+  .explainButton,
+  .mobileTab,
+  .headerSuniButton,
+  .aiPanelBackButton{
+    min-height: var(--touch-target-min);
+  }
+  .explainButton{ min-width: var(--touch-target-min); justify-content: center; }
+}
+
+/* -- 산점도/박스플롯 범례 2열 (≤767px, spec §B-6) ------------------------
+   ScatterChart.tsx's .scatterLegendRow is `flex-wrap:wrap` with each
+   card `flex: 1 1 160px` already -- at a ~350px content width that
+   naturally wraps to 2 per row without a dedicated override, but pin it
+   explicitly so a future min-width tweak there can't silently regress
+   back to 1-per-row on the narrowest supported phones (375px). */
+@media (max-width: 767px){
+  .scatterLegendCard{ flex-basis: 45%; }
+}
+
+/* -- Y1~Y5 세그먼트: 가로 스크롤 허용, 줄바꿈 금지 (spec §B-6) ----------- */
+@media (max-width: 767px){
+  .targetSegmentBar{ overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .targetSegmentBar::-webkit-scrollbar{ display: none; }
+}
+
+/* -- 알람/개선 권장 목록: 테이블 -> 카드형 전환 (≤767px, spec §B-6) -----
+   AlarmRow/RecommendationRow render as <tr> normally; alerts/page.tsx
+   additionally renders an .alarmCardList of <AlarmCard>/<RecommendationCard>
+   siblings and toggles which one is visible purely by width class here
+   (both are always in the DOM; CSS decides which is display:none) so no
+   duplicate data-fetch/state logic is needed per breakpoint. */
+.alarmCardList{ display: none; flex-direction: column; gap: 10px; }
+@media (max-width: 767px){
+  .tableHideOnMobile{ display: none; }
+  .alarmCardList{ display: flex; }
+}
+.alarmCard{
+  border: 1px solid var(--border-card, var(--border));
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--surface-card, var(--surface));
+  display: flex; flex-direction: column; gap: 6px;
+}
+.alarmCardTopRow{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.alarmCardId{ font-size: 14px; font-weight: 700; }
+.alarmCardId a{ color: inherit; text-decoration: none; }
+.alarmCardMeta{ font-size: 12px; color: var(--text-secondary); }
+.alarmCardStatsRow{
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  font-size: 12.5px; color: var(--text-primary);
+}
+.alarmCardStatsRow b{ font-weight: 700; }
+.alarmCardActions{ display: flex; justify-content: flex-end; margin-top: 2px; }
+
+/* -- LOT별 알람 집계 / 데이터 전처리: 카드 전환 없이 폰트·패딩만 축소
+   (spec §B-6: "컬럼이 적으므로 카드 전환 없이") -------------------------- */
+@media (max-width: 767px){
+  .lotSummaryTable th, .lotSummaryTable td,
+  .benchmarkTable th, .benchmarkTable td{
+    padding: 6px 8px; font-size: 12px;
+  }
+}
+
+/* -- 브러싱: 767px 이하 비활성 -------------------------------------------
+   해당 시점 기준 ScatterChart.tsx에는 드래그 영역 선택(브러싱) 기능 자체가
+   구현되어 있지 않다 (점 클릭 -> WaferDetailPopover, 호버 -> 툴팁만 존재) --
+   비활성화할 대상이 없어 이 규칙은 향후 브러싱이 추가될 때를 대비한
+   자리표시자로만 남긴다. */
+@media (max-width: 767px){
+  .scatterChartSvg{ touch-action: pan-y; }
+}
+

@@ -431,6 +431,19 @@ function FragmentRow({
               })
             }
             onMouseLeave={() => onHover(null)}
+            onTouchStart={(event) =>
+              onHover({
+                x: event.touches[0]?.clientX ?? 0,
+                y: event.touches[0]?.clientY ?? 0,
+                feature,
+                target,
+                value,
+                n,
+                q,
+                significant,
+                tier,
+              })
+            }
             onClick={() => onSelectCell({ target, feature, significant, qValue: q })}
             aria-label={`${feature}, ${target}, ${metric === "spearman" ? "rho" : "eps2"} ${value != null ? value.toFixed(2) : "표본 부족"}`}
           >

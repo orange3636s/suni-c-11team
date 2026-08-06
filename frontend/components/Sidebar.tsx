@@ -6,13 +6,16 @@ import { useEffect, useRef, useState } from "react";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 
-const navigationItems = [
+// Exported so MobileTabBar (≤1023px horizontal tab bar, same nav set) can
+// share one source of truth instead of a second hardcoded list drifting
+// out of sync with this one.
+export const navigationItems = [
   { label: "모델 학습", href: "/training", icon: "model" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "사전 알람 로그", href: "/alerts", icon: "alert" },
 ] as const;
 
-type NavigationLabel = (typeof navigationItems)[number]["label"];
+export type NavigationLabel = (typeof navigationItems)[number]["label"];
 
 type SidebarProps = {
   activeItem?: NavigationLabel;

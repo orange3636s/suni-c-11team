@@ -242,7 +242,7 @@ export default function AlertsPage() {
       </section>
 
       <section className="uploadCard">
-        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(200px,1fr) minmax(200px,1fr) minmax(140px,.6fr) auto" }}>
+        <div className="rcControlBar alarmControlBar">
           <DatasetSelector label="정상범위 산출 (train)" value={trainDataset} onChange={setTrainDataset} />
           <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
           <div className="fieldGroup">
@@ -346,36 +346,50 @@ export default function AlertsPage() {
         )}
         {!loading && alarms && alarmTable.sorted.length > 0 && (
           <>
-            <HScrollTableBody minWidth={980}>
-              <table>
-                <thead>
-                  <tr>
-                    <th className="col-wafer colNoTruncate">Wafer</th>
-                    <th>LOT</th>
-                    <th>Step</th>
-                    <th>인자</th>
-                    <th>타깃</th>
-                    <th className="numCol col-value colNoTruncate">값</th>
-                    <th className="col-range colNoTruncate">정상범위</th>
-                    <th className="numCol col-deviation colNoTruncate">이탈량</th>
-                    <th>방향</th>
-                    <th className="col-severity colNoTruncate">심각성</th>
-                    <th className="numCol" title="해당 행의 타깃(target) 실제 불량률">실측값</th>
-                    <th aria-label="해설" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {alarmTable.sorted.map((item, index) => (
-                    <AlarmRow
-                      key={`${item.lot_wafer_id}-${item.feature}-${index}`}
-                      item={item}
-                      onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
-                      explainDisabled={!analysisDataset}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </HScrollTableBody>
+            <div className="tableHideOnMobile">
+              <HScrollTableBody minWidth={980}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="col-wafer colNoTruncate">Wafer</th>
+                      <th>LOT</th>
+                      <th>Step</th>
+                      <th>인자</th>
+                      <th>타깃</th>
+                      <th className="numCol col-value colNoTruncate">값</th>
+                      <th className="col-range colNoTruncate">정상범위</th>
+                      <th className="numCol col-deviation colNoTruncate">이탈량</th>
+                      <th>방향</th>
+                      <th className="col-severity colNoTruncate">심각성</th>
+                      <th className="numCol" title="해당 행의 타깃(target) 실제 불량률">실측값</th>
+                      <th aria-label="해설" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alarmTable.sorted.map((item, index) => (
+                      <AlarmRow
+                        key={`${item.lot_wafer_id}-${item.feature}-${index}`}
+                        item={item}
+                        onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
+                        explainDisabled={!analysisDataset}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </HScrollTableBody>
+            </div>
+            {/* ≤767px: 카드형 전환 (spec §B-6) -- 같은 alarmTable.sorted를
+                공유하므로 데이터/정렬/검색 상태가 둘 사이에서 갈라질 일이 없다. */}
+            <div className="alarmCardList">
+              {alarmTable.sorted.map((item, index) => (
+                <AlarmCard
+                  key={`card-${item.lot_wafer_id}-${item.feature}-${index}`}
+                  item={item}
+                  onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
+                  explainDisabled={!analysisDataset}
+                />
+              ))}
+            </div>
             <TableCaption total={alarmTable.sorted.length} shown={Math.min(10, alarmTable.sorted.length)} />
           </>
         )}
@@ -396,7 +410,7 @@ export default function AlertsPage() {
         {summary && summary.top_lots.length > 0 ? (
           <>
             <ScrollTableBody rows={5}>
-              <table>
+              <table className="lotSummaryTable">
                 <thead><tr><th style={{ width: "70%" }}>LOT</th><th className="numCol" style={{ width: "30%" }}>알람 건수</th></tr></thead>
                 <tbody>
                   {summary.top_lots.map((lot) => (
@@ -453,35 +467,47 @@ export default function AlertsPage() {
         )}
         {!loading && recommendations && recommendationTable.sorted.length > 0 && (
           <>
-            <HScrollTableBody minWidth={960}>
-              <table>
-                <thead>
-                  <tr>
-                    <th className="col-wafer colNoTruncate">Wafer</th>
-                    <th>LOT</th>
-                    <th>Step</th>
-                    <th>인자</th>
-                    <th>타깃</th>
-                    <th className="numCol col-value colNoTruncate">현재값</th>
-                    <th className="col-range colNoTruncate">권장 구간</th>
-                    <th>이동 방향</th>
-                    <th className="numCol">기대 개선</th>
-                    <th>태그</th>
-                    <th aria-label="해설" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {recommendationTable.sorted.map((item, index) => (
-                    <RecommendationRow
-                      key={`${item.lot_wafer_id}-${item.feature}-${index}`}
-                      item={item}
-                      onExplain={() => requestChat(recommendationExplainMessage(item), "chat")}
-                      explainDisabled={!analysisDataset}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </HScrollTableBody>
+            <div className="tableHideOnMobile">
+              <HScrollTableBody minWidth={960}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="col-wafer colNoTruncate">Wafer</th>
+                      <th>LOT</th>
+                      <th>Step</th>
+                      <th>인자</th>
+                      <th>타깃</th>
+                      <th className="numCol col-value colNoTruncate">현재값</th>
+                      <th className="col-range colNoTruncate">권장 구간</th>
+                      <th>이동 방향</th>
+                      <th className="numCol">기대 개선</th>
+                      <th>태그</th>
+                      <th aria-label="해설" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recommendationTable.sorted.map((item, index) => (
+                      <RecommendationRow
+                        key={`${item.lot_wafer_id}-${item.feature}-${index}`}
+                        item={item}
+                        onExplain={() => requestChat(recommendationExplainMessage(item), "chat")}
+                        explainDisabled={!analysisDataset}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </HScrollTableBody>
+            </div>
+            <div className="alarmCardList">
+              {recommendationTable.sorted.map((item, index) => (
+                <RecommendationCard
+                  key={`card-${item.lot_wafer_id}-${item.feature}-${index}`}
+                  item={item}
+                  onExplain={() => requestChat(recommendationExplainMessage(item), "chat")}
+                  explainDisabled={!analysisDataset}
+                />
+              ))}
+            </div>
             <TableCaption total={recommendationTable.sorted.length} shown={Math.min(10, recommendationTable.sorted.length)} />
           </>
         )}
@@ -857,6 +883,45 @@ function AlarmRow({
   );
 }
 
+/** ≤767px row-to-card conversion (spec §B-6) -- same data as AlarmRow,
+ * compressed into an identifier+badge line and 2 detail lines instead of
+ * 12 columns, since a 980px-min-width scrolling table is unusable on a
+ * 375px screen. CSS (.tableHideOnMobile / .alarmCardList) decides which
+ * of the two renders; both stay mounted so no extra fetch/state is needed. */
+function AlarmCard({
+  item,
+  onExplain,
+  explainDisabled,
+}: {
+  item: AlarmItem;
+  onExplain: () => void;
+  explainDisabled: boolean;
+}) {
+  const [lo, hi] = item.normal_range;
+  const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"}~${hi != null ? hi.toFixed(1) : "+∞"}`;
+  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
+  return (
+    <div className="alarmCard">
+      <div className="alarmCardTopRow">
+        <span className="alarmCardId"><Link href={rootCauseHref}>{item.lot_wafer_id}</Link></span>
+        <SeverityBadge severity={item.severity} />
+      </div>
+      <div className="alarmCardMeta">
+        <Link href={rootCauseHref}>{item.feature}</Link> · {item.target} · Step {item.step}
+        {item.lot_id && ` · ${item.lot_id}`}
+      </div>
+      <div className="alarmCardStatsRow">
+        <span>값 <b>{item.value.toFixed(1)}</b></span>
+        <span>정상 <b>{rangeText}</b></span>
+        <span>이탈 <b>{item.deviation >= 0 ? "+" : ""}{item.deviation.toFixed(1)}</b></span>
+      </div>
+      <div className="alarmCardActions">
+        <ExplainButton onClick={onExplain} disabled={explainDisabled} />
+      </div>
+    </div>
+  );
+}
+
 function RecommendationRow({
   item,
   onExplain,
@@ -890,5 +955,42 @@ function RecommendationRow({
       <td><RecommendationTagBadge tag={item.tag} /></td>
       <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
+  );
+}
+
+/** ≤767px row-to-card conversion for 개선 권장 목록 -- see AlarmCard. */
+function RecommendationCard({
+  item,
+  onExplain,
+  explainDisabled,
+}: {
+  item: RecommendationItem;
+  onExplain: () => void;
+  explainDisabled: boolean;
+}) {
+  const [lo, hi] = item.recommended_range;
+  const rangeText = `${lo.toFixed(1)}~${hi.toFixed(1)}`;
+  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
+  const improvement = item.expected_improvement_pct != null ? `−${item.expected_improvement_pct.toFixed(0)}%` : "-";
+  return (
+    <div className="alarmCard">
+      <div className="alarmCardTopRow">
+        <span className="alarmCardId"><Link href={rootCauseHref}>{item.lot_wafer_id}</Link></span>
+        <RecommendationTagBadge tag={item.tag} />
+      </div>
+      <div className="alarmCardMeta">
+        <Link href={rootCauseHref}>{item.feature}</Link> · {item.target} · Step {item.step}
+        {item.lot_id && ` · ${item.lot_id}`}
+      </div>
+      <div className="alarmCardStatsRow">
+        <span>값 <b>{item.value.toFixed(1)}</b></span>
+        <span>권장 <b>{rangeText}</b></span>
+        <span className={`recommendationDirection dir-${item.direction}`}>{DIRECTION_LABEL[item.direction] ?? item.direction}</span>
+        <span>기대개선 <b>{improvement}</b></span>
+      </div>
+      <div className="alarmCardActions">
+        <ExplainButton onClick={onExplain} disabled={explainDisabled} />
+      </div>
+    </div>
   );
 }

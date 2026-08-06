@@ -676,11 +676,16 @@ export default function ScatterChart({
   // 8-10 / 6-8, backing off toward the lower bound whenever labels would
   // collide -- which also makes density shrink automatically as the chart
   // narrows (panel open, mobile), since a narrower plotWidth needs more
-  // backoff steps to stop the same labels from overlapping.
-  const xTicks = useMemo(
-    () => niceTicksFitted(xDomain, X_TICK_COUNT[0], X_TICK_COUNT[1], plotWidth, formatTick, (label) => measureTextWidth(label, TICK_FONT)),
-    [xDomain, plotWidth],
-  );
+  // backoff steps to stop the same labels from overlapping. Below a
+  // ~240px-tall mobile chart (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
+  // 전환 §B-6, "x축 4~5개 · y축 4개"), the desktop band itself drops too --
+  // niceTicksFitted's own overlap backoff alone doesn't reliably reach
+  // that few on a chart this compact.
+  const isCompactChart = plotHeight < 200;
+  const xTicks = useMemo(() => {
+    const [max, min] = isCompactChart ? [5, 4] : X_TICK_COUNT;
+    return niceTicksFitted(xDomain, max, min, plotWidth, formatTick, (label) => measureTextWidth(label, TICK_FONT));
+  }, [xDomain, plotWidth, isCompactChart]);
   // Box mode: one tick per bin, at its column center, labeled with the
   // bin's x-mean rounded to an integer (spec §3-1) -- not the shared
   // niceTicksFitted continuous-axis logic, since these positions are
@@ -698,10 +703,10 @@ export default function ScatterChart({
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boxBins, plotWidth]);
-  const yTicks = useMemo(
-    () => niceTicksFitted(yDomain, Y_TICK_COUNT[0], Y_TICK_COUNT[1], plotHeight, formatTick, () => Y_TICK_LABEL_HEIGHT_PX),
-    [yDomain, plotHeight],
-  );
+  const yTicks = useMemo(() => {
+    const [max, min] = isCompactChart ? [4, 4] : Y_TICK_COUNT;
+    return niceTicksFitted(yDomain, max, min, plotHeight, formatTick, () => Y_TICK_LABEL_HEIGHT_PX);
+  }, [yDomain, plotHeight, isCompactChart]);
   // Measured (not guessed) so the y-axis title's 8px clearance (spec §1
   // 재지시) holds regardless of how wide the actual tick numbers render --
   // short domains ("1".."5") get a tighter gutter, wide ones ("-123.4")

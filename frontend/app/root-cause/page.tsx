@@ -14,11 +14,11 @@ import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { formatPValue } from "@/lib/numberFormat";
+import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
-  getAnalysisReport,
   getScreeningHeatmap,
   getScreeningPareto,
   getScreeningScatter,
@@ -155,6 +155,9 @@ function RootCauseContent() {
   // reload/reconnect restores a lean (points-less) version of it via
   // GET /api/state/latest.
   const { analysis, setAnalysis, hydrated } = useAnalysisState();
+  // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
+  const isMobileLayout = useIsMobileLayout();
+  const chartHeight = isMobileLayout ? 240 : 420;
   const [datasetId, setDatasetId] = useState("train");
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
@@ -170,8 +173,6 @@ function RootCauseContent() {
   const [runError, setRunError] = useState("");
   const [runErrorDetail, setRunErrorDetail] = useState("");
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
-  const [reportSaving, setReportSaving] = useState(false);
-  const [reportToast, setReportToast] = useState("");
 
   const paretoByTarget = analysis?.paretoByTarget ?? EMPTY_PARETO_BY_TARGET;
   const scatterByKey = analysis?.scatterByKey ?? EMPTY_SCATTER_BY_KEY;
@@ -322,36 +323,6 @@ function RootCauseContent() {
     }
   }
 
-  async function saveJsonReport() {
-    setReportSaving(true);
-    try {
-      const report = await getAnalysisReport(datasetId);
-      const now = new Date();
-      const stamp = [
-        now.getFullYear(),
-        String(now.getMonth() + 1).padStart(2, "0"),
-        String(now.getDate()).padStart(2, "0"),
-      ].join("") + "_" + [String(now.getHours()).padStart(2, "0"), String(now.getMinutes()).padStart(2, "0")].join("");
-      const filename = `suni_analysis_${datasetId}_${stamp}.json`;
-      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      setReportToast("보고서를 저장했습니다");
-      window.setTimeout(() => setReportToast(""), 2500);
-    } catch (failure) {
-      setReportToast(failure instanceof Error ? failure.message : "보고서 저장에 실패했습니다.");
-      window.setTimeout(() => setReportToast(""), 3500);
-    } finally {
-      setReportSaving(false);
-    }
-  }
-
   const activeDisplayFactors: ParetoRankingItem[] = useMemo(
     () => paretoByTarget[activeTarget]?.items ?? [],
     [paretoByTarget, activeTarget],
@@ -484,24 +455,12 @@ function RootCauseContent() {
                 : "타깃 5개 각각의 전체 인자 풀(R+D+Eq.) 기준 Pareto 상위 5개를 계산합니다."}
             </p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center" }}>
             <button type="button" className="button" disabled={runState === "running"} onClick={() => void runAnalysis()}>
               {runState === "running" ? "원인 분석 중..." : runState === "done" ? "다시 실행" : runState === "error" ? "다시 시도" : "원인 분석 실행"}
             </button>
-            <button
-              type="button"
-              className="reportButton"
-              disabled={runState !== "done" || reportSaving}
-              title={runState !== "done" ? "원인 분석을 먼저 실행하세요" : "보고서는 전체 인자 기준으로 생성됩니다"}
-              onClick={() => void saveJsonReport()}
-            >
-              {reportSaving ? "저장 중..." : "JSON 보고서 저장"}
-            </button>
           </div>
         </div>
-        {runState === "done" && (
-          <p className="reportButtonCaption">보고서는 전체 인자 기준으로 생성됩니다.</p>
-        )}
         {runState === "running" && (
           <div className="paretoRunProgress" style={{ marginTop: 12 }}>
             <div className="paretoRunProgressTrack">
@@ -584,9 +543,9 @@ function RootCauseContent() {
                 </p>
               )}
               {quickLookNumeric ? (
-                <ScatterChart data={quickLookNumeric} colorMode={quickLookColorMode} view={quickLookView} onSelectWafer={setSelectedWafer} height={420} />
+                <ScatterChart data={quickLookNumeric} colorMode={quickLookColorMode} view={quickLookView} onSelectWafer={setSelectedWafer} height={chartHeight} />
               ) : quickLookCategorical ? (
-                <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={420} />
+                <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={chartHeight} />
               ) : !quickLookError ? (
                 <p className="emptyMessage">불러오는 중…</p>
               ) : null}
@@ -636,7 +595,7 @@ function RootCauseContent() {
                     </p>
                   )}
                   {categoricalData ? (
-                    <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={420} />
+                    <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={chartHeight} />
                   ) : (
                     <p className="emptyMessage">불러오는 중…</p>
                   )}
@@ -659,7 +618,6 @@ function RootCauseContent() {
       {selectedWafer && (
         <WaferDetailPopover point={selectedWafer} target={activeTarget} onClose={() => setSelectedWafer(null)} />
       )}
-      {reportToast && <div className="jsonReportToast" role="status">{reportToast}</div>}
       {compareFeature && (
         <CompareAcrossTargetsModal
           feature={compareFeature}
@@ -822,6 +780,10 @@ function NumericFactorCard({
   // in a shared store/URL/localStorage -- resets for free whenever this
   // card remounts on a new run/target (see its `key` at the call site).
   const [view, setView] = useState<ScatterView>("scatter");
+  // ≤767px: 산점도 높이 240px (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
+  // 전환 §B-6).
+  const isMobileLayout = useIsMobileLayout();
+  const chartHeight = isMobileLayout ? 240 : 480;
   // SPC/ML 토글 상태 (spec §3-2): 기본 선택은 이 인자의 `methods.adopted`를
   // 따른다. `numericData`는 비동기로 한 번만 채워지므로 (같은 카드 인스턴스가
   // 다른 인자 데이터로 바뀌는 일은 없다 -- 위 key가 매 실행/타깃/인자 조합마다
@@ -874,7 +836,7 @@ function NumericFactorCard({
       )}
       {numericData ? (
         <>
-          <ScatterChart data={numericData} colorMode={colorMode} view={view} method={method} onSelectWafer={onSelectWafer} height={480} />
+          <ScatterChart data={numericData} colorMode={colorMode} view={view} method={method} onSelectWafer={onSelectWafer} height={chartHeight} />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>
       ) : (
