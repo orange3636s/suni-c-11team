@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getLatestState } from "@/lib/api";
 import type {
+  AlarmGrade,
   AlarmListResponse,
   AlarmSummaryResponse,
   CategoricalScatterResponse,
@@ -51,6 +52,10 @@ export type AnalysisState = {
   // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
   // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
   measurementExpansion: MeasurementExpansionResponse | null;
+  // 알람 판정 GBDT 전환 (spec §B) -- wafer_id -> 등급. 분석 실행 시 한 번만
+  // 가져와 모든 산점도/Box Plot 카드가 공유한다 (§B-2: 카드마다 재요청하지
+  // 않는다).
+  alarmGradeByWaferId: Record<string, AlarmGrade> | null;
 } | null;
 
 export type AlarmsState = {
@@ -117,6 +122,10 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
             // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
             measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
+            // wafer 수만큼 커질 수 있어(예: train.CSV 1만 행) 서버에 저장하지
+            // 않는다 -- scatterByKey와 같은 방식으로 복원 직후 배경에서
+            // 다시 채운다 (root-cause/page.tsx의 fetchAllScatterData 이펙트).
+            alarmGradeByWaferId: null,
           });
         }
         if (state.alarms) {

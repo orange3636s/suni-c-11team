@@ -50,6 +50,10 @@ class ReferenceLineSchema(BaseModel):
     alarm_relevant: bool
     formula: str
     outside_count: int
+    # key가 "warning_lo"/"warning_hi"일 때만 채워진다 (spec 알람 판정 GBDT
+    # 전환 §C-4-1) -- 범례에 쓰는 실측 수율 차이(%p), 표본 30장 미만이면
+    # None.
+    observed_yield_gap_pp: float | None = None
 
 
 class BinProfileSchema(BaseModel):
@@ -179,19 +183,17 @@ class ControlRangeListResponse(BaseModel):
 
 
 class AlarmItemSchema(BaseModel):
+    """알람 판정 GBDT 전환 (spec §A-3) -- 관리한계 이탈량이 아니라 부트스트랩
+    앙상블 예측 수율의 신뢰구간 상한(pred_hi) 기준. 예측 수율 절대값과
+    신뢰구간은 화면에 노출하지 않는다(spec §A-3: 오차가 Y 표준편차의
+    72~80%라 잘못된 확신을 준다) -- `risk_percentile`(순위)만 내보낸다.
+    """
+
     lot_wafer_id: str
     lot_id: str | None
-    wafer_slot: int | None
-    step: int
-    feature: str
-    kind: str
-    target: str
-    value: float
-    normal_range: list[float | None]
-    deviation: float
-    direction: str
-    severity: str
-    actual_y: float | None
+    grade: str  # "심각" | "위험" | "주의" | "개선 권고"
+    risk_percentile: float  # 0-100, 낮을수록 위험
+    reason: str
 
 
 class AlarmListResponse(BaseModel):
@@ -199,6 +201,12 @@ class AlarmListResponse(BaseModel):
     eval_dataset_id: str
     items: list[AlarmItemSchema]
     total: int
+    # 심각+위험+주의 합계 (개선 권고 제외) -- spec §A-2 "알람이 평가 대상의
+    # 10%를 넘을 때 경고" 판단에 쓴다.
+    alarm_total: int
+    improvement_total: int
+    evaluated_total: int
+    alarm_share_warning: bool
 
 
 class WaferStatusCounts(BaseModel):
@@ -368,6 +376,18 @@ class ReportPerChamberWindowSchema(BaseModel):
     n: int
 
 
+class ReportWarningLineSchema(BaseModel):
+    """알람 판정 GBDT 전환 §C-4 -- 화면에는 위치만 쓰고(경고선), 곡선/PDP
+    수치는 표시하지 않는다. JSON 보고서에는 재현성 확인용으로 남긴다."""
+
+    value: float
+    lower: float | None
+    upper: float | None
+    method: str
+    pdp_range: float
+    observed_yield_gap: float | None
+
+
 class ReportFactorSchema(BaseModel):
     feature: str
     kind: str
@@ -386,6 +406,7 @@ class ReportFactorSchema(BaseModel):
     relation: ReportRelationSchema
     binned_profile: list[dict[str, float]]
     control_limits: ReportControlLimitsSchema
+    warning_line: ReportWarningLineSchema | None = None
     band_stability: float
     band_width: float | None
     window: ReportWindowSchema | None
@@ -430,6 +451,7 @@ class ContextFactorSchema(BaseModel):
     n_missing_pct: float
     relation: ReportRelationSchema
     control_limits: ReportControlLimitsSchema
+    warning_line: ReportWarningLineSchema | None = None
     band_stability: float
     band_width: float | None
     window: ReportWindowSchema | None
@@ -589,3 +611,31 @@ class MeasurementExpansionResponse(BaseModel):
     show_full_card: bool
     priorities: list[FactorPrioritySchema] = Field(default_factory=list)
     new_factor_discoveries: list[NewFactorDiscoverySchema] = Field(default_factory=list)
+
+
+RELIABILITY_THRESHOLDS_DISCLAIMER = (
+    "등급 기준은 내장 데이터셋에서 구분이 되도록 설정한 경험값이며 절대 기준이 아닙니다."
+)
+
+
+class ReliabilityResponse(BaseModel):
+    """종합 신뢰성 등급 (spec 알람 판정 GBDT 전환 §E)."""
+
+    dataset_id: str
+    grade: str  # "높음" | "보통" | "낮음"
+    total_score: int
+    auc_lower_bound: float | None
+    auc_score: int
+    n_significant_factors: int
+    n_significant_score: int
+    max_eps2: float | None
+    max_eps2_score: int
+    n_train: int
+    n_train_score: int
+    coverage_pct: float | None
+    coverage_score: int
+    deduction_reasons: list[str] = Field(default_factory=list)
+    low_holdout_sample: bool
+    thresholds_disclaimer: str = RELIABILITY_THRESHOLDS_DISCLAIMER
+    target_fallback_tier: str  # "per_target" | "final_yield_only" | "unanalyzable"
+    target_fallback_message: str | None

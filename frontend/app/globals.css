@@ -10057,3 +10057,70 @@ html[data-theme="dark"]{
 
 .rootCauseIntro{ word-break: keep-all; }
 
+/* -- 알람 판정 GBDT 전환 -------------------------------------------------- */
+
+/* 알람 등급 배지 (spec §A-3/§B-1 색상 재사용: 심각 #DC2626, 위험 #EA580C,
+   주의 #CA8A04 -- 빈 삼각형은 테두리만 보이므로 밝은 노랑 대신 진한
+   황갈색을 쓴다). "개선 권고"는 알람이 아니라 회색 참고 배지. */
+.severityBadge-grade-severe{ background: rgba(220,38,38,.14); color: #DC2626; }
+.severityBadge-grade-severe::before{ background: #DC2626; }
+.severityBadge-grade-danger{ background: rgba(234,88,12,.14); color: #C2570A; }
+.severityBadge-grade-danger::before{ background: #EA580C; }
+.severityBadge-grade-caution{ background: rgba(202,138,4,.14); color: #9A6B03; }
+.severityBadge-grade-caution::before{ background: #CA8A04; }
+.severityBadge-grade-improve{ background: rgba(142,142,147,.14); color: var(--text-secondary); }
+.severityBadge-grade-improve::before{ background: #8E8E93; }
+html[data-theme="dark"] .severityBadge-grade-severe{ color: #F87171; }
+html[data-theme="dark"] .severityBadge-grade-danger{ color: #FB923C; }
+html[data-theme="dark"] .severityBadge-grade-caution{ color: #FACC15; }
+html[data-theme="dark"] .severityBadge-grade-improve{ color: var(--text-secondary); }
+
+.alarmReasonCell{ color: var(--text-secondary); font-size: 12.5px; max-width: 360px; }
+.alarmShareWarning{
+  margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  background: var(--warning-soft); color: var(--warning);
+}
+
+/* 종합 신뢰성 등급 (spec §E-3) */
+.pageHeadingTitleRow{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.reliabilityBadge{
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600; border: 1px solid; cursor: pointer; background: var(--surface);
+}
+.reliabilityBadge-high{ color: #0D9668; border-color: #0D9668; }
+.reliabilityBadge-medium{ color: #D97706; border-color: #D97706; }
+.reliabilityBadge-low{ color: #DC2626; border-color: #DC2626; }
+html[data-theme="dark"] .reliabilityBadge-high{ color: #34D399; border-color: #34D399; }
+html[data-theme="dark"] .reliabilityBadge-medium{ color: #FBBF24; border-color: #FBBF24; }
+html[data-theme="dark"] .reliabilityBadge-low{ color: #F87171; border-color: #F87171; }
+
+.reliabilityPanel{
+  margin: 10px 0; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface-secondary); max-width: 520px;
+}
+.reliabilityPanelHeader{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); }
+.reliabilityGradeText{ font-size: 15px; font-weight: 650; }
+.reliabilityGradeText.grade-high{ color: #0D9668; }
+.reliabilityGradeText.grade-medium{ color: #D97706; }
+.reliabilityGradeText.grade-low{ color: #DC2626; }
+html[data-theme="dark"] .reliabilityGradeText.grade-high{ color: #34D399; }
+html[data-theme="dark"] .reliabilityGradeText.grade-medium{ color: #FBBF24; }
+html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
+.reliabilityTable{ width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.reliabilityTable td{ padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.reliabilityDeductions{ margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.reliabilityDisclaimer{ margin: 8px 0 0; font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+.reliabilityLowWarning{
+  margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  background: var(--danger-soft); color: var(--danger);
+}
+.analysisFallbackNotice{
+  margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  background: var(--surface-secondary); color: var(--text-secondary);
+}
+
+/* 산점도/Box Plot 알람 삼각형 범례 (spec §B-3) */
+.scatterAlarmLegendRow{ align-items: center; }
+.scatterAlarmLegendLabel{ font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-right: 4px; }
+.scatterAlarmLegendNote{ font-size: 11.5px; color: var(--text-muted); margin: 4px 0 0; line-height: 1.5; }
+

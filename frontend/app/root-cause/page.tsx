@@ -21,6 +21,7 @@ import {
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
+  getAlarms,
   getDatasetSchema,
   getMeasurementExpansion,
   getScreeningHeatmap,
@@ -30,6 +31,7 @@ import {
   saveAnalysisState,
 } from "@/lib/api";
 import type {
+  AlarmGrade,
   CategoricalScatterResponse,
   ConfidenceTier,
   DatasetSchemaResponse,
@@ -40,6 +42,22 @@ import type {
   ScreeningScatterResponse,
   WindowMethod,
 } from "@/types/data";
+
+// 알람 판정 GBDT 전환 (spec §B) -- 산점도/Box Plot이 그리는 wafer는 이
+// 데이터셋 자기 자신(build_scatter_data(df, df, factor)와 동일하게
+// train=eval=datasetId)이므로, 마커도 같은 데이터셋을 자기 자신에 대해
+// 판정한 결과를 쓴다. train≠eval로 판정하면(예: 항상 eval="test") 두
+// 데이터셋의 분포가 다를 때 알람이 사실상 0건으로 사라질 수 있다(실측:
+// mentorship_dataset_final을 test.csv로 판정하면 0건, 자기 자신으로
+// 판정하면 634건).
+async function fetchAlarmGradeByWaferId(datasetId: string): Promise<Record<string, AlarmGrade>> {
+  const response = await getAlarms(datasetId, datasetId);
+  const map: Record<string, AlarmGrade> = {};
+  for (const item of response.items) {
+    map[item.lot_wafer_id] = item.grade;
+  }
+  return map;
+}
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 // Stable empty-object fallbacks (spec: avoid a fresh `{}` literal every
@@ -280,6 +298,16 @@ function RootCauseContent() {
         // 실행" if this silently fails.
       }
     })();
+    // 알람 삼각형(spec §B)은 부트스트랩 앙상블이라 수십 초가 걸릴 수 있다
+    // (§A-1) -- 산점도 좌표 복원과 묶어 기다리게 하면 그 시간만큼 차트
+    // 전체가 "불러오는 중"에 갇힌다. 별도 요청으로 분리해 늦게 도착해도
+    // 삼각형만 나중에 얹히게 한다.
+    void fetchAlarmGradeByWaferId(dataset)
+      .then((alarmGradeByWaferId) => {
+        if (cancelled) return;
+        setAnalysis((previous) => (previous && previous.dataset === dataset ? { ...previous, alarmGradeByWaferId } : previous));
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -327,9 +355,19 @@ function RootCauseContent() {
         categoricalByKey: categoricalMap,
         pointsComplete: true,
         measurementExpansion,
+        alarmGradeByWaferId: null,
       });
       setRunState("done");
       setAnalysisDataset(datasetId);
+      // 알람 심각도 삼각형 (spec §B) -- 부트스트랩 앙상블이라 수십 초가
+      // 걸릴 수 있다(§A-1). 위 setAnalysis를 붙잡아 두면 이미 준비된
+      // 산점도/Pareto까지 그만큼 늦게 보이므로, 별도 요청으로 분리해
+      // 나중에 도착하는 대로 삼각형만 얹는다.
+      void fetchAlarmGradeByWaferId(datasetId)
+        .then((alarmGradeByWaferId) => {
+          setAnalysis((previous) => (previous && previous.dataset === datasetId ? { ...previous, alarmGradeByWaferId } : previous));
+        })
+        .catch(() => {});
       // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
       // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
       // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을
@@ -578,7 +616,7 @@ function RootCauseContent() {
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
                   이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(quickLookNumeric.p_value)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
-                  아래 관리한계선은 인자 자체의 분포에서 산출된 것으로 별개이지만, 원인으로 단정할 근거는 부족합니다.
+                  아래 경고선은 예측 수율을 기준으로 별도 산출된 것으로 별개이지만, 원인으로 단정할 근거는 부족합니다.
                 </p>
               )}
               {!quickLookError && quickLookCategorical && !hasReliableEvidence(quickLookCategorical.confidence_tier) && (
@@ -587,7 +625,14 @@ function RootCauseContent() {
                 </p>
               )}
               {quickLookNumeric ? (
-                <ScatterChart data={quickLookNumeric} colorMode={quickLookColorMode} view={quickLookView} onSelectWafer={setSelectedWafer} height={chartHeight} />
+                <ScatterChart
+                  data={quickLookNumeric}
+                  colorMode={quickLookColorMode}
+                  view={quickLookView}
+                  onSelectWafer={setSelectedWafer}
+                  height={chartHeight}
+                  alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
+                />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={chartHeight} />
               ) : !quickLookError ? (
@@ -611,6 +656,7 @@ function RootCauseContent() {
                     onSelectWafer={setSelectedWafer}
                     onCompare={setCompareFeature}
                     hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
+                    alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
                   />
                 );
               }
@@ -636,7 +682,7 @@ function RootCauseContent() {
                   </div>
                   {!hasReliableEvidence(item.confidence_tier) && (
                     <p className="heatmapSignificanceBanner">
-                      이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
+                      이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 원인으로 단정할 근거는 부족합니다.
                     </p>
                   )}
                   {categoricalData ? (
@@ -831,6 +877,7 @@ function NumericFactorCard({
   onSelectWafer,
   onCompare,
   hasConfig,
+  alarmGradeByWaferId,
 }: {
   item: ParetoRankingItem;
   index: number;
@@ -839,6 +886,7 @@ function NumericFactorCard({
   onSelectWafer: (point: ScatterPoint) => void;
   onCompare: (feature: string) => void;
   hasConfig: boolean;
+  alarmGradeByWaferId?: Record<string, AlarmGrade>;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
@@ -896,12 +944,20 @@ function NumericFactorCard({
       </div>
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
-          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 관리한계선은 인자 자체의 분포에서 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 경고선은 예측 수율을 기준으로 별도 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
       {numericData ? (
         <>
-          <ScatterChart data={numericData} colorMode={colorMode} view={view} method={method} onSelectWafer={onSelectWafer} height={chartHeight} />
+          <ScatterChart
+            data={numericData}
+            colorMode={colorMode}
+            view={view}
+            method={method}
+            onSelectWafer={onSelectWafer}
+            height={chartHeight}
+            alarmGradeByWaferId={alarmGradeByWaferId}
+          />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>
       ) : (

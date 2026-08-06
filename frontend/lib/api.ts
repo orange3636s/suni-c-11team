@@ -21,6 +21,7 @@ import type {
   ParetoRankingResponse,
   PreprocessResponse,
   RecommendationListResponse,
+  ReliabilityResponse,
   ScreeningScatterResponse,
   TrainResponse,
   TrainingJobCreateResponse,
@@ -417,14 +418,18 @@ export function getControlRanges(dataset: string): Promise<ControlRangeListRespo
   return getJson(`/api/control-ranges?${new URLSearchParams({ dataset }).toString()}`);
 }
 
-export function getAlarms(trainDataset: string, evalDataset: string, severity?: string): Promise<AlarmListResponse> {
+export function getAlarms(trainDataset: string, evalDataset: string, grade?: string): Promise<AlarmListResponse> {
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
-  if (severity) params.set("severity", severity);
+  if (grade) params.set("grade", grade);
   return getJson(`/api/alarms?${params.toString()}`);
 }
 
 export function getAlarmSummary(trainDataset: string, evalDataset: string): Promise<AlarmSummaryResponse> {
   return getJson(`/api/alarms/summary?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
+}
+
+export function getReliability(dataset: string): Promise<ReliabilityResponse> {
+  return getJson(`/api/analysis/reliability?${new URLSearchParams({ dataset }).toString()}`);
 }
 
 export function getRecommendations(trainDataset: string, evalDataset: string): Promise<RecommendationListResponse> {

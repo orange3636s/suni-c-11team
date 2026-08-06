@@ -22,9 +22,11 @@ from api.schemas.analysis import (
     ModelPerformanceResponse,
     ParetoRankingResponse,
     RecommendationListResponse,
+    ReliabilityResponse,
     ScreeningScatterResponse,
 )
 from api.settings import APP_VERSION, settings
+from src.analysis import alarm_gbdt, reliability, target_fallback, warning_line
 from src.analysis.alarm_bands import classify_measured_bands, compute_factor_band
 from src.analysis.control_range import (
     compute_control_range,
@@ -44,6 +46,7 @@ from src.analysis.screening.selector import (
     ParetoFactor,
     confidence_tier,
     find_factor,
+    score_all_factors,
     select_fdr_significant_factors,
     select_primary_factor,
 )
@@ -88,7 +91,9 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
             detail=f"'{feature}'은(는) Config(범주형) 인자입니다. /api/screening/scatter/categorical을 사용하세요.",
         )
 
-    data = build_scatter_data(df, df, factor)
+    reference_model = _cached_reference_model(dataset)
+    gbdt_features = alarm_gbdt.feature_columns(schema)
+    data = build_scatter_data(df, df, factor, reference_model=reference_model, gbdt_features=gbdt_features)
     # Only the bulky per-point/per-bin arrays are rounded -- they're what
     # actually drives payload size (108KB for 1,470 points); scalar stats
     # (p_value/q_value/eps2) keep full precision since a very small
@@ -211,6 +216,72 @@ def _cached_ranked_rows(dataset_id: str, target: str) -> tuple[dict, ...]:
     return tuple(_ranked_rows(df, schema, target, 0.05, 100, 20))
 
 
+REFERENCE_MODEL_CACHE_DATASETS = 2
+
+
+@lru_cache(maxsize=REFERENCE_MODEL_CACHE_DATASETS)
+def _cached_reference_model(dataset_id: str):
+    """경고선(§C) 계산 전용 단일 GBDT -- 데이터셋당 한 번만 학습해(약 5~10초)
+    이후 모든 인자의 산점도 요청이 재사용한다. 결측(Y가 전부 비어 있거나
+    R+D 인자가 하나도 없는) 데이터셋에서는 None을 반환해 호출자가 경고선
+    없이 진행하게 한다.
+    """
+    df = _dataframe_or_404(dataset_id)
+    schema = parse_schema(df)
+    features = alarm_gbdt.feature_columns(schema)
+    if not features or alarm_gbdt.FINAL_YIELD_COLUMN not in df.columns:
+        return None
+    valid_y = pd.to_numeric(df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").notna()
+    if int(valid_y.sum()) < 10:
+        return None
+    t0 = time.perf_counter()
+    model = warning_line.fit_reference_model(df, features)
+    logger.info("warning_line reference model fit %.1fms (dataset=%s)", (time.perf_counter() - t0) * 1000, dataset_id)
+    return model
+
+
+@lru_cache(maxsize=REFERENCE_MODEL_CACHE_DATASETS)
+def _cached_all_warning_lines(dataset_id: str):
+    """§A-3 알람 사유용 -- 전체 R+D 인자의 경고선을 데이터셋당 한 번만
+    계산해 캐시한다 (인자 58개 기준 반복 호출 시 수십 초가 걸린다).
+    """
+    model = _cached_reference_model(dataset_id)
+    if model is None:
+        return {}
+    df = _dataframe_or_404(dataset_id)
+    schema = parse_schema(df)
+    features = alarm_gbdt.feature_columns(schema)
+    t0 = time.perf_counter()
+    lines = warning_line.compute_all_warning_lines(model, df, features)
+    logger.info(
+        "warning_line all-feature computation %.1fms (dataset=%s, n_lines=%d)",
+        (time.perf_counter() - t0) * 1000, dataset_id, len(lines),
+    )
+    return lines
+
+
+BOOTSTRAP_CACHE_PAIRS = 2
+
+
+@lru_cache(maxsize=BOOTSTRAP_CACHE_PAIRS)
+def _cached_bootstrap_prediction(train_dataset_id: str, eval_dataset_id: str):
+    """§A-1 부트스트랩 앙상블 -- (train, eval) 쌍마다 한 번만 계산해
+    캐시한다 (spec §A-1: "분석 실행 시 한 번만 수행하고 캐시한다")."""
+    train_df = _dataframe_or_404(train_dataset_id)
+    eval_df = _dataframe_or_404(eval_dataset_id)
+    schema = parse_schema(train_df)
+    features = alarm_gbdt.feature_columns(schema)
+    if not features or alarm_gbdt.FINAL_YIELD_COLUMN not in train_df.columns:
+        return None
+    t0 = time.perf_counter()
+    result = alarm_gbdt.fit_bootstrap_ensemble(train_df, eval_df, features)
+    logger.info(
+        "alarm_gbdt bootstrap ensemble fit %.1fms (train=%s, eval=%s)",
+        (time.perf_counter() - t0) * 1000, train_dataset_id, eval_dataset_id,
+    )
+    return result
+
+
 def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
     t0 = time.perf_counter()
     hits_before = _cached_ranked_rows.cache_info().hits
@@ -299,37 +370,80 @@ def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
 
 
 @router.get("/alarms", response_model=AlarmListResponse)
-def get_alarms(train: str = "train", eval: str = "test", severity: str | None = None) -> dict[str, Any]:
+def get_alarms(train: str = "train", eval: str = "test", grade: str | None = None) -> dict[str, Any]:
+    """알람 판정 GBDT 전환 (spec §A) -- 관리한계 이탈량이 아니라 부트스트랩
+    앙상블로 예측한 최종 수율(Y) 신뢰구간 상한(pred_hi)이 Y 분위수 임계
+    아래인 wafer만 알람으로 낸다. 개수를 고정하지 않는다: 신뢰할 수 없는
+    데이터셋(예: killing_event)에서는 알람이 0~1건만 나오는 것이 설계
+    의도다.
+    """
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
-    schema = parse_schema(train_df)
-    factors, _ = _alarm_factors(train_df, schema)
+    empty_response = {
+        "train_dataset_id": train,
+        "eval_dataset_id": eval,
+        "items": [],
+        "total": 0,
+        "alarm_total": 0,
+        "improvement_total": 0,
+        "evaluated_total": len(eval_df),
+        "alarm_share_warning": False,
+    }
+
+    prediction = _cached_bootstrap_prediction(train, eval)
+    if prediction is None:
+        return empty_response
+
+    thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
+    scored = alarm_gbdt.score_alarms(eval_df, prediction, thresholds)
+
+    warning_lines = _cached_all_warning_lines(train)
+    id_column = "Lot_Wafer_ID"
+    eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
 
     items: list[dict[str, Any]] = []
-    for factor in factors:
-        control_range = compute_control_range(train_df, factor)
-        for alarm in evaluate_alarms(eval_df, control_range):
-            if severity and alarm.severity != severity:
-                continue
-            items.append(
-                {
-                    "lot_wafer_id": alarm.lot_wafer_id,
-                    "lot_id": alarm.lot_id,
-                    "wafer_slot": alarm.wafer_slot,
-                    "step": factor.step,
-                    "feature": alarm.feature,
-                    "kind": alarm.kind,
-                    "target": alarm.target,
-                    "value": alarm.value,
-                    "normal_range": [alarm.lower, alarm.upper],
-                    "deviation": alarm.deviation,
-                    "direction": alarm.direction,
-                    "severity": alarm.severity,
-                    "actual_y": alarm.actual_y,
-                }
-            )
-    items.sort(key=lambda item: item["lot_wafer_id"])
-    return {"train_dataset_id": train, "eval_dataset_id": eval, "items": items, "total": len(items)}
+    for score in scored:
+        if grade and score.grade != grade:
+            continue
+        row = None
+        if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
+            match = eval_by_id.loc[score.lot_wafer_id]
+            row = match.iloc[0] if isinstance(match, pd.DataFrame) else match
+        reason = (
+            warning_line.build_alarm_reason(row, warning_lines)
+            if row is not None and warning_lines
+            else warning_line.NO_EXCEEDANCE_REASON
+        )
+        items.append(
+            {
+                "lot_wafer_id": score.lot_wafer_id,
+                "lot_id": score.lot_id,
+                "grade": score.grade,
+                "risk_percentile": score.risk_percentile,
+                "reason": reason,
+            }
+        )
+    items.sort(key=lambda item: item["risk_percentile"])
+
+    alarm_total = sum(1 for s in scored if s.grade in ("심각", "위험", "주의"))
+    improvement_total = sum(1 for s in scored if s.grade == "개선 권고")
+    evaluated_total = len(eval_df)
+    alarm_share_warning = (
+        evaluated_total > 0 and (alarm_total / evaluated_total) > alarm_gbdt.ALARM_SHARE_WARNING_THRESHOLD
+    )
+
+    return round_floats(
+        {
+            "train_dataset_id": train,
+            "eval_dataset_id": eval,
+            "items": items,
+            "total": len(items),
+            "alarm_total": alarm_total,
+            "improvement_total": improvement_total,
+            "evaluated_total": evaluated_total,
+            "alarm_share_warning": alarm_share_warning,
+        }
+    )
 
 
 def _factor_band_dict(band) -> dict[str, Any]:
@@ -643,6 +757,85 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
             ],
         }
     )
+
+
+RELIABILITY_CACHE_DATASETS = 4
+
+
+@lru_cache(maxsize=RELIABILITY_CACHE_DATASETS)
+def _cached_reliability(dataset_id: str) -> dict[str, Any]:
+    """spec §E: 5개 지표 100점 -- 데이터셋당 한 번만 계산해 캐시한다
+    (GroupKFold 5-fold 검증이 주 비용이다).
+    """
+    df = _dataframe_or_404(dataset_id)
+    schema = parse_schema(df)
+    features = alarm_gbdt.feature_columns(schema)
+
+    fallback = target_fallback.select_analysis_targets(df)
+
+    n_sig_features: set[str] = set()
+    max_eps2: float | None = None
+    for target in fallback.targets:
+        rows = score_all_factors(df, schema, target)
+        for row in rows:
+            if row["significant"]:
+                n_sig_features.add(row["feature"])
+            max_eps2 = row["eps2"] if max_eps2 is None else max(max_eps2, row["eps2"])
+
+    fold_aucs = alarm_gbdt.cross_validate_auc(df, features) if features else None
+
+    bad_threshold = (
+        pd.to_numeric(df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").quantile(alarm_gbdt.BAD_LABEL_QUANTILE)
+        if alarm_gbdt.FINAL_YIELD_COLUMN in df.columns
+        else None
+    )
+    bad_sample_size = (
+        int((pd.to_numeric(df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce") <= bad_threshold).sum())
+        if bad_threshold is not None
+        else 0
+    )
+
+    # "판정 커버리지": 전체 R+D 인자 중 하나라도 계측된 행의 비율 --
+    # GBDT는 값이 하나도 없어도 예측 자체는 내놓지만, 그런 행은 사실상
+    # 모델의 편향(bias)만으로 예측한 것이라 신뢰성 점수에 반영한다.
+    coverage_pct: float | None = None
+    if features:
+        present = [f for f in features if f in df.columns]
+        if present:
+            coverage_pct = float(df[present].notna().any(axis=1).mean() * 100.0)
+
+    breakdown = reliability.compute_reliability(
+        fold_aucs=fold_aucs,
+        n_significant_factors=len(n_sig_features),
+        max_eps2=max_eps2,
+        n_train=len(df),
+        coverage_pct=coverage_pct,
+        bad_sample_size=bad_sample_size,
+    )
+    return {
+        "dataset_id": dataset_id,
+        "grade": breakdown.grade,
+        "total_score": breakdown.total_score,
+        "auc_lower_bound": breakdown.auc_lower_bound,
+        "auc_score": breakdown.auc_score,
+        "n_significant_factors": breakdown.n_significant_factors,
+        "n_significant_score": breakdown.n_significant_score,
+        "max_eps2": breakdown.max_eps2,
+        "max_eps2_score": breakdown.max_eps2_score,
+        "n_train": breakdown.n_train,
+        "n_train_score": breakdown.n_train_score,
+        "coverage_pct": breakdown.coverage_pct,
+        "coverage_score": breakdown.coverage_score,
+        "deduction_reasons": reliability.deduction_reasons(breakdown),
+        "low_holdout_sample": breakdown.low_holdout_sample,
+        "target_fallback_tier": fallback.tier,
+        "target_fallback_message": fallback.message,
+    }
+
+
+@router.get("/analysis/reliability", response_model=ReliabilityResponse)
+def get_reliability(dataset: str = "train") -> dict[str, Any]:
+    return round_floats(_cached_reliability(dataset))
 
 
 @router.get("/analysis/context", response_model=AnalysisContextResponse)

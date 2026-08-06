@@ -17,24 +17,26 @@ import {
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { niceTicks } from "@/lib/niceTicks";
-import { getAlarmSummary, getAlarms, getRecommendations, saveAlarmsState } from "@/lib/api";
+import { getAlarmSummary, getAlarms, getRecommendations, getReliability, saveAlarmsState } from "@/lib/api";
 import type {
+  AlarmGrade,
   AlarmItem,
   AlarmSummaryResponse,
   FactorBand,
   MeasurementBiasSummary,
   RecommendationItem,
+  ReliabilityResponse,
 } from "@/types/data";
 
-const SEVERITY_LABEL: Record<string, string> = { low: "낮음", medium: "중간", high: "높음" };
-const RANGE_UNBOUNDED_LO = "-∞";
-const RANGE_UNBOUNDED_HI = "+∞";
+// 알람 판정 GBDT 전환 (spec §A/§B) -- 관리한계 이탈량이 아니라 부트스트랩
+// 앙상블 예측 수율 기준 등급이다. "개선 권고"는 알람이 아니라 참고용.
+const GRADE_LABEL: Record<AlarmGrade, string> = { 심각: "심각", 위험: "위험", 주의: "주의", "개선 권고": "개선 권고" };
+const GRADE_RANK: Record<AlarmGrade, number> = { 심각: 4, 위험: 3, 주의: 2, "개선 권고": 1 };
 
 function alarmExplainMessage(item: AlarmItem): string {
-  const [lo, hi] = item.normal_range;
-  const rangeText = `${lo != null ? lo.toFixed(1) : RANGE_UNBOUNDED_LO}~${hi != null ? hi.toFixed(1) : RANGE_UNBOUNDED_HI}`;
   return (
-    `알람: ${item.lot_wafer_id} · ${item.feature} = ${item.value.toFixed(1)} (관리한계 ${rangeText}) · ${item.target}\n` +
+    `알람: ${item.lot_wafer_id} · 등급 ${item.grade} · 위험 순위 하위 ${item.risk_percentile.toFixed(1)}%\n` +
+    `사유: ${item.reason}\n` +
     "이 알람에 대해 설명해 주세요."
   );
 }
@@ -47,25 +49,100 @@ function recommendationExplainMessage(item: RecommendationItem): string {
     "이 항목에 대해 설명해 주세요."
   );
 }
-const SEVERITY_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
 const TAG_LABEL: Record<string, string> = { priority: "우선 권장", recommended: "권장", reference: "참고" };
 const TAG_RANK: Record<string, number> = { priority: 3, recommended: 2, reference: 1 };
 const DIRECTION_LABEL: Record<string, string> = { down: "↓ 낮추기", up: "↑ 높이기" };
 
-function SeverityBadge({ severity }: { severity: string }) {
-  return <span className={`severityBadge severityBadge-${severity}`}>{SEVERITY_LABEL[severity] ?? severity}</span>;
+const GRADE_CLASS: Record<AlarmGrade, string> = { 심각: "severe", 위험: "danger", 주의: "caution", "개선 권고": "improve" };
+
+function GradeBadge({ grade }: { grade: AlarmGrade }) {
+  return <span className={`severityBadge severityBadge-grade-${GRADE_CLASS[grade] ?? "caution"}`}>{GRADE_LABEL[grade] ?? grade}</span>;
 }
 
 function RecommendationTagBadge({ tag }: { tag: string }) {
   return <span className={`recommendationTag tag-${tag}`}>{TAG_LABEL[tag] ?? tag}</span>;
 }
 
-function lotCompare(a: string | null, b: string | null): number {
-  return (a ?? "").localeCompare(b ?? "", undefined, { numeric: true });
+const RELIABILITY_GRADE_CLASS: Record<string, string> = { 높음: "high", 보통: "medium", 낮음: "low" };
+
+/** spec §E-3 헤더 배지 -- 클릭하면 상세 패널이 열린다. */
+function ReliabilityBadge({
+  reliability,
+  open,
+  onToggle,
+}: {
+  reliability: ReliabilityResponse;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`reliabilityBadge reliabilityBadge-${RELIABILITY_GRADE_CLASS[reliability.grade] ?? "medium"}`}
+      onClick={onToggle}
+      aria-expanded={open}
+    >
+      분석 신뢰도 {reliability.grade}
+    </button>
+  );
 }
 
-function alarmWaferSlot(item: AlarmItem): number {
-  return item.wafer_slot ?? 0;
+const AUC_TOOLTIP = "알람 순위가 실제 위험 순서와 얼마나 맞는지. 0.5는 무작위, 1.0은 완벽";
+
+/** spec §E-3 상세 패널: 5개 지표 배점 내역 + 감점 사유(코드 생성) + 경험값 고지. */
+function ReliabilityPanel({ reliability: r }: { reliability: ReliabilityResponse }) {
+  return (
+    <div className="reliabilityPanel">
+      <div className="reliabilityPanelHeader">
+        <span>분석 신뢰도</span>
+        <strong className={`reliabilityGradeText grade-${RELIABILITY_GRADE_CLASS[r.grade] ?? "medium"}`}>
+          {r.grade} {r.total_score}점
+        </strong>
+      </div>
+      <table className="reliabilityTable">
+        <tbody>
+          <tr>
+            <td title={AUC_TOOLTIP}>알람 순위 품질</td>
+            <td className="numCol">{r.auc_lower_bound != null ? `AUC ${r.auc_lower_bound.toFixed(3)}` : "산출 불가"}</td>
+            <td className="numCol">{r.auc_score} / 40</td>
+          </tr>
+          <tr>
+            <td>유의 인자 수</td>
+            <td className="numCol">{r.n_significant_factors}개</td>
+            <td className="numCol">{r.n_significant_score} / 25</td>
+          </tr>
+          <tr>
+            <td>최대 설명력</td>
+            <td className="numCol">{r.max_eps2 != null ? r.max_eps2.toFixed(3) : "-"}</td>
+            <td className="numCol">{r.max_eps2_score} / 20</td>
+          </tr>
+          <tr>
+            <td>표본 크기</td>
+            <td className="numCol">{r.n_train.toLocaleString()}행</td>
+            <td className="numCol">{r.n_train_score} / 10</td>
+          </tr>
+          <tr>
+            <td>판정 커버리지</td>
+            <td className="numCol">{r.coverage_pct != null ? `${r.coverage_pct.toFixed(1)}%` : "-"}</td>
+            <td className="numCol">{r.coverage_score} / 5</td>
+          </tr>
+        </tbody>
+      </table>
+      {r.deduction_reasons.length > 0 && (
+        <p className="reliabilityDeductions">감점 사유: {r.deduction_reasons.join(" ")}</p>
+      )}
+      {r.low_holdout_sample && (
+        <p className="reliabilityDeductions">
+          평가 표본이 부족해(하위 5% 표본 적음) 성능 지표의 불확실성이 큽니다.
+        </p>
+      )}
+      <p className="reliabilityDisclaimer">{r.thresholds_disclaimer}</p>
+    </div>
+  );
+}
+
+function lotCompare(a: string | null, b: string | null): number {
+  return (a ?? "").localeCompare(b ?? "", undefined, { numeric: true });
 }
 
 function recommendationWaferSlot(item: RecommendationItem): number {
@@ -75,7 +152,7 @@ function recommendationWaferSlot(item: RecommendationItem): number {
 }
 
 function alarmTieBreak(a: AlarmItem, b: AlarmItem): number {
-  return lotCompare(a.lot_id, b.lot_id) || alarmWaferSlot(a) - alarmWaferSlot(b);
+  return lotCompare(a.lot_id, b.lot_id) || a.lot_wafer_id.localeCompare(b.lot_wafer_id, undefined, { numeric: true });
 }
 
 function recommendationTieBreak(a: RecommendationItem, b: RecommendationItem): number {
@@ -83,13 +160,10 @@ function recommendationTieBreak(a: RecommendationItem, b: RecommendationItem): n
 }
 
 const ALARM_SORT_OPTIONS: SortOption<AlarmItem>[] = [
-  { value: "severity", label: "심각성", compare: (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0) },
+  { value: "risk", label: "위험 순위", compare: (a, b) => a.risk_percentile - b.risk_percentile },
+  { value: "grade", label: "등급", compare: (a, b) => (GRADE_RANK[b.grade] ?? 0) - (GRADE_RANK[a.grade] ?? 0) },
   { value: "lot_asc", label: "LOT 오름차순", compare: (a, b) => lotCompare(a.lot_id, b.lot_id) },
   { value: "lot_desc", label: "LOT 내림차순", compare: (a, b) => lotCompare(b.lot_id, a.lot_id) },
-  { value: "target_asc", label: "타깃 오름차순", compare: (a, b) => a.target.localeCompare(b.target, undefined, { numeric: true }) },
-  { value: "target_desc", label: "타깃 내림차순", compare: (a, b) => b.target.localeCompare(a.target, undefined, { numeric: true }) },
-  { value: "step_asc", label: "Step 오름차순", compare: (a, b) => a.step - b.step },
-  { value: "step_desc", label: "Step 내림차순", compare: (a, b) => b.step - a.step },
 ];
 
 const RECOMMENDATION_SORT_OPTIONS: SortOption<RecommendationItem>[] = [
@@ -123,11 +197,16 @@ export default function AlertsPage() {
   const { alarms: alarmsState, setAlarms: setAlarmsState, hydrated } = useAnalysisState();
   const [trainDataset, setTrainDataset] = useState("train");
   const [evalDataset, setEvalDataset] = useState("test");
-  const [severityFilter, setSeverityFilter] = useState("");
+  const [gradeFilter, setGradeFilter] = useState("");
   const [showReferenceTag, setShowReferenceTag] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [factorBandIndex, setFactorBandIndex] = useState(0);
+  // 종합 신뢰성 등급 (spec §E) -- train 데이터셋 하나에만 매인 값이라
+  // alarmsState(train+eval 쌍)와 별도로 둔다. 조회 버튼을 누를 때마다
+  // train 기준으로 다시 가져온다.
+  const [reliability, setReliability] = useState<ReliabilityResponse | null>(null);
+  const [reliabilityPanelOpen, setReliabilityPanelOpen] = useState(false);
 
   const summary = alarmsState?.summary ?? null;
   const alarms = alarmsState?.alarms ?? null;
@@ -141,19 +220,23 @@ export default function AlertsPage() {
   // 심각성 필터는 이미 불러온 alarms.items를 클라이언트에서 거를 뿐, 서버를
   // 다시 부르지 않는다 -- 필터를 바꿔도 "탭 전환 시 API 재호출 금지"와
   // 같은 원칙(불필요한 네트워크 요청 최소화)을 지키면서 즉시 반응한다.
-  const severityFilteredAlarmItems = useMemo(() => {
+  const gradeFilteredAlarmItems = useMemo(() => {
     const items = alarms?.items ?? [];
-    return severityFilter ? items.filter((item) => item.severity === severityFilter) : items;
-  }, [alarms, severityFilter]);
+    return gradeFilter ? items.filter((item) => item.grade === gradeFilter) : items;
+  }, [alarms, gradeFilter]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [summaryResponse, alarmsResponse, recommendationsResponse] = await Promise.all([
+      const [summaryResponse, alarmsResponse, recommendationsResponse, reliabilityResponse] = await Promise.all([
         getAlarmSummary(trainDataset, evalDataset),
         getAlarms(trainDataset, evalDataset),
         getRecommendations(trainDataset, evalDataset),
+        // 신뢰성 등급은 train 데이터셋만의 함수다 -- 실패해도 알람 자체는
+        // 계속 보여줘야 하므로 별도로 처리한다 (spec §E: 배지가 없다고
+        // 알람 목록까지 막으면 안 된다).
+        getReliability(trainDataset).catch(() => null),
       ]);
       setAlarmsState({
         trainDataset,
@@ -163,6 +246,7 @@ export default function AlertsPage() {
         alarms: alarmsResponse,
         recommendations: recommendationsResponse,
       });
+      setReliability(reliabilityResponse);
       setFactorBandIndex(0);
       // 조회 성공 직후 저장 (spec §3-4) -- 실패해도 방금 불러온 결과는
       // 이미 화면에 반영되어 있다 (spec §3-2).
@@ -210,10 +294,10 @@ export default function AlertsPage() {
   }, [hydrated, alarmsState]);
 
   const alarmTable = useTableSearchSort(
-    severityFilteredAlarmItems,
-    (item) => `${item.lot_wafer_id} ${item.feature} ${item.target}`,
+    gradeFilteredAlarmItems,
+    (item) => `${item.lot_wafer_id} ${item.reason}`,
     ALARM_SORT_OPTIONS,
-    "severity",
+    "risk",
     alarmTieBreak,
   );
 
@@ -237,8 +321,24 @@ export default function AlertsPage() {
     <DashboardShell activeItem="사전 알람 로그">
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">PRE-ALERT LOG</span>
-        <h1>사전 알람 로그</h1>
+        <div className="pageHeadingTitleRow">
+          <h1>사전 알람 로그</h1>
+          {reliability && (
+            <ReliabilityBadge reliability={reliability} open={reliabilityPanelOpen} onToggle={() => setReliabilityPanelOpen((v) => !v)} />
+          )}
+        </div>
         <p>학습 데이터셋에서 산출한 정상범위를 평가 데이터셋에 적용해 이탈 여부를 판정합니다.</p>
+        {reliability && reliabilityPanelOpen && <ReliabilityPanel reliability={reliability} />}
+        {reliability && reliability.grade === "낮음" && (
+          <p className="reliabilityLowWarning">
+            ⚠ 이 데이터셋에서는 분석 신뢰도가 낮습니다.
+            <br />
+            불량률 변동이 계측 인자로 설명되지 않아 알람 정확도를 보장할 수 없습니다.
+          </p>
+        )}
+        {reliability?.target_fallback_message && (
+          <p className="analysisFallbackNotice">{reliability.target_fallback_message}</p>
+        )}
         <LastRunNote createdAt={alarmsState?.createdAt} />
       </section>
 
@@ -247,12 +347,13 @@ export default function AlertsPage() {
           <DatasetSelector label="정상범위 산출 (train)" value={trainDataset} onChange={setTrainDataset} />
           <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
           <div className="fieldGroup">
-            <span>심각성</span>
-            <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+            <span>등급</span>
+            <select value={gradeFilter} onChange={(event) => setGradeFilter(event.target.value)}>
               <option value="">전체</option>
-              <option value="low">낮음</option>
-              <option value="medium">중간</option>
-              <option value="high">높음</option>
+              <option value="심각">심각</option>
+              <option value="위험">위험</option>
+              <option value="주의">주의</option>
+              <option value="개선 권고">개선 권고</option>
             </select>
           </div>
           <button type="button" className="button primary" disabled={loading} onClick={() => void load()} style={{ alignSelf: "end" }}>
@@ -325,51 +426,59 @@ export default function AlertsPage() {
         <div className="sectionHeading compact">
           <div>
             <span className="sectionLabel">ALARMS</span>
-            <h2>알람 목록 ({severityFilteredAlarmItems.length}건)</h2>
+            <h2>예측 기반 알람 목록 ({gradeFilteredAlarmItems.length}건)</h2>
           </div>
-          {alarms && severityFilteredAlarmItems.length > 0 && (
+          {alarms && gradeFilteredAlarmItems.length > 0 && (
             <TableToolbar
               search={alarmTable.search}
               onSearchChange={alarmTable.setSearch}
               sort={alarmTable.sort}
               onSortChange={alarmTable.setSort}
               sortOptions={ALARM_SORT_OPTIONS}
-              placeholder="Wafer ID · 인자 · 장비 검색"
+              placeholder="Wafer ID · 사유 검색"
             />
           )}
         </div>
         {loading && <p className="emptyMessage">불러오는 중…</p>}
-        {!loading && alarms && severityFilteredAlarmItems.length === 0 && (
+        {!loading && alarms && alarms.alarm_share_warning && (
+          <p className="alarmShareWarning">
+            알람이 {alarms.alarm_total}건으로 평가 대상의{" "}
+            {alarms.evaluated_total > 0 ? ((alarms.alarm_total / alarms.evaluated_total) * 100).toFixed(1) : "0"}%입니다.
+            공정 전반의 점검이 필요할 수 있습니다.
+          </p>
+        )}
+        {!loading && alarms && alarms.total === 0 && (
+          <p className="emptyMessage">
+            기준을 충족하는 알람이 없습니다.
+            <br />
+            예측 수율이 통계적으로 확실하게 낮은 wafer가 발견되지 않았습니다.
+          </p>
+        )}
+        {!loading && alarms && alarms.total > 0 && gradeFilteredAlarmItems.length === 0 && (
           <p className="emptyMessage">조건에 맞는 알람이 없습니다.</p>
         )}
-        {!loading && alarms && severityFilteredAlarmItems.length > 0 && alarmTable.sorted.length === 0 && (
+        {!loading && alarms && gradeFilteredAlarmItems.length > 0 && alarmTable.sorted.length === 0 && (
           <NoSearchResults onClear={() => alarmTable.setSearch("")} />
         )}
         {!loading && alarms && alarmTable.sorted.length > 0 && (
           <>
             <div className="tableHideOnMobile">
-              <HScrollTableBody minWidth={980}>
+              <HScrollTableBody minWidth={760}>
                 <table>
                   <thead>
                     <tr>
                       <th className="col-wafer colNoTruncate">Wafer</th>
+                      <th>위험 순위</th>
+                      <th className="col-severity colNoTruncate">등급</th>
+                      <th>사유</th>
                       <th>LOT</th>
-                      <th>Step</th>
-                      <th>인자</th>
-                      <th>타깃</th>
-                      <th className="numCol col-value colNoTruncate">값</th>
-                      <th className="col-range colNoTruncate">정상범위</th>
-                      <th className="numCol col-deviation colNoTruncate">이탈량</th>
-                      <th>방향</th>
-                      <th className="col-severity colNoTruncate">심각성</th>
-                      <th className="numCol" title="해당 행의 타깃(target) 실제 불량률">실측값</th>
                       <th aria-label="해설" />
                     </tr>
                   </thead>
                   <tbody>
                     {alarmTable.sorted.map((item, index) => (
                       <AlarmRow
-                        key={`${item.lot_wafer_id}-${item.feature}-${index}`}
+                        key={`${item.lot_wafer_id}-${index}`}
                         item={item}
                         onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
                         explainDisabled={!analysisDataset}
@@ -384,7 +493,7 @@ export default function AlertsPage() {
             <div className="alarmCardList">
               {alarmTable.sorted.map((item, index) => (
                 <AlarmCard
-                  key={`card-${item.lot_wafer_id}-${item.feature}-${index}`}
+                  key={`card-${item.lot_wafer_id}-${index}`}
                   item={item}
                   onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
                   explainDisabled={!analysisDataset}
@@ -395,8 +504,8 @@ export default function AlertsPage() {
           </>
         )}
         <p className="tableDisclaimer">
-          알람은 인자 값이 관리한계(LCL/UCL)를 벗어난 wafer입니다. 관리한계는 학습 데이터의
-          인자 분포에서 산출한 값으로, 해당 wafer가 평소와 다른 조건에서 처리되었음을 뜻합니다.
+          알람은 학습 데이터로 학습한 예측 모델이 최종 수율(Y)을 낮게 예측한 wafer입니다.
+          예측이 불안정한(신뢰구간이 넓은) wafer는 오히려 더 보수적으로(안전한 쪽으로) 판단해 알람에 포함될 수 있습니다.
           불량의 원인으로 확정된 것은 아니며, 우선 확인 대상을 좁히는 용도입니다.
         </p>
       </section>
@@ -489,7 +598,7 @@ export default function AlertsPage() {
                   <tbody>
                     {recommendationTable.sorted.map((item, index) => (
                       <RecommendationRow
-                        key={`${item.lot_wafer_id}-${item.feature}-${index}`}
+                        key={`${item.lot_wafer_id}-${index}`}
                         item={item}
                         onExplain={() => requestChat(recommendationExplainMessage(item), "chat")}
                         explainDisabled={!analysisDataset}
@@ -502,7 +611,7 @@ export default function AlertsPage() {
             <div className="alarmCardList">
               {recommendationTable.sorted.map((item, index) => (
                 <RecommendationCard
-                  key={`card-${item.lot_wafer_id}-${item.feature}-${index}`}
+                  key={`card-${item.lot_wafer_id}-${index}`}
                   item={item}
                   onExplain={() => requestChat(recommendationExplainMessage(item), "chat")}
                   explainDisabled={!analysisDataset}
@@ -890,36 +999,22 @@ function AlarmRow({
   onExplain: () => void;
   explainDisabled: boolean;
 }) {
-  const [lo, hi] = item.normal_range;
-  const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"} ~ ${hi != null ? hi.toFixed(1) : "+∞"}`;
-  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
   return (
     <tr>
-      <td className="col-wafer colNoTruncate">
-        <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.lot_wafer_id}</Link>
-      </td>
+      <td className="col-wafer colNoTruncate">{item.lot_wafer_id}</td>
+      <td className="numCol">하위 {item.risk_percentile.toFixed(1)}%</td>
+      <td className="col-severity colNoTruncate"><GradeBadge grade={item.grade} /></td>
+      <td className="alarmReasonCell">{item.reason}</td>
       <td>{item.lot_id ?? "-"}</td>
-      <td>{item.step}</td>
-      <td>
-        <Link href={rootCauseHref} title="원인 분석 산점도에서 열기">{item.feature}</Link>
-      </td>
-      <td>{item.target}</td>
-      <td className="numCol col-value colNoTruncate">{item.value.toFixed(2)}</td>
-      <td className="col-range colNoTruncate" title={`train에서 ${item.feature} 자체 분포의 IQR×1.5 관리한계 (Y와 무관)`}>{rangeText}</td>
-      <td className="numCol col-deviation colNoTruncate">{item.deviation.toFixed(2)}</td>
-      <td>{item.direction === "above" ? "높음" : "낮음"}</td>
-      <td className="col-severity colNoTruncate"><SeverityBadge severity={item.severity} /></td>
-      <td className="numCol">{item.actual_y != null ? item.actual_y.toFixed(2) : "-"}</td>
       <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
   );
 }
 
 /** ≤767px row-to-card conversion (spec §B-6) -- same data as AlarmRow,
- * compressed into an identifier+badge line and 2 detail lines instead of
- * 12 columns, since a 980px-min-width scrolling table is unusable on a
- * 375px screen. CSS (.tableHideOnMobile / .alarmCardList) decides which
- * of the two renders; both stay mounted so no extra fetch/state is needed. */
+ * compressed for a 375px screen. CSS (.tableHideOnMobile / .alarmCardList)
+ * decides which of the two renders; both stay mounted so no extra
+ * fetch/state is needed. */
 function AlarmCard({
   item,
   onExplain,
@@ -929,23 +1024,18 @@ function AlarmCard({
   onExplain: () => void;
   explainDisabled: boolean;
 }) {
-  const [lo, hi] = item.normal_range;
-  const rangeText = `${lo != null ? lo.toFixed(1) : "-∞"}~${hi != null ? hi.toFixed(1) : "+∞"}`;
-  const rootCauseHref = `/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`;
   return (
     <div className="alarmCard">
       <div className="alarmCardTopRow">
-        <span className="alarmCardId"><Link href={rootCauseHref}>{item.lot_wafer_id}</Link></span>
-        <SeverityBadge severity={item.severity} />
+        <span className="alarmCardId">{item.lot_wafer_id}</span>
+        <GradeBadge grade={item.grade} />
       </div>
       <div className="alarmCardMeta">
-        <Link href={rootCauseHref}>{item.feature}</Link> · {item.target} · Step {item.step}
+        위험 순위 하위 {item.risk_percentile.toFixed(1)}%
         {item.lot_id && ` · ${item.lot_id}`}
       </div>
       <div className="alarmCardStatsRow">
-        <span>값 <b>{item.value.toFixed(1)}</b></span>
-        <span>정상 <b>{rangeText}</b></span>
-        <span>이탈 <b>{item.deviation >= 0 ? "+" : ""}{item.deviation.toFixed(1)}</b></span>
+        <span>{item.reason}</span>
       </div>
       <div className="alarmCardActions">
         <ExplainButton onClick={onExplain} disabled={explainDisabled} />

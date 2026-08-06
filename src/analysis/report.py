@@ -23,6 +23,8 @@ from typing import Any
 
 import pandas as pd
 
+from src.analysis.alarm_gbdt import FINAL_YIELD_COLUMN as GBDT_TARGET_COLUMN
+from src.analysis.alarm_gbdt import feature_columns as gbdt_feature_columns
 from src.analysis.control_range import (
     ControlRange,
     compute_control_range,
@@ -30,6 +32,7 @@ from src.analysis.control_range import (
     summarize_wafer_status,
 )
 from src.analysis.display_text import add_display_text
+from src.analysis.warning_line import compute_warning_line, fit_reference_model, observed_yield_gap
 from src.analysis.llm_stats import (
     band_stability,
     chamber_interaction_p,
@@ -81,6 +84,11 @@ LIMITATIONS = [
     "설명력 지표는 통계적 연관성이며 인과가 아니다. 공정 순서상 선행·후행 관계나 교락 인자는 반영되지 않았다.",
     "Config는 장비당 표본이 적어 검출력이 부족할 수 있다. p<0.05를 만족하지 못한 것이 영향이 없다는 뜻은 아니다.",
     "관리한계는 '평소와 다른가'를 판정하며 '수율이 좋은가'를 보장하지 않는다.",
+    # 알람 판정 GBDT 전환 §E-2-1: "등급 기준은 절대 기준이 아니다"를 화면
+    # 상세 패널뿐 아니라 JSON limitations에도 동일하게 밝힌다. 알람 등급
+    # 분위수(5%/10%/15%)와 경고선 임계(0.35σ)도 같은 성격의 경험값이다.
+    "알람 등급 분위수(하위 5%/10%/15%), 경고선 임계(0.35 x 표준편차), 종합 신뢰성 등급의 배점 기준은 모두 "
+    "통계적으로 도출된 값이 아니라 내장 데이터셋에서 등급이 구분되도록 설정한 경험값이며 절대 기준이 아니다.",
 ]
 
 # Below this measurement rate, "~만 분석 대상이다" (only the measured
@@ -163,6 +171,30 @@ def _control_limits_dict(control_range: ControlRange) -> dict[str, Any]:
     }
 
 
+def _warning_line_dict(reference_model: Any, train_df: pd.DataFrame, feature: str, gbdt_features: list[str]) -> dict[str, Any] | None:
+    """알람 판정 GBDT 전환 §C-4: 경고선은 화면에 곡선을 그리지 않지만
+    JSON 보고서에는 재현성 확인용으로 남긴다. 경고선이 없으면(이 인자
+    단독으로는 예측 수율이 임계를 넘지 않음) None -- "경고선 없음"은
+    정상 결과다.
+    """
+    if reference_model is None or feature not in train_df.columns:
+        return None
+    warning = compute_warning_line(reference_model, train_df, feature, gbdt_features)
+    if warning is None or (warning.lower is None and warning.upper is None):
+        return None
+    gaps = observed_yield_gap(train_df, feature, warning)
+    primary_value = warning.upper if warning.upper is not None else warning.lower
+    primary_gap = gaps["upper_gap"] if warning.upper is not None else gaps["lower_gap"]
+    return {
+        "value": primary_value,
+        "lower": warning.lower,
+        "upper": warning.upper,
+        "method": "partial_dependence",
+        "pdp_range": warning.pdp_range,
+        "observed_yield_gap": primary_gap,
+    }
+
+
 def _eval_result(eval_df: pd.DataFrame, control_range: ControlRange, factor: ParetoFactor) -> dict[str, Any]:
     x = pd.to_numeric(eval_df[factor.feature], errors="coerce")
     observed_mask = x.notna()
@@ -222,6 +254,19 @@ def build_analysis_report(
     generated_at: str,
 ) -> dict[str, Any]:
     schema = parse_schema(train_df)
+
+    # 알람 판정 GBDT 전환 §C-4: 경고선을 factor마다 하나씩 계산해 보고서에
+    # 싣는다. 참조 모델은 데이터셋 전체에 한 번만 학습해(§A-1과 별개 목적:
+    # 신뢰구간이 아니라 부분 의존도 곡선의 모양) 아래 루프의 5개 인자가
+    # 재사용한다. Y가 없거나 R+D 인자가 하나도 없으면 None -- 그 경우
+    # warning_line은 모든 factor에서 생략된다(§D: 인자 선정 실패와 같은
+    # 원리로, 조용히 생략하지 오류를 내지 않는다).
+    gbdt_features = gbdt_feature_columns(schema)
+    reference_model = (
+        fit_reference_model(train_df, gbdt_features)
+        if gbdt_features and GBDT_TARGET_COLUMN in train_df.columns
+        else None
+    )
 
     included_factors: list[ParetoFactor] = []
     # Two passes: chamber-interaction q-values are BH-corrected across this
@@ -306,6 +351,7 @@ def build_analysis_report(
                         pd.to_numeric(train_df[target], errors="coerce"),
                     ),
                     "control_limits": _control_limits_dict(control_range),
+                    "warning_line": _warning_line_dict(reference_model, train_df, factor.feature, gbdt_features),
                     "band_stability": entry["band_stability"],
                     "band_width": entry["band_width"],
                     "window": (

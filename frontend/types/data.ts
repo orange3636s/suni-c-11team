@@ -435,7 +435,18 @@ export type NormalRange = {
   fallback_applied: boolean;
 };
 
-export type ReferenceLineKey = "mean" | "q1" | "q3" | "iqr_lo" | "iqr_hi" | "s3_lo" | "s3_hi" | "s6_lo" | "s6_hi";
+export type ReferenceLineKey =
+  | "mean"
+  | "q1"
+  | "q3"
+  | "iqr_lo"
+  | "iqr_hi"
+  | "s3_lo"
+  | "s3_hi"
+  | "s6_lo"
+  | "s6_hi"
+  | "warning_lo"
+  | "warning_hi";
 
 export type ReferenceLine = {
   key: ReferenceLineKey;
@@ -444,6 +455,10 @@ export type ReferenceLine = {
   alarm_relevant: boolean;
   formula: string;
   outside_count: number;
+  /** key가 "warning_lo"/"warning_hi"일 때만 채워진다 (알람 판정 GBDT 전환
+   * §C-4-1) -- 경고선 밖 실측 수율 차이(%p, 예측값 아님). 표본 30장 미만이면
+   * null. */
+  observed_yield_gap_pp: number | null;
 };
 
 export type BinProfile = {
@@ -559,22 +574,19 @@ export type ControlRangeListResponse = {
   no_significant_factor_targets: string[];
 };
 
-export type AlarmSeverity = "low" | "medium" | "high";
+/** 알람 판정 GBDT 전환 (spec §A-2) -- 관리한계 이탈량이 아니라 부트스트랩
+ * 앙상블 예측 수율의 신뢰구간 상한 기준 등급. "개선 권고"는 알람이
+ * 아니라 참고용(예측 평균 기준, 알람 제외)이다. */
+export type AlarmGrade = "심각" | "위험" | "주의" | "개선 권고";
 
 export type AlarmItem = {
   lot_wafer_id: string;
   lot_id: string | null;
-  wafer_slot: number | null;
-  step: number;
-  feature: string;
-  kind: string;
-  target: string;
-  value: number;
-  normal_range: [number | null, number | null];
-  deviation: number;
-  direction: "above" | "below";
-  severity: AlarmSeverity;
-  actual_y: number | null;
+  grade: AlarmGrade;
+  /** 0-100, 낮을수록 위험. 예측 수율 절대값·신뢰구간은 화면에 노출하지
+   * 않는다 (spec §A-3: 오차가 Y 표준편차의 72~80%). */
+  risk_percentile: number;
+  reason: string;
 };
 
 export type AlarmListResponse = {
@@ -582,6 +594,33 @@ export type AlarmListResponse = {
   eval_dataset_id: string;
   items: AlarmItem[];
   total: number;
+  alarm_total: number;
+  improvement_total: number;
+  evaluated_total: number;
+  alarm_share_warning: boolean;
+};
+
+export type ReliabilityGrade = "높음" | "보통" | "낮음";
+
+export type ReliabilityResponse = {
+  dataset_id: string;
+  grade: ReliabilityGrade;
+  total_score: number;
+  auc_lower_bound: number | null;
+  auc_score: number;
+  n_significant_factors: number;
+  n_significant_score: number;
+  max_eps2: number | null;
+  max_eps2_score: number;
+  n_train: number;
+  n_train_score: number;
+  coverage_pct: number | null;
+  coverage_score: number;
+  deduction_reasons: string[];
+  low_holdout_sample: boolean;
+  thresholds_disclaimer: string;
+  target_fallback_tier: "per_target" | "final_yield_only" | "unanalyzable";
+  target_fallback_message: string | null;
 };
 
 export type FactorBandPoint = {
