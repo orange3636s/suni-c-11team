@@ -44,11 +44,34 @@ const Y_TICK_LABEL_HEIGHT_PX = 14;
 const X_TICK_COUNT: [max: number, min: number] = [10, 8];
 const Y_TICK_COUNT: [max: number, min: number] = [8, 6];
 const HEIGHT = 420;
-// "최적 중심" (5 glyphs, ~58px at the label's 10px font) is roughly twice
-// as wide as "LCL"/"UCL" (~26px) -- widened from 34px so the 2-row
-// collision fallback actually engages before the two visually overlap,
-// not just when their center points happen to coincide.
-const LABEL_MIN_GAP = 46;
+// 기준선 라벨 겹침 수정 (spec §C-2) -- "최적 중심"/"경고선"/"권장 구간"
+// 라벨이 서로의 x 위치가 가까울 때 겹치던 문제를, 3단 높이로 분산해
+// 해결한다. offset은 plot 상단 가장자리(y=0) 기준 위쪽(margin 안)으로
+// 얼마나 띄우는지이며, 값이 클수록 차트에서 더 멀다 -- 34가 가장 위
+// (경고선), 6이 차트에 가장 가깝다(최적 중심). 14px 간격은 라벨 한 줄의
+// 대략적인 높이와 맞춘 값이라 세 줄이 서로 겹치지 않는다.
+type LabelRowKey = "warning_line" | "window_bounds" | "optimal_center";
+const LABEL_ROW_OFFSET: Record<LabelRowKey, number> = {
+  optimal_center: 6,
+  window_bounds: 20,
+  warning_line: 34,
+};
+// 생략 순서 (spec §C-3): 경고선(1, 항상 표시) > 권장 구간 경계(2) > 최적
+// 중심(3, 가장 먼저 생략) -- 숫자가 작을수록 우선순위가 높다.
+const LABEL_ROW_PRIORITY: Record<LabelRowKey, number> = {
+  warning_line: 1,
+  window_bounds: 2,
+  optimal_center: 3,
+};
+// .scatterLineLabel의 font-weight/font-size와 맞춘 측정용 폰트 문자열
+// (spec §C-4 폭 계산에 실제 렌더 폭을 써야 축약 여부 판단이 정확하다).
+const LABEL_FONT = "700 10px system-ui, -apple-system, sans-serif";
+// 이 폭 미만이면 라벨을 축약형으로 바꾼다 (spec §C-4: "차트 폭 600px
+// 미만이면 축약형을 쓴다").
+const COMPACT_LABEL_CHART_WIDTH = 600;
+// 권장 구간 밴드 폭이 이보다 좁으면 양끝 경계값 라벨을 생략한다 (spec
+// §C-5).
+const BAND_BOUNDARY_MIN_WIDTH = 60;
 
 type LineMeta = {
   legendId: string;
@@ -574,31 +597,61 @@ function colorForPoint(
 type DisplayLine = {
   key: "warning_lo" | "warning_hi" | "optimal";
   value: number;
-  shortLabel: string;
   color: { light: string; dark: string };
   dash: string;
   strokeWidth: number;
   greyedOut: boolean;
 };
 
-type LineLayout = { line: DisplayLine; xPixel: number; row: number; hidden: boolean };
+// 기준선 라벨 하나 -- 경고선/최적 중심 vertical line뿐 아니라 권장 구간
+// 밴드의 요약 라벨(window_bounds)도 같은 체계로 배치되므로, "라인이
+// 있는가"와 무관하게 여기서는 x 위치 + 우선순위 행만 다룬다 (spec §C-6:
+// Box Plot도 같은 로직을 쓴다 -- plotX가 이미 두 보기를 통일하므로
+// 여기서부터는 view를 몰라도 된다).
+type FloatingLabel = {
+  key: string;
+  rowKey: LabelRowKey;
+  x: number;
+  full: string;
+  short: string;
+  color: string;
+};
 
-function layoutLabels(entries: Array<{ line: DisplayLine; xPixel: number }>): LineLayout[] {
-  const placedPerRow: number[][] = [[], []];
-  const result: LineLayout[] = [];
-  for (const entry of entries) {
-    let row = -1;
-    for (let candidate = 0; candidate < 2; candidate += 1) {
-      const conflict = placedPerRow[candidate].some((x) => Math.abs(x - entry.xPixel) < LABEL_MIN_GAP);
-      if (!conflict) {
-        row = candidate;
-        placedPerRow[candidate].push(entry.xPixel);
-        break;
-      }
-    }
-    result.push({ line: entry.line, xPixel: entry.xPixel, row: row < 0 ? 0 : row, hidden: row < 0 });
+type FloatingLabelPlacement = { key: string; x: number; y: number; hidden: boolean; text: string; color: string };
+
+/** 폭 기반 충돌 판정으로 라벨을 3단 높이에 배치한다 (spec §C-2/§C-3).
+ * 아무 라벨도 충돌하지 않으면 전부 가장 낮은 높이(차트에 가장 가까운
+ * offset)에 그대로 둔다 -- 불필요한 계단을 만들지 않는다. 충돌이 하나라도
+ * 있으면 각 라벨을 자기 우선순위의 지정 행으로 올리고, 그래도 같은 행
+ * 안에서 겹치면(예: 경고선 lo/hi가 서로 가까움) 우선순위가 낮은 쪽부터
+ * 생략한다 -- 생략된 라벨은 그려지지 않지만, 그 라벨이 속한 선/밴드 자체는
+ * 별도로 계속 그려지므로 호버 시 툴팁으로 값을 확인할 수 있다(spec §C-3
+ * "생략된 라벨은 호버 시 툴팁으로 표시한다"). */
+function layoutFloatingLabels(
+  labels: FloatingLabel[],
+  useShort: boolean,
+  measure: (text: string) => number,
+): FloatingLabelPlacement[] {
+  if (labels.length === 0) return [];
+  const textOf = (l: FloatingLabel) => (useShort ? l.short : l.full);
+  const widthOf = new Map(labels.map((l) => [l.key, measure(textOf(l)) + 8]));
+  const collide = (a: FloatingLabel, b: FloatingLabel) =>
+    Math.abs(a.x - b.x) < (widthOf.get(a.key)! + widthOf.get(b.key)!) / 2 + 8;
+  const anyCollision = labels.some((a, i) => labels.slice(i + 1).some((b) => collide(a, b)));
+  if (!anyCollision) {
+    const y = -LABEL_ROW_OFFSET.optimal_center;
+    return labels.map((l) => ({ key: l.key, x: l.x, y, hidden: false, text: textOf(l), color: l.color }));
   }
-  return result;
+  const sorted = [...labels].sort((a, b) => LABEL_ROW_PRIORITY[a.rowKey] - LABEL_ROW_PRIORITY[b.rowKey]);
+  const placedByRow: FloatingLabel[] = [];
+  const byKey = new Map<string, FloatingLabelPlacement>();
+  for (const l of sorted) {
+    const conflict = placedByRow.some((o) => o.rowKey === l.rowKey && collide(l, o));
+    const y = -LABEL_ROW_OFFSET[l.rowKey];
+    if (!conflict) placedByRow.push(l);
+    byKey.set(l.key, { key: l.key, x: l.x, y, hidden: conflict, text: textOf(l), color: l.color });
+  }
+  return labels.map((l) => byKey.get(l.key)!);
 }
 
 type TrendHover = {
@@ -830,31 +883,70 @@ export default function ScatterChart({
     const lines: DisplayLine[] = [];
     if (warningLo?.drawable) {
       lines.push({
-        key: "warning_lo", value: warningLo.value, shortLabel: "경고선",
+        key: "warning_lo", value: warningLo.value,
         color: LINE_COLOR.warning, dash: LINE_META.warning_lo.dash, strokeWidth: LINE_META.warning_lo.strokeWidth,
         greyedOut: !warningLo.alarm_relevant,
       });
     }
     if (warningHi?.drawable) {
       lines.push({
-        key: "warning_hi", value: warningHi.value, shortLabel: "경고선",
+        key: "warning_hi", value: warningHi.value,
         color: LINE_COLOR.warning, dash: LINE_META.warning_hi.dash, strokeWidth: LINE_META.warning_hi.strokeWidth,
         greyedOut: !warningHi.alarm_relevant,
       });
     }
     if (displayedOptimalCenter != null) {
       lines.push({
-        key: "optimal", value: displayedOptimalCenter, shortLabel: "최적 중심",
+        key: "optimal", value: displayedOptimalCenter,
         color: methodColor, dash: "4 3", strokeWidth: 1.9, greyedOut: false,
       });
     }
     return lines;
   }, [warningLo, warningHi, displayedOptimalCenter, methodColor]);
 
-  const labelLayout = useMemo(
-    () => layoutLabels(displayLines.map((line) => ({ line, xPixel: plotX(line.value) }))),
+  // 차트 폭이 좁으면 라벨을 축약형(값만)으로 바꾼다 (spec §C-4). 이 폭
+  // 미만에서는 권장 구간 요약 라벨도 아예 빼고 밴드 안쪽 경계값 라벨에
+  // 정보 전달을 맡긴다 (아래 BAND_BOUNDARY_MIN_WIDTH 조건부 렌더 참고).
+  const isNarrowChart = containerWidth < COMPACT_LABEL_CHART_WIDTH;
+
+  // 경고선/최적 중심 라인 라벨 + 권장 구간 요약 라벨을 한 배열로 모아 같은
+  // 3단 충돌 배치 로직을 함께 통과시킨다 (spec §C-2) -- 꺼진 그룹은 애초에
+  // 배치 대상에서 빼서, 숨겨진 라벨이 다른 라벨의 자리를 차지하지 않는다.
+  const floatingLabels = useMemo<FloatingLabel[]>(() => {
+    const items: FloatingLabel[] = [];
+    for (const line of displayLines) {
+      if (!visibleGroups.has(lineGroupOf(line))) continue;
+      const name = line.key === "optimal" ? "최적 중심" : "경고선";
+      const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
+      items.push({
+        key: line.key,
+        rowKey: line.key === "optimal" ? "optimal_center" : "warning_line",
+        x: plotX(line.value),
+        full: `${name} ${formatNum1(line.value)}`,
+        short: formatNum1(line.value),
+        color,
+      });
+    }
+    if (!isNarrowChart && visibleGroups.has("recommended") && recommendedRangeValue) {
+      const [lo, hi] = recommendedRangeValue;
+      const x1 = Math.min(plotX(lo), plotX(hi));
+      const x2 = Math.max(plotX(lo), plotX(hi));
+      items.push({
+        key: "window_bounds",
+        rowKey: "window_bounds",
+        x: (x1 + x2) / 2,
+        full: `권장 구간 (${METHOD_LABEL[activeMethod]}) ${formatNum1(Math.min(lo, hi))}~${formatNum1(Math.max(lo, hi))}`,
+        short: "",
+        color: theme === "dark" ? methodColor.dark : methodColor.light,
+      });
+    }
+    return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [displayLines, plotWidth, view, boxBins],
+  }, [displayLines, visibleGroups, isNarrowChart, recommendedRangeValue, activeMethod, methodColor, theme, plotWidth, view, boxBins]);
+
+  const labelLayout = useMemo(
+    () => layoutFloatingLabels(floatingLabels, isNarrowChart, (text) => measureTextWidth(text, LABEL_FONT)),
+    [floatingLabels, isNarrowChart],
   );
 
   const trendPath = useMemo(() => {
@@ -1091,21 +1183,21 @@ export default function ScatterChart({
     );
   }
 
-  function renderLineLabel(line: DisplayLine) {
-    if (!visibleGroups.has(lineGroupOf(line))) return null;
-    const layout = labelLayout.find((l) => l.line.key === line.key);
-    if (!layout || layout.hidden) return null;
-    const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
-    const x = plotX(line.value);
+  // line 라벨/권장 구간 라벨 공용 렌더러 -- labelLayout이 이미 x/y/숨김
+  // 여부/축약 텍스트까지 계산해 뒀으므로 여기서는 그리기만 한다 (spec
+  // §C-6: Box Plot도 plotX를 통해 같은 좌표계를 쓰므로 별도 분기가 없다).
+  function renderFloatingLabel(key: string) {
+    const layout = labelLayout.find((l) => l.key === key);
+    if (!layout || layout.hidden || !layout.text) return null;
     return (
       // A wide, generously-overflowing box (label text is unconstrained
       // by it anyway -- overflow:visible) with the badge itself centered
       // by flex, not by relying on inline-block sizing to exactly 40px:
-      // "최적 중심" is wider than that and would render left-shifted off
-      // its true line position otherwise.
-      <foreignObject key={line.key} x={x - 45} y={layout.row * 16} width={90} height={16} style={{ overflow: "visible", pointerEvents: "none" }}>
+      // "권장 구간 (SPC) 54.7~61.5" is much wider than that and would
+      // render left-shifted off its true position otherwise.
+      <foreignObject key={key} x={layout.x - 70} y={layout.y} width={140} height={14} style={{ overflow: "visible", pointerEvents: "none" }}>
         <div className="scatterLineLabelWrap">
-          <span className="scatterLineLabel" style={{ color }}>{line.shortLabel}</span>
+          <span className="scatterLineLabel" style={{ color: layout.color }}>{layout.text}</span>
         </div>
       </foreignObject>
     );
@@ -1198,15 +1290,20 @@ export default function ScatterChart({
                   x={x1} y={0} width={x2 - x1} height={plotHeight}
                   fill="none" stroke={fill} strokeWidth={2} pointerEvents="none"
                 />
-                {x2 - x1 > 60 && (
-                  <text
-                    x={(x1 + x2) / 2} y={16} textAnchor="middle"
-                    className="scatterBandLabel"
-                    style={{ fill }}
-                    pointerEvents="none"
-                  >
-                    {`권장 구간 (${METHOD_LABEL[activeMethod]})`}
-                  </text>
+                {/* 밴드 양끝 안쪽 경계값 (spec §C-5) -- "권장 구간 (SPC)
+                    54.7~61.5" 이름표는 이제 위쪽 3단 라벨 체계
+                    (window_bounds)로 옮겨졌으니, 밴드 안에는 그 라벨이
+                    좁은 화면에서 생략되더라도 경계값만은 항상 읽히도록
+                    작은 값 라벨만 남긴다. SPC/ML 모두 동일하게 적용된다. */}
+                {x2 - x1 >= BAND_BOUNDARY_MIN_WIDTH && (
+                  <>
+                    <text x={x1 + 4} y={20} textAnchor="start" className="scatterBandBoundaryLabel" style={{ fill }} pointerEvents="none">
+                      {formatNum1(Math.min(lo, hi))}
+                    </text>
+                    <text x={x2 - 4} y={20} textAnchor="end" className="scatterBandBoundaryLabel" style={{ fill }} pointerEvents="none">
+                      {formatNum1(Math.max(lo, hi))}
+                    </text>
+                  </>
                 )}
               </>
             );
@@ -1423,7 +1520,7 @@ export default function ScatterChart({
           })()}
 
           {/* line name labels -- topmost of all */}
-          {displayLines.map((line) => renderLineLabel(line))}
+          {labelLayout.map((layout) => renderFloatingLabel(layout.key))}
 
           {/* continuous point+trend hover overlay -- nearest-point search,
               not per-point listeners (see findNearestPoint's comment). */}

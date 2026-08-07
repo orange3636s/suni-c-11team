@@ -20,6 +20,12 @@ export const navigationItems = [
 
 export type NavigationLabel = (typeof navigationItems)[number]["label"];
 
+// 접힘 상태 화면 모드 드롭다운 크기 추정치 (spec §D-2/§D-3) -- 실제 렌더
+// 전에는 높이를 알 수 없으므로, flip 여부를 결정하는 데 쓸 넉넉한 상한.
+const THEME_MENU_MAX_HEIGHT = 170;
+const THEME_MENU_WIDTH = 140;
+const VIEWPORT_EDGE_PADDING = 8;
+
 type SidebarProps = {
   activeItem?: NavigationLabel;
   collapsed?: boolean;
@@ -38,7 +44,7 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
   // 건드리지 않는다.
   const themeTriggerButtonRef = useRef<HTMLButtonElement>(null);
   const themePortalRef = useRef<HTMLDivElement>(null);
-  const [themeMenuPos, setThemeMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [themeMenuPos, setThemeMenuPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
 
   useEffect(() => {
     if (!themeMenuOpen) return;
@@ -68,9 +74,27 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
   function toggleThemeMenu() {
     if (collapsed && !themeMenuOpen) {
       const rect = themeTriggerButtonRef.current?.getBoundingClientRect();
-      // 아이콘 우측에 띄운다 (spec §D-2) -- 접힌 rail 폭이 좁아 아래로
-      // 띄우면 화면을 벗어난다.
-      if (rect) setThemeMenuPos({ left: rect.right + 8, top: rect.top });
+      if (rect) {
+        // 아이콘 우측에 띄운다 (spec §D-2) -- 접힌 rail 폭이 좁아 아래로
+        // 띄우면 화면을 벗어난다. 기본은 right-end: 패널의 아래 끝을
+        // 버튼 아래 끝에 맞추고 위로 펼친다 -- 버튼이 사이드바 하단에
+        // 있으므로 아래로 펼치면 화면을 벗어나기 때문이다. 위쪽 공간이
+        // 부족할 때만 아래로 반전한다 (spec §D-3 flip).
+        const spaceAbove = rect.bottom;
+        const spaceBelow = window.innerHeight - rect.top;
+        const flipDown = spaceAbove < THEME_MENU_MAX_HEIGHT && spaceBelow > spaceAbove;
+        let left = rect.right + 8;
+        // 화면 경계에서 8px 안쪽으로 밀어 넣는다 (spec §D-3 shift).
+        left = Math.min(left, window.innerWidth - THEME_MENU_WIDTH - VIEWPORT_EDGE_PADDING);
+        left = Math.max(left, VIEWPORT_EDGE_PADDING);
+        if (flipDown) {
+          const top = Math.min(rect.top, window.innerHeight - THEME_MENU_MAX_HEIGHT - VIEWPORT_EDGE_PADDING);
+          setThemeMenuPos({ left, top: Math.max(top, VIEWPORT_EDGE_PADDING) });
+        } else {
+          const bottom = Math.max(window.innerHeight - rect.bottom, VIEWPORT_EDGE_PADDING);
+          setThemeMenuPos({ left, bottom });
+        }
+      }
     }
     setThemeMenuOpen((open) => !open);
   }
@@ -151,8 +175,8 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
             {/* 펼침 상태는 기존 그대로 컨테이너 내부에 렌더 (spec §D-2 대상은
                 접힘 상태뿐이라 여기는 건드리지 않는다). */}
             {themeMenuOpen && !collapsed && (
-              <div className="themeMenu" role="menu" aria-label="Theme 선택">
-                <strong>Theme</strong>
+              <div className="themeMenu" role="menu" aria-label="화면 모드 선택">
+                <strong>화면 모드</strong>
                 <ThemeOptionsList theme={theme} onSelect={(value) => { setTheme(value); setThemeMenuOpen(false); }} />
               </div>
             )}
@@ -161,13 +185,13 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
               className={`themeToggle themeTrigger ${collapsed ? "railIconButton" : ""}`}
               type="button"
               aria-expanded={themeMenuOpen}
-              aria-label="Theme 선택"
+              aria-label="화면 모드 선택"
               aria-haspopup="menu"
-              title="Theme 선택"
+              title="화면 모드 선택"
               onClick={toggleThemeMenu}
             >
               <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
-              <span className="themeTriggerLabel">Theme</span>
+              <span className="themeTriggerLabel">화면 모드</span>
               <ChevronDown />
             </button>
           </div>
@@ -193,10 +217,10 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
           ref={themePortalRef}
           className="themeMenuPortal"
           role="menu"
-          aria-label="Theme 선택"
-          style={{ left: themeMenuPos.left, top: themeMenuPos.top }}
+          aria-label="화면 모드 선택"
+          style={{ left: themeMenuPos.left, top: themeMenuPos.top, bottom: themeMenuPos.bottom }}
         >
-          <strong>Theme</strong>
+          <strong>화면 모드</strong>
           <ThemeOptionsList theme={theme} onSelect={(value) => { setTheme(value); setThemeMenuOpen(false); }} />
         </div>,
         document.body,

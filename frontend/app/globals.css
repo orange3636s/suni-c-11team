@@ -8889,9 +8889,10 @@ html[data-theme="dark"] .scatterOutsideShade{ opacity: 0.12; }
    here -- never higher, or the points underneath get lost (a 2px solid
    border compensates for visibility instead, drawn separately in TSX). */
 .scatterRecommendedBand{ opacity: 0.15; cursor: help; }
-/* In-band "권장 구간 (SPC/ML)" label (spec §3-4) -- sits inside the band
-   near its top edge, colored to match the band/border. */
-.scatterBandLabel{ font-size: 11px; font-weight: 600; }
+/* 권장 구간 밴드 양끝 안쪽 경계값 라벨 (spec §C-5) -- 밴드/테두리와 같은
+   색, 9px. 이름표("권장 구간 (SPC) 54.7~61.5")는 상단 3단 라벨 체계로
+   옮겨졌으므로 밴드 안에는 값만 남는다. */
+.scatterBandBoundaryLabel{ font-size: 9px; font-weight: 600; }
 .scatterTrendBand{ opacity: 0.08; stroke: none; }
 .scatterTrendLine{ stroke-width: 2; }
 .scatterGuideLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
@@ -10151,31 +10152,37 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
    끝에 추가해 캐스케이드에서 이긴다).
    ============================================================ */
 
-/* -- §A-2: Theme + 설정 2분할 -------------------------------------- */
+/* -- §A-2/§D-0-1: 화면 모드 + 설정 세로 배치 ------------------------- */
+/* 가로 반반(flex-direction:row + flex:1 1 0)이었던 이전 배치는 폭이 좁아
+   두 버튼 라벨이 서로 겹치는 문제가 있었다 (spec §D-0-1) -- 세로로
+   쌓으면 각 버튼이 컨테이너 전체 폭을 쓸 수 있어 겹칠 여지가 없어진다.
+   순서는 화면 모드 -> 설정. */
 .sidebar .sidebarFooter{
   display: flex !important;
-  flex-direction: row;
+  flex-direction: column;
   gap: 6px;
   align-items: stretch;
+  padding: 0 12px 12px;
 }
-.sidebar .themeTriggerCol{ position: relative; flex: 1 1 0; min-width: 0; }
-/* 겹침 원인 진단 (spec §D-1): line 39의 레거시 `.sidebar .themeTrigger{
-   min-width:118px }`가 이 flex 2분할 레이아웃이 생기기 전부터 남아있었다.
-   부모(.themeTriggerCol)는 min-width:0으로 줄어들 수 있지만 버튼 자신은
-   118px 밑으로 줄지 못해, 좁은 사이드바에서 두 버튼 폭의 합이 컨테이너를
-   넘기고 설정 버튼과 겹친다. box-sizing:border-box + min-width:0으로 그
-   레거시 값을 무력화해 flex:1 1 0이 실제로 반씩 나눠 갖게 한다. */
+.sidebar .themeTriggerCol{ position: relative; width: 100%; }
+/* 겹침 원인 진단 (spec §D-1, 세로 배치로 근본 해결 §D-0-1): line 39의
+   레거시 `.sidebar .themeTrigger{ min-width:118px }`가 예전 가로 2분할
+   레이아웃 때부터 남아있었다. 지금은 두 버튼 모두 폭 100%를 쓰므로 더는
+   충돌하지 않지만, 높이만큼은 두 버튼이 정확히 같아야 하므로 고정값으로
+   맞춘다 (spec: "두 버튼의 폭과 높이가 정확히 같아야 한다"). */
 .sidebar .themeTriggerCol .themeTrigger,
 .sidebar .settingsTrigger{
   width: 100%;
-  height: 100%;
+  height: 40px;
   min-width: 0;
   box-sizing: border-box;
+  /* 사이드바 기존 메뉴 항목(.navigationItem: padding 0 12px, gap 11px)과
+     맞춘 정렬 -- 하단 버튼만 다르게 보이지 않도록 한다 (spec §D-0-1). */
+  padding: 0 12px;
+  gap: 10px;
 }
 .sidebar .settingsTrigger{
-  flex: 1 1 0;
-  min-width: 0;
-  justify-content: center;
+  justify-content: flex-start;
 }
 .sidebar .settingsTrigger[aria-expanded="true"]{
   background: rgba(255, 255, 255, 0.18);
