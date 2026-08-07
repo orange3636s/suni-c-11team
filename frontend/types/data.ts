@@ -781,6 +781,9 @@ export type ParetoRankingResponse = {
   target: string;
   total_factor_count: number;
   n80: number | null;
+  fdr_pass_count: number;
+  effect_size_pass_count: number;
+  max_eps2: number | null;
   items: ParetoRankingItem[];
 };
 

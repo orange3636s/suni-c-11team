@@ -310,11 +310,20 @@ def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
         for row in top
     ]
     n80 = next((index + 1 for index, row in enumerate(ranked) if row["cumulative_pct"] >= 80.0), None)
+    # 차트 표시 규칙(spec §B)의 0개-타깃 안내 문구가 쓰는 전체 풀 집계치 --
+    # 화면에 노출되는 top-5만으로는 "58건 중 FDR 통과 0건"을 계산할 수 없어
+    # 여기서 전체 ranked 풀을 기준으로 함께 내려보낸다.
+    fdr_pass_count = sum(1 for row in ranked if row["significant"])
+    effect_size_pass_count = sum(1 for row in ranked if confidence_tier(row["eps2"], row["p_value"]) != "reference")
+    max_eps2 = max((row["eps2"] for row in ranked), default=None)
     return {
         "dataset_id": dataset_id,
         "target": target,
         "total_factor_count": len(ranked),
         "n80": n80,
+        "fdr_pass_count": fdr_pass_count,
+        "effect_size_pass_count": effect_size_pass_count,
+        "max_eps2": max_eps2,
         "items": items,
     }
 

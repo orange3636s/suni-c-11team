@@ -14,6 +14,7 @@ import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { selectDisplayFactors } from "@/lib/chartSelection";
 import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { formatPValue } from "@/lib/numberFormat";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
@@ -67,11 +68,23 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
-const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
+// 등급 라벨 정비 (spec §C-2) -- "약함"/"참고"는 이름만으로 차이가 드러나지
+// 않아 "근거 부족"/"관계 없음"으로 바꾼다. 내부 코드의 tier 값(strong/
+// moderate/weak/reference)과 JSON `grade` 필드는 그대로 두고, 화면 표시
+// 문자열만 바꾼다 (spec §C-2/§21).
+const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "근거 부족", reference: "관계 없음" };
+// 등급 배지 호버 설명 (spec §C-3).
+const TIER_TOOLTIP: Record<ConfidenceTier, string> = {
+  strong: "부도율 변동의 10% 이상을 설명합니다. 조치의 우선 순위입니다.",
+  moderate: "5~10%를 설명합니다. 관계는 있지만 추가 확인이 필요합니다.",
+  weak: "통계적 근거가 부족합니다. 조치 판단에 사용하지 마세요.",
+  reference: "효과 크기가 기준(0.02)에 미치지 못합니다.",
+};
 const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중", "계측 확대 시뮬레이션 중"];
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
+type ChartCriterion = "significant" | "all";
 
 function hasReliableEvidence(tier: ConfidenceTier): boolean {
   return tier === "strong" || tier === "moderate";
@@ -104,7 +117,22 @@ function classifyAnalysisFailure(error: unknown): { kind: AnalysisFailureKind; d
 }
 
 function ConfidenceBadge({ tier }: { tier: ConfidenceTier }) {
-  return <span className={`confidenceBadge tier-${tier}`}>{TIER_LABEL[tier]}</span>;
+  return (
+    <span className={`confidenceBadge tier-${tier}`} title={TIER_TOOLTIP[tier]}>
+      {TIER_LABEL[tier]}
+    </span>
+  );
+}
+
+/** `보통` 등급 인자의 설명력이 낮은 편임을 알리는 한 줄 캡션 (spec §C-4).
+ * train.CSV의 Step24_R1 → Y4(ε² 0.073)가 여기 해당한다. */
+function ModerateTierCaption({ tier, eps2 }: { tier: ConfidenceTier; eps2: number }) {
+  if (tier !== "moderate") return null;
+  return (
+    <p className="moderateTierCaption">
+      이 인자의 설명력은 {(eps2 * 100).toFixed(1)}%로 낮은 편입니다. 다른 요인의 영향이 더 클 수 있습니다.
+    </p>
+  );
 }
 
 function buildCategoricalSpec(data: CategoricalScatterResponse) {
@@ -189,6 +217,10 @@ function RootCauseContent() {
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
   const [compareFeature, setCompareFeature] = useState<string | null>(null);
+  // 판정 기준 토글 (spec §B-6) -- 기본값은 "유의한 인자만" (§B-2 규칙 적용).
+  // 타깃 선택·데이터셋 변경 시 기본값으로 되돌아간다 (아래 selectTarget과
+  // datasetId 변경 이펙트에서 초기화).
+  const [chartCriterion, setChartCriterion] = useState<ChartCriterion>("significant");
 
   const [runState, setRunState] = useState<RunState>("idle");
   // Bumped once per "원인 분석 실행"/"다시 실행" -- folded into each factor
@@ -253,6 +285,8 @@ function RootCauseContent() {
     const timer = window.setTimeout(() => {
       setQuickLook(null);
       setQuickLookData(null);
+      // 데이터셋 변경 시 판정 기준 토글도 기본값으로 되돌린다 (spec §B-6).
+      setChartCriterion("significant");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [datasetId]);
@@ -396,10 +430,78 @@ function RootCauseContent() {
     }
   }
 
-  const activeDisplayFactors: ParetoRankingItem[] = useMemo(
-    () => paretoByTarget[activeTarget]?.items ?? [],
-    [paretoByTarget, activeTarget],
+  const activeParetoResponse = paretoByTarget[activeTarget];
+  const activeParetoItems: ParetoRankingItem[] = useMemo(
+    () => activeParetoResponse?.items ?? [],
+    [activeParetoResponse],
   );
+  // 차트 표시 규칙 (spec §B-2) -- "유의한 인자만"일 때만 필터링하고, "전체
+  // 상위 5개"는 등급 무관 그대로 노출한다 (spec §B-6 탈출 동선).
+  const significantDisplayFactors = useMemo(() => selectDisplayFactors(activeParetoItems), [activeParetoItems]);
+  const displayFactors = chartCriterion === "significant" ? significantDisplayFactors : activeParetoItems;
+  // 이 타깃에서 그릴 차트가 0개인지 (spec §B-4) -- 전체 후보 풀에 효과 크기
+  // 조건을 통과한 인자가 하나도 없을 때만 해당한다.
+  const activeTargetHasNoChart =
+    chartCriterion === "significant" && activeParetoItems.length > 0 && (activeParetoResponse?.effect_size_pass_count ?? 0) === 0;
+  // 5개 타깃 전부 차트가 0개인지 (spec §B-5) -- killing_event처럼 전 타깃에서
+  // 계측된 인자로 부도율이 설명되지 않는 경우, 타깃별 안내 문구를 5번
+  // 반복하지 않고 통합 안내 하나만 보여준다.
+  const allTargetsHaveNoChart =
+    chartCriterion === "significant" &&
+    runState === "done" &&
+    TARGETS.every((t) => (paretoByTarget[t]?.items.length ?? 0) > 0 && (paretoByTarget[t]?.effect_size_pass_count ?? -1) === 0);
+  // §B-5 통합 안내에 쓰는 5개 타깃 합산 통계 (검정 건수/효과 크기 통과/최대
+  // 설명력).
+  const datasetNoChartStats = useMemo(() => {
+    if (!allTargetsHaveNoChart) return null;
+    let totalTested = 0;
+    let effectSizePass = 0;
+    let maxEps2 = 0;
+    for (const t of TARGETS) {
+      const response = paretoByTarget[t];
+      if (!response) continue;
+      totalTested += response.total_factor_count;
+      effectSizePass += response.effect_size_pass_count;
+      maxEps2 = Math.max(maxEps2, response.max_eps2 ?? 0);
+    }
+    return { totalTested, effectSizePass, maxEps2 };
+  }, [allTargetsHaveNoChart, paretoByTarget]);
+
+  /** 인자 카드 하나를 그린다 (numeric -> ScatterChart, Config -> Box Plot) --
+   * 메인 그리드와 §B-4/§B-5 "상위 3개 보기" 접힘 목록이 모두 이 함수를
+   * 공유한다. `target`을 클로저의 activeTarget에 기대지 않고 인자로 받는
+   * 것은 §B-5 통합 안내가 5개 타깃 전부를 한 화면에 그리기 때문이다. */
+  function renderFactorCard(target: string, item: ParetoRankingItem, index: number, options?: { fallbackWarning?: boolean }) {
+    const isConfig = item.kind === "Config";
+    const key = `${target}::${item.feature}`;
+    if (!isConfig) {
+      return (
+        <NumericFactorCard
+          key={`${runGeneration}-${target}-${item.feature}`}
+          item={item}
+          index={index}
+          activeTarget={target}
+          numericData={scatterByKey[key]}
+          onSelectWafer={setSelectedWafer}
+          onCompare={setCompareFeature}
+          hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
+          alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
+          fallbackWarning={options?.fallbackWarning}
+        />
+      );
+    }
+    return (
+      <CategoricalFactorCard
+        key={`${target}-${item.feature}`}
+        item={item}
+        index={index}
+        activeTarget={target}
+        categoricalData={categoricalByKey[key]}
+        chartHeight={chartHeight}
+        fallbackWarning={options?.fallbackWarning}
+      />
+    );
+  }
 
   function updateUrl(target: string, feature?: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -412,6 +514,8 @@ function RootCauseContent() {
   function selectTarget(target: string) {
     setActiveTarget(target);
     updateUrl(target);
+    // 타깃 선택 시 판정 기준 토글도 기본값으로 되돌린다 (spec §B-6).
+    setChartCriterion("significant");
     // Keeps the persisted-for-restore activeTarget in sync with whatever
     // the user is actually looking at, not frozen at whatever it was
     // when the run/restore first completed.
@@ -506,14 +610,16 @@ function RootCauseContent() {
         <span className="eyebrow">ROOT CAUSE</span>
         <h1>원인 분석</h1>
         {/* 3줄 고정 (spec 문구 전수 검토 PART C) -- Box Plot, SPC/ML 비교,
-            계측 확대 권고를 언급한다. 원인 분석 탭에 새 기능이 추가되거나
-            제거되면 이 문구도 함께 갱신해야 한다. */}
+            계측 확대 권고를 언급한다. 배치 순서 변경(§A-2)으로 계측 확대
+            권고가 Pareto 바로 아래, 산점도보다 먼저 온다는 점을 반영한다.
+            원인 분석 탭에 새 기능이 추가되거나 제거되면 이 문구도 함께
+            갱신해야 한다. */}
         <p className="rootCauseIntro">
-          타깃(Y1~Y5)별로 전체 인자 풀 기준 Pareto 상위 5개 인자를 확인합니다.
+          타깃(Y1~Y5)별로 전체 인자 풀 기준 Pareto와, 강함·보통 등급 위주로 선별한 인자의 산점도·Box Plot을 확인합니다.
           <br />
-          산점도와 Box Plot으로 분포를 살펴보고, 권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
+          권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
           <br />
-          하단에서 계측 확대 시 기대 효과를 확인할 수 있습니다.
+          Pareto 바로 아래에서 계측 확대 시 기대 효과를 먼저 확인할 수 있습니다.
         </p>
       </section>
 
@@ -578,6 +684,10 @@ function RootCauseContent() {
         onHeatmapCellSelect={handleHeatmapSelect}
       />
 
+      {/* 배치 순서 변경 (spec §A-2): 계측 확대 권고를 Pareto 바로 아래로
+          옮긴다 -- 산점도/Box Plot(인자별 상세)보다 먼저 보인다. */}
+      {runState === "done" && <MeasurementExpansionCard data={analysis?.measurementExpansion ?? null} />}
+
       {runState === "done" && (
         <>
           {quickLook && (
@@ -619,6 +729,8 @@ function RootCauseContent() {
                 </div>
               </div>
               {quickLookError && <p className="errorMessage">{quickLookError}</p>}
+              {quickLookNumeric && <ModerateTierCaption tier={quickLookNumeric.confidence_tier} eps2={quickLookNumeric.eps2} />}
+              {quickLookCategorical && <ModerateTierCaption tier={quickLookCategorical.confidence_tier} eps2={quickLookCategorical.eps2} />}
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
                   이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(quickLookNumeric.p_value)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
@@ -647,70 +759,84 @@ function RootCauseContent() {
             </article>
           )}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-            {activeDisplayFactors.map((item, index) => {
-              const isConfig = item.kind === "Config";
-              const key = `${activeTarget}::${item.feature}`;
-              if (!isConfig) {
-                return (
-                  <NumericFactorCard
-                    key={`${runGeneration}-${activeTarget}-${item.feature}`}
-                    item={item}
-                    index={index}
-                    activeTarget={activeTarget}
-                    numericData={scatterByKey[key]}
-                    onSelectWafer={setSelectedWafer}
-                    onCompare={setCompareFeature}
-                    hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
-                    alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
-                  />
-                );
-              }
-              const categoricalData = categoricalByKey[key];
-              return (
-                <article className="resultCard factorChartCard" id={`factor-${item.feature}`} key={item.feature}>
-                  <div className="factorChartMeta">
-                    <div className="factorChartTitleBlock">
-                      <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
-                      <div className="factorChartTitleRow">
-                        <h2>{item.feature} vs {activeTarget}</h2>
-                        <ConfidenceBadge tier={item.confidence_tier} />
-                      </div>
-                    </div>
-                    {categoricalData && (
-                      <small className="factorChartStats">
-                        <span>n={categoricalData.n}</span>
-                        <span>기여율={item.contribution_pct.toFixed(1)}%</span>
-                        <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
-                        <span>p-value {formatPValue(item.p_value)}</span>
-                      </small>
-                    )}
-                  </div>
-                  {!hasReliableEvidence(item.confidence_tier) && (
-                    <p className="heatmapSignificanceBanner">
-                      이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 원인으로 단정할 근거는 부족합니다.
-                    </p>
-                  )}
-                  {categoricalData ? (
-                    <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={chartHeight} />
-                  ) : (
-                    <p className="emptyMessage">불러오는 중…</p>
-                  )}
-                </article>
-              );
-            })}
+          {/* 판정 기준 토글 (spec §B-6) -- 차트 영역 상단. 전환은 이미 받은
+              Pareto 결과를 클라이언트에서 다시 필터링할 뿐, API를 재호출하지
+              않는다. */}
+          <div className="chartCriterionBar">
+            <span className="chartCriterionLabel">판정 기준</span>
+            <div className="scatterViewToggle" role="group" aria-label="차트 표시 기준">
+              <button
+                type="button"
+                className={`scatterViewToggleBtn ${chartCriterion === "significant" ? "active" : ""}`}
+                onClick={() => setChartCriterion("significant")}
+              >
+                유의한 인자만
+              </button>
+              <button
+                type="button"
+                className={`scatterViewToggleBtn ${chartCriterion === "all" ? "active" : ""}`}
+                onClick={() => setChartCriterion("all")}
+              >
+                전체 상위 5개
+              </button>
+            </div>
           </div>
+
+          {allTargetsHaveNoChart && datasetNoChartStats ? (
+            <section className="resultCard noChartMessage">
+              <h2>이 데이터셋에서는 통계적으로 유의한 인자를 찾지 못했습니다</h2>
+              <p className="noChartStats">
+                전체 검정 {datasetNoChartStats.totalTested.toLocaleString()}건 · 효과 크기 조건 통과 {datasetNoChartStats.effectSizePass.toLocaleString()}건 · 최대 설명력 {datasetNoChartStats.maxEps2.toFixed(4)}
+                <br />
+                부도율 변동의 대부분이 계측되지 않은 공정 변수로 설명됩니다.
+              </p>
+              <p className="noChartStats">
+                계측되지 않은 다른 공정 변수는 측정되지 않은 사건이 원인일 수 있습니다.
+                <br />
+                안전율 예측 기반 알람은 계속 동작합니다.
+              </p>
+              <details className="noChartFallback">
+                <summary>타깃별 상위 3개 보기</summary>
+                {TARGETS.map((t) => (
+                  <div className="noChartFallbackTarget" key={t}>
+                    <h3>{t}</h3>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+                      {(paretoByTarget[t]?.items ?? []).slice(0, 3).map((item, index) => renderFactorCard(t, item, index, { fallbackWarning: true }))}
+                    </div>
+                  </div>
+                ))}
+              </details>
+            </section>
+          ) : activeTargetHasNoChart && activeParetoResponse ? (
+            <section className="resultCard noChartMessage">
+              <h2>{activeTarget} · 통계적으로 유의한 인자를 찾지 못했습니다</h2>
+              <p className="noChartStats">
+                검정 {activeParetoResponse.total_factor_count.toLocaleString()}건 · FDR 통과 {activeParetoResponse.fdr_pass_count.toLocaleString()}건 · 효과 크기 조건 통과 {activeParetoResponse.effect_size_pass_count.toLocaleString()}건
+                <br />
+                최대 설명력 {(activeParetoResponse.max_eps2 ?? 0).toFixed(4)}
+              </p>
+              <p className="noChartStats">부도율 변동이 계측 인자로 설명되지 않습니다.</p>
+              <details className="noChartFallback">
+                <summary>전체 상위 3개 보기</summary>
+                <div style={{ display: "flex", flexDirection: "column", gap: 32, marginTop: 20 }}>
+                  {activeParetoItems.slice(0, 3).map((item, index) => renderFactorCard(activeTarget, item, index, { fallbackWarning: true }))}
+                </div>
+              </details>
+            </section>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+              {displayFactors.map((item, index) => renderFactorCard(activeTarget, item, index))}
+            </div>
+          )}
         </>
       )}
-
-      {runState === "done" && <MeasurementExpansionCard data={analysis?.measurementExpansion ?? null} />}
 
       <section className="analysisDisclaimers">
         <strong>해석 시 한계</strong>
         <ul>
           <li>{measurementRateDisclaimer(analysisSchema)}</li>
           <li>ε²는 통계적 연관성이지 인과가 아닙니다. 공정 순서상 선행/후행 관계나 교락 인자는 반영되지 않았습니다.</li>
-          <li>&ldquo;약함&rdquo;·&ldquo;참고&rdquo; 등급 인자는 통계적 신뢰도가 낮아 원인으로 단정할 근거가 부족합니다. 사전 알람은 p&lt;0.05(강함·보통 등급) 인자에서만 생성됩니다.</li>
+          <li>&ldquo;근거 부족&rdquo;·&ldquo;관계 없음&rdquo; 등급 인자는 통계적 신뢰도가 낮아 원인으로 단정할 근거가 부족합니다. 사전 알람은 p&lt;0.05(강함·보통 등급) 인자에서만 생성됩니다.</li>
         </ul>
       </section>
 
@@ -884,6 +1010,7 @@ function NumericFactorCard({
   onCompare,
   hasConfig,
   alarmGradeByWaferId,
+  fallbackWarning,
 }: {
   item: ParetoRankingItem;
   index: number;
@@ -893,6 +1020,9 @@ function NumericFactorCard({
   onCompare: (feature: string) => void;
   hasConfig: boolean;
   alarmGradeByWaferId?: Record<string, AlarmGrade>;
+  // §B-4/§B-5 "상위 3개 보기" 접힘 목록에서만 켠다 -- 기본 그리드는 참고
+  // 등급을 절대 그리지 않으므로(§B-2) 이 배지도 그 탈출 동선에서만 보인다.
+  fallbackWarning?: boolean;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
@@ -921,6 +1051,7 @@ function NumericFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
+            {fallbackWarning && <FallbackWarningBadge tier={item.confidence_tier} />}
             <button
               type="button"
               className="compareTriggerButton"
@@ -948,6 +1079,7 @@ function NumericFactorCard({
           )}
         </div>
       </div>
+      <ModerateTierCaption tier={item.confidence_tier} eps2={item.eps2} />
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
           이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 경고선은 예측 수율을 기준으로 별도 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
@@ -966,6 +1098,68 @@ function NumericFactorCard({
           />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>
+      ) : (
+        <p className="emptyMessage">불러오는 중…</p>
+      )}
+    </article>
+  );
+}
+
+/** §B-4/§B-5 "상위 3개 보기" 접힘 목록에서 켜지는 경고 배지 -- 이 목록에
+ * 뜨는 인자는 정의상 전부 `관계 없음`(참고) 등급이다 (effect_size_pass_count
+ * 가 0일 때만 열리는 화면이라 top-5 중 eps2가 가장 큰 인자조차 기준
+ * 0.02를 넘지 못한다). 등급 라벨 자체는 ConfidenceBadge가 이미 보여주므로
+ * 여기서는 "통계적 근거 부족"이라는 사용 유의 문구만 덧붙인다. */
+function FallbackWarningBadge({ tier }: { tier: ConfidenceTier }) {
+  return <span className="fallbackWarningBadge">{TIER_LABEL[tier]} · 통계적 근거 부족</span>;
+}
+
+/** Config(범주형) 인자 카드 -- 메인 그리드와 §B-4/§B-5 접힘 목록이 공유한다
+ * (원래는 root-cause 렌더 루프에 인라인돼 있었으나, 상위 3개 보기 목록도
+ * 같은 카드를 그려야 해서 컴포넌트로 뺐다). */
+function CategoricalFactorCard({
+  item,
+  index,
+  activeTarget,
+  categoricalData,
+  chartHeight,
+  fallbackWarning,
+}: {
+  item: ParetoRankingItem;
+  index: number;
+  activeTarget: string;
+  categoricalData: CategoricalScatterResponse | undefined;
+  chartHeight: number;
+  fallbackWarning?: boolean;
+}) {
+  return (
+    <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
+      <div className="factorChartMeta">
+        <div className="factorChartTitleBlock">
+          <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
+          <div className="factorChartTitleRow">
+            <h2>{item.feature} vs {activeTarget}</h2>
+            <ConfidenceBadge tier={item.confidence_tier} />
+            {fallbackWarning && <FallbackWarningBadge tier={item.confidence_tier} />}
+          </div>
+        </div>
+        {categoricalData && (
+          <small className="factorChartStats">
+            <span>n={categoricalData.n}</span>
+            <span>기여율={item.contribution_pct.toFixed(1)}%</span>
+            <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
+            <span>p-value {formatPValue(item.p_value)}</span>
+          </small>
+        )}
+      </div>
+      <ModerateTierCaption tier={item.confidence_tier} eps2={item.eps2} />
+      {!hasReliableEvidence(item.confidence_tier) && (
+        <p className="heatmapSignificanceBanner">
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 원인으로 단정할 근거는 부족합니다.
+        </p>
+      )}
+      {categoricalData ? (
+        <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={chartHeight} />
       ) : (
         <p className="emptyMessage">불러오는 중…</p>
       )}

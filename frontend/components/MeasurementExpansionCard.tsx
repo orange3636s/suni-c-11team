@@ -19,10 +19,10 @@ const DISCOVERY_CARD_COLOR = "#9333EA";
 const RELIABILITY_CARD_COLOR = "#0891B2";
 const FALSE_POSITIVE_CARD_COLOR = "#0D9668";
 
-/** '계측 확대 권고' 카드 (spec 문구 전수 검토 PART B) -- 원인 분석 탭 가장
- * 하단, 산점도 5장과 비교 카드가 모두 끝난 뒤에 렌더된다. 값은 분석 실행
- * 시 한 번 계산되어 `data`로 그대로 전달되며, 이 컴포넌트는 어떤 통계도
- * 재계산하지 않는다 (spec §B-7).
+/** '계측 확대 권고' 카드 (spec 문구 전수 검토 PART B, 배치 순서 변경 §A-2) --
+ * 원인 분석 탭에서 Pareto 바로 아래, 인자별 산점도/Box Plot보다 먼저
+ * 렌더된다. 값은 분석 실행 시 한 번 계산되어 `data`로 그대로 전달되며,
+ * 이 컴포넌트는 어떤 통계도 재계산하지 않는다 (spec §B-7).
  */
 export default function MeasurementExpansionCard({ data }: { data: MeasurementExpansionResponse | null }) {
   if (!data) return null;

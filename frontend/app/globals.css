@@ -10057,6 +10057,39 @@ html[data-theme="dark"]{
 
 .rootCauseIntro{ word-break: keep-all; }
 
+/* -- 판정 기준 토글 (spec §B-6) -- 차트 영역(산점도/Box Plot) 상단, 등급
+   무관 escape hatch. 버튼 자체는 .scatterViewToggle/.scatterViewToggleBtn
+   을 그대로 재사용한다. */
+.chartCriterionBar{ display: flex; align-items: center; gap: 10px; }
+.chartCriterionLabel{ font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+
+/* -- 차트 표시 규칙 §B-4/§B-5: 그릴 차트가 0개인 타깃/데이터셋 안내 -- */
+.noChartMessage{ display: flex; flex-direction: column; gap: 8px; }
+.noChartMessage h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
+.noChartMessage h3{ margin: 0 0 12px; font-size: 13px; font-weight: 700; color: var(--text-secondary); }
+.noChartStats{ margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.noChartFallback{ margin-top: 4px; }
+.noChartFallback > summary{
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-card, rgba(0,0,0,.1));
+  background: transparent; color: var(--text-secondary, #6e6e73); list-style: none; width: fit-content;
+}
+.noChartFallback > summary::-webkit-details-marker{ display: none; }
+.noChartFallback[open] > summary{ margin-bottom: 20px; }
+.noChartFallbackTarget + .noChartFallbackTarget{ margin-top: 32px; padding-top: 32px; border-top: 1px solid var(--border-card, rgba(0,0,0,.08)); }
+
+/* §B-4/§B-5 접힘 목록에서만 켜지는 경고 배지 -- 이 인자는 정의상 전부
+   `관계 없음` 등급이므로 confidenceBadge와 나란히 붙는 보조 경고다. */
+.fallbackWarningBadge{
+  display: inline-flex; align-items: center; margin-left: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: var(--warning, #a96208);
+  background: color-mix(in srgb, var(--warning, #a96208) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #a96208) 35%, transparent);
+}
+
+/* `보통` 등급 인자의 설명력 캡션 (spec §C-4). */
+.moderateTierCaption{ margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+
 /* -- 알람 판정 GBDT 전환 -------------------------------------------------- */
 
 /* 알람 등급 배지 (spec §A-3/§B-1 색상 재사용: 심각 #DC2626, 위험 #EA580C,

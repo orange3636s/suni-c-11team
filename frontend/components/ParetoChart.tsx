@@ -21,7 +21,9 @@ const LEFT_TICKS = [0, 25, 50, 75, 100];
 const RIGHT_TICKS = [0, 20, 40, 60, 80, 100];
 const LABEL_FONT = "10px var(--font-ui, system-ui, sans-serif)";
 
-const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
+// 등급 라벨 정비 (spec §C-2) -- 화면 표시 문자열만 바꾼다, tier 값과 JSON
+// grade 필드는 그대로 유지한다.
+const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "근거 부족", reference: "관계 없음" };
 
 type TooltipState = { x: number; y: number; index: number } | null;
 
@@ -129,10 +131,10 @@ export default function ParetoChart({
           <h2>{target} 상관 인자 기여도</h2>
         </div>
         <div className="paretoLegend paretoLegendInline">
-          <span><i className="paretoLegendSwatch tier-strong" /> 강함</span>
-          <span><i className="paretoLegendSwatch tier-moderate" /> 보통</span>
-          <span><i className="paretoLegendSwatch tier-weak" /> 약함</span>
-          <span><i className="paretoLegendSwatch tier-reference" /> 참고</span>
+          <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
+          <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
+          <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
+          <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
         </div>
       </div>
 

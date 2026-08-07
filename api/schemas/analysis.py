@@ -24,6 +24,11 @@ class ParetoRankingResponse(BaseModel):
     target: str
     total_factor_count: int
     n80: int | None
+    # 전체 후보 풀(top-5로 잘리기 전) 기준 집계 -- 차트 표시 규칙(spec §B)의
+    # 0개-타깃 안내 문구("검정 58건 · FDR 통과 0건 · 효과 크기 조건 통과 0건")가 쓴다.
+    fdr_pass_count: int
+    effect_size_pass_count: int
+    max_eps2: float | None
     items: list[ParetoRankingItemSchema]
 
 
