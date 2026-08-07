@@ -678,6 +678,17 @@ type PointHover = { screenX: number; screenY: number; clientX: number; clientY: 
 type BoxHover = { clientX: number; clientY: number; bin: BoxBin };
 
 const POINT_HOVER_RADIUS_PX = 16;
+// 드래그 선택 (spec B) -- 이동 거리가 이 미만이면 클릭(기존 포인트 상세),
+// 이상이면 브러시 선택으로 본다.
+const DRAG_THRESHOLD_PX = 5;
+type DragPos = { x: number; y: number };
+// 정보 박스 예상 크기 (CSS 값과 맞춰 둔다) -- 드래그 사각형이 우상단
+// 코너의 이 영역을 침범하는지 판정하는 데만 쓰인다.
+const STATS_BOX_WIDTH = 200;
+const STATS_BOX_HEIGHT = 130;
+// globals.css --accent (#0e306d) -- 라이트/다크 동일 값이라 이 파일의
+// 다른 색처럼 테마별 쌍을 따로 두지 않는다.
+const ACCENT_COLOR = "#0E306D";
 
 export default function ScatterChart({
   data,
@@ -733,6 +744,23 @@ export default function ScatterChart({
   const [pointHover, setPointHover] = useState<PointHover | null>(null);
   const [disabledHint, setDisabledHint] = useState<{ x: number; y: number; text: string } | null>(null);
   const [boxHover, setBoxHover] = useState<BoxHover | null>(null);
+  // 드래그 선택 (spec B) -- 일시적 상태다. 뷰 전환·타깃 변경·카드 remount
+  // 시 해제해야 하므로 아래 [data, view] 이펙트에서 지운다.
+  const [dragStart, setDragStart] = useState<DragPos | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<DragPos | null>(null);
+  const [selectedPoints, setSelectedPoints] = useState<ScatterPoint[]>([]);
+  // 정보 박스가 드래그 사각형이 우상단 코너를 침범할 때만 좌상단으로
+  // flip한다 -- 선택이 끝난 뒤에는 박스가 사각형을 따라다니지 않으므로
+  // (지시서 B) 이 값도 finishDrag 시점에 한 번만 정해지고 고정된다.
+  const [statsBoxFlip, setStatsBoxFlip] = useState(false);
+
+  useEffect(() => {
+    // setTimeout으로 감싼다 -- 이펙트 본문에서 곧장 setState를 부르면
+    // cascading render 린트 규칙에 걸린다(이 파일의 다른 모달들과 같은
+    // 우회 패턴).
+    const timer = window.setTimeout(() => setSelectedPoints([]), 0);
+    return () => window.clearTimeout(timer);
+  }, [data, view]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -1061,7 +1089,97 @@ export default function ScatterChart({
     return null;
   }
 
+  // 선택 표시 (spec B) -- 선택이 있을 때만 비선택 점을 흐리게 한다.
+  const hasSelection = selectedPoints.length > 0;
+  const selectedSet = new Set(selectedPoints);
+
+  // 드래그 브러시 히트테스트용 렌더 좌표 -- Box 모드는 지터된 화면 위치
+  // 기준으로 판정한다(지시서 B: "지터된 점 좌표 기준"), Scatter 모드는
+  // 실제 값 좌표. 숨겨진(inlier/outlier 토글 꺼짐) 점은 제외한다.
+  const dragHitPoints: { point: ScatterPoint; screenX: number; screenY: number }[] =
+    view === "box"
+      ? boxBins.flatMap((bin) =>
+          bin.members
+            .filter((member) => (member.isOutlier ? boxPointsVisible.outlier : boxPointsVisible.inlier))
+            .map((member) => ({
+              point: member.point,
+              screenX: catScale(bin.index + 1 + member.jitter),
+              screenY: yScale(member.point.y),
+            })),
+        )
+      : data.points.map((point) => ({ point, screenX: xScale(point.x), screenY: yScale(point.y) }));
+
+  function toPlotRelative(clientX: number, clientY: number): DragPos | null {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return { x: clientX - rect.left - MARGIN.left, y: clientY - rect.top - MARGIN.top };
+  }
+
+  function handlePlotMouseDown(event: React.MouseEvent<SVGRectElement>) {
+    const pos = toPlotRelative(event.clientX, event.clientY);
+    if (!pos) return;
+    // 새 드래그를 시작하면 이전 선택은 즉시 지운다 -- 그래야 드래그가
+    // 결국 "빈 영역 클릭"으로 끝나도 선택 해제와 동일한 결과가 된다.
+    setSelectedPoints([]);
+    setDragStart(pos);
+    setDragCurrent(pos);
+  }
+
+  function finishDrag(start: DragPos, end: DragPos) {
+    const distance = Math.hypot(end.x - start.x, end.y - start.y);
+    if (distance < DRAG_THRESHOLD_PX) {
+      // 클릭으로 본다 -- 기존 포인트 클릭 상세를 그대로 재현한다. 이
+      // 오버레이가 모든 하위 도형의 포인터 이벤트를 가로채므로(위
+      // findBoxColumnAt 주석 참고) 개별 <circle>의 onClick은 실제로
+      // 발생하지 않는다 -- 클릭 처리는 여기서 대신한다.
+      if (view === "box") {
+        const nearest = findNearestBoxPoint(end.x, end.y);
+        if (nearest) onSelectWafer(nearest.point);
+      } else {
+        const nearest = findNearestPoint(end.x, end.y);
+        if (nearest) onSelectWafer(nearest);
+      }
+      return;
+    }
+    const xLo = Math.min(start.x, end.x);
+    const xHi = Math.max(start.x, end.x);
+    const yLo = Math.min(start.y, end.y);
+    const yHi = Math.max(start.y, end.y);
+    const hits = dragHitPoints
+      .filter((p) => p.screenX >= xLo && p.screenX <= xHi && p.screenY >= yLo && p.screenY <= yHi)
+      .map((p) => p.point);
+    // 우상단 코너에 정보 박스가 뜨는데 드래그 사각형이 그 자리를
+    // 침범하면 박스가 선택 점을 가리므로 좌상단으로 flip (지시서 B).
+    setStatsBoxFlip(xHi > plotWidth - STATS_BOX_WIDTH && yLo < STATS_BOX_HEIGHT);
+    setSelectedPoints(hits);
+  }
+
+  // 드래그 중에는 커서가 오버레이 밖으로 나가도 계속 추적해야 하므로
+  // window 리스너를 쓴다 (오버레이 자체의 onMouseMove/onMouseUp만으로는
+  // 사각형 밖으로 나가는 순간 드래그가 끊긴다).
+  useEffect(() => {
+    if (!dragStart) return;
+    function handleWindowMouseMove(event: MouseEvent) {
+      const pos = toPlotRelative(event.clientX, event.clientY);
+      if (pos) setDragCurrent(pos);
+    }
+    function handleWindowMouseUp(event: MouseEvent) {
+      const end = toPlotRelative(event.clientX, event.clientY) ?? dragCurrent ?? dragStart;
+      if (dragStart && end) finishDrag(dragStart, end);
+      setDragStart(null);
+      setDragCurrent(null);
+    }
+    window.addEventListener("mousemove", handleWindowMouseMove);
+    window.addEventListener("mouseup", handleWindowMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleWindowMouseMove);
+      window.removeEventListener("mouseup", handleWindowMouseUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragStart]);
+
   function handlePlotOverlayMouseMove(event: React.MouseEvent<SVGRectElement>) {
+    if (dragStart) return; // 드래그 중엔 브러시 사각형만 갱신한다 (window 리스너), 호버는 잠시 멈춘다.
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     const relativeX = event.clientX - rect.left - MARGIN.left;
@@ -1222,6 +1340,7 @@ export default function ScatterChart({
         <p className="scatterInterpretationTipBody">{interpretationText}</p>
       </div>
 
+      <div className="scatterPlotWrap">
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {/* dark-mode-only plot background (spec §4 재지시) -- painted
@@ -1325,6 +1444,7 @@ export default function ScatterChart({
             ? data.points.map((point, index) => {
                 const style = colorForPoint(point, colorMode, lotIndex, theme, recommendedRangeValue);
                 const isHovered = pointHover?.point === point;
+                const isSelected = selectedSet.has(point);
                 // 관리한계 밖 점은 가장 연한 채움이라 테두리로도 구분되게 한다
                 // (spec §3) -- 기본 모드에서만, 호버 중엔 기존 호버 테두리가
                 // 우선한다.
@@ -1339,11 +1459,11 @@ export default function ScatterChart({
                     key={point.lot_wafer_id ?? index}
                     cx={xScale(point.x)}
                     cy={yScale(point.y)}
-                    r={isHovered ? style.size * 1.5 : style.size}
-                    fill={style.color}
-                    opacity={isHovered ? 1 : style.opacity}
-                    stroke={stroke}
-                    strokeWidth={isHovered ? 1.5 : isOutControlBorder ? 1 : 0}
+                    r={isHovered ? style.size * 1.5 : isSelected ? style.size + 1 : style.size}
+                    fill={isSelected && !isHovered ? ACCENT_COLOR : style.color}
+                    opacity={isHovered || isSelected ? 1 : hasSelection ? style.opacity / 3 : style.opacity}
+                    stroke={isSelected && !isHovered ? ACCENT_COLOR : stroke}
+                    strokeWidth={isHovered ? 1.5 : isSelected ? 1.5 : isOutControlBorder ? 1 : 0}
                     style={{ cursor: "pointer" }}
                     onClick={() => onSelectWafer(point)}
                   />
@@ -1385,13 +1505,18 @@ export default function ScatterChart({
                       const cx = catScale(bin.index + 1 + member.jitter);
                       const cy = yScale(member.point.y);
                       const isHovered = pointHover?.point === member.point;
+                      const isSelected = selectedSet.has(member.point);
                       if (member.isOutlier) {
                         if (!boxPointsVisible.outlier) return null;
+                        const baseOpacity = 0.85;
                         return (
                           <circle
                             key={member.point.lot_wafer_id ?? `${bin.index}-out-${mi}`}
-                            cx={cx} cy={cy} r={isHovered ? 6 : 4.5}
-                            fill="none" stroke={outlierColor} strokeWidth={isHovered ? 1.8 : 1} opacity={0.85}
+                            cx={cx} cy={cy} r={isHovered ? 6 : isSelected ? 5.5 : 4.5}
+                            fill="none"
+                            stroke={isSelected && !isHovered ? ACCENT_COLOR : outlierColor}
+                            strokeWidth={isHovered ? 1.8 : isSelected ? 1.6 : 1}
+                            opacity={isHovered || isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity}
                             style={{ cursor: "pointer" }}
                             onClick={() => onSelectWafer(member.point)}
                           />
@@ -1399,11 +1524,13 @@ export default function ScatterChart({
                       }
                       if (!boxPointsVisible.inlier) return null;
                       const style = colorForPoint(member.point, colorMode, lotIndex, theme, recommendedRangeValue);
+                      const baseOpacity = 0.28;
                       return (
                         <circle
                           key={member.point.lot_wafer_id ?? `${bin.index}-in-${mi}`}
-                          cx={cx} cy={cy} r={isHovered ? 4 : 2.2}
-                          fill={style.color} opacity={isHovered ? 0.85 : 0.28}
+                          cx={cx} cy={cy} r={isHovered ? 4 : isSelected ? 3.2 : 2.2}
+                          fill={isSelected && !isHovered ? ACCENT_COLOR : style.color}
+                          opacity={isHovered ? 0.85 : isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity}
                           style={{ cursor: "pointer" }}
                           onClick={() => onSelectWafer(member.point)}
                         />
@@ -1531,12 +1658,32 @@ export default function ScatterChart({
           {/* line name labels -- topmost of all */}
           {labelLayout.map((layout) => renderFloatingLabel(layout.key))}
 
+          {/* 드래그 브러시 사각형 (spec B) -- 오버레이보다 먼저 그려서
+              오버레이가 계속 포인터 이벤트를 받게 둔다(사각형 자체는
+              pointerEvents:none). */}
+          {dragStart && dragCurrent && (
+            <rect
+              x={Math.min(dragStart.x, dragCurrent.x)}
+              y={Math.min(dragStart.y, dragCurrent.y)}
+              width={Math.abs(dragCurrent.x - dragStart.x)}
+              height={Math.abs(dragCurrent.y - dragStart.y)}
+              className="scatterBrushRect"
+              pointerEvents="none"
+            />
+          )}
+
           {/* continuous point+trend hover overlay -- nearest-point search,
-              not per-point listeners (see findNearestPoint's comment). */}
+              not per-point listeners (see findNearestPoint's comment).
+              Also owns click-vs-drag selection (spec B): every pointer
+              event in the plot lands here first (see findBoxColumnAt's
+              comment on why per-shape listeners don't fire), so point
+              click and the drag brush both route through this one rect. */}
           <rect
             x={0} y={0} width={plotWidth} height={plotHeight} fill="transparent"
+            onMouseDown={handlePlotMouseDown}
             onMouseMove={handlePlotOverlayMouseMove}
             onMouseLeave={() => {
+              if (dragStart) return; // drag continues via the window listener
               setPointHover(null);
               setTrendHover(null);
               setBoxHover(null);
@@ -1555,6 +1702,17 @@ export default function ScatterChart({
           )}
         </g>
       </svg>
+
+      {selectedPoints.length > 0 && (
+        <SelectionStatsBox
+          points={selectedPoints}
+          xLabel={factorAxisLabel(data.axis.x_label)}
+          yLabel={targetAxisLabel(data.axis.y_label)}
+          flip={statsBoxFlip}
+          onClose={() => setSelectedPoints([])}
+        />
+      )}
+      </div>
 
       <p className="scatterAxisTitle">{factorAxisLabel(data.axis.x_label)}</p>
 
@@ -1796,6 +1954,72 @@ export default function ScatterChart({
 
 function formatTick(value: number): string {
   return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1);
+}
+
+function meanOf(values: number[]): number {
+  return values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
+}
+
+/** 드래그 선택 정보 박스 (spec B) -- 플롯 우측 상단에 고정 위치로 뜬다
+ * (드래그 사각형을 따라다니지 않는다). 축 이름은 하드코딩하지 않고
+ * `data.axis`에서 그대로 받은 실제 컬럼명을 쓴다. 1개 선택이면 통계
+ * 대신 그 wafer 하나의 값만 간략히 보여준다 -- 기존 포인트 클릭
+ * 상세(WaferDetailPopover)와 중복되지 않게, 표 없이 한 줄로만. */
+function SelectionStatsBox({
+  points,
+  xLabel,
+  yLabel,
+  flip,
+  onClose,
+}: {
+  points: ScatterPoint[];
+  xLabel: string;
+  yLabel: string;
+  flip: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className={`heatmapTooltip scatterSelectionBox ${flip ? "flip" : ""}`}>
+      <div className="scatterSelectionBoxHeader">
+        <strong>선택 {points.length}개 점</strong>
+        <button type="button" className="scatterSelectionBoxClose" onClick={onClose} aria-label="선택 해제">✕</button>
+      </div>
+      {points.length === 1 ? (
+        <div className="heatmapTooltipRow">
+          <span>{points[0].lot_wafer_id ?? "-"}</span>
+          <b>{xLabel} {formatTick(points[0].x)} · {yLabel} {formatTick(points[0].y)}</b>
+        </div>
+      ) : (
+        <table className="scatterSelectionBoxTable">
+          <thead>
+            <tr><th /><th>{xLabel}</th><th>{yLabel}</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>평균</td>
+              <td>{formatTick(meanOf(points.map((p) => p.x)))}</td>
+              <td>{formatTick(meanOf(points.map((p) => p.y)))}</td>
+            </tr>
+            <tr>
+              <td>중앙값</td>
+              <td>{formatTick(quantileOf([...points.map((p) => p.x)].sort((a, b) => a - b), 0.5))}</td>
+              <td>{formatTick(quantileOf([...points.map((p) => p.y)].sort((a, b) => a - b), 0.5))}</td>
+            </tr>
+            <tr>
+              <td>최솟값</td>
+              <td>{formatTick(Math.min(...points.map((p) => p.x)))}</td>
+              <td>{formatTick(Math.min(...points.map((p) => p.y)))}</td>
+            </tr>
+            <tr>
+              <td>최댓값</td>
+              <td>{formatTick(Math.max(...points.map((p) => p.x)))}</td>
+              <td>{formatTick(Math.max(...points.map((p) => p.y)))}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }
 
 /** `Step16_Model2_EQB_CH3` -> model/equipment/chamber (display-only split,

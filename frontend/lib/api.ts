@@ -3,6 +3,7 @@ import type {
   AlertsDataResponse,
   AnalysisReportResponse,
   CategoricalScatterResponse,
+  ConfigHeatmapLevel,
   ConfigTreemapResponse,
   ControlRangeListResponse,
   DatasetListResponse,
@@ -10,6 +11,7 @@ import type {
   DatasetUploadResponse,
   DeleteModelResponse,
   DispatchResponse,
+  HeatmapKind,
   HeatmapMetric,
   HeatmapResponse,
   LatestAlarmsPayload,
@@ -441,8 +443,16 @@ export function getModelPerformance(): Promise<ModelPerformanceResponse> {
   return getJson("/api/models/performance");
 }
 
-export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric): Promise<HeatmapResponse> {
-  return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric }).toString()}`);
+export function getScreeningHeatmap(
+  dataset: string,
+  metric: HeatmapMetric,
+  kind?: HeatmapKind,
+  configLevel?: ConfigHeatmapLevel,
+): Promise<HeatmapResponse> {
+  const params = new URLSearchParams({ dataset, metric });
+  if (kind) params.set("kind", kind);
+  if (configLevel) params.set("config_level", configLevel);
+  return getJson(`/api/screening/heatmap?${params.toString()}`);
 }
 
 // `topN`은 백엔드의 PARETO_TOP_N(10) 기본값을 그대로 쓴다 -- 원인 분석 탭은

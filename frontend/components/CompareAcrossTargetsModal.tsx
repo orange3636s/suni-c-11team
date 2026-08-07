@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
 import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
@@ -21,7 +22,6 @@ const MINI_TICK_FONT = "9px system-ui, -apple-system, sans-serif";
 const MINI_X_TICK_COUNT: [max: number, min: number] = [5, 4];
 const MINI_Y_TICK_COUNT = 4;
 
-const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
 const NAVY = { light: "#0E306D", dark: "#7BA3E8" };
 const GREEN = { light: "#059669", dark: "#34D399" };
 const RED = { light: "#DC2626", dark: "#F87171" };
@@ -362,9 +362,7 @@ function MiniChart({
         <span className="compareMiniChartTitle" style={{ color: titleColor }}>
           {target}{isOrigin && " ★"} {rho != null && <span className="compareMiniChartRho">ρ={rho >= 0 ? "+" : ""}{rho.toFixed(2)}</span>}
         </span>
-        {data && (
-          <span className={`confidenceBadge tier-${data.confidence_tier}`}>{TIER_LABEL[data.confidence_tier]}</span>
-        )}
+        {data && <ConfidenceBadge tier={data.confidence_tier} />}
       </div>
 
       {!data ? (

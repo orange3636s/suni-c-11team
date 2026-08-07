@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
+import { effectSizeTierFromRho, TIER_TOOLTIP } from "@/lib/confidenceTier";
 import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -10,10 +12,17 @@ import type { ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 // n 미만이면 그룹 내 최적중심/구간/경고선을 그리지 않는다 -- 근거 없는
 // 선을 그리면 오탐을 유도하므로 (지시서 "n 부족 처리").
 const MIN_GROUP_N = 30;
-const CHART_H = 190;
-const MARGIN = { top: 22, right: 8, bottom: 24, left: 34 };
+// Y1~Y5 비교 모달(CompareAcrossTargetsModal의 MiniChart)과 완전히 같은
+// 값으로 고정한다 (지시서 C-2: "기준은 Y1~Y5 비교 모달이다. 두 모달을
+// 나란히 열었을 때 패널 카드가 같은 크기·같은 폰트로 보여야 한다") --
+// 분할 기준(Model/EQ/Chamber)이 바뀌어도, 패널 수가 몇 개든 이 값은
+// 절대 재계산하지 않는다. 패널이 늘면 .compareModalScroll의 가로
+// 스크롤로 처리한다.
+const CHART_W = 320;
+const CHART_H = 260;
+const MARGIN = { top: 26, right: 10, bottom: 26, left: 36 };
 const MINI_TICK_FONT = "9px system-ui, -apple-system, sans-serif";
-const MINI_X_TICK_COUNT: [max: number, min: number] = [4, 3];
+const MINI_X_TICK_COUNT: [max: number, min: number] = [5, 4];
 const MINI_Y_TICK_COUNT = 4;
 // 구간 평균 불량률 계산은 산점도/Box Plot과 동일한 12분위를 쓴다
 // (ScatterChart.tsx의 BOX_BIN_COUNT와 맞춤).
@@ -29,8 +38,10 @@ const ORANGE = "#F59E0B";
 const GRAY = { light: "#9CA3AF", dark: "#6B7280" };
 const POINT_COLOR = { light: "#1D4ED8", dark: "#7BA3E8" };
 
-type SplitMode = "eq" | "model" | "chamber";
-const SPLIT_LABEL: Record<SplitMode, string> = { eq: "EQ 호기", model: "Model", chamber: "Chamber" };
+type SplitMode = "model" | "eq" | "chamber";
+// 계층 순서(Model이 상위)와 일치시킨다 (지시서 C-1) -- Object.keys 순회
+// 순서로 토글 버튼이 렌더되므로 이 선언 순서가 곧 화면 순서다.
+const SPLIT_LABEL: Record<SplitMode, string> = { model: "Model", eq: "EQ 호기", chamber: "Chamber" };
 
 function formatNum(v: number): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
@@ -116,11 +127,13 @@ function approxPValue(rho: number, n: number): number {
   const z = rho * Math.sqrt(n - 1);
   return 2 * (1 - normalCdf(Math.abs(z)));
 }
-function significanceBadge(rho: number, n: number): { tier: "strong" | "moderate" | "reference"; label: string } {
-  const p = approxPValue(rho, n);
-  if (p < 0.01 && Math.abs(rho) >= 0.3) return { tier: "strong", label: "유의(강함)" };
-  if (p < 0.05) return { tier: "moderate", label: "유의" };
-  return { tier: "reference", label: "유의하지 않음" };
+// 통계적 유의성(p값, 헤더에 텍스트로 표시)과 효과크기 등급(배지)을
+// 분리한다 (지시서 D-③) -- 예전에는 "유의(강함)" 같은 조합 라벨 하나에
+// 두 개념을 섞어서, Trellis 화면에서는 "이 장비가 다르다"로 오독되기
+// 쉬웠다. p값은 이 함수로 텍스트만, 등급은 lib/confidenceTier의
+// effectSizeTierFromRho로 배지만 담당한다.
+function formatApproxPValue(p: number): string {
+  return p < 0.001 ? "p<.001" : `p=${p.toFixed(3)}`;
 }
 
 type BinStat = { x_mean: number; y_mean: number; n: number; x_lo: number; x_hi: number };
@@ -208,10 +221,6 @@ function buildGroupStat(key: string, points: ScatterPoint[]): GroupStat {
   return { key, points, n, rho, ...window, insufficientN };
 }
 
-function panelWidthFor(count: number): number {
-  return count <= 3 ? 250 : 212;
-}
-
 export default function CompareAcrossConfigsModal({
   feature,
   step,
@@ -228,7 +237,7 @@ export default function CompareAcrossConfigsModal({
   const theme = useResolvedTheme();
   const [data, setData] = useState<ScreeningScatterResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [splitMode, setSplitMode] = useState<SplitMode>("eq");
+  const [splitMode, setSplitMode] = useState<SplitMode>("model");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -347,7 +356,6 @@ export default function CompareAcrossConfigsModal({
     return lines;
   }, [loading, groups, xDomain]);
 
-  const panelWidth = panelWidthFor(groups.length);
   const yAxisLabel = `${target} (%)`;
 
   return (
@@ -394,7 +402,7 @@ export default function CompareAcrossConfigsModal({
                 key={group.key}
                 group={group}
                 index={index}
-                width={panelWidth}
+                width={CHART_W}
                 xDomain={xDomain}
                 yDomain={yDomain}
                 globalOptimalCenter={data?.optimal_center ?? null}
@@ -453,7 +461,11 @@ function TrellisPanel({
   const grayColor = theme === "dark" ? GRAY.dark : GRAY.light;
   const pointColor = theme === "dark" ? POINT_COLOR.dark : POINT_COLOR.light;
 
-  const badge = !group.insufficientN && group.rho != null ? significanceBadge(group.rho, group.n) : null;
+  // 유의성(p값)과 효과크기 등급(배지)을 분리한다 (지시서 D-③) -- 둘 다
+  // group.rho에서 나오지만 서로 다른 질문에 답한다: p값은 "이 상관이
+  // 우연일 가능성", 등급은 "관계의 크기". 표본 부족 그룹은 둘 다 비운다.
+  const pValue = !group.insufficientN && group.rho != null ? approxPValue(group.rho, group.n) : null;
+  const tier = !group.insufficientN && group.rho != null ? effectSizeTierFromRho(group.rho) : null;
 
   return (
     <div className={`compareMiniChart ${group.insufficientN ? "insufficientN" : ""}`} style={{ width }}>
@@ -463,12 +475,16 @@ function TrellisPanel({
           <span className="compareMiniChartRho">
             {" "}n={group.n}
             {group.rho != null && <> · ρ={group.rho >= 0 ? "+" : ""}{group.rho.toFixed(2)}</>}
+            {pValue != null && <> · {formatApproxPValue(pValue)}</>}
           </span>
         </span>
         {group.insufficientN ? (
           <span className="confidenceBadge tier-reference">표본 부족(n={group.n})</span>
-        ) : badge ? (
-          <span className={`confidenceBadge tier-${badge.tier}`}>{badge.label}</span>
+        ) : tier ? (
+          <ConfidenceBadge
+            tier={tier}
+            title={`이 그룹 내에서 인자-타깃 관계의 효과크기 등급입니다 (그룹 간 차이와는 무관). ${TIER_TOOLTIP[tier]}`}
+          />
         ) : null}
       </div>
 

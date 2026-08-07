@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import ConfidenceBadge from "@/components/ConfidenceBadge";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
 import { LastRunNote } from "@/components/LastRunNote";
@@ -14,8 +15,6 @@ import {
   type MonitoringSnapshot,
   type SignificantFactorDetail,
 } from "@/lib/monitoringSource";
-
-const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "근거 부족", reference: "관계 없음" };
 
 type ActionItem = { key: string; text: string; href: string; buttonLabel: string; note?: string };
 
@@ -228,7 +227,7 @@ function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
       </td>
       <td>{factor.rangeText ?? "-"}</td>
       <td className="numCol">{factor.deviationText ?? "-"}</td>
-      <td>{factor.confidenceTier ? <span className={`confidenceBadge tier-${factor.confidenceTier}`}>{TIER_LABEL[factor.confidenceTier]}</span> : "-"}</td>
+      <td>{factor.confidenceTier ? <ConfidenceBadge tier={factor.confidenceTier} /> : "-"}</td>
     </tr>
   );
 }

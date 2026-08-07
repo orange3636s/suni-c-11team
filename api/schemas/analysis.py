@@ -152,6 +152,9 @@ class HeatmapScaleSchema(BaseModel):
 class HeatmapResponse(BaseModel):
     dataset_id: str
     metric: str
+    # "numeric" | "categorical" -- 프론트가 어느 그리드를 받았는지
+    # 캐시/렌더 분기에 쓴다 (spec E).
+    kind: str = "numeric"
     features: list[str]
     targets: list[str]
     values: list[list[float | None]]

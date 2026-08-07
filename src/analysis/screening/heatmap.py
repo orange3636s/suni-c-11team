@@ -14,19 +14,32 @@ unordered categorical.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
 import pandas as pd
 
+from src.analysis.screening.effect_size import eps2_categorical
 from src.analysis.screening.schema import Schema
-from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, confidence_tier, score_all_factors
+from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, benjamini_hochberg, confidence_tier, score_all_factors
 
 MIN_CELL_N = 30
 SPEARMAN_SCALE = (-0.5, 0.5)
 EPS2_SCALE = (0.0, 0.7)
+# 범주형(Config) 히트맵 전용 고정 스케일 (지시서 E: "자동 정규화 금지" --
+# 실측 기준 Config의 ε²는 최대 0.006, 중앙값 0.0003이라 관측 최대값에
+# 맞추면 신호 없는 셀이 새빨갛게 렌더된다).
+EPS2_CATEGORICAL_SCALE = (0.0, 0.05)
 
 Metric = Literal["spearman", "eps2"]
+ConfigLevel = Literal["model", "eq", "chamber"]
+
+# `Step16_Model2_EQC_CH3`의 3계층 토큰 -- src/config_parser.py는 서버에서
+# 이 분해를 절대 하지 않는다는 원칙이지만, 히트맵은 계층별로 묶어 검정해야
+# 하므로 이 모듈 안에서만 임시로(원본 컬럼은 그대로 두고) 파생한다.
+_CONFIG_LEVEL_RE = re.compile(r"^Step\d+_(Model\d+)_(EQ[A-Z])_(CH\d+)$")
+_LEVEL_GROUP_INDEX: dict[ConfigLevel, int] = {"model": 1, "eq": 2, "chamber": 3}
 
 
 @dataclass
@@ -122,4 +135,98 @@ def build_heatmap(
         tier=[tier_grid[i] for i in order],
         scale={"min": scale_min, "max": scale_max},
         excluded_configs=len(schema.config_cols),
+    )
+
+
+def _config_level_series(config_col: pd.Series, level: ConfigLevel) -> pd.Series:
+    """`Step16_Model2_EQC_CH3` -> 그 레벨의 토큰만 뽑은 파생 Series. 형식이
+    다른 값(미지 Config)은 None -- eps2_categorical의 dropna가 자연히
+    제외하므로 별도 처리가 필요 없다."""
+    idx = _LEVEL_GROUP_INDEX[level]
+
+    def extract(value: object) -> str | None:
+        if pd.isna(value):
+            return None
+        match = _CONFIG_LEVEL_RE.match(str(value))
+        return match.group(idx) if match else None
+
+    return config_col.map(extract)
+
+
+def build_categorical_heatmap(
+    df: pd.DataFrame,
+    schema: Schema,
+    level: ConfigLevel = "eq",
+    fdr_alpha: float = DEFAULT_FDR_ALPHA,
+) -> HeatmapData:
+    """Config x Y1~Y5 히트맵 -- R/D 히트맵과 별도 경로다 (spec: "합치지
+    말고 토글로 분리한다"). 지표는 ε² 고정(ρ는 순서 없는 범주형에 정의되지
+    않는다). FDR 가족은 이 레벨 하나에서 나오는 스텝x타깃 셀 전체 --
+    레벨을 바꾸면(Model/EQ/Chamber) 완전히 새 가족으로 다시 검정한다.
+
+    색칠 여부(q<0.05)는 여기서 결정하지 않는다 -- `significant`/`q`
+    그리드를 그대로 내려주고, "FDR 통과 셀만 칠한다"는 프론트가 렌더
+    시점에 적용한다(숫자형 히트맵과 응답 형태를 공유하기 위함).
+    """
+    features = schema.config_cols
+    targets = schema.target_cols
+
+    level_series_by_feature = {feature: _config_level_series(df[feature], level) for feature in features if feature in df.columns}
+
+    results: dict[tuple[str, str], object] = {}
+    p_values: list[float] = []
+    keys_with_p: list[tuple[str, str]] = []
+    for feature in features:
+        level_series = level_series_by_feature.get(feature)
+        for target in targets:
+            result = eps2_categorical(level_series, df[target]) if level_series is not None and target in df.columns else None
+            results[(feature, target)] = result
+            if result is not None:
+                p_values.append(result.p_value)
+                keys_with_p.append((feature, target))
+
+    q_by_key = dict(zip(keys_with_p, benjamini_hochberg(p_values))) if p_values else {}
+
+    values: list[list[float | None]] = []
+    n_grid: list[list[int]] = []
+    q_grid: list[list[float | None]] = []
+    sig_grid: list[list[bool]] = []
+    tier_grid: list[list[str | None]] = []
+
+    for feature in features:
+        value_row: list[float | None] = []
+        n_row: list[int] = []
+        q_row: list[float | None] = []
+        sig_row: list[bool] = []
+        tier_row: list[str | None] = []
+        for target in targets:
+            result = results[(feature, target)]
+            q = q_by_key.get((feature, target))
+            value_row.append(result.eps2 if result else None)
+            n_row.append(result.n_observed if result else 0)
+            q_row.append(q)
+            sig_row.append(bool(q is not None and q < fdr_alpha))
+            tier_row.append(confidence_tier(result.eps2, result.p_value) if result else None)
+        values.append(value_row)
+        n_grid.append(n_row)
+        q_grid.append(q_row)
+        sig_grid.append(sig_row)
+        tier_grid.append(tier_row)
+
+    order = sorted(
+        range(len(features)),
+        key=lambda i: max((v for v in values[i] if v is not None), default=0.0),
+        reverse=True,
+    )
+
+    return HeatmapData(
+        features=[features[i] for i in order],
+        targets=targets,
+        values=[values[i] for i in order],
+        n=[n_grid[i] for i in order],
+        q=[q_grid[i] for i in order],
+        significant=[sig_grid[i] for i in order],
+        tier=[tier_grid[i] for i in order],
+        scale={"min": EPS2_CATEGORICAL_SCALE[0], "max": EPS2_CATEGORICAL_SCALE[1]},
+        excluded_configs=len(schema.r_cols) + len(schema.d_cols),
     )

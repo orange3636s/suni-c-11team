@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TIER_LABEL } from "@/lib/confidenceTier";
 import { formatPValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ParetoRankingItem } from "@/types/data";
@@ -24,10 +25,6 @@ const AXIS_RESERVED_WIDTH = 44 * 2 + 6 * 2;
 const LEFT_TICKS = [0, 25, 50, 75, 100];
 const RIGHT_TICKS = [0, 20, 40, 60, 80, 100];
 const LABEL_FONT = "10px var(--font-ui, system-ui, sans-serif)";
-
-// 등급 라벨 정비 (spec §C-2) -- 화면 표시 문자열만 바꾼다, tier 값과 JSON
-// grade 필드는 그대로 유지한다.
-const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "근거 부족", reference: "관계 없음" };
 
 type TooltipState = { x: number; y: number; index: number } | null;
 

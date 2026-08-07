@@ -2,12 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getScreeningHeatmap } from "@/lib/api";
+import { TIER_LABEL } from "@/lib/confidenceTier";
 import { formatEps2, formatQValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { ConfidenceTier, HeatmapMetric, HeatmapResponse } from "@/types/data";
+import type { ConfidenceTier, ConfigHeatmapLevel, HeatmapKind, HeatmapMetric, HeatmapResponse } from "@/types/data";
 
 const DEFAULT_ROW_LIMIT = 20;
 const METRIC_LABEL: Record<HeatmapMetric, string> = { spearman: "상관계수 (ρ)", eps2: "설명력 (ε²)" };
+const VIEW_KIND_LABEL: Record<HeatmapKind, string> = { numeric: "수치형", categorical: "범주형" };
+const CONFIG_LEVEL_LABEL: Record<ConfigHeatmapLevel, string> = { model: "Model", eq: "EQ", chamber: "Chamber" };
+// Config는 순서 없는 범주형이라 상관계수(ρ)가 정의되지 않는다 (spec E) --
+// 범주형 보기에서는 기준 토글을 이 지표로 고정·비활성화한다.
+const CATEGORICAL_METRIC: HeatmapMetric = "eps2";
 type SortMode = "max_rho" | "min_rho" | "target" | "step";
 
 /** ε² has no sign, so "절댓값"/"부호 포함" framing doesn't apply to it --
@@ -89,8 +95,6 @@ type TooltipState = {
   tier: ConfidenceTier | null;
 };
 
-const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "약함", reference: "참고" };
-
 export default function CorrelationHeatmap({
   datasetId,
   enabled,
@@ -102,6 +106,12 @@ export default function CorrelationHeatmap({
 }) {
   const theme = useResolvedTheme();
   const [metric, setMetric] = useState<HeatmapMetric>("spearman");
+  const [kind, setKind] = useState<HeatmapKind>("numeric");
+  const [configLevel, setConfigLevel] = useState<ConfigHeatmapLevel>("eq");
+  // 범주형 보기에서는 지표가 늘 ε²다 -- 토글에 쓸 "현재 표시 중인 지표"는
+  // 이 값을 쓰고, `metric` state 자체는 수치형으로 돌아왔을 때 사용자가
+  // 마지막으로 고른 값(ρ/ε²)을 그대로 기억하도록 건드리지 않는다.
+  const effectiveMetric: HeatmapMetric = kind === "categorical" ? CATEGORICAL_METRIC : metric;
   const [data, setData] = useState<HeatmapResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -128,7 +138,10 @@ export default function CorrelationHeatmap({
 
   useEffect(() => {
     if (!enabled) return;
-    const cacheKey = metric;
+    // kind/configLevel까지 캐시 키에 넣는다 -- 안 그러면 수치형 캐시가
+    // 범주형 조회에 잘못 재사용될 수 있다 (지시서 E의 백엔드 캐시 키
+    // 주의사항과 같은 이유).
+    const cacheKey = kind === "categorical" ? `categorical:${configLevel}` : `numeric:${metric}`;
     const cached = cache.current.get(cacheKey);
     if (cached) {
       setData(cached);
@@ -140,7 +153,7 @@ export default function CorrelationHeatmap({
         setLoading(true);
         setError("");
         try {
-          const response = await getScreeningHeatmap(datasetId, metric);
+          const response = await getScreeningHeatmap(datasetId, metric, kind, kind === "categorical" ? configLevel : undefined);
           if (cancelled) return;
           cache.current.set(cacheKey, response);
           setData(response);
@@ -157,7 +170,7 @@ export default function CorrelationHeatmap({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetId, metric, enabled]);
+  }, [datasetId, metric, kind, configLevel, enabled]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -224,6 +237,10 @@ export default function CorrelationHeatmap({
 
   const [scaleMin, scaleMax] = [data.scale.min, data.scale.max];
   const gridTemplateColumns = `160px repeat(${data.targets.length}, minmax(64px, 1fr))`;
+  // 범주형 헤더 요약 "검정 N건 · FDR 통과 M건" (지시서 E) -- 그리드에
+  // 이미 실려 있는 값에서 파생만 한다, 별도 필드를 새로 만들지 않는다.
+  const testedCount = data.values.reduce((sum, row) => sum + row.filter((v) => v != null).length, 0);
+  const passedCount = data.significant.reduce((sum, row) => sum + row.filter(Boolean).length, 0);
 
   return (
     <section className="resultCard heatmapCard">
@@ -231,23 +248,76 @@ export default function CorrelationHeatmap({
         <div className="heatmapHeaderRowText">
           <span className="sectionLabel">CORRELATION OVERVIEW</span>
           <h2>전체 상관관계 히트맵</h2>
-          <p className="heatmapIntro">산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</p>
+          <p className="heatmapIntro">
+            {kind === "numeric"
+              ? <>산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</>
+              : `검정 ${testedCount}건 · FDR 통과 ${passedCount}건`}
+          </p>
         </div>
-        <div className="heatmapMetricToggle" role="tablist" aria-label="지표 선택">
-          {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={metric === key}
-              className={metric === key ? "active" : ""}
-              onClick={() => setMetric(key)}
+        <div className="heatmapToggleStack">
+          {/* 기준(ρ/ε²) — 범주형 보기에서는 ε²로 고정·비활성화한다 (spec E:
+              "범주형 인자는 상관계수를 정의할 수 없어 설명력만 사용합니다"). */}
+          <div className="scatterViewToggleRow">
+            <span className="scatterViewToggleLabel">기준</span>
+            <div
+              className="scatterViewToggle"
+              role="group"
+              aria-label="지표 선택"
+              title={kind === "categorical" ? "범주형 인자는 상관계수를 정의할 수 없어 설명력만 사용합니다." : undefined}
             >
-              {METRIC_LABEL[key]}
-            </button>
-          ))}
+              {(Object.keys(METRIC_LABEL) as HeatmapMetric[]).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`scatterViewToggleBtn ${effectiveMetric === key ? "active" : ""}`}
+                  disabled={kind === "categorical"}
+                  onClick={() => setMetric(key)}
+                >
+                  {METRIC_LABEL[key]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="scatterViewToggleRow">
+            <span className="scatterViewToggleLabel">보기</span>
+            <div className="scatterViewToggle" role="group" aria-label="수치형/범주형 보기">
+              {(Object.keys(VIEW_KIND_LABEL) as HeatmapKind[]).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`scatterViewToggleBtn ${kind === key ? "active" : ""}`}
+                  onClick={() => setKind(key)}
+                >
+                  {VIEW_KIND_LABEL[key]}
+                </button>
+              ))}
+            </div>
+          </div>
+          {kind === "categorical" && (
+            <div className="scatterViewToggleRow">
+              <span className="scatterViewToggleLabel">계층</span>
+              <div className="scatterViewToggle" role="group" aria-label="Config 계층 선택">
+                {(Object.keys(CONFIG_LEVEL_LABEL) as ConfigHeatmapLevel[]).map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    className={`scatterViewToggleBtn ${configLevel === level ? "active" : ""}`}
+                    onClick={() => setConfigLevel(level)}
+                  >
+                    {CONFIG_LEVEL_LABEL[level]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {kind === "categorical" && passedCount === 0 && (
+        <p className="heatmapEmptyBanner">
+          이 데이터에서는 FDR 보정 후 유의한 Config 인자가 없습니다 ({testedCount}건 검정, 통과 0건). 장비 효과가 현재 해상도에서 검출 한계 이하입니다.
+        </p>
+      )}
 
       <div className="heatmapControls">
         <div className="fieldGroup">
@@ -259,10 +329,10 @@ export default function CorrelationHeatmap({
               triggerRowSettle();
             }}
           >
-            <option value="max_rho">{sortOptionLabels(metric).max}</option>
-            <option value="min_rho">{sortOptionLabels(metric).min}</option>
-            <option value="target">{sortOptionLabels(metric).target}</option>
-            <option value="step">{sortOptionLabels(metric).step}</option>
+            <option value="max_rho">{sortOptionLabels(effectiveMetric).max}</option>
+            <option value="min_rho">{sortOptionLabels(effectiveMetric).min}</option>
+            <option value="target">{sortOptionLabels(effectiveMetric).target}</option>
+            <option value="step">{sortOptionLabels(effectiveMetric).step}</option>
           </select>
         </div>
         {sortMode === "target" && (
@@ -308,7 +378,8 @@ export default function CorrelationHeatmap({
                 feature={feature}
                 rowIndex={rowIndex}
                 data={data}
-                metric={metric}
+                metric={effectiveMetric}
+                kind={kind}
                 theme={theme}
                 scaleMin={scaleMin}
                 scaleMax={scaleMax}
@@ -341,17 +412,27 @@ export default function CorrelationHeatmap({
       </div>
 
       <p className="heatmapCaption">
-        {data.excluded_configs > 0 &&
-          `Eq. ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
-        표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
-        <br />
-        인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
+        {kind === "numeric" ? (
+          <>
+            {data.excluded_configs > 0 &&
+              `Eq. ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
+            표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
+            <br />
+            인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
+          </>
+        ) : (
+          <>
+            색은 FDR 통과(q&lt;0.05) 셀에만 칠합니다 — 나머지는 회색 고정(자동 정규화 없음, 고정 스케일 ε² {scaleMin.toFixed(2)}~{scaleMax.toFixed(2)}).
+            <br />
+            R/D {data.excluded_configs}개는 수치형 보기에서 확인하세요. 계층을 바꾸면 검정을 새로 합니다.
+          </>
+        )}
       </p>
 
       {tooltip && (
         <div className="heatmapTooltip" style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
           <strong>{tooltip.feature} × {tooltip.target}</strong>
-          <div className="heatmapTooltipRow"><span>{metric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
+          <div className="heatmapTooltipRow"><span>{effectiveMetric === "spearman" ? "ρ" : "ε²"}</span><b>{tooltip.value != null ? tooltip.value.toFixed(3) : "표본 부족"}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltip.n.toLocaleString()}</b></div>
           <div className="heatmapTooltipRow"><span>q</span><b>{formatQValue(tooltip.q)}</b></div>
           <div className="heatmapTooltipRow"><span>신뢰도</span><b>{tooltip.tier ? TIER_LABEL[tooltip.tier] : "-"}</b></div>
@@ -367,6 +448,7 @@ function FragmentRow({
   rowIndex,
   data,
   metric,
+  kind,
   theme,
   scaleMin,
   scaleMax,
@@ -377,6 +459,7 @@ function FragmentRow({
   rowIndex: number;
   data: HeatmapResponse;
   metric: HeatmapMetric;
+  kind: HeatmapKind;
   theme: "light" | "dark";
   scaleMin: number;
   scaleMax: number;
@@ -393,8 +476,12 @@ function FragmentRow({
         const significant = data.significant[rowIndex][colIndex];
         const tier = data.tier[rowIndex][colIndex];
         const masked = value == null;
+        // 범주형 보기 전용: 색은 FDR 게이트를 통과한 셀에만 칠한다 (지시서
+        // E "색 스케일 규칙" -- 자동 정규화 금지와 짝을 이루는 규칙. q가
+        // 없거나(=미검정) 0.05 이상이면 값은 있어도 회색 고정).
+        const gated = kind === "categorical" && !masked && !significant;
         const style: React.CSSProperties = {};
-        if (!masked) {
+        if (!masked && !gated) {
           const { bg, light } = cellBackground(value, scaleMin, scaleMax, theme);
           style.background = bg;
           style.color = light ? "var(--heatmap-text-inverse)" : "var(--heatmap-text)";
@@ -403,7 +490,7 @@ function FragmentRow({
           <button
             key={target}
             type="button"
-            className={`heatmapCell ${significant ? "significant" : ""} ${masked ? "masked" : ""}`}
+            className={`heatmapCell ${significant ? "significant" : ""} ${masked ? "masked" : ""} ${gated ? "gated" : ""}`}
             style={style}
             onMouseEnter={(event) =>
               onHover({

@@ -799,10 +799,13 @@ export type ParetoRankingResponse = {
 };
 
 export type HeatmapMetric = "spearman" | "eps2";
+export type HeatmapKind = "numeric" | "categorical";
+export type ConfigHeatmapLevel = "model" | "eq" | "chamber";
 
 export type HeatmapResponse = {
   dataset_id: string;
   metric: HeatmapMetric;
+  kind: HeatmapKind;
   features: string[];
   targets: string[];
   values: Array<Array<number | null>>;

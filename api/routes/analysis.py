@@ -40,7 +40,7 @@ from src.analysis.recommendations import FactorRecommendation, compute_factor_re
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
-from src.analysis.screening.heatmap import HeatmapData, build_heatmap
+from src.analysis.screening.heatmap import HeatmapData, build_categorical_heatmap, build_heatmap
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import (
     PARETO_TOP_N,
@@ -151,18 +151,23 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
 
 
 HEATMAP_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict older ones
-HEATMAP_METRICS = 2  # spearman + eps2
+# numeric: spearman + eps2 (2) / categorical: model + eq + chamber (3)
+HEATMAP_VARIANTS = 5
 
-@lru_cache(maxsize=HEATMAP_CACHE_DATASETS * HEATMAP_METRICS)
-def _cached_heatmap(dataset_id: str, metric: str) -> HeatmapData:
-    # Cached per (dataset_id, metric), capped at the 2 most-recent
-    # datasets (LRU-evicted) so this never grows unbounded in server
-    # memory across a long-running process. Dataset content is immutable
-    # once a dataset_id exists (uploads mint a fresh uuid; bundled files
-    # are static). One heatmap per dataset now -- the R/D/Config split
-    # view was removed, so there is no more per-kind cache dimension.
+@lru_cache(maxsize=HEATMAP_CACHE_DATASETS * HEATMAP_VARIANTS)
+def _cached_heatmap(dataset_id: str, kind: str, metric: str, config_level: str) -> HeatmapData:
+    # 캐시 키에 kind/config_level까지 넣는다 (spec E) -- 빠뜨리면 같은
+    # dataset_id·metric으로 수치형을 먼저 조회한 뒤 범주형을 조회했을 때
+    # lru_cache가 수치형 결과를 그대로 돌려준다. config_level은
+    # kind="numeric"일 때, metric은 kind="categorical"일 때 각각 쓰이지
+    # 않지만(범주형은 항상 ε²), 캐시 키에는 남겨 시그니처를 하나로
+    # 유지한다. 데이터셋 내용은 dataset_id가 존재하는 한 불변이므로
+    # (업로드는 매번 새 uuid, 번들 파일은 정적) 이 캐시는 최근 2개
+    # 데이터셋만 LRU로 유지해 무한정 커지지 않는다.
     df = _dataframe_or_404(dataset_id)
     schema = parse_schema(df)
+    if kind == "categorical":
+        return build_categorical_heatmap(df, schema, level=config_level)  # type: ignore[arg-type]
     return build_heatmap(df, schema, metric=metric)  # type: ignore[arg-type]
 
 
@@ -170,22 +175,28 @@ def _cached_heatmap(dataset_id: str, metric: str) -> HeatmapData:
 def get_screening_heatmap(
     dataset: str = "train",
     metric: Literal["spearman", "eps2"] = "spearman",
+    kind: Literal["numeric", "categorical"] = "numeric",
+    config_level: Literal["model", "eq", "chamber"] = "eq",
 ) -> dict[str, Any]:
-    """The one shared correlation heatmap (R+D x Y1~Y5, Config excluded --
-    rho isn't defined for a category) used identically by both the
-    training tab and the root-cause tab.
+    """The correlation heatmap used identically by both the training tab
+    and the root-cause tab. Two independent views (spec E), never merged
+    into one grid or one FDR family: numeric (R+D x Y1~Y5, rho or eps2)
+    and categorical (Config x Y1~Y5, eps2 only -- rho isn't defined for
+    an unordered category). The numeric path's behavior/response shape
+    is unchanged from before this parameter existed.
     """
     t0 = time.perf_counter()
     hits_before = _cached_heatmap.cache_info().hits
-    heatmap = _cached_heatmap(dataset, metric)
+    heatmap = _cached_heatmap(dataset, kind, metric, config_level)
     cached = _cached_heatmap.cache_info().hits > hits_before
     logger.info(
-        "screening_heatmap %.1fms (cached=%s, dataset=%s, metric=%s)",
-        (time.perf_counter() - t0) * 1000, cached, dataset, metric,
+        "screening_heatmap %.1fms (cached=%s, dataset=%s, kind=%s, metric=%s, config_level=%s)",
+        (time.perf_counter() - t0) * 1000, cached, dataset, kind, metric, config_level,
     )
     return {
         "dataset_id": dataset,
-        "metric": metric,
+        "metric": "eps2" if kind == "categorical" else metric,
+        "kind": kind,
         "features": heatmap.features,
         "targets": heatmap.targets,
         "values": heatmap.values,

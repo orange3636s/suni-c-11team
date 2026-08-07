@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import ConfidenceBadge from "@/components/ConfidenceBadge";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
@@ -47,19 +48,6 @@ const showMetric = (value?: number | null, digits = 3) =>
 function hasUsableResult(performance: ModelPerformanceResponse | null): boolean {
   return Boolean(performance && performance.model_id && performance.targets.length > 0);
 }
-
-// 등급 라벨 정비 (spec §C-2) -- 화면 표시 문자열만 바꾼다, tier 값과 JSON
-// grade 필드는 그대로 유지한다.
-const TIER_LABEL: Record<string, string> = { strong: "강함", moderate: "보통", weak: "근거 부족", reference: "관계 없음" };
-// 등급 배지 호버 설명 (spec §C-3).
-const TIER_TOOLTIP: Record<string, string> = {
-  strong: "부도율 변동의 10% 이상을 설명합니다. 조치의 우선 순위입니다.",
-  moderate: "5~10%를 설명합니다. 관계는 있지만 추가 확인이 필요합니다.",
-  weak: "통계적 근거가 부족합니다. 조치 판단에 사용하지 마세요.",
-  reference: "효과 크기가 기준(0.02)에 미치지 못합니다.",
-};
-
-
 
 export default function TrainingPage() {
   const router = useRouter();
@@ -409,9 +397,7 @@ export default function TrainingPage() {
                     <td className="numCol">{detail.contribution_pct != null ? `${detail.contribution_pct.toFixed(1)}%` : "-"}</td>
                     <td>
                       {!detail.no_factor_available && detail.confidence_tier ? (
-                        <span className={`confidenceBadge tier-${detail.confidence_tier}`} style={{ marginLeft: 0 }} title={TIER_TOOLTIP[detail.confidence_tier]}>
-                          {TIER_LABEL[detail.confidence_tier]}
-                        </span>
+                        <ConfidenceBadge tier={detail.confidence_tier} style={{ marginLeft: 0 }} />
                       ) : "-"}
                     </td>
                     <td className="numCol">{showMetric(detail.r2)}</td>
@@ -521,7 +507,7 @@ export default function TrainingPage() {
                     <td className="numCol">{showMetric(factor.cumulative_pct, 1)}%</td>
                     <td className="numCol">{factor.n_observed}</td>
                     <td className="numCol">{formatQValue(factor.q_value)}</td>
-                    <td><span className={`confidenceBadge tier-${factor.confidence_tier}`} style={{ marginLeft: 0 }} title={TIER_TOOLTIP[factor.confidence_tier]}>{TIER_LABEL[factor.confidence_tier]}</span></td>
+                    <td><ConfidenceBadge tier={factor.confidence_tier} style={{ marginLeft: 0 }} /></td>
                   </tr>
                 ))}
               </tbody>

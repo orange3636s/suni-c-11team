@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
+import ConfidenceBadge from "@/components/ConfidenceBadge";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
@@ -16,6 +17,7 @@ import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { selectDisplayFactors } from "@/lib/chartSelection";
+import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
 import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { formatPValue } from "@/lib/numberFormat";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
@@ -69,27 +71,11 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
-// 등급 라벨 정비 (spec §C-2) -- "약함"/"참고"는 이름만으로 차이가 드러나지
-// 않아 "근거 부족"/"관계 없음"으로 바꾼다. 내부 코드의 tier 값(strong/
-// moderate/weak/reference)과 JSON `grade` 필드는 그대로 두고, 화면 표시
-// 문자열만 바꾼다 (spec §C-2/§21).
-const TIER_LABEL: Record<ConfidenceTier, string> = { strong: "강함", moderate: "보통", weak: "근거 부족", reference: "관계 없음" };
-// 등급 배지 호버 설명 (spec §C-3).
-const TIER_TOOLTIP: Record<ConfidenceTier, string> = {
-  strong: "부도율 변동의 10% 이상을 설명합니다. 조치의 우선 순위입니다.",
-  moderate: "5~10%를 설명합니다. 관계는 있지만 추가 확인이 필요합니다.",
-  weak: "통계적 근거가 부족합니다. 조치 판단에 사용하지 마세요.",
-  reference: "효과 크기가 기준(0.02)에 미치지 못합니다.",
-};
 const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중", "계측 확대 시뮬레이션 중"];
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
 type ChartCriterion = "significant" | "all";
-
-function hasReliableEvidence(tier: ConfidenceTier): boolean {
-  return tier === "strong" || tier === "moderate";
-}
 
 type AnalysisFailureKind = "network" | "timeout" | "server" | "model_not_ready" | "unknown";
 
@@ -115,14 +101,6 @@ function classifyAnalysisFailure(error: unknown): { kind: AnalysisFailureKind; d
   }
   if (error instanceof Error) return { kind: "unknown", detail: error.message };
   return { kind: "unknown", detail: String(error) };
-}
-
-function ConfidenceBadge({ tier }: { tier: ConfidenceTier }) {
-  return (
-    <span className={`confidenceBadge tier-${tier}`} title={TIER_TOOLTIP[tier]}>
-      {TIER_LABEL[tier]}
-    </span>
-  );
 }
 
 /** `보통` 등급 인자의 설명력이 낮은 편임을 알리는 한 줄 캡션 (spec §C-4).
@@ -898,6 +876,39 @@ function ChartCriterionToggle({ value, onChange }: { value: ChartCriterion; onCh
  * points/bins/pareto items, no new API call on switch. Pareto sits first
  * (탐색 뷰 -> 검증 뷰 순서) but is never the *default* view -- see
  * NumericFactorCard's `useState<ScatterView>("scatter")`. */
+/** "비교" 줄 -- Y1~Y5 비교/장비별 Trellis 모달을 여는 트리거다. `보기`
+ * 토글과 같은 `.scatterViewToggle*` 마크업을 쓰지만 상태 토글이 아니므로
+ * (지시서 A: "눌리면 모달이 열리고 토글은 선택 상태로 남지 않는다")
+ * `active` 클래스를 절대 붙이지 않는다. `onTrellis`가 없으면(Config 인자)
+ * 버튼 하나만 남는다. */
+function CompareToggleRow({ onCompare, onTrellis }: { onCompare: () => void; onTrellis: (() => void) | null }) {
+  return (
+    <div className="scatterViewToggleRow">
+      <span className="scatterViewToggleLabel">비교</span>
+      <div className="scatterViewToggle" role="group" aria-label="비교 보기">
+        <button
+          type="button"
+          className="scatterViewToggleBtn"
+          title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
+          onClick={onCompare}
+        >
+          Y1~Y5 비교
+        </button>
+        {onTrellis && (
+          <button
+            type="button"
+            className="scatterViewToggleBtn"
+            title="이 인자의 효과가 장비에 따라 달라지는지 확인"
+            onClick={onTrellis}
+          >
+            장비별 Trellis
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ViewToggle({ value, onChange }: { value: ScatterView; onChange: (view: ScatterView) => void }) {
   return (
     <div className="scatterViewToggleRow">
@@ -1115,27 +1126,10 @@ function NumericFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
-            <div className="factorCompareGroup" role="group" aria-label="비교 보기">
-              <button
-                type="button"
-                className="compareTriggerButton"
-                title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
-                onClick={() => onCompare(item.feature)}
-              >
-                ⊞ Y1~Y5 비교
-              </button>
-              <button
-                type="button"
-                className="compareTriggerButton"
-                title="이 인자의 효과가 장비에 따라 달라지는지 확인"
-                onClick={() => onTrellis(item.feature, item.step)}
-              >
-                ⊞ 장비별 Trellis
-              </button>
-            </div>
             <ColorBySelect value={colorMode} onChange={setColorMode} hasConfig={hasConfig} />
           </div>
           <div className="factorChartToggleStack">
+            <CompareToggleRow onCompare={() => onCompare(item.feature)} onTrellis={() => onTrellis(item.feature, item.step)} />
             <ViewToggle value={view} onChange={setView} />
             {/* SPC/ML 방식 토글은 Scatter/Box 보기 전용이다 (spec §2-2/§3-3)
                 -- Pareto 보기에서는 아무 것도 바꾸지 않으므로 숨긴다. */}

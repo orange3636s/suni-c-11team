@@ -8577,12 +8577,12 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    splitting a Korean word/particle across the break when it does. */
 .heatmapHeaderRowText{ flex: 1 1 320px; min-width: 0; }
 .heatmapHeaderRow p{ margin: 4px 0 0; font-size: 12.5px; color: var(--text-secondary); max-width: none; word-break: keep-all; }
-.heatmapMetricToggle{ display: inline-flex; border: 1px solid var(--border-card, var(--border)); border-radius: 999px; padding: 3px; gap: 2px; flex: 0 0 auto; }
-.heatmapMetricToggle button{
-  border: none; background: transparent; padding: 6px 12px; border-radius: 999px; font: 600 12.5px/1 var(--font-ui);
-  color: var(--text-secondary); cursor: pointer; white-space: nowrap;
-}
-.heatmapMetricToggle button.active{ background: var(--accent); color: #fff; }
+/* 지시서 F: 히트맵의 토글을 산점도의 .scatterViewToggle 스타일로
+   통일한다 -- 기존 탭 모양의 .heatmapMetricToggle은 삭제했다(더는 쓰는
+   곳이 없다). 여러 줄(기준/보기/계층)을 세로로 쌓는 래퍼만 새로 둔다. */
+.heatmapToggleStack{ display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; align-items: flex-end; }
+.heatmapToggleStack .scatterViewToggleRow{ justify-content: flex-end; }
+.scatterViewToggleBtn:disabled{ opacity: 0.4; cursor: not-allowed; }
 
 .heatmapControls{ display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
 .heatmapControls .fieldGroup{ min-width: 140px; }
@@ -8635,6 +8635,15 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   color: var(--text-muted); font-weight: 500; cursor: default;
 }
 .heatmapCell.masked:hover{ transform: none; box-shadow: none; }
+/* 범주형 보기: FDR 게이트를 통과하지 못한(q>=0.05) 셀 -- 검정은 됐지만
+   신호가 없다는 뜻이라, "표본 부족"(.masked, 사선 패턴)과는 다른
+   단색 회색으로 구분한다 (지시서 E). */
+.heatmapCell.gated{ background: var(--surface-tertiary); color: var(--text-muted); font-weight: 500; }
+.heatmapEmptyBanner{
+  margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
+  border: 1px solid var(--border-card, var(--border));
+}
 
 .heatmapColorbar{ display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-secondary); }
 .heatmapColorbarTrack{ width: 160px; height: 10px; border-radius: 999px; border: 1px solid var(--heatmap-cell-border); }
@@ -8844,10 +8853,37 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
    renders through this one component so control-limit lines are never
    drawn differently on different screens. */
 .scatterChart{ display: flex; flex-direction: column; gap: 4px; }
+/* 드래그 선택 정보 박스의 위치 기준 (spec B: "플롯 우측 상단 고정") --
+   해석 팁을 포함한 카드 전체가 아니라 SVG 자체에만 relative를 건다. */
+.scatterPlotWrap{ position: relative; }
+
+/* 드래그 선택 (spec B) -- 브러시 사각형 + 우상단 고정 정보 박스. 박스는
+   .heatmapTooltip 외형(흰 배경·그림자·radius)을 재사용하되 position만
+   fixed(커서 추적)에서 absolute(플롯 코너 고정)로 바꾼다. */
+.scatterBrushRect{ fill: var(--accent); fill-opacity: 0.08; stroke: var(--accent); stroke-width: 1; }
+.heatmapTooltip.scatterSelectionBox{
+  position: absolute; left: auto; top: 8px; right: 8px; max-width: 220px; pointer-events: auto;
+}
+.heatmapTooltip.scatterSelectionBox.flip{ right: auto; left: 8px; }
+.scatterSelectionBoxHeader{ display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.scatterSelectionBoxClose{
+  border: none; background: transparent; cursor: pointer; font-size: 12px; line-height: 1;
+  color: var(--text-secondary); padding: 2px;
+}
+.scatterSelectionBoxClose:hover{ color: var(--text-primary); }
+.scatterSelectionBoxTable{ width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.scatterSelectionBoxTable th,
+.scatterSelectionBoxTable td{ padding: 2px 6px 2px 0; text-align: right; color: var(--text-secondary); font-weight: 400; }
+.scatterSelectionBoxTable th:first-child,
+.scatterSelectionBoxTable td:first-child{ text-align: left; color: var(--text-secondary); }
+.scatterSelectionBoxTable th{ font-weight: 600; color: var(--text-primary); }
+.scatterSelectionBoxTable td:not(:first-child){ color: var(--text-primary); font-variant-numeric: tabular-nums; }
 /* Scatter/Box view toggle (spec §1-3) -- lives in the card header (see
    ViewToggle in root-cause/page.tsx), same row/height as the title, not
-   inside this component. Segmented control matching
-   .compareTriggerButton's height/radius/font. */
+   inside this component. Also backs the "비교" trigger row above it
+   (CompareToggleRow) -- same segmented-control markup, just without an
+   `active` state since those buttons open modals rather than switch a
+   view. */
 .scatterViewToggleRow{ display: flex; align-items: center; gap: 8px; }
 .scatterViewToggleLabel{ font-size: 12px; color: var(--text-secondary); }
 .scatterViewToggle{
@@ -9068,6 +9104,11 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareMiniChartTitle{ font-size: 13px; font-weight: 700; }
 .compareMiniChartRho{ font-weight: 500; font-size: 11.5px; margin-left: 4px; }
 .compareMiniChartSvg{ display: block; }
+/* Trellis 지시서 C-2: 배지 텍스트 길이("강함" 2자 vs "근거 부족" 5자 vs
+   "표본 부족(n=NN)")가 달라도 패널 레이아웃이 밀리지 않게 최소 폭을
+   준다. CompareAcrossTargetsModal의 MiniChart와 Trellis의 TrellisPanel
+   둘 다 이 헤더 클래스를 공유하므로 한 규칙으로 양쪽에 적용된다. */
+.compareMiniChartHeader .confidenceBadge{ min-width: 64px; justify-content: center; text-align: center; flex: 0 0 auto; }
 .compareMiniGridLine{ stroke: var(--border); stroke-width: 1; opacity: 0.6; }
 .compareMiniTick{ font-size: 9px; fill: var(--text-secondary); }
 .compareMiniOutsideShade{ fill: #F59E0B; opacity: 0.08; }
@@ -9080,27 +9121,6 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareModalLegend{ display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
 .compareModalLegend span{ display: inline-flex; align-items: center; gap: 6px; }
 .compareLegendSwatch{ display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
-
-/* "Y1~Y5 비교" button on each scatter card header -- filled, not an
-   outline, so it reads as a clickable button instead of a badge next to
-   the (also-rounded-outline) confidence badge it sits beside. Same
-   #0072C6 in both themes -- it has enough contrast against both a light
-   card and the dark theme's #252527 surface, so it doesn't need a
-   separate dark-mode value. Size/radius/font/position are untouched,
-   only color changed. */
-.compareTriggerButton{
-  display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent;
-  background: #0072C6; border-radius: 8px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600;
-  color: #FFFFFF; cursor: pointer; white-space: nowrap;
-}
-.compareTriggerButton:hover{ background: #005A9E; }
-.compareTriggerButton:active{ background: #004C85; }
-.compareTriggerButton:focus-visible{ outline: 3px solid rgba(255,255,255,0.55); outline-offset: 2px; }
-
-/* "Y1~Y5 비교"/"장비별 Trellis" 버튼 묶음 -- 두 .compareTriggerButton을
-   나란히 두는 순수 래퍼. 좁은 화면에서는 줄바꿈만 허용한다 (모달 자체는
-   가로 스크롤을 쓰지만, 헤더의 버튼 두 개는 세로 스택이어도 무방하다). */
-.factorCompareGroup{ display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* 장비별 Trellis 패널 중 표본(n<30) 부족 그룹 -- 근거 없는 참조선을 감추는
    대신, 패널 자체를 흐리게 표시해 "데이터는 있으나 판정은 유보"임을
@@ -9299,9 +9319,9 @@ html[data-theme="dark"] .analysisErrorBox{
 html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 255, 0.08); }
 .analysisErrorBox > .button{ flex: 0 0 auto; }
 
-/* Per-scatter-card Color By dropdown (spec §5-3) -- lines up with
-   .compareTriggerButton: same height/radius/font, same gap on both
-   sides via --factor-title-gap. */
+/* Per-scatter-card Color By dropdown (spec §5-3) -- height/radius/font
+   sized to match the confidence badge it sits beside in
+   .factorChartTitleRow, gapped via --factor-title-gap. */
 .colorBySelectField{
   display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
   font-size: 12px; color: var(--text-secondary);
