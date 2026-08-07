@@ -70,13 +70,14 @@ export default function Header() {
     <header className="topHeader" ref={headerRef}>
       <div className="headerContext">
         {/* SUNI C brand mark -- separate from the sidebar's character logo
-            (SuniAvatar), not a replacement for it. Links to the model
-            training tab like any header logo would. ≤767px: the full
+            (SuniAvatar), not a replacement for it. Links to 모니터링 홈 like
+            any header logo would (지시서 I: 모델 학습은 더 이상 탭이 아니라
+            사이드바 하단의 팝업이라 로고 링크가 될 수 없다). ≤767px: the full
             wordmark image gives way to the compact character mark alone
             (spec §B-7: "로고는 767px 이하에서 아이콘만") -- SuniAvatar is
             the only square icon-shaped brand asset in the project;
             there's no separate icon-only crop of the wordmark to use. */}
-        <Link href="/training" className="headerLogoLink" aria-label="SUNI C - 모델 학습으로 이동">
+        <Link href="/monitoring" className="headerLogoLink" aria-label="SUNI C - 모니터링 홈으로 이동">
           {isMobileLayout ? (
             <SuniAvatar size={28} />
           ) : (

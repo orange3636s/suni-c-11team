@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
@@ -10,7 +11,6 @@ import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import {
   getLatestSnapshot,
   getMeasurementQueue,
-  type LotMeasurementRow,
   type MeasurementQueueData,
   type MonitoringSnapshot,
   type SignificantFactorDetail,
@@ -26,14 +26,19 @@ type ActionItem = { key: string; text: string; href: string; buttonLabel: string
  */
 function buildActionTriage(
   snapshot: MonitoringSnapshot,
-  queue: MeasurementQueueData,
 ): { doNow: ActionItem[]; experiment: ActionItem[]; needsCheck: ActionItem[] } {
-  const doNow: ActionItem[] = queue.lots.slice(0, 2).map((lot) => ({
-    key: `lot-${lot.lotId}`,
-    text: `${lot.lotId} 집중 계측 (${lot.recommendation})`,
-    href: `/alerts?lot=${encodeURIComponent(lot.lotId)}`,
-    buttonLabel: "실행",
-  }));
+  // 지시서 K-5: "지금 할 수 있는 것"은 랏 단위 큐 대신 계측 확대 제안의
+  // 인자별 우선순위 목록(유지 아닌 것만)에서 가져온다 -- 랏 집계 로직
+  // 자체를 없앴으므로 그 데이터를 다시 만들 수 없다.
+  const doNow: ActionItem[] = (snapshot.measurementExpansion?.priorities ?? [])
+    .filter((priority) => priority.recommendation !== "유지")
+    .slice(0, 2)
+    .map((priority) => ({
+      key: `priority-${priority.target}-${priority.feature}`,
+      text: `${priority.feature} → ${priority.target} 계측 확대 (${priority.recommendation})`,
+      href: `/root-cause?target=${encodeURIComponent(priority.target)}&feature=${encodeURIComponent(priority.feature)}`,
+      buttonLabel: "실행",
+    }));
 
   const experiment: ActionItem[] = [];
   for (const f of snapshot.significantFactors) {
@@ -67,18 +72,75 @@ function buildActionTriage(
 
 type YieldStatus = "high" | "medium" | "low";
 
-function classifyYieldStatus(predLo: number, predHi: number, target: number): { status: YieldStatus; label: string } {
-  if (predLo >= target) return { status: "high", label: "● 양호" };
-  if (predHi >= target) return { status: "medium", label: "◐ 주의" };
-  return { status: "low", label: "● 위험" };
+// 지시서 K-1: 상태 배지는 갭 구간(목표-예측)의 하한이 0을 넘는지로
+// 판정한다 -- 점추정(predMean)으로 판정하지 않는다. gapLo = target -
+// predHi(최선의 경우 갭), gapHi = target - predLo(최악의 경우 갭).
+// gapLo > 0이면 최선의 경우조차 목표 미달(경보), gapHi <= 0이면 최악의
+// 경우도 목표 달성(정상), 그 사이는 불확실(주의).
+function classifyYieldStatus(predLo: number, predHi: number, target: number): { status: YieldStatus; label: string; icon: string } {
+  const gapLo = target - predHi;
+  const gapHi = target - predLo;
+  if (gapHi <= 0) return { status: "high", label: "정상", icon: "●" };
+  if (gapLo > 0) return { status: "low", label: "경보", icon: "●" };
+  return { status: "medium", label: "주의", icon: "◐" };
+}
+
+// 지시서 K-1: 고정 스케일(80~95%) -- 갱신 때마다 관측값에 맞춰 축을
+// 다시 잡으면 막대가 요동쳐 없는 변화를 만들어 보이므로 절대 값에
+// 맞추지 않는다.
+const YIELD_GAP_SCALE_MIN = 80;
+const YIELD_GAP_SCALE_MAX = 95;
+
+function YieldGapBar({ predLo, predHi, target }: { predLo: number; predHi: number; target: number }) {
+  const span = YIELD_GAP_SCALE_MAX - YIELD_GAP_SCALE_MIN;
+  const pctOf = (value: number) => Math.min(100, Math.max(0, ((value - YIELD_GAP_SCALE_MIN) / span) * 100));
+  const bandLoPct = pctOf(predLo);
+  const bandHiPct = pctOf(predHi);
+  const targetPct = pctOf(target);
+  const ticks = Array.from(
+    new Set([YIELD_GAP_SCALE_MIN, predLo, predHi, target, YIELD_GAP_SCALE_MAX].map((v) => Math.round(v * 10) / 10)),
+  ).sort((a, b) => a - b);
+
+  return (
+    <div className="yieldGapBar">
+      <div className="yieldGapBarTrack">
+        <div className="yieldGapBarBand" style={{ left: `${bandLoPct}%`, width: `${Math.max(bandHiPct - bandLoPct, 0.6)}%` }} />
+        <div className="yieldGapBarBoundary" style={{ left: `${bandLoPct}%` }} />
+        <div className="yieldGapBarBoundary" style={{ left: `${bandHiPct}%` }} />
+        <div className="yieldGapBarTarget" style={{ left: `${targetPct}%` }} />
+        <span className="yieldGapBarTargetLabel" style={{ left: `${targetPct}%` }}>목표</span>
+      </div>
+      <div className="yieldGapBarTicks">
+        {ticks.map((tick) => (
+          <span key={tick} className="yieldGapBarTick" style={{ left: `${pctOf(tick)}%` }}>{tick.toFixed(1)}</span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function MonitoringPage() {
-  const [snapshot, setSnapshot] = useState<MonitoringSnapshot | null>(null);
-  const [queue, setQueue] = useState<MeasurementQueueData>({ yieldSummary: null, lots: [] });
-  const [loading, setLoading] = useState(true);
+  // 지시서 K-3: 원인 분석·학습 결과가 그대로면(무효화 조건 ①②가 안
+  // 일어났으면) 재조회하지 않고 캐시를 그대로 쓴다. 캐시는
+  // AnalysisStateProvider에 있어 탭을 옮겼다 돌아와도(페이지 언마운트)
+  // 살아남는다 -- 하드 새로고침(조건 ③)만 이 컨텍스트 자체를 초기화한다.
+  const { hydrated, analysis, training, monitoringHome, setMonitoringHome } = useAnalysisState();
+  const cacheKey = `${analysis?.createdAt ?? ""}|${training?.createdAt ?? ""}`;
+  const cached = monitoringHome && monitoringHome.cacheKey === cacheKey ? monitoringHome : null;
+
+  const [snapshot, setSnapshot] = useState<MonitoringSnapshot | null>(cached?.snapshot ?? null);
+  const [queue, setQueue] = useState<MeasurementQueueData>(cached?.queue ?? { yieldSummary: null });
+  const [loading, setLoading] = useState(!cached);
 
   useEffect(() => {
+    if (!hydrated) return;
+    if (monitoringHome && monitoringHome.cacheKey === cacheKey) {
+      // 캐시 적중 -- API를 다시 부르지 않고 캐시된 결과를 그대로 보여준다.
+      setSnapshot(monitoringHome.snapshot);
+      setQueue(monitoringHome.queue);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLoading(true);
@@ -87,19 +149,22 @@ export default function MonitoringPage() {
         setSnapshot(snap);
         if (!snap.hasAnalysis) {
           setLoading(false);
+          setMonitoringHome({ cacheKey, snapshot: snap, queue: { yieldSummary: null } });
           return;
         }
         const queueData = await getMeasurementQueue(snap.alarmsRecord);
         if (cancelled) return;
         setQueue(queueData);
         setLoading(false);
+        setMonitoringHome({ cacheKey, snapshot: snap, queue: queueData });
       });
     }, 0);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, cacheKey]);
 
   return (
     <DashboardShell activeItem="모니터링">
@@ -128,7 +193,6 @@ export default function MonitoringPage() {
                 </div>
               </div>
               <MeasurementExpansionCard data={snapshot.measurementExpansion} />
-              <LotQueueTable lots={queue.lots} />
             </section>
             <ConfigTreemap datasetId={snapshot.dataset ?? "train"} />
           </>
@@ -147,7 +211,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
   const gapLo = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predHi : null;
   const gapHi = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predLo : null;
 
-  const triage = buildActionTriage(snapshot, queue);
+  const triage = buildActionTriage(snapshot);
 
   return (
     <section className="resultCard">
@@ -159,18 +223,25 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
       </div>
 
       {!queue.yieldSummary || targetYield == null ? (
-        <p className="sectionCaption">예측 없음 — 사전 알람 로그 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>
+        <p className="sectionCaption">예측 없음 — 알림 이력 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>
       ) : (
-        <p className="sectionCaption">
-          예상 수율 {queue.yieldSummary.predMean.toFixed(1)}% [구간 {queue.yieldSummary.predLo.toFixed(1)} – {queue.yieldSummary.predHi.toFixed(1)}]
-          {" "}· 목표 {targetYield.toFixed(0)} 대비 갭{" "}
-          {gapLo != null && gapHi != null
-            ? gapLo <= 0 && gapHi <= 0
-              ? "목표 달성"
-              : `${Math.max(gapLo, 0).toFixed(1)} – ${Math.max(gapHi, 0).toFixed(1)}%p`
-            : "-"}
-          {yieldStatus && <strong className={`reliabilityGradeText grade-${yieldStatus.status}`}> {yieldStatus.label}</strong>}
-        </p>
+        <div className="yieldGapSection">
+          <div className="yieldGapHeaderRow">
+            <span className="yieldGapMean">예상 수율 {queue.yieldSummary.predMean.toFixed(1)}%</span>
+            <span className="yieldGapText">
+              갭{" "}
+              {gapLo != null && gapHi != null
+                ? gapLo <= 0 && gapHi <= 0
+                  ? "목표 달성"
+                  : `${Math.max(gapLo, 0).toFixed(1)} – ${Math.max(gapHi, 0).toFixed(1)}%p`
+                : "-"}
+            </span>
+            {yieldStatus && (
+              <strong className={`reliabilityGradeText grade-${yieldStatus.status}`}>{yieldStatus.icon} {yieldStatus.label}</strong>
+            )}
+          </div>
+          <YieldGapBar predLo={queue.yieldSummary.predLo} predHi={queue.yieldSummary.predHi} target={targetYield} />
+        </div>
       )}
       <p className="sectionCaption">
         <LastRunNote createdAt={snapshot.createdAt} /> · {snapshot.dataset}
@@ -232,6 +303,10 @@ function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
   );
 }
 
+// 지시서 K-4: 세 레일(지금 할 수 있는 것/실험으로 확인할 것/확인이
+// 필요한 것)의 실행·상세·보기 버튼 크기를 하나로 통일한다 -- 새 버튼
+// 스타일을 만들지 않고 다른 화면과 공유하는 `.button.sm`을 쓴다.
+// "실행"만 강조색(.primary)이고 크기는 동일하다.
 function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
   if (items.length === 0) return <p className="emptyMessage">{empty}</p>;
   return (
@@ -239,41 +314,12 @@ function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
       {items.map((item) => (
         <li key={item.key}>
           <span>{item.text}</span>
-          <Link href={item.href} className="button secondary">{item.buttonLabel}</Link>
+          <Link href={item.href} className={`button sm ${item.buttonLabel === "실행" ? "primary" : "secondary"}`}>
+            {item.buttonLabel}
+          </Link>
         </li>
       ))}
     </ul>
   );
 }
 
-function LotQueueTable({ lots }: { lots: LotMeasurementRow[] }) {
-  if (lots.length === 0) return null;
-  return (
-    <div className="tableWrap monitoringLotQueue">
-      <table>
-        <thead>
-          <tr>
-            <th>랏</th>
-            <th className="numCol">예측 구간</th>
-            <th>분산</th>
-            <th>사유</th>
-            <th>계측 권고</th>
-            <th aria-hidden="true" />
-          </tr>
-        </thead>
-        <tbody>
-          {lots.map((lot) => (
-            <tr key={lot.lotId}>
-              <td>{lot.lotId}</td>
-              <td className="numCol">{lot.predLo.toFixed(1)} – {lot.predHi.toFixed(1)}%</td>
-              <td>{lot.variance}</td>
-              <td>{lot.reason ?? "-"}</td>
-              <td>{lot.recommendation}</td>
-              <td><Link href={`/alerts?lot=${encodeURIComponent(lot.lotId)}`} className="button secondary">배정</Link></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}

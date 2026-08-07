@@ -21,22 +21,18 @@ import {
   CLASS_KEYS,
   classifyAll,
   downloadAlarmsCsv,
-  estimatePrecisionRecall,
-  representativeWafer,
   summarizeClasses,
   targetYieldMismatch,
 } from "@/lib/alertsClassify";
-import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
-import { niceTicks } from "@/lib/niceTicks";
-import { getAlertsData, getDatasetSchema, getReliability, saveAlarmsState } from "@/lib/api";
-import type {
-  DatasetSchemaResponse,
-  FactorBand,
-  MeasurementBiasSummary,
-  ReliabilityResponse,
-} from "@/types/data";
+import { getAlertsData, getReliability, saveAlarmsState } from "@/lib/api";
+import type { ReliabilityResponse } from "@/types/data";
 
 const RELIABILITY_GRADE_CLASS: Record<string, string> = { 높음: "high", 보통: "medium", 낮음: "low" };
+
+// 지시서 H-4: 알람 목록 화면 표시는 7개까지 -- 렌더링부와 캡션이 같은
+// 상수를 참조해야 둘이 어긋나지 않는다. CSV 다운로드는 이 제한과 무관하게
+// alarmTable.sorted 전체를 쓴다.
+const ALARM_PAGE_SIZE = 7;
 
 /** spec §E-3 헤더 배지 -- 클릭하면 상세 패널이 열린다. */
 function ReliabilityBadge({
@@ -177,25 +173,8 @@ function AlertsContent() {
   const [gradeFilter, setGradeFilter] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [factorBandIndex, setFactorBandIndex] = useState(0);
   const [reliability, setReliability] = useState<ReliabilityResponse | null>(null);
   const [reliabilityPanelOpen, setReliabilityPanelOpen] = useState(false);
-  const [trainSchema, setTrainSchema] = useState<DatasetSchemaResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getDatasetSchema(trainDataset)
-      .then((result) => {
-        if (!cancelled) setTrainSchema(result);
-      })
-      .catch(() => {
-        if (!cancelled) setTrainSchema(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [trainDataset]);
-
   const data = alarmsState?.data ?? null;
   const datasetMismatch = Boolean(
     alarmsState && (alarmsState.trainDataset !== trainDataset || alarmsState.evalDataset !== evalDataset),
@@ -224,9 +203,8 @@ function AlertsContent() {
           data: dataResponse,
         }));
         setReliability(reliabilityResponse);
-        setFactorBandIndex(0);
       } catch (failure) {
-        setError(failure instanceof Error ? failure.message : "사전 알람 로그를 불러오지 못했습니다.");
+        setError(failure instanceof Error ? failure.message : "알림 이력을 불러오지 못했습니다.");
       } finally {
         setLoading(false);
       }
@@ -291,11 +269,6 @@ function AlertsContent() {
     [classified, data],
   );
 
-  const precisionRecall = useMemo(
-    () => estimatePrecisionRecall(data?.holdout ?? null, { target: targetYieldForClassify, sensitivity: sensitivityForClassify }),
-    [data, targetYieldForClassify, sensitivityForClassify],
-  );
-
   const alarmItems = useMemo(
     () => classified.filter((item): item is ClassifiedWafer & { grade: "심각" | "위험" | "주의" } =>
       item.grade === "심각" || item.grade === "위험" || item.grade === "주의"),
@@ -345,11 +318,11 @@ function AlertsContent() {
     : 0;
 
   return (
-    <DashboardShell activeItem="사전 알람 로그">
+    <DashboardShell activeItem="알림 이력">
       <section className="uploadIntro pageHeading">
-        <span className="eyebrow">PRE-ALERT LOG</span>
+        <span className="eyebrow">ALERT HISTORY</span>
         <div className="pageHeadingTitleRow">
-          <h1>사전 알람 로그</h1>
+          <h1>알림 이력</h1>
           {reliability && (
             <ReliabilityBadge reliability={reliability} open={reliabilityPanelOpen} onToggle={() => setReliabilityPanelOpen((v) => !v)} />
           )}
@@ -398,11 +371,6 @@ function AlertsContent() {
           trainYMin={data.train_y_min}
           trainYMax={data.train_y_max}
           trainYMedian={data.train_y_median}
-          alarmCount={classSummary.심각.count + classSummary.위험.count + classSummary.주의.count}
-          normalCount={classSummary.정상.count}
-          undecidableCount={classSummary.판별불가.count}
-          precisionPct={precisionRecall.precisionPct}
-          recallPct={precisionRecall.recallPct}
         />
       ) : (
         <section className="uploadCard alertsSettingsSkeleton">
@@ -418,21 +386,6 @@ function AlertsContent() {
           aucGateThreshold={data.auc_gate_threshold}
         />
       )}
-
-      {data && <JudgmentPrincipleChart summary={classSummary} target={targetYield} />}
-
-      {data && data.factor_bands.length > 0 ? (
-        <FactorYieldBandCard
-          bands={data.factor_bands}
-          activeIndex={Math.min(factorBandIndex, data.factor_bands.length - 1)}
-          onChange={setFactorBandIndex}
-        />
-      ) : data ? (
-        <section className="resultCard yieldBandCard">
-          <div className="yieldBandCardTitle"><h3>인자별 불량률 (%)</h3></div>
-          <p className="emptyMessage">강함·보통 등급 인자가 없어 인자별 불량률을 표시할 수 없습니다.</p>
-        </section>
-      ) : null}
 
       <section className="resultCard">
         <div className="sectionHeading compact">
@@ -522,7 +475,7 @@ function AlertsContent() {
                         </tr>
                       </thead>
                       <tbody>
-                        {alarmTable.sorted.map((item, index) => (
+                        {alarmTable.sorted.slice(0, ALARM_PAGE_SIZE).map((item, index) => (
                           <AlarmRow
                             key={`${item.lot_wafer_id}-${index}`}
                             item={item}
@@ -535,7 +488,7 @@ function AlertsContent() {
                   </HScrollTableBody>
                 </div>
                 <div className="alarmCardList">
-                  {alarmTable.sorted.map((item, index) => (
+                  {alarmTable.sorted.slice(0, ALARM_PAGE_SIZE).map((item, index) => (
                     <AlarmCard
                       key={`card-${item.lot_wafer_id}-${index}`}
                       item={item}
@@ -544,7 +497,7 @@ function AlertsContent() {
                     />
                   ))}
                 </div>
-                <TableCaption total={alarmTable.sorted.length} shown={Math.min(10, alarmTable.sorted.length)} />
+                <TableCaption total={alarmTable.sorted.length} shown={Math.min(ALARM_PAGE_SIZE, alarmTable.sorted.length)} />
               </>
             )}
             <p className="tableDisclaimer">
@@ -554,17 +507,6 @@ function AlertsContent() {
         )}
       </section>
 
-      <section className="analysisDisclaimers">
-        <strong>해석 시 한계</strong>
-        <ul>
-          <li>{measurementRateDisclaimer(trainSchema)}</li>
-          {data?.measurement_bias && <li>{describeMeasurementBias(data.measurement_bias)}</li>}
-          <li>알람은 관측 데이터의 통계적 연관성에 기반하며 인과관계를 의미하지 않습니다.</li>
-          <li>정밀도·재현율은 학습 데이터 홀드아웃 기준 추정치입니다. 평가 데이터의 정답을 모르므로 실측이 아닙니다.</li>
-          <li>분석 신뢰도가 낮은 데이터셋에서는 알람 정확도를 보장할 수 없습니다.</li>
-          <li>판별불가(미계측) wafer는 선정 인자가 계측되지 않아 판정 자체가 불가능한 것이며, 정상을 의미하지 않습니다.</li>
-        </ul>
-      </section>
     </DashboardShell>
   );
 }
@@ -685,11 +627,6 @@ function SettingsBar({
   trainYMin,
   trainYMax,
   trainYMedian,
-  alarmCount,
-  normalCount,
-  undecidableCount,
-  precisionPct,
-  recallPct,
 }: {
   targetYield: number;
   onTargetYieldChange: (value: number) => void;
@@ -702,11 +639,6 @@ function SettingsBar({
   trainYMin: number;
   trainYMax: number;
   trainYMedian: number;
-  alarmCount: number;
-  normalCount: number;
-  undecidableCount: number;
-  precisionPct: number | null;
-  recallPct: number | null;
 }) {
   return (
     <section className="resultCard alertsSettingsBar">
@@ -782,32 +714,6 @@ function SettingsBar({
           </button>
         </div>
       )}
-
-      <div className="alertsPreviewRow">
-        <span className="alertsPreviewLabel">현재 설정 기준 예상</span>
-        <div className="alertsPreviewStats">
-          <div className="alertsPreviewStat">
-            <strong>{alarmCount.toLocaleString()}건</strong>
-            <span>알람</span>
-          </div>
-          <div className="alertsPreviewStat" title="학습 데이터 검증 결과에 기반한 추정치입니다">
-            <strong>{precisionPct != null ? `${precisionPct.toFixed(0)}%` : "-"}</strong>
-            <span>정밀도</span>
-          </div>
-          <div className="alertsPreviewStat" title="학습 데이터 검증 결과에 기반한 추정치입니다">
-            <strong>{recallPct != null ? `${recallPct.toFixed(0)}%` : "-"}</strong>
-            <span>재현율</span>
-          </div>
-          <div className="alertsPreviewStat">
-            <strong>{normalCount.toLocaleString()}장</strong>
-            <span>정상</span>
-          </div>
-          <div className="alertsPreviewStat">
-            <strong>{undecidableCount.toLocaleString()}장</strong>
-            <span>판별불가</span>
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
@@ -896,291 +802,3 @@ function FiveClassGrid({
   );
 }
 
-/* ===================================================================
-   §C 판정 원리 -- 분류별 대표 사례의 예측 구간을 목표와 비교하는 그림.
-   =================================================================== */
-
-function JudgmentPrincipleChart({
-  summary,
-  target,
-}: {
-  summary: ReturnType<typeof summarizeClasses>;
-  target: number;
-}) {
-  const rows = useMemo(() => {
-    return (["심각", "위험", "주의", "판별불가", "정상"] as ClassKey[])
-      .map((key) => ({ key, rep: representativeWafer(summary[key].items) }))
-      .filter((row): row is { key: ClassKey; rep: NonNullable<typeof row.rep> } => row.rep != null);
-  }, [summary]);
-
-  if (rows.length === 0) return null;
-
-  const values = rows.flatMap((row) => [row.rep.pred_lo, row.rep.pred_hi]);
-  values.push(target);
-  const domainLoRaw = Math.min(...values);
-  const domainHiRaw = Math.max(...values);
-  const pad = (domainHiRaw - domainLoRaw) * 0.08 || 1;
-  const domainLo = domainLoRaw - pad;
-  const domainHi = domainHiRaw + pad;
-  const span = domainHi - domainLo || 1;
-  const pctOf = (value: number) => ((value - domainLo) / span) * 100;
-
-  return (
-    <section className="resultCard alertsPrincipleCard">
-      <div className="yieldBandCardTitle"><h3>판정 원리</h3></div>
-      <p className="sectionCaption">예측 수율 구간을 목표와 비교합니다</p>
-      <div className="alertsPrincipleBody">
-        <div className="alertsPrincipleChart">
-          <div className="alertsPrincipleTargetLine" style={{ left: `${pctOf(target)}%` }} />
-          <span className="alertsPrincipleTargetLabel" style={{ left: `${pctOf(target)}%` }}>목표 {target.toFixed(1)}</span>
-          <div className="alertsPrincipleRows">
-            {rows.map(({ key, rep }) => {
-              const loPct = pctOf(rep.pred_lo);
-              const hiPct = pctOf(rep.pred_hi);
-              const meanPct = pctOf(rep.pred_mean);
-              return (
-                <div key={key} className="alertsPrincipleRow">
-                  <span className="alertsPrincipleRowLabel" style={{ color: CLASS_COLOR[key] }}>{key}</span>
-                  <div className="alertsPrincipleTrack">
-                    <div
-                      className="alertsPrincipleBar"
-                      style={{ left: `${loPct}%`, width: `${Math.max(hiPct - loPct, 0.5)}%`, background: CLASS_COLOR[key] }}
-                    />
-                    <div className="alertsPrincipleMean" style={{ left: `${meanPct}%`, background: CLASS_COLOR[key] }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="alertsPrincipleRules">
-          <strong>판정 규칙</strong>
-          <dl>
-            <div><dt>알람</dt><dd>구간 상한 &lt; 목표</dd></div>
-            <div><dt>정상</dt><dd>구간 하한 ≥ 목표</dd></div>
-            <div><dt>판별불가</dt><dd>구간이 목표를 가로지름</dd></div>
-            <div><dt>판별불가</dt><dd>선정 인자 미계측</dd></div>
-          </dl>
-        </div>
-      </div>
-      <p className="sectionCaption">민감도를 올리면 알람 판정선이 목표에 가까워져 더 많은 wafer가 알람으로 분류됩니다.</p>
-    </section>
-  );
-}
-
-/* ===================================================================
-   §D-1 인자별 불량률 -- 인자 값 구간별 불량률(5분류와 무관). 용어만
-   경고선/최적 구간 기준으로 갱신했다.
-   =================================================================== */
-
-type BandTone = "out" | "outrec" | "inrec";
-type BandSegment = { tone: BandTone; label: string; widthPct: number };
-type BandLine = { tone: "control" | "recommended"; pct: number };
-type BandTick = { pct: number; label: string };
-
-// 사전 알람 로그 전면 개편 (spec §D-1) -- "관리한계 이탈" -> "경고선 초과",
-// "권장구간 밖/안" -> "최적 구간 밖/내".
-const TONE_LABEL: Record<BandTone, string> = { out: "경고선 초과", outrec: "최적 구간 밖", inrec: "최적 구간 내" };
-
-function formatTickValue(value: number): string {
-  return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1);
-}
-
-function formatDeltaPP(delta: number): string {
-  if (!Number.isFinite(delta)) return "-";
-  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
-  return `${sign}${Math.abs(delta).toFixed(2)}%p`;
-}
-
-function ArrowIcon() {
-  return (
-    <svg width="20" height="12" viewBox="0 0 20 12" fill="none" aria-hidden="true">
-      <path d="M1 6h15" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M12 1.5 17 6l-5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
-}
-
-function BandTrack({
-  segments,
-  lines,
-  ticks,
-  lclPct,
-  uclPct,
-  recLoPct,
-  recHiPct,
-}: {
-  segments: BandSegment[];
-  lines: BandLine[];
-  ticks?: BandTick[];
-  lclPct: number | null;
-  uclPct: number | null;
-  recLoPct: number | null;
-  recHiPct: number | null;
-}) {
-  return (
-    <>
-      <div className="yieldBandLabelsRow">
-        {lclPct != null && <span className="yieldBandBoundaryLabel" style={{ left: `${lclPct}%` }}>경고선</span>}
-        {recLoPct != null && recHiPct != null && (
-          <span className="yieldBandRecommendedArrow" style={{ left: `${(recLoPct + recHiPct) / 2}%` }}>
-            ◀─ 최적 구간 ─▶
-          </span>
-        )}
-        {uclPct != null && <span className="yieldBandBoundaryLabel" style={{ left: `${uclPct}%` }}>경고선</span>}
-      </div>
-      <div className="yieldBandTrack">
-        {segments.map((seg, index) => (
-          <div key={index} className={`yieldBandSeg seg-${seg.tone}`} style={{ width: `${Math.max(seg.widthPct, 0)}%` }}>
-            <span>{seg.label}</span>
-          </div>
-        ))}
-        {lines.map((line, index) => (
-          <div key={index} className={`yieldBandLine line-${line.tone}`} style={{ left: `${line.pct}%` }} />
-        ))}
-      </div>
-      {ticks && (
-        <div className="yieldBandTicks">
-          {ticks.map((tick) => (
-            <span key={tick.label} className="yieldBandTick" style={{ left: `${tick.pct}%` }}>{tick.label}</span>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function BandStatsRow({
-  stats,
-  arrowTone,
-}: {
-  stats: { name: string; tone: BandTone; value: number | null; count: number; pct: number }[];
-  arrowTone: "yield" | "defect";
-}) {
-  return (
-    <div className="yieldBandStats">
-      {stats.map((stat, index) => (
-        <div key={stat.tone} style={{ display: "contents" }}>
-          <div className={`yieldBandStatCol seg-${stat.tone}`}>
-            <span className="yieldBandStatName">{stat.name}</span>
-            <strong className="yieldBandStatValue">{stat.value != null ? stat.value.toFixed(2) : "-"}</strong>
-            <span className="yieldBandStatSub">{stat.count.toLocaleString()}장 · {stat.pct.toFixed(1)}%</span>
-          </div>
-          {index < stats.length - 1 && stat.value != null && stats[index + 1].value != null && (
-            <div className={`yieldBandArrowGap tone-${arrowTone}`}>
-              <ArrowIcon />
-              <span>{formatDeltaPP(stats[index + 1].value! - stat.value!)}</span>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function FactorYieldBandCard({
-  bands,
-  activeIndex,
-  onChange,
-}: {
-  bands: FactorBand[];
-  activeIndex: number;
-  onChange: (index: number) => void;
-}) {
-  const band = bands[activeIndex] ?? bands[0];
-  if (!band) return null;
-
-  const pad = (band.x_max - band.x_min) * 0.04 || 1;
-  const domainLoRaw = Math.min(band.x_min, band.lcl ?? band.x_min);
-  const domainHiRaw = Math.max(band.x_max, band.ucl ?? band.x_max);
-  const domainLo = domainLoRaw - pad;
-  const domainHi = domainHiRaw + pad;
-  const span = domainHi - domainLo || 1;
-  const pctOf = (v: number) => ((v - domainLo) / span) * 100;
-
-  const lclPct = band.lcl != null ? pctOf(band.lcl) : null;
-  const uclPct = band.ucl != null ? pctOf(band.ucl) : null;
-  const hasRecommended = band.recommended_lo != null && band.recommended_hi != null;
-  const recLoPct = hasRecommended ? pctOf(band.recommended_lo as number) : null;
-  const recHiPct = hasRecommended ? pctOf(band.recommended_hi as number) : null;
-
-  const segments: BandSegment[] = [];
-  const lines: BandLine[] = [];
-  let leftEdge = 0;
-  if (lclPct != null) {
-    segments.push({ tone: "out", label: TONE_LABEL.out, widthPct: lclPct - leftEdge });
-    lines.push({ tone: "control", pct: lclPct });
-    leftEdge = lclPct;
-  }
-  const rightEdge = uclPct ?? 100;
-  if (recLoPct != null && recHiPct != null) {
-    segments.push({ tone: "outrec", label: TONE_LABEL.outrec, widthPct: recLoPct - leftEdge });
-    lines.push({ tone: "recommended", pct: recLoPct });
-    segments.push({ tone: "inrec", label: TONE_LABEL.inrec, widthPct: recHiPct - recLoPct });
-    lines.push({ tone: "recommended", pct: recHiPct });
-    leftEdge = recHiPct;
-  }
-  segments.push({ tone: "outrec", label: TONE_LABEL.outrec, widthPct: rightEdge - leftEdge });
-  if (uclPct != null) {
-    lines.push({ tone: "control", pct: uclPct });
-    segments.push({ tone: "out", label: TONE_LABEL.out, widthPct: 100 - uclPct });
-  }
-
-  const ticks: BandTick[] = niceTicks([domainLo, domainHi], 6).map((value) => ({
-    pct: pctOf(value),
-    label: formatTickValue(value),
-  }));
-
-  const totalMeasured = band.out_of_control.count + band.out_of_recommended.count + band.in_recommended.count;
-  const statsOf = (count: number) => (totalMeasured > 0 ? (count / totalMeasured) * 100 : 0);
-  const stats = [
-    { name: TONE_LABEL.out, tone: "out" as const, value: band.out_of_control.mean_defect_rate, count: band.out_of_control.count, pct: statsOf(band.out_of_control.count) },
-    { name: TONE_LABEL.outrec, tone: "outrec" as const, value: band.out_of_recommended.mean_defect_rate, count: band.out_of_recommended.count, pct: statsOf(band.out_of_recommended.count) },
-    { name: TONE_LABEL.inrec, tone: "inrec" as const, value: band.in_recommended.mean_defect_rate, count: band.in_recommended.count, pct: statsOf(band.in_recommended.count) },
-  ];
-
-  return (
-    <section className="resultCard yieldBandCard">
-      <div className="yieldBandCardHeader">
-        <div className="yieldBandCardTitle">
-          <h3>인자별 불량률 (%)</h3>
-          <label className="factorSelectField">
-            <select
-              className="factorSelect"
-              value={activeIndex}
-              onChange={(event) => onChange(Number(event.target.value))}
-            >
-              {bands.map((item, index) => (
-                <option key={`${item.feature}-${item.target}`} value={index}>
-                  {item.feature} → {item.target} · {item.confidence_tier === "strong" ? "강함" : "보통"}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <span className="yieldBandCardMeta">낮을수록 좋음</span>
-      </div>
-      <BandTrack segments={segments} lines={lines} ticks={ticks} lclPct={lclPct} uclPct={uclPct} recLoPct={recLoPct} recHiPct={recHiPct} />
-      <BandStatsRow stats={stats} arrowTone="defect" />
-    </section>
-  );
-}
-
-/** 인자별 계측 편향 검정 결과를 사람이 읽을 문장으로 바꾼다 (spec 문구 전수
- * 검토 §A-7). */
-function describeMeasurementBias(bias: MeasurementBiasSummary | null): string | null {
-  if (!bias) return null;
-  if (bias.significant_count === 0) {
-    return "계측 대상 선정에 따른 편향은 관측되지 않았습니다.";
-  }
-  const directionWord = { low: "낮게", high: "높게", mixed: "다르게" }[bias.direction ?? "mixed"];
-  const scope =
-    bias.significant_count === bias.tested_count
-      ? `선정 인자 ${bias.significant_count}개 모두에서`
-      : `선정 인자 ${bias.tested_count}개 중 ${bias.significant_count}개에서`;
-  return (
-    `계측 대상이 무작위로 선정되지 않았을 가능성이 있습니다. ${scope} 계측된 wafer의 불량률이 ` +
-    `미계측 wafer보다 ${directionWord} 관측되었습니다. 이 분석 결과를 미계측 wafer로 ` +
-    `일반화할 때는 주의가 필요합니다.`
-  );
-}

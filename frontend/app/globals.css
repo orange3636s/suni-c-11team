@@ -7115,6 +7115,16 @@ root-cause{
   font-size: 13px;
 }
 
+/* 지시서 K-4: 액션 레일(모니터링 홈)의 실행/상세/보기 버튼 전용 -- 다른
+   화면에서도 컴팩트한 버튼이 필요하면 이 한 종류를 재사용한다. 두
+   클래스(.button.sm)라 위 .button보다 우선한다. */
+.button.sm{
+  min-height: 26px;
+  min-width: 64px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
 .modelSelectorOption{
   min-height: 46px;
   padding: 7px 9px;
@@ -8513,6 +8523,36 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    (spec §4-4). Button/badge visual style is untouched, only position. */
 .factorChartTitleRow{ display: flex; align-items: center; gap: var(--factor-title-gap, 8px); flex-wrap: wrap; }
 .factorChartTitleRow h2{ margin: 0; }
+/* 지시서 J-2: 인자 카드 즐겨찾기 별. */
+.favoriteStarButton{
+  border: none; background: transparent; cursor: pointer; padding: 0 2px;
+  font-size: 18px; line-height: 1; color: var(--text-secondary);
+}
+.favoriteStarButton.active{ color: #F59E0B; }
+.favoriteStarButton:hover{ color: #F59E0B; }
+
+/* 지시서 J-3: 즐겨찾기 페이지 -- 흰 카드 그리드. */
+.favoritesGrid{
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px; margin-top: 16px;
+}
+.favoriteCard{ position: relative; padding: 0; overflow: hidden; cursor: pointer; }
+.favoriteCardThumb{ background: var(--surface-muted); padding: 6px; }
+.favoriteCardBody{ padding: 12px 14px; }
+.favoriteCardBody h3{ margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+.favoriteCardMeta{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.favoriteCardBadge{
+  font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  background: var(--surface-secondary); color: var(--text-secondary);
+}
+.favoriteCardTime{ font-size: 11.5px; color: var(--text-secondary); }
+.favoriteCardDelete{
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 24px; height: 24px; border-radius: 50%; border: none;
+  background: rgba(15,23,42,.55); color: #fff; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+}
+.favoriteCardDelete:hover{ background: rgba(15,23,42,.8); }
 .factorChartStats{
   display: flex; align-items: baseline; gap: 0; flex: 0 0 auto;
   font-size: 13px; color: var(--text-secondary); white-space: nowrap;
@@ -9520,148 +9560,14 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
    width:1%(table-layout:auto에서 "내용만큼만") + nowrap. */
 .col-severity{ width: 1%; white-space: nowrap; }
 
-/* ===================================================================
-   사전 알람 로그 구간별 수율/불량률 카드 (PART B, 카드①②③).
-   Colors shared by both bands so 카드①(개념도)/카드②(실제 축) read as
-   one system; 권장구간 내(inrec) reuses the same green family as the
-   root-cause 산점도's 권장 구간 band (LINE_COLOR.recommended) so the two
-   screens visually agree.
-   =================================================================== */
-:root{
-  --band-out-text: #B45309;
-  --band-out-bg: #FDF0DC;
-  --band-outrec-text: #5B6270;
-  --band-outrec-bg: #F1F2F4;
-  --band-inrec-text: #0D9668;
-  --band-inrec-bg: #D6EFE5;
-  --band-line-control: #0E306D;
-  --band-arrow-yield: #0D9668;
-  --band-arrow-defect: #DC2626;
-}
-html[data-theme="dark"]{
-  --band-out-text: #FBBF24;
-  --band-out-bg: rgba(245, 158, 11, 0.12);
-  --band-outrec-text: #9CA3AF;
-  --band-outrec-bg: rgba(255, 255, 255, 0.05);
-  --band-inrec-text: #34D399;
-  --band-inrec-bg: rgba(13, 150, 104, 0.18);
-  --band-line-control: #7BA3E8;
-  --band-arrow-yield: #34D399;
-  --band-arrow-defect: #F87171;
-}
-
-.yieldBandCard{ margin-bottom: 16px; }
-.yieldBandCardHeader{
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
-}
+/* 지시서 H-3: 판정 원리·인자별 불량률 카드를 없애면서 이 구간 색상
+   변수/트랙/스탯 CSS 전체를 삭제했다 (사용처가 그 두 카드뿐이었음).
+   .yieldBandCardTitle만 판정 결과 카드 헤더가 계속 쓴다. */
 .yieldBandCardTitle{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .yieldBandCardTitle h3{ margin: 0; font-size: var(--text-section, 15px); font-weight: 700; }
-.yieldBandCardMeta{ font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-
-/* Small, thin factor-select dropdown (spec: must not push the card
-   title around) -- sits next to the h3, not full select-field height. */
-.factorSelectField{ display: inline-flex; align-items: center; }
-.factorSelect{
-  height: 26px;
-  padding: 0 24px 0 10px;
-  font-size: 12px;
-  border-radius: 8px;
-  max-width: 220px;
-  background: var(--surface-secondary, var(--surface-muted));
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  font-family: inherit;
-}
-
-.yieldBandLabelsRow{
-  position: relative;
-  height: 18px;
-  margin: 14px 0 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-.yieldBandBoundaryLabel{
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  color: var(--band-line-control);
-  white-space: nowrap;
-}
-.yieldBandRecommendedArrow{
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  color: var(--band-inrec-text);
-  white-space: nowrap;
-}
-
-.yieldBandTrack{
-  position: relative;
-  display: flex;
-  height: 40px;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-}
-.yieldBandSeg{
-  display: flex; align-items: center; justify-content: center;
-  min-width: 0;
-  font-size: 11px; font-weight: 600;
-}
-.yieldBandSeg span{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
-.yieldBandSeg.seg-out{ background: var(--band-out-bg); color: var(--band-out-text); }
-.yieldBandSeg.seg-outrec{ background: var(--band-outrec-bg); color: var(--band-outrec-text); }
-.yieldBandSeg.seg-inrec{ background: var(--band-inrec-bg); color: var(--band-inrec-text); }
-.yieldBandLine{
-  position: absolute; top: 0; bottom: 0; width: 0;
-  border-left: 2px dashed var(--band-line-control);
-  pointer-events: none;
-}
-.yieldBandLine.line-recommended{
-  border-left-style: dotted;
-  border-left-color: var(--band-inrec-text);
-}
-
-.yieldBandTicks{ position: relative; height: 16px; margin-top: 4px; }
-.yieldBandTick{
-  position: absolute; top: 0; transform: translateX(-50%);
-  font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.yieldBandStats{
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 16px; gap: 4px;
-}
-.yieldBandStatCol{
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  flex: 1 1 0; min-width: 0;
-}
-.yieldBandStatName{ font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-.yieldBandStatValue{ font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.yieldBandStatSub{ font-size: 11.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.yieldBandStatCol.seg-out .yieldBandStatValue{ color: var(--band-out-text); }
-.yieldBandStatCol.seg-outrec .yieldBandStatValue{ color: var(--band-outrec-text); }
-.yieldBandStatCol.seg-inrec .yieldBandStatValue{ color: var(--band-inrec-text); }
-
-.yieldBandArrowGap{
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  flex: 0 0 auto; gap: 1px; padding-bottom: 16px; min-width: 56px;
-}
-.yieldBandArrowGap svg{ display: block; }
-.yieldBandArrowGap span{ font-size: 11px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.yieldBandArrowGap.tone-yield svg, .yieldBandArrowGap.tone-yield span{ color: var(--band-arrow-yield); }
-.yieldBandArrowGap.tone-defect svg, .yieldBandArrowGap.tone-defect span{ color: var(--band-arrow-defect); }
-
-@media (max-width: 640px){
-  .yieldBandStats{ flex-wrap: wrap; }
-  .yieldBandArrowGap{ min-width: 40px; }
-}
 
 /* ===================================================================
-   사전 알람 로그 전면 개편 -- §A 설정 바 · §B 5분류 카드 · §C 판정 원리.
+   알림 이력 -- §A 설정 바 · §B 5분류 카드.
    =================================================================== */
 
 .alertsSettingsSkeleton{ display: flex; align-items: center; justify-content: center; min-height: 80px; }
@@ -9726,17 +9632,6 @@ html[data-theme="dark"]{
 html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .alertsMismatchWarning p{ margin: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
 
-.alertsPreviewRow{
-  display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
-  padding-top: 12px; border-top: 1px solid var(--border);
-}
-.alertsPreviewLabel{ font-size: 12px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
-.alertsPreviewStats{ display: flex; flex-wrap: wrap; gap: 20px; }
-.alertsPreviewStat{ display: flex; flex-direction: column; gap: 1px; }
-.alertsPreviewStat strong{ font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.alertsPreviewStat span{ font-size: 11px; color: var(--text-secondary); }
-.alertsPreviewStat[title]{ cursor: help; }
-
 .alertsClassSection{ margin-top: 4px; }
 .alertsClassGrid{
   display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 10px 0 4px;
@@ -9763,37 +9658,8 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 
 .alertsAlarmListActions{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-.alertsPrincipleBody{ display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
-.alertsPrincipleChart{ position: relative; flex: 2 1 380px; min-width: 260px; padding-top: 18px; }
-.alertsPrincipleTargetLine{
-  position: absolute; top: 18px; bottom: 0; width: 0;
-  border-left: 2px dashed #0E306D; pointer-events: none;
-}
-html[data-theme="dark"] .alertsPrincipleTargetLine{ border-left-color: #7BA3E8; }
-.alertsPrincipleTargetLabel{
-  position: absolute; top: 0; transform: translateX(-50%);
-  font-size: 11px; font-weight: 700; color: #0E306D; white-space: nowrap;
-}
-html[data-theme="dark"] .alertsPrincipleTargetLabel{ color: #7BA3E8; }
-.alertsPrincipleRows{ display: flex; flex-direction: column; gap: 10px; }
-.alertsPrincipleRow{ display: flex; align-items: center; gap: 10px; }
-.alertsPrincipleRowLabel{ flex: 0 0 44px; font-size: 12px; font-weight: 700; }
-.alertsPrincipleTrack{ position: relative; flex: 1 1 auto; height: 14px; }
-.alertsPrincipleBar{ position: absolute; top: 3px; height: 8px; border-radius: 4px; opacity: 0.85; }
-.alertsPrincipleMean{ position: absolute; top: 0; width: 2px; height: 14px; transform: translateX(-1px); }
-.alertsPrincipleRules{
-  flex: 1 1 220px; min-width: 200px; padding: 12px 14px; border-radius: 12px;
-  background: var(--surface-secondary, var(--surface-muted));
-}
-.alertsPrincipleRules strong{ display: block; font-size: 12.5px; margin-bottom: 8px; }
-.alertsPrincipleRules dl{ margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.alertsPrincipleRules dl > div{ display: flex; gap: 8px; align-items: baseline; }
-.alertsPrincipleRules dt{ flex: 0 0 52px; font-size: 11.5px; font-weight: 700; color: var(--text-secondary); }
-.alertsPrincipleRules dd{ margin: 0; font-size: 12px; }
-
 @media (max-width: 640px){
   .alertsSettingsRow{ gap: 18px; }
-  .alertsPreviewStats{ gap: 14px; }
 }
 
 /* ===================================================================
@@ -10310,33 +10176,6 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   border-radius: 12px;
 }
 
-/* 모니터링 홈 신설 §2: 사이드바 하단 연결 상태 점. 점 색상은 Header의
-   .apiStatus-online/.apiStatus-offline 색상 선택자를 그대로 재사용한다
-   (globals.css 상단, `.apiStatus-online>span{background:#34C759}` 등) --
-   이 클래스는 레이아웃(위치·간격·라벨 숨김)만 새로 정의한다. */
-.sidebarConnectionStatus{
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  color: rgba(255, 255, 255, 0.76);
-}
-.sidebarConnectionStatus > span{
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #8e8e93;
-}
-.sidebarConnectionStatus small{
-  font-size: 12px;
-  font-weight: 500;
-}
-.sidebar.collapsed .sidebarConnectionStatus{
-  justify-content: center;
-  padding: 0;
-}
-
 /* 접힘 상태 Theme 패널 포털 (spec §D-2) -- .sidebarSurface가
    overflow:hidden이라(카드 코너를 둥글게 유지하기 위해) 컨테이너 내부에
    그대로 두면 잘린다. document.body로 포털돼 더 이상 `.sidebar` 하위가
@@ -10424,6 +10263,15 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 }
 .settingsSection h3{ margin: 0 0 4px; font-size: 14px; font-weight: 700; }
 .settingsSectionDesc{ margin: 0 0 12px; font-size: 12.5px; color: var(--text-secondary); }
+
+/* 지시서 I-2: 모델 학습 팝업 -- 3줄 읽기전용 정보 + SQL 필드 행. */
+.trainingInfoList{ margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.trainingInfoList > div{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.trainingInfoList dt{ font-size: 12px; color: var(--text-secondary); }
+.trainingInfoList dd{ margin: 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.trainingSqlRow{ display: flex; gap: 10px; margin-bottom: 10px; }
+.trainingSqlRow .notifyFieldLabel{ flex: 1 1 auto; }
+.trainingSqlRow .trainingPortField{ flex: 0 0 110px; }
 
 /* -- §C-2: 채널 카드 -------------------------------------------------- */
 .notifyChannelList{ display: flex; flex-direction: column; gap: 10px; }
@@ -10603,5 +10451,33 @@ html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-
   padding: 8px 12px; border-radius: 10px; background: var(--surface-secondary, var(--surface-muted));
   font-size: 13px;
 }
-.monitoringLotQueue{ margin-top: 14px; }
 
+/* 지시서 K-1: 수율 갭 고정 스케일 막대. 트랙 폭은 항상 80~95% 스케일을
+   나타낸다 -- 관측값에 맞춰 자동으로 넓어지거나 좁아지지 않는다. */
+.yieldGapSection{ margin: 4px 0 8px; }
+.yieldGapHeaderRow{ display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.yieldGapMean{ font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.yieldGapText{ font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.yieldGapBar{ padding: 0 4px; }
+.yieldGapBarTrack{
+  position: relative; height: 22px; border-radius: 6px;
+  background: var(--surface-secondary, var(--surface-muted)); border: 1px solid var(--border);
+}
+.yieldGapBarBand{
+  position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: 0.28; border-radius: 6px;
+}
+.yieldGapBarBoundary{
+  position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid var(--accent);
+}
+.yieldGapBarTarget{
+  position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 2px dashed var(--warning);
+}
+.yieldGapBarTargetLabel{
+  position: absolute; top: -18px; transform: translateX(-50%);
+  font-size: 10.5px; font-weight: 700; color: var(--warning); white-space: nowrap;
+}
+.yieldGapBarTicks{ position: relative; height: 14px; margin-top: 4px; }
+.yieldGapBarTick{
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap;
+}

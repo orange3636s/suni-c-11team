@@ -840,6 +840,8 @@ export type ModelPerformanceResponse = {
   source_filename: string | null;
   targets: TargetPerformance[];
   final_yield: TargetPerformance | null;
+  row_count: number | null;
+  feature_count: number | null;
 };
 
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------
@@ -849,8 +851,16 @@ export type ModelPerformanceResponse = {
 // so a restored entry is always `points: []` until the page independently
 // refetches it.
 
+// 지시서 I-3: 모델 학습 팝업의 SQL 연결 정보(비밀번호 제외)·Refresh 주기를
+// 서버에 저장한다 -- 최근 학습 결과(performance)와 같은 레코드에 함께
+// 실어 GET /api/state/latest 한 번으로 둘 다 복원한다.
 export type LatestTrainingPayload = {
   performance: ModelPerformanceResponse;
+  sqlHost?: string;
+  sqlPort?: string;
+  sqlDb?: string;
+  sqlUser?: string;
+  refreshIntervalMinutes?: number | null;
 };
 
 export type LatestTrainingRecord = {
@@ -905,6 +915,31 @@ export type LatestStateResponse = {
   analysis: LatestAnalysisRecord | null;
   alarms: LatestAlarmsRecord | null;
   notifications: NotificationSettingsSummary;
+};
+
+// -- 즐겨찾기 (지시서 J) -------------------------------------------------
+// 점 데이터는 절대 담지 않는다 (J-2) -- 열 때 이 파라미터로 API를 다시
+// 불러 렌더한다.
+export type FavoriteViewType = "scatter" | "box" | "pareto";
+
+export type FavoriteSnapshot = {
+  dataset: string;
+  target: string;
+  feature: string;
+  viewType: FavoriteViewType;
+  colorBy?: string;
+  method?: string | null;
+  isConfig: boolean;
+};
+
+export type FavoriteRecord = {
+  favorite_id: string;
+  created_at: string;
+  snapshot: FavoriteSnapshot;
+};
+
+export type FavoriteListResponse = {
+  items: FavoriteRecord[];
 };
 
 // 모니터링 홈 트리맵 -- Config 문자열은 서버에서 Model/EQ/Chamber로

@@ -322,6 +322,9 @@ class ModelPerformanceResponse(BaseModel):
     source_filename: str | None
     targets: list[TargetPerformanceSchema]
     final_yield: TargetPerformanceSchema | None
+    # 지시서 I-2: 모델 학습 팝업의 "데이터 크기" 표시줄용.
+    row_count: int | None = None
+    feature_count: int | None = None
 
 
 class ReportMethodSchema(BaseModel):

@@ -16,6 +16,9 @@ type PanelStateValue = {
   // 열면 다른 하나는 자동으로 닫힌다 (아래 setter들이 서로를 닫는다).
   settingsPanelOpen: boolean;
   setSettingsPanelOpen: (value: BoolUpdater) => void;
+  // 지시서 L-1: 모델 학습 팝업도 설정·챗봇 패널과 상호 배타적이다.
+  trainingPanelOpen: boolean;
+  setTrainingPanelOpen: (value: BoolUpdater) => void;
   // The dataset id that 원인 분석 last completed for, or null if no
   // analysis has finished yet (or it was invalidated by a dataset change).
   // SUNI's AI panel reads this to know whether it has anything to answer
@@ -58,6 +61,7 @@ export default function PanelStateProvider({
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(initialSidebarCollapsed);
   const [aiPanelOpen, setAiPanelOpenState] = useState(initialAiPanelOpen);
   const [settingsPanelOpen, setSettingsPanelOpenState] = useState(false);
+  const [trainingPanelOpen, setTrainingPanelOpenState] = useState(false);
   const [analysisDataset, setAnalysisDataset] = useState<string | null>(null);
   const [pendingChatRequest, setPendingChatRequest] = useState<PendingChatRequest | null>(null);
 
@@ -73,7 +77,10 @@ export default function PanelStateProvider({
     setAiPanelOpenState((previous) => {
       const next = typeof value === "function" ? value(previous) : value;
       writeCookie(AI_PANEL_COOKIE, next);
-      if (next) setSettingsPanelOpenState(false);
+      if (next) {
+        setSettingsPanelOpenState(false);
+        setTrainingPanelOpenState(false);
+      }
       return next;
     });
   }, []);
@@ -84,6 +91,19 @@ export default function PanelStateProvider({
       if (next) {
         setAiPanelOpenState(false);
         writeCookie(AI_PANEL_COOKIE, false);
+        setTrainingPanelOpenState(false);
+      }
+      return next;
+    });
+  }, []);
+
+  const setTrainingPanelOpen = useCallback((value: BoolUpdater) => {
+    setTrainingPanelOpenState((previous) => {
+      const next = typeof value === "function" ? value(previous) : value;
+      if (next) {
+        setAiPanelOpenState(false);
+        writeCookie(AI_PANEL_COOKIE, false);
+        setSettingsPanelOpenState(false);
       }
       return next;
     });
@@ -103,6 +123,8 @@ export default function PanelStateProvider({
       setAiPanelOpen,
       settingsPanelOpen,
       setSettingsPanelOpen,
+      trainingPanelOpen,
+      setTrainingPanelOpen,
       analysisDataset,
       setAnalysisDataset,
       pendingChatRequest,
@@ -116,6 +138,8 @@ export default function PanelStateProvider({
       setAiPanelOpen,
       settingsPanelOpen,
       setSettingsPanelOpen,
+      trainingPanelOpen,
+      setTrainingPanelOpen,
       analysisDataset,
       pendingChatRequest,
       requestChat,

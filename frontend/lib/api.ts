@@ -11,6 +11,9 @@ import type {
   DatasetUploadResponse,
   DeleteModelResponse,
   DispatchResponse,
+  FavoriteListResponse,
+  FavoriteRecord,
+  FavoriteSnapshot,
   HeatmapKind,
   HeatmapMetric,
   HeatmapResponse,
@@ -553,6 +556,23 @@ export function saveAlarmsState(
   payload: LatestAlarmsPayload,
 ): Promise<{ saved: boolean }> {
   return postJson("/api/state/alarms", { train_dataset: trainDataset, eval_dataset: evalDataset, payload }, 15_000);
+}
+
+// -- 즐겨찾기 (지시서 J) -- 서버에 저장한다(브라우저 저장소 금지, J-4). 점
+// 데이터는 스냅샷에 절대 담지 않는다 -- 열 때 스냅샷 파라미터로 API를
+// 다시 호출해 렌더한다.
+export function getFavorites(): Promise<FavoriteListResponse> {
+  return getJson("/api/favorites");
+}
+
+export function createFavorite(snapshot: FavoriteSnapshot): Promise<FavoriteRecord> {
+  return postJson("/api/favorites", { snapshot });
+}
+
+export async function deleteFavorite(favoriteId: string): Promise<{ deleted: boolean }> {
+  const response = await fetch(`${getApiBaseUrl()}/api/favorites/${encodeURIComponent(favoriteId)}`, { method: "DELETE" });
+  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
+  return response.json();
 }
 
 export type ChatMode = "report" | "chat";

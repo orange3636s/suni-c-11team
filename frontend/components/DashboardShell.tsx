@@ -7,6 +7,7 @@ import MobileTabBar from "@/components/MobileTabBar";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SettingsPanel from "@/components/SettingsPanel";
 import Sidebar, { type NavigationLabel } from "@/components/Sidebar";
+import TrainingPanel from "@/components/TrainingPanel";
 import { useIsTabBarLayout } from "@/lib/useMediaQuery";
 
 export default function DashboardShell({
@@ -16,7 +17,16 @@ export default function DashboardShell({
   activeItem: NavigationLabel;
   children: ReactNode;
 }) {
-  const { sidebarCollapsed, setSidebarCollapsed, aiPanelOpen, setAiPanelOpen, settingsPanelOpen, setSettingsPanelOpen } = usePanelState();
+  const {
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    aiPanelOpen,
+    setAiPanelOpen,
+    settingsPanelOpen,
+    setSettingsPanelOpen,
+    trainingPanelOpen,
+    setTrainingPanelOpen,
+  } = usePanelState();
   // ≤1023px: the left sidebar becomes a horizontal tab bar (spec §B-3) --
   // a conditional render, not a CSS hide, so the collapse toggle button
   // and its bug (collapsing pushed content off-screen at narrow widths --
@@ -44,6 +54,7 @@ export default function DashboardShell({
       </div>
       <AiPanel open={aiPanelOpen} onToggle={() => setAiPanelOpen((value) => !value)} />
       <SettingsPanel open={settingsPanelOpen} onClose={() => setSettingsPanelOpen(false)} />
+      <TrainingPanel open={trainingPanelOpen} onClose={() => setTrainingPanelOpen(false)} />
     </div>
   );
 }

@@ -1079,10 +1079,13 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
         if final_test_metrics
         else None
     )
+    feature_columns = metadata.get("feature_columns") or []
     return {
         "model_id": metadata.get("model_id"),
         "trained_at": metadata.get("created_at"),
         "source_filename": metadata.get("source_filename"),
         "targets": targets,
         "final_yield": final_yield,
+        "row_count": metadata.get("row_count"),
+        "feature_count": len(feature_columns) or None,
     }

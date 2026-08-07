@@ -248,11 +248,9 @@ export default function CorrelationHeatmap({
         <div className="heatmapHeaderRowText">
           <span className="sectionLabel">CORRELATION OVERVIEW</span>
           <h2>전체 상관관계 히트맵</h2>
-          <p className="heatmapIntro">
-            {kind === "numeric"
-              ? <>산점도가 &ldquo;왜 이 인자인가&rdquo;를 보여준다면, 이 히트맵은 &ldquo;다른 인자들은 왜 아닌가&rdquo;를 보여줍니다.</>
-              : `검정 ${testedCount}건 · FDR 통과 ${passedCount}건`}
-          </p>
+          {kind === "categorical" && (
+            <p className="heatmapIntro">검정 {testedCount}건 · FDR 통과 {passedCount}건</p>
+          )}
         </div>
         <div className="heatmapToggleStack">
           {/* 기준(ρ/ε²) — 범주형 보기에서는 ε²로 고정·비활성화한다 (spec E:
@@ -414,17 +412,14 @@ export default function CorrelationHeatmap({
       <p className="heatmapCaption">
         {kind === "numeric" ? (
           <>
-            {data.excluded_configs > 0 &&
-              `Eq. ${data.excluded_configs}개는 범주형이므로 제외됨 — 원인분석 Pareto/산점도에서는 박스플롯으로 확인하세요. `}
+            {data.excluded_configs > 0 && `Eq. ${data.excluded_configs}개 제외. `}
             표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
-            <br />
-            인자 선정은 ε² + BH-FDR 기준이며, 이 히트맵은 전체 조망용입니다.
           </>
         ) : (
           <>
-            색은 FDR 통과(q&lt;0.05) 셀에만 칠합니다 — 나머지는 회색 고정(자동 정규화 없음, 고정 스케일 ε² {scaleMin.toFixed(2)}~{scaleMax.toFixed(2)}).
+            색은 FDR 통과(q&lt;0.05) 셀에만 칠합니다 — 나머지는 회색 고정(고정 스케일 ε² {scaleMin.toFixed(2)}~{scaleMax.toFixed(2)}).
             <br />
-            R/D {data.excluded_configs}개는 수치형 보기에서 확인하세요. 계층을 바꾸면 검정을 새로 합니다.
+            R/D {data.excluded_configs}개 제외.
           </>
         )}
       </p>

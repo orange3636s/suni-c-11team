@@ -19,7 +19,6 @@ import type {
   MeasurementExpansionResponse,
   ParetoRankingItem,
   RelationShape,
-  WaferPrediction,
 } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -30,24 +29,6 @@ const CONFIG_FORMAT_RE = /^Step\d+_Model\d+_EQ[A-Z]_CH\d+$/;
 
 function average(values: number[]): number {
   return values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
-}
-function stddev(values: number[]): number {
-  if (values.length < 2) return 0;
-  const mean = average(values);
-  return Math.sqrt(average(values.map((v) => (v - mean) ** 2)));
-}
-function mostCommonReason(reasons: (string | null)[]): string | null {
-  const counts = new Map<string, number>();
-  for (const r of reasons) {
-    if (!r) continue;
-    counts.set(r, (counts.get(r) ?? 0) + 1);
-  }
-  let best: string | null = null;
-  let bestCount = 0;
-  for (const [reason, count] of counts) {
-    if (count > bestCount) { best = reason; bestCount = count; }
-  }
-  return best;
 }
 
 function isReliableTier(tier: ConfidenceTier): boolean {
@@ -205,87 +186,32 @@ export async function getTreemapData(dataset: string, step: number): Promise<Con
   }
 }
 
-export type LotMeasurementRow = {
-  lotId: string;
-  waferCount: number;
-  predLo: number;
-  predHi: number;
-  predMean: number;
-  variance: "낮음" | "중간" | "높음";
-  reason: string | null;
-  unmeasuredCount: number;
-  recommendation: string;
-};
-
 export type MeasurementQueueData = {
   yieldSummary: { predMean: number; predLo: number; predHi: number; totalWafers: number } | null;
-  lots: LotMeasurementRow[];
 };
 
-const VARIANCE_RANK: Record<LotMeasurementRow["variance"], number> = { 낮음: 0, 중간: 1, 높음: 2 };
-
-/** 기존 알람 API(getAlertsData)의 wafer별 원시 예측치를 랏 단위로 묶는다
- * -- 새 백엔드 엔드포인트를 만들지 않고 프론트에서 조인한다(지시서 §4②).
- * 미계측 wafer가 하나도 없는 랏은 계측을 늘려 얻을 게 없으므로 큐에서
- * 뺀다. 같은 alarms 레코드/예측 호출로 SUMMARY의 예상 수율 구간도 함께
- * 계산해 반환한다 -- 페이지가 이 한 번의 조회로 두 블록을 채운다. */
+/** SUMMARY의 예상 수율 구간을 계산한다 -- 기존 알람 API(getAlertsData)의
+ * wafer별 원시 예측치를 평균해 구한다. 지시서 K-5: 랏 단위 집계(분산·
+ * 사유·계측 권고 표)는 화면 높이만 과도하게 차지하고 홈의 요약 성격에
+ * 맞지 않아 제거했다 -- 그 집계 로직도 함께 지운다(더 쓰는 곳이 없다). */
 export async function getMeasurementQueue(alarmsRecord: LatestAlarmsRecord | null): Promise<MeasurementQueueData> {
-  if (!alarmsRecord) return { yieldSummary: null, lots: [] };
+  if (!alarmsRecord) return { yieldSummary: null };
 
   let alerts;
   try {
     alerts = await getAlertsData(alarmsRecord.train_dataset, alarmsRecord.eval_dataset);
   } catch {
-    return { yieldSummary: null, lots: [] };
+    return { yieldSummary: null };
   }
   const preds = alerts.predictions;
-  if (preds.length === 0) return { yieldSummary: null, lots: [] };
+  if (preds.length === 0) return { yieldSummary: null };
 
-  const yieldSummary = {
-    predMean: average(preds.map((p) => p.pred_mean)),
-    predLo: average(preds.map((p) => p.pred_lo)),
-    predHi: average(preds.map((p) => p.pred_hi)),
-    totalWafers: alerts.total_wafers,
+  return {
+    yieldSummary: {
+      predMean: average(preds.map((p) => p.pred_mean)),
+      predLo: average(preds.map((p) => p.pred_lo)),
+      predHi: average(preds.map((p) => p.pred_hi)),
+      totalWafers: alerts.total_wafers,
+    },
   };
-
-  const byLot = new Map<string, WaferPrediction[]>();
-  for (const p of preds) {
-    if (!p.lot_id) continue;
-    const arr = byLot.get(p.lot_id);
-    if (arr) arr.push(p);
-    else byLot.set(p.lot_id, [p]);
-  }
-
-  const sigma = alerts.sigma > 0 ? alerts.sigma : 1;
-  const lots: LotMeasurementRow[] = [];
-  for (const [lotId, wafers] of byLot) {
-    const unmeasured = wafers.filter((w) => !w.measured);
-    if (unmeasured.length === 0) continue;
-
-    const means = wafers.map((w) => w.pred_mean);
-    const spread = stddev(means) / sigma;
-    const variance: LotMeasurementRow["variance"] = spread < 0.5 ? "낮음" : spread < 1.0 ? "중간" : "높음";
-
-    const lotMean = average(means);
-    const reasonParts: string[] = [`${unmeasured.length}장 미계측`];
-    if (lotMean < alerts.train_y_median) reasonParts.push("하위권");
-    const measuredReason = mostCommonReason(wafers.map((w) => w.reason));
-    if (measuredReason) reasonParts.push(measuredReason);
-
-    lots.push({
-      lotId,
-      waferCount: wafers.length,
-      predLo: average(wafers.map((w) => w.pred_lo)),
-      predHi: average(wafers.map((w) => w.pred_hi)),
-      predMean: lotMean,
-      variance,
-      reason: reasonParts.join(" · "),
-      unmeasuredCount: unmeasured.length,
-      recommendation: unmeasured.length === wafers.length ? `${unmeasured.length}장 전수` : `${unmeasured.length}장 확대`,
-    });
-  }
-
-  lots.sort((a, b) => VARIANCE_RANK[b.variance] - VARIANCE_RANK[a.variance] || b.unmeasuredCount - a.unmeasuredCount);
-
-  return { yieldSummary, lots };
 }

@@ -667,12 +667,15 @@ async def train_model(
     logger.info("학습 모델 저장 완료")
     _report_training_progress("학습 결과 정리", 98)
 
-    # Switch the active pointer only after the saved bundle is complete.  Any
-    # failure above leaves the previous active model untouched.
+    # Switch the active pointer only after the saved bundle is complete, and
+    # only if it passes the promotion gate (지시서 I-4) -- an auto/manual
+    # retrain that's worse than the currently active model must NOT replace
+    # it silently, since that would shift alarm judgments without the user
+    # knowing. Any failure above leaves the previous active model untouched.
     RuntimeStore(
         settings.runtime_db_path,
         settings.runtime_artifact_dir,
-    ).promote_model(
+    ).promote_if_better(
         model_id=model_id,
         pipeline_version=str(hybrid_result.metadata["pipeline_version"]),
         dataset_version=0,

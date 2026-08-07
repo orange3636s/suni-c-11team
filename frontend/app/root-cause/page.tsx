@@ -18,16 +18,18 @@ import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterVi
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
-import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { formatPValue } from "@/lib/numberFormat";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
+  createFavorite,
+  deleteFavorite,
   dispatchAlarmNotifications,
   getAlarms,
   getDatasetSchema,
+  getFavorites,
   getMeasurementExpansion,
   getScreeningHeatmap,
   getScreeningPareto,
@@ -40,6 +42,7 @@ import type {
   CategoricalScatterResponse,
   ConfidenceTier,
   DatasetSchemaResponse,
+  FavoriteSnapshot,
   MethodComparison,
   ParetoRankingItem,
   ParetoRankingResponse,
@@ -83,7 +86,7 @@ const ANALYSIS_FAILURE_MESSAGE: Record<AnalysisFailureKind, string> = {
   network: "서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
   timeout: "분석 시간이 초과되었습니다. 다시 시도해 주세요.",
   server: "분석 중 오류가 발생했습니다. 다시 시도해 주세요.",
-  model_not_ready: "모델 학습이 완료되지 않았습니다. 모델 학습 탭에서 먼저 학습을 실행해 주세요.",
+  model_not_ready: "모델 학습이 완료되지 않았습니다. 사이드바 하단의 모델 학습에서 먼저 학습을 실행해 주세요.",
   unknown: "분석을 완료하지 못했습니다. 다시 시도해 주세요.",
 };
 
@@ -190,8 +193,7 @@ function RootCauseContent() {
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
   const [datasetId, setDatasetId] = useState("train");
-  // 해석 시 한계 문구의 계측률 수치는 데이터셋마다 다르므로 (spec 문구 전수
-  // 검토 §A-1) 하드코딩 대신 실제 스키마를 불러와 반영한다.
+  // hasConfig 판단(Eq. 색상 옵션·팝오버 행 노출 여부)에 쓰는 데이터셋 스키마.
   const [analysisSchema, setAnalysisSchema] = useState<DatasetSchemaResponse | null>(null);
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
@@ -233,6 +235,54 @@ function RootCauseContent() {
       cancelled = true;
     };
   }, [datasetId]);
+
+  // 즐겨찾기 (지시서 J) -- `${dataset}::${target}::${feature}` -> favorite_id.
+  // 목록은 마운트 시 한 번만 불러온다(브라우저 저장소 금지, 서버가 유일한
+  // 출처). 별 버튼은 이 맵에 키가 있는지로만 채움 여부를 판단한다.
+  const [favoriteIdByKey, setFavoriteIdByKey] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    getFavorites()
+      .then((response) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const item of response.items) {
+          const s = item.snapshot;
+          map[`${s.dataset}::${s.target}::${s.feature}`] = item.favorite_id;
+        }
+        setFavoriteIdByKey(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggleFavorite(snapshot: FavoriteSnapshot) {
+    const key = `${snapshot.dataset}::${snapshot.target}::${snapshot.feature}`;
+    const existingId = favoriteIdByKey[key];
+    if (existingId) {
+      setFavoriteIdByKey((previous) => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+      try {
+        await deleteFavorite(existingId);
+      } catch {
+        // Best-effort -- a failed unfavorite just leaves the star filled;
+        // the user can retry.
+        setFavoriteIdByKey((previous) => ({ ...previous, [key]: existingId }));
+      }
+      return;
+    }
+    try {
+      const created = await createFavorite(snapshot);
+      setFavoriteIdByKey((previous) => ({ ...previous, [key]: created.favorite_id }));
+    } catch {
+      // Best-effort -- 저장 실패 시 별은 그대로 빈 채로 남는다.
+    }
+  }
 
   const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string; isConfig: boolean } | null>(null);
@@ -472,12 +522,14 @@ function RootCauseContent() {
   function renderFactorCard(target: string, item: ParetoRankingItem, index: number) {
     const isConfig = item.kind === "Config";
     const key = `${target}::${item.feature}`;
+    const isFavorited = Boolean(favoriteIdByKey[`${datasetId}::${target}::${item.feature}`]);
     if (!isConfig) {
       return (
         <NumericFactorCard
           key={`${runGeneration}-${target}-${item.feature}`}
           item={item}
           index={index}
+          dataset={datasetId}
           activeTarget={target}
           numericData={scatterByKey[key]}
           onSelectWafer={setSelectedWafer}
@@ -488,6 +540,8 @@ function RootCauseContent() {
           paretoItems={paretoByTarget[target]?.items ?? []}
           paretoN80={paretoByTarget[target]?.n80 ?? null}
           onParetoBarClick={handleParetoBarClick}
+          isFavorited={isFavorited}
+          onToggleFavorite={toggleFavorite}
         />
       );
     }
@@ -496,9 +550,12 @@ function RootCauseContent() {
         key={`${target}-${item.feature}`}
         item={item}
         index={index}
+        dataset={datasetId}
         activeTarget={target}
         categoricalData={categoricalByKey[key]}
         chartHeight={chartHeight}
+        isFavorited={isFavorited}
+        onToggleFavorite={toggleFavorite}
       />
     );
   }
@@ -800,15 +857,6 @@ function RootCauseContent() {
         </>
       )}
 
-      <section className="analysisDisclaimers">
-        <strong>해석 시 한계</strong>
-        <ul>
-          <li>{measurementRateDisclaimer(analysisSchema)}</li>
-          <li>ε²는 통계적 연관성이지 인과가 아닙니다. 공정 순서상 선행/후행 관계나 교락 인자는 반영되지 않았습니다.</li>
-          <li>&ldquo;근거 부족&rdquo;·&ldquo;관계 없음&rdquo; 등급 인자는 통계적 신뢰도가 낮아 원인으로 단정할 근거가 부족합니다. 사전 알람은 p&lt;0.05(강함·보통 등급) 인자에서만 생성됩니다.</li>
-        </ul>
-      </section>
-
       {selectedWafer && (
         <WaferDetailPopover
           point={selectedWafer}
@@ -1072,6 +1120,7 @@ function ColorBySelect({
 function NumericFactorCard({
   item,
   index,
+  dataset,
   activeTarget,
   numericData,
   onSelectWafer,
@@ -1082,9 +1131,12 @@ function NumericFactorCard({
   paretoItems,
   paretoN80,
   onParetoBarClick,
+  isFavorited,
+  onToggleFavorite,
 }: {
   item: ParetoRankingItem;
   index: number;
+  dataset: string;
   activeTarget: string;
   numericData: ScreeningScatterResponse | undefined;
   onSelectWafer: (point: ScatterPoint) => void;
@@ -1098,6 +1150,8 @@ function NumericFactorCard({
   paretoItems: ParetoRankingItem[];
   paretoN80: number | null;
   onParetoBarClick: (item: ParetoRankingItem) => void;
+  isFavorited: boolean;
+  onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
@@ -1126,6 +1180,20 @@ function NumericFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
+            <FavoriteStarButton
+              favorited={isFavorited}
+              onClick={() =>
+                onToggleFavorite({
+                  dataset,
+                  target: activeTarget,
+                  feature: item.feature,
+                  viewType: view,
+                  colorBy: colorMode,
+                  method,
+                  isConfig: false,
+                })
+              }
+            />
             <ColorBySelect value={colorMode} onChange={setColorMode} hasConfig={hasConfig} />
           </div>
           <div className="factorChartToggleStack">
@@ -1193,15 +1261,21 @@ function NumericFactorCard({
 function CategoricalFactorCard({
   item,
   index,
+  dataset,
   activeTarget,
   categoricalData,
   chartHeight,
+  isFavorited,
+  onToggleFavorite,
 }: {
   item: ParetoRankingItem;
   index: number;
+  dataset: string;
   activeTarget: string;
   categoricalData: CategoricalScatterResponse | undefined;
   chartHeight: number;
+  isFavorited: boolean;
+  onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
 }) {
   return (
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
@@ -1211,6 +1285,12 @@ function CategoricalFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
+            <FavoriteStarButton
+              favorited={isFavorited}
+              onClick={() =>
+                onToggleFavorite({ dataset, target: activeTarget, feature: item.feature, viewType: "box", isConfig: true })
+              }
+            />
           </div>
         </div>
         {categoricalData && (
@@ -1234,6 +1314,23 @@ function CategoricalFactorCard({
         <p className="emptyMessage">불러오는 중…</p>
       )}
     </article>
+  );
+}
+
+/** 즐겨찾기 별 토글 (지시서 J-2) -- 저장 시점 상태 스냅샷만 넘긴다, 점
+ * 데이터는 절대 포함하지 않는다. */
+function FavoriteStarButton({ favorited, onClick }: { favorited: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`favoriteStarButton ${favorited ? "active" : ""}`}
+      onClick={onClick}
+      aria-pressed={favorited}
+      aria-label={favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+      title={favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+    >
+      {favorited ? "★" : "☆"}
+    </button>
   );
 }
 

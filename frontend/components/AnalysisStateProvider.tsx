@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getLatestState } from "@/lib/api";
+import type { MeasurementQueueData, MonitoringSnapshot } from "@/lib/monitoringSource";
 import type {
   AlarmGrade,
   AlertsDataResponse,
@@ -42,9 +43,13 @@ export type TrainingState = {
   dataset: string;
   createdAt: string;
   performance: ModelPerformanceResponse;
-  paretoByTarget: Record<string, ParetoRankingResponse>;
-  analysisReady: boolean;
-  activeTarget: string;
+  // 지시서 I-2/I-3: 모델 학습 팝업의 SQL 연결 정보(비밀번호 제외)·Refresh
+  // 주기 -- 서버 재접속 시 팝업이 다시 채워 보여준다.
+  sqlHost: string;
+  sqlPort: string;
+  sqlDb: string;
+  sqlUser: string;
+  refreshIntervalMinutes: number | null;
 } | null;
 
 export type AnalysisState = {
@@ -83,6 +88,18 @@ export type AlarmsState = {
   data: AlertsDataResponse | null;
 } | null;
 
+// 지시서 K-3: 모니터링 홈이 마지막으로 렌더한 결과를 탭 이동에도 살아남는
+// 이 컨텍스트에 보관한다(페이지 컴포넌트의 useState에만 두면 언마운트마다
+// 날아간다). `cacheKey`가 마지막 계산 시점의 analysis/training
+// createdAt과 같으면 재조회 없이 그대로 쓴다 -- 무효화 조건은 원인 분석
+// 재실행·새 학습·명시적 새로고침(하드 리로드로 이 컨텍스트 자체가
+// 재생성됨) 셋뿐이다.
+export type MonitoringHomeState = {
+  cacheKey: string;
+  snapshot: MonitoringSnapshot;
+  queue: MeasurementQueueData;
+} | null;
+
 type AnalysisStateValue = {
   // True once the one-time GET /api/state/latest has settled (success or
   // failure) -- pages use this to decide "still restoring, show a
@@ -94,6 +111,8 @@ type AnalysisStateValue = {
   setAnalysis: (value: AnalysisState | ((previous: AnalysisState) => AnalysisState)) => void;
   alarms: AlarmsState;
   setAlarms: (value: AlarmsState | ((previous: AlarmsState) => AlarmsState)) => void;
+  monitoringHome: MonitoringHomeState;
+  setMonitoringHome: (value: MonitoringHomeState) => void;
   // 설정 패널 신설 §D-3: state/latest가 마운트 시 1번에 실어 온 알림 설정.
   // 설정 패널의 각 변경 액션(연결/해제/조건 저장)은 자기 응답으로 이 값을
   // 갱신할 뿐, 별도 GET을 새로 만들지 않는다.
@@ -108,6 +127,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [training, setTraining] = useState<TrainingState>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>(null);
   const [alarms, setAlarms] = useState<AlarmsState>(null);
+  const [monitoringHome, setMonitoringHome] = useState<MonitoringHomeState>(null);
   const [notifications, setNotifications] = useState<NotificationSettingsSummary>(DEFAULT_NOTIFICATIONS);
   const hydrationStarted = useRef(false);
 
@@ -123,9 +143,11 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             dataset: state.training.dataset,
             createdAt: state.training.created_at,
             performance: state.training.payload.performance,
-            paretoByTarget: {},
-            analysisReady: false,
-            activeTarget: "Y1",
+            sqlHost: state.training.payload.sqlHost ?? "",
+            sqlPort: state.training.payload.sqlPort ?? "",
+            sqlDb: state.training.payload.sqlDb ?? "",
+            sqlUser: state.training.payload.sqlUser ?? "",
+            refreshIntervalMinutes: state.training.payload.refreshIntervalMinutes ?? null,
           });
         }
         if (state.analysis) {
@@ -176,8 +198,20 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   }, []);
 
   const value = useMemo<AnalysisStateValue>(
-    () => ({ hydrated, training, setTraining, analysis, setAnalysis, alarms, setAlarms, notifications, setNotifications }),
-    [hydrated, training, analysis, alarms, notifications],
+    () => ({
+      hydrated,
+      training,
+      setTraining,
+      analysis,
+      setAnalysis,
+      alarms,
+      setAlarms,
+      monitoringHome,
+      setMonitoringHome,
+      notifications,
+      setNotifications,
+    }),
+    [hydrated, training, analysis, alarms, monitoringHome, notifications],
   );
 
   return <AnalysisStateContext.Provider value={value}>{children}</AnalysisStateContext.Provider>;

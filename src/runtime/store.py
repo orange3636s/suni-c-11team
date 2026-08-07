@@ -128,6 +128,25 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_notify_sent_log_lookup
                 ON notify_sent_log(dataset_id, wafer_id, sent_at DESC);
+                CREATE TABLE IF NOT EXISTS promotion_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    candidate_model_id TEXT NOT NULL,
+                    promoted INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    candidate_metric REAL,
+                    active_metric REAL,
+                    previous_model_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_promotion_events_created
+                ON promotion_events(created_at DESC);
+                CREATE TABLE IF NOT EXISTS favorites (
+                    favorite_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_favorites_created
+                ON favorites(created_at DESC);
                 """
             )
 
@@ -153,6 +172,128 @@ class RuntimeStore:
                 rollbacks = [previous, *[item for item in rollbacks if item != previous]][:2]
             connection.execute("""UPDATE model_slots SET active_model_id=?,pipeline_version=?,promoted_at=?,dataset_version=?,previous_model_id=?,status='active',rollback_json=?,active_metadata_json=? WHERE singleton=1""", (model_id, pipeline_version, now, dataset_version, previous, self._json(rollbacks), self._json(metadata)))
         return self.active_model() or {}
+
+    def promote_if_better(
+        self,
+        *,
+        model_id: str,
+        pipeline_version: str,
+        dataset_version: int,
+        metadata: dict[str, Any],
+        metric_path: tuple[str, ...] = ("metrics", "test", "rmse"),
+    ) -> dict[str, Any]:
+        """승격 게이트 (지시서 I-4) -- 후보 모델이 현재 활성 모델의
+        `metric_path` 지표(기본: 최종 수율 테스트 RMSE, 낮을수록 좋음)보다
+        나쁘지 않을 때만 `promote_model`을 호출한다. 활성 모델이 없거나
+        지표를 비교할 수 없으면(둘 중 하나라도 None) 비교 불가로 보고
+        승격시킨다 -- 게이트가 첫 학습 자체를 막아서는 안 된다.
+
+        수동 학습("수동 학습 실행")과 자동 재학습이 이 메서드 하나를
+        공유하므로 두 경로 모두 같은 게이트를 통과한다. 매 학습이 자신의
+        85/15 분할에서 계산한 테스트 지표를 비교하는 것이라 완전히
+        고정된 단일 홀드아웃은 아니지만, 동일한 random_state로 분할하므로
+        데이터셋이 그대로면 분할도 그대로다.
+        """
+        def _dig(source: dict[str, Any] | None) -> float | None:
+            node: Any = source
+            for key in metric_path:
+                if not isinstance(node, dict):
+                    return None
+                node = node.get(key)
+            return float(node) if isinstance(node, (int, float)) else None
+
+        active = self.active_model()
+        candidate_metric = _dig(metadata)
+        active_metadata = active.get("metadata") if active else None
+        active_metric = _dig(active_metadata)
+
+        if active is None:
+            promoted, reason = True, "활성 모델 없음 -- 최초 학습은 게이트 없이 승격"
+        elif candidate_metric is None or active_metric is None:
+            promoted, reason = True, "지표 비교 불가(RMSE 없음) -- 비교할 수 없어 승격"
+        elif candidate_metric <= active_metric:
+            promoted, reason = True, f"후보 RMSE {candidate_metric:.4f} <= 활성 RMSE {active_metric:.4f}"
+        else:
+            promoted, reason = False, f"후보 RMSE {candidate_metric:.4f} > 활성 RMSE {active_metric:.4f} -- 승격 거부, 기존 모델 유지"
+
+        self.record_promotion_event(
+            candidate_model_id=model_id,
+            promoted=promoted,
+            reason=reason,
+            candidate_metric=candidate_metric,
+            active_metric=active_metric,
+            previous_model_id=(active or {}).get("active_model_id"),
+        )
+        if promoted:
+            return self.promote_model(
+                model_id=model_id,
+                pipeline_version=pipeline_version,
+                dataset_version=dataset_version,
+                metadata=metadata,
+            )
+        return active or {}
+
+    def record_promotion_event(
+        self,
+        *,
+        candidate_model_id: str,
+        promoted: bool,
+        reason: str,
+        candidate_metric: float | None,
+        active_metric: float | None,
+        previous_model_id: str | None,
+    ) -> None:
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO promotion_events
+                (created_at,candidate_model_id,promoted,reason,candidate_metric,active_metric,previous_model_id)
+                VALUES (?,?,?,?,?,?,?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    candidate_model_id,
+                    1 if promoted else 0,
+                    str(reason)[:500],
+                    candidate_metric,
+                    active_metric,
+                    previous_model_id,
+                ),
+            )
+
+    def list_promotion_events(self, limit: int = 20) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM promotion_events ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_favorite(self, favorite_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+        created_at = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO favorites (favorite_id,created_at,snapshot_json) VALUES (?,?,?)",
+                (favorite_id, created_at, self._json(snapshot)),
+            )
+        return {"favorite_id": favorite_id, "created_at": created_at, "snapshot": snapshot}
+
+    def list_favorites(self) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT favorite_id,created_at,snapshot_json FROM favorites ORDER BY created_at DESC"
+            ).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "favorite_id": row["favorite_id"],
+                "created_at": row["created_at"],
+                "snapshot": json.loads(row["snapshot_json"]),
+            })
+        return result
+
+    def delete_favorite(self, favorite_id: str) -> bool:
+        with _lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM favorites WHERE favorite_id=?", (favorite_id,))
+        return cursor.rowcount > 0
 
     def migration_status(self, migration_id: str) -> dict[str, Any] | None:
         with _lock, self._connect() as connection:
