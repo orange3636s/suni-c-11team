@@ -1,6 +1,6 @@
 import type {
   AlarmListResponse,
-  AlarmSummaryResponse,
+  AlertsDataResponse,
   AnalysisReportResponse,
   CategoricalScatterResponse,
   ControlRangeListResponse,
@@ -428,8 +428,8 @@ export function getAlarms(trainDataset: string, evalDataset: string, grade?: str
   return getJson(`/api/alarms?${params.toString()}`);
 }
 
-export function getAlarmSummary(trainDataset: string, evalDataset: string): Promise<AlarmSummaryResponse> {
-  return getJson(`/api/alarms/summary?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
+export function getAlertsData(trainDataset: string, evalDataset: string): Promise<AlertsDataResponse> {
+  return getJson(`/api/alarms/predictions?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
 }
 
 export function getReliability(dataset: string, evalDataset: string): Promise<ReliabilityResponse> {

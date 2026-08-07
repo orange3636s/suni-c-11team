@@ -218,34 +218,6 @@ class AlarmListResponse(BaseModel):
     auc_gate_threshold: float
 
 
-class WaferStatusCounts(BaseModel):
-    """집계 카드(spec 알람 신뢰도 게이트 §B-4)의 3개 tile -- 알람/정상/
-    판정불가. "정상"은 최적 구간 안팎을 가리지 않은, 판정 가능 wafer 중
-    알람이 아닌 전부다 (= band_counts.out_of_recommended +
-    band_counts.in_recommended)."""
-
-    alarm: int
-    normal: int
-    unmeasured: int
-
-
-class YieldBandCounts(BaseModel):
-    """구간별 평균 수율 카드(spec §C-1)의 3구간 -- 알람 구간/최적 구간
-    밖/정상. 셋의 합은 언제나 `measured_wafers`(판정 가능 wafer 수)와
-    같다."""
-
-    alarm: int
-    out_of_recommended: int
-    in_recommended: int
-
-
-class BandYieldSchema(BaseModel):
-    alarm: float | None
-    out_of_recommended: float | None
-    in_recommended: float | None
-    unmeasured: float | None
-
-
 class FactorBandPointSchema(BaseModel):
     count: int
     mean_defect_rate: float | None
@@ -276,22 +248,52 @@ class MeasurementBiasSummary(BaseModel):
     direction: str | None
 
 
-class AlarmSummaryResponse(BaseModel):
+class WaferPredictionSchema(BaseModel):
+    """사전 알람 로그 전면 개편 (spec §A-3) -- 등급 없는 원시 예측치 하나.
+    frontend가 목표 수율/민감도로 실시간 재분류하는 재료다."""
+
+    lot_wafer_id: str
+    lot_id: str | None
+    measured: bool
+    pred_mean: float
+    pred_lo: float
+    pred_hi: float
+    # measured=False이거나 어떤 인자도 경고선을 넘지 않았으면 None.
+    reason: str | None
+
+
+class HoldoutSchema(BaseModel):
+    """정밀도·재현율 실시간 추정용 학습 홀드아웃 (spec §A-4) -- train을 LOT
+    기준 5-fold로 잘라 얻은 out-of-fold 점추정치 + 잔차 표준편차. frontend가
+    `pred_point ± 1.645*residual_std`로 90% 구간을 근사해 현재 설정으로
+    재분류한 뒤 실제 Y(<target)와 비교해 정밀도/재현율을 추정한다."""
+
+    actual_y: list[float]
+    pred_point: list[float]
+    residual_std: float
+
+
+class AlertsDataResponse(BaseModel):
     train_dataset_id: str
     eval_dataset_id: str
     total_wafers: int
-    measured_wafers: int
-    counts: WaferStatusCounts
-    band_counts: YieldBandCounts
-    band_yield: BandYieldSchema
-    measurement_bias: MeasurementBiasSummary | None
-    factor_bands: list[FactorBandSchema] = Field(default_factory=list)
+    # train Y 표준편차 -- classify_wafer의 σ 배수 임계 계산에 쓴다.
+    sigma: float
+    # 목표 수율 분포 불일치 경고(spec §A-1)와 "중앙값으로 설정" 버튼에 쓴다.
+    train_y_min: float
+    train_y_max: float
+    train_y_median: float
+    train_y_p1: float
+    train_y_p99: float
+    predictions: list[WaferPredictionSchema] = Field(default_factory=list)
+    holdout: HoldoutSchema | None
     # 알람 신뢰도 게이트 -- AlarmListResponse와 동일한 값(같은 (train,eval)
-    # 쌍이면 항상 일치한다). 게이트 미달이면 counts.alarm/band_counts.alarm
-    # 모두 0이다.
+    # 쌍이면 항상 일치한다). 게이트 미달이면 심각/위험/주의가 전부 0건이다.
     auc_lower_bound: float | None
     auc_gate_passed: bool
     auc_gate_threshold: float
+    factor_bands: list[FactorBandSchema] = Field(default_factory=list)
+    measurement_bias: MeasurementBiasSummary | None
 
 
 class TargetPerformanceSchema(BaseModel):

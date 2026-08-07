@@ -9006,66 +9006,7 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 .methodComparisonReason{ margin: 12px 0 2px; font-size: 12.5px; font-weight: 600; }
 .methodComparisonFootnote{ margin: 2px 0 0; font-size: 10.5px; color: var(--text-secondary); }
 
-/* Alarm-log aggregate cards: 4-up grid (알람/개선 권장/정상/판정불가), same
-   card size/style/font as before -- only the column count changed (3 ->
-   4), so individual cards get narrower, never smaller text or padding. */
-.alarmSummaryGrid{
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin: 16px 0 4px;
-}
-@media (max-width: 760px){
-  .alarmSummaryGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-.alarmSummaryCard .alarmSummaryLabel{
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.alarmSummaryCaption{
-  margin: 0 0 20px; font-size: 12px; color: var(--text-secondary);
-}
-.alarmSummaryCard.tone-good .alarmSummaryValue{ color: var(--band-inrec-text); }
-.alarmSummaryCard.tone-faint{ background: var(--surface-secondary, var(--surface-muted)); }
-.alarmSummaryCard.tone-faint .alarmSummaryValue,
-.alarmSummaryCard.tone-faint .alarmSummaryLabel{ color: var(--text-secondary); }
-.alarmSummaryCard{
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px 18px;
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.035);
-}
-html[data-theme="dark"] .alarmSummaryCard{ box-shadow: none; }
-.alarmSummaryLabel{ font-size: 12px; font-weight: 500; color: var(--text-secondary); }
-.alarmSummaryValueRow{ display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.alarmSummaryValue{ font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.alarmSummaryAux{ font-size: 12px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.alarmSummaryCard.tone-highlight .alarmSummaryValue,
-.alarmSummaryCard.tone-highlight .alarmSummaryAux{ color: var(--danger); }
-.alarmSummaryCard.tone-muted{ background: var(--surface-secondary, var(--surface-muted)); }
-.alarmSummaryCard.tone-muted .alarmSummaryValue{ color: var(--text-secondary); }
-.alarmSummaryCard.tone-muted .alarmSummaryLabel{ color: var(--text-secondary); }
-.alarmSummaryCard[title]{ cursor: help; }
-.alarmSummaryCard.skeleton{ gap: 10px; }
-.alarmSummaryCard.skeleton .alarmSkeletonLine{
-  height: 10px; border-radius: 6px;
-  background: var(--surface-secondary, var(--surface-muted));
-  animation: alarmSkeletonPulse 1.4s ease-in-out infinite;
-}
-.alarmSummaryCard.skeleton .alarmSkeletonLine.label{ width: 56%; }
-.alarmSummaryCard.skeleton .alarmSkeletonLine.value{ width: 72%; height: 22px; margin-top: 2px; }
-@keyframes alarmSkeletonPulse{
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce){
-  .alarmSummaryCard.skeleton .alarmSkeletonLine{ animation: none; }
-}
-.alarmSummaryNote{ margin: -6px 0 4px; font-size: 13px; color: var(--text-secondary); }
-/* Bottom-of-card explanatory blurb under 알람 목록/개선 권장 목록's table
+/* Bottom-of-card explanatory blurb under 알람 목록 table
    (spec §7 재지시) -- same font-size/color as .alarmSummaryNote, but its
    own class since this one always sits below the table/caption, wraps to
    2-3 lines, and never breaks mid-Korean-word. */
@@ -9636,13 +9577,6 @@ html[data-theme="dark"]{
 .yieldBandSeg.seg-out{ background: var(--band-out-bg); color: var(--band-out-text); }
 .yieldBandSeg.seg-outrec{ background: var(--band-outrec-bg); color: var(--band-outrec-text); }
 .yieldBandSeg.seg-inrec{ background: var(--band-inrec-bg); color: var(--band-inrec-text); }
-/* 구간별 평균 수율 카드(카드①) 전용 톤 (spec 알람 신뢰도 게이트 §C-3) --
-   고정 hex다. 인자별 불량률(카드②)의 seg-out/outrec/inrec과는 별개라
-   같은 --band-* 변수를 재사용하지 않는다(라이트/다크 공통, spec이 준
-   값을 그대로 쓴다). */
-.yieldBandSeg.seg-alarm{ background: color-mix(in srgb, #DC2626 14%, transparent); color: #DC2626; }
-.yieldBandSeg.seg-optimalOut{ background: color-mix(in srgb, #6B7280 16%, transparent); color: #6B7280; }
-.yieldBandSeg.seg-normal{ background: color-mix(in srgb, #0D9668 14%, transparent); color: #0D9668; }
 .yieldBandLine{
   position: absolute; top: 0; bottom: 0; width: 0;
   border-left: 2px dashed var(--band-line-control);
@@ -9674,9 +9608,6 @@ html[data-theme="dark"]{
 .yieldBandStatCol.seg-out .yieldBandStatValue{ color: var(--band-out-text); }
 .yieldBandStatCol.seg-outrec .yieldBandStatValue{ color: var(--band-outrec-text); }
 .yieldBandStatCol.seg-inrec .yieldBandStatValue{ color: var(--band-inrec-text); }
-.yieldBandStatCol.seg-alarm .yieldBandStatValue{ color: #DC2626; }
-.yieldBandStatCol.seg-optimalOut .yieldBandStatValue{ color: #6B7280; }
-.yieldBandStatCol.seg-normal .yieldBandStatValue{ color: #0D9668; }
 
 .yieldBandArrowGap{
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -9687,30 +9618,145 @@ html[data-theme="dark"]{
 .yieldBandArrowGap.tone-yield svg, .yieldBandArrowGap.tone-yield span{ color: var(--band-arrow-yield); }
 .yieldBandArrowGap.tone-defect svg, .yieldBandArrowGap.tone-defect span{ color: var(--band-arrow-defect); }
 
-.yieldBandCaptionRow{ display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.yieldBandFoonote{ font-size: 12px; color: var(--text-secondary); margin: 10px 0 0; }
-/* 총 격차 (spec 알람 신뢰도 게이트 §C-3) -- 화살표와 같은 초록. */
-.yieldBandTotalGap{
-  margin: 4px 0 0; text-align: center; font-size: 12.5px; font-weight: 700;
-  color: var(--band-arrow-yield); font-variant-numeric: tabular-nums;
-}
-
-/* 카드③ 판정불가 -- 톤을 낮춘다: 보조 텍스트 색만 사용, 큰 숫자 없음, 위
-   카드들과 분리된 별도 섹션(margin으로 구분)이라 90.24가 "최고 구간"으로
-   오독되지 않는다. */
-.unmeasuredCard{
-  margin-top: 4px;
-  padding: 14px 18px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface-secondary, var(--surface-muted));
-}
-.unmeasuredCard p{ margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
-.unmeasuredCard strong{ color: var(--text-primary); font-weight: 600; }
-
 @media (max-width: 640px){
   .yieldBandStats{ flex-wrap: wrap; }
   .yieldBandArrowGap{ min-width: 40px; }
+}
+
+/* ===================================================================
+   사전 알람 로그 전면 개편 -- §A 설정 바 · §B 5분류 카드 · §C 판정 원리.
+   =================================================================== */
+
+.alertsSettingsSkeleton{ display: flex; align-items: center; justify-content: center; min-height: 80px; }
+
+.alertsSettingsBar{ display: flex; flex-direction: column; gap: 14px; }
+.alertsSettingsRow{ display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+.alertsSettingField{ display: flex; flex-direction: column; gap: 6px; }
+.alertsTargetField{ min-width: 160px; }
+.alertsSettingLabel{ font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+.alertsTargetInputRow{
+  display: flex; align-items: center; gap: 6px;
+  height: 38px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface);
+  width: fit-content;
+}
+.alertsTargetInputRow input{
+  width: 72px; border: none; background: transparent; font-size: 15px; font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+.alertsTargetInputRow input:focus{ outline: none; }
+.alertsTargetInputRow span{ font-size: 13px; color: var(--text-secondary); }
+.alertsSettingHint{ font-size: 11.5px; color: var(--text-secondary); }
+
+.alertsSensitivityField{ flex: 1 1 340px; min-width: 280px; }
+.alertsPresetRow{ display: flex; gap: 6px; flex-wrap: wrap; }
+.alertsPresetButton{
+  height: 30px; padding: 0 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+  cursor: pointer; transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.alertsPresetButton:hover{ background: var(--surface-secondary, var(--surface-muted)); }
+.alertsPresetButton.active{ background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.alertsGaugeRow{ display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.alertsGaugeWrap{ flex: 1 1 auto; min-width: 160px; }
+.alertsGaugeHints{
+  display: flex; justify-content: space-between;
+  font-size: 10.5px; color: var(--text-secondary); margin-bottom: 2px;
+}
+.alertsGaugeSlider{
+  width: 100%; margin: 0; accent-color: var(--accent);
+}
+.alertsGaugeEnds{
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--text-secondary); margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.alertsSensitivityNumber{
+  width: 64px; height: 34px; padding: 0 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--text-primary); text-align: center;
+}
+
+.alertsMismatchWarning{
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  padding: 12px 14px; border-radius: 12px;
+  background: color-mix(in srgb, #F59E0B 12%, transparent);
+  border: 1px solid color-mix(in srgb, #F59E0B 35%, transparent);
+}
+.alertsMismatchWarning strong{ font-size: 13px; color: #92400E; }
+html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
+.alertsMismatchWarning p{ margin: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+
+.alertsPreviewRow{
+  display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+  padding-top: 12px; border-top: 1px solid var(--border);
+}
+.alertsPreviewLabel{ font-size: 12px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.alertsPreviewStats{ display: flex; flex-wrap: wrap; gap: 20px; }
+.alertsPreviewStat{ display: flex; flex-direction: column; gap: 1px; }
+.alertsPreviewStat strong{ font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.alertsPreviewStat span{ font-size: 11px; color: var(--text-secondary); }
+.alertsPreviewStat[title]{ cursor: help; }
+
+.alertsClassSection{ margin-top: 4px; }
+.alertsClassGrid{
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 10px 0 4px;
+}
+@media (max-width: 900px){ .alertsClassGrid{ grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px){ .alertsClassGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.alertsClassCard{
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 14px 12px; border-radius: 14px;
+  border: 1.5px solid color-mix(in srgb, var(--class-color) 45%, var(--border));
+  background: color-mix(in srgb, var(--class-color) 7%, var(--surface));
+}
+.alertsClassCardHead{ display: flex; align-items: center; gap: 6px; }
+.alertsClassCardHead strong{ font-size: 13px; font-weight: 700; color: var(--class-color); }
+.alertsClassCardValue{ font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.alertsClassCardPct{ font-size: 11.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.alertsClassCardYield{ font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; }
+.alertsClassCardNote{ font-size: 10.5px; font-weight: 600; color: var(--class-color); margin-top: 4px; }
+.alertsClassGridFoot{ margin-top: 8px; }
+.alertsGateNote{
+  margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
+  background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
+}
+
+.alertsAlarmListActions{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.alertsPrincipleBody{ display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+.alertsPrincipleChart{ position: relative; flex: 2 1 380px; min-width: 260px; padding-top: 18px; }
+.alertsPrincipleTargetLine{
+  position: absolute; top: 18px; bottom: 0; width: 0;
+  border-left: 2px dashed #0E306D; pointer-events: none;
+}
+html[data-theme="dark"] .alertsPrincipleTargetLine{ border-left-color: #7BA3E8; }
+.alertsPrincipleTargetLabel{
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; color: #0E306D; white-space: nowrap;
+}
+html[data-theme="dark"] .alertsPrincipleTargetLabel{ color: #7BA3E8; }
+.alertsPrincipleRows{ display: flex; flex-direction: column; gap: 10px; }
+.alertsPrincipleRow{ display: flex; align-items: center; gap: 10px; }
+.alertsPrincipleRowLabel{ flex: 0 0 44px; font-size: 12px; font-weight: 700; }
+.alertsPrincipleTrack{ position: relative; flex: 1 1 auto; height: 14px; }
+.alertsPrincipleBar{ position: absolute; top: 3px; height: 8px; border-radius: 4px; opacity: 0.85; }
+.alertsPrincipleMean{ position: absolute; top: 0; width: 2px; height: 14px; transform: translateX(-1px); }
+.alertsPrincipleRules{
+  flex: 1 1 220px; min-width: 200px; padding: 12px 14px; border-radius: 12px;
+  background: var(--surface-secondary, var(--surface-muted));
+}
+.alertsPrincipleRules strong{ display: block; font-size: 12.5px; margin-bottom: 8px; }
+.alertsPrincipleRules dl{ margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.alertsPrincipleRules dl > div{ display: flex; gap: 8px; align-items: baseline; }
+.alertsPrincipleRules dt{ flex: 0 0 52px; font-size: 11.5px; font-weight: 700; color: var(--text-secondary); }
+.alertsPrincipleRules dd{ margin: 0; font-size: 12px; }
+
+@media (max-width: 640px){
+  .alertsSettingsRow{ gap: 18px; }
+  .alertsPreviewStats{ gap: 14px; }
 }
 
 /* ===================================================================

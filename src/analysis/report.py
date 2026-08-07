@@ -12,7 +12,7 @@ Two factor sets are deliberately different and never conflated:
     borderline second factor (e.g. Y2's Step24_R1) crowd the narrative.
   - `alarms` / `summary.alarm_wafers`: the existing, already-verified
     alarm engine (BH-FDR q<0.05 selection, see `_alarm_engine_factors`)
-    used by /api/alarms and /api/alarms/summary. The report echoes that
+    used by /api/alarms and /api/alarms/predictions. The report echoes that
     number rather than recomputing a different one from the narrative
     factor set, so the report and the live alarm log never disagree.
 """
@@ -231,7 +231,7 @@ def _top_factor_per_target(train_df: pd.DataFrame, schema: Schema, target: str) 
 
 def _alarm_engine_factors(train_df: pd.DataFrame, schema: Schema) -> list[ParetoFactor]:
     """The existing BH-FDR (q<0.05) factor set already used by
-    /api/alarms and /api/alarms/summary -- reused as-is so the report's
+    /api/alarms and /api/alarms/predictions -- reused as-is so the report's
     alarm numbers always agree with the live alarm log.
     """
     factors: list[ParetoFactor] = []

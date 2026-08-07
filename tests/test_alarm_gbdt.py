@@ -10,14 +10,14 @@ import pandas as pd
 import pytest
 
 from src.analysis.alarm_gbdt import (
-    BAD_LABEL_QUANTILE,
-    compute_grade_thresholds,
+    classify_offset,
+    classify_wafer,
+    compute_holdout_predictions,
     cross_validate_auc,
     cross_validate_transfer_auc,
     fit_bootstrap_ensemble,
-    grade_of,
     prepare_feature_matrix,
-    score_alarms,
+    score_wafers,
 )
 
 
@@ -58,42 +58,90 @@ def test_fit_bootstrap_ensemble_is_deterministic():
     assert (first.pred_mean <= first.pred_hi).all()
 
 
-def test_grade_of_uses_pred_hi_not_pred_mean():
-    """spec §A-2 핵심: 알람 판정은 pred_hi(상한) 기준 -- 예측이 흔들리는
+def test_classify_offset_maps_sensitivity_to_sigma_multiplier():
+    """spec 사전 알람 로그 전면 개편 §A-3: s=0(오경보 최소)이 가장 보수적
+    (+0.6σ), s=1(미탐 최소)이 가장 민감(-0.2σ)해야 한다."""
+    assert classify_offset(0.0) == pytest.approx(0.6)
+    assert classify_offset(1.0) == pytest.approx(-0.2)
+    assert classify_offset(0.5) == pytest.approx(0.2)
+
+
+def test_classify_wafer_uses_pred_hi_not_pred_mean():
+    """spec §B-1 핵심: 알람 판정은 pred_hi(상한) 기준 -- 예측이 흔들리는
     (구간이 넓은) wafer는 상한이 높아 알람에서 자동 제외되어야 한다."""
-    from src.analysis.alarm_gbdt import GradeThresholds
+    # target=85, sensitivity=0.5 -> off=0.2, sigma=10 이면 심각 임계는
+    # 85-6=79, 위험 81, 주의 83.
+    grade = classify_wafer(pred_hi=90.0, pred_lo=80.0, target=85.0, sensitivity=0.5, sigma=10.0)
+    assert grade is None  # 구간이 목표를 가로지름 -- 판별불가
+    assert classify_wafer(pred_hi=78.0, pred_lo=70.0, target=85.0, sensitivity=0.5, sigma=10.0) == "심각"
 
-    thresholds = GradeThresholds(severe=80.0, danger=82.0, caution=84.0)
-    # pred_hi가 85(주의 기준보다도 높음)면 "심각/위험/주의" 알람이 아니어야
-    # 한다 -- 예측이 불안정하다는 뜻이다. ("개선 권고" 등급은 삭제됐다 --
-    # spec 알람 신뢰도 게이트 §B-1: 정밀도가 무작위 수준과 다르지 않았다.)
-    grade = grade_of(pred_hi=85.0, thresholds=thresholds)
+
+def test_classify_wafer_five_classes_do_not_overlap():
+    """spec §B-1 핵심: 심각 -> 위험 -> 주의 -> 정상 -> 판별불가는 서로
+    배타적이다."""
+    target, sensitivity, sigma = 85.0, 0.5, 10.0
+    off = classify_offset(sensitivity)
+    severe_edge = target - (off + 0.4) * sigma
+    danger_edge = target - (off + 0.2) * sigma
+    caution_edge = target - off * sigma
+    assert classify_wafer(pred_hi=severe_edge, pred_lo=severe_edge - 1, target=target, sensitivity=sensitivity, sigma=sigma) == "심각"
+    assert classify_wafer(pred_hi=danger_edge, pred_lo=danger_edge - 1, target=target, sensitivity=sensitivity, sigma=sigma) == "위험"
+    assert classify_wafer(pred_hi=caution_edge, pred_lo=caution_edge - 1, target=target, sensitivity=sensitivity, sigma=sigma) == "주의"
+    assert classify_wafer(pred_hi=target + 5, pred_lo=target + 1, target=target, sensitivity=sensitivity, sigma=sigma) == "정상"
+    assert classify_wafer(pred_hi=target + 5, pred_lo=target - 1, target=target, sensitivity=sensitivity, sigma=sigma) is None
+
+
+def test_classify_wafer_gate_failure_suppresses_alarm_tiers_only():
+    """spec §B-4 핵심: 신뢰도 게이트 미달이면 심각/위험/주의는 안 나오지만
+    정상/판별불가는 그대로 계산된다."""
+    target, sensitivity, sigma = 85.0, 0.5, 10.0
+    # 심각 조건을 만족하는 wafer라도 gate_passed=False면 알람이 아니다.
+    grade = classify_wafer(pred_hi=50.0, pred_lo=40.0, target=target, sensitivity=sensitivity, sigma=sigma, gate_passed=False)
     assert grade is None
-    assert grade_of(pred_hi=79.0, thresholds=thresholds) == "심각"
+    grade_normal = classify_wafer(pred_hi=90.0, pred_lo=86.0, target=target, sensitivity=sensitivity, sigma=sigma, gate_passed=False)
+    assert grade_normal == "정상"
 
 
-def test_grade_thresholds_use_quantiles_not_std():
-    """spec §A-2 핵심: Y 분포가 정규가 아닌 데이터셋(왜도가 큰 분포)에서도
-    임계가 음수가 되지 않아야 한다 (표준편차 배수 방식이었다면 무너진다)."""
-    skewed_y = pd.Series([*([50.0] * 90), *([1.0] * 5), *([99.0] * 5)])
-    df = pd.DataFrame({"Y": skewed_y})
-    thresholds = compute_grade_thresholds(df)
-    assert thresholds.severe > 0
-    assert thresholds.severe <= thresholds.danger <= thresholds.caution
-
-
-def test_score_alarms_does_not_fix_a_count():
-    """spec §A-2 핵심: 알람 개수를 고정하지 않는다 -- 등급 조건을 만족하는
-    wafer 수만큼만 나온다."""
+def test_score_wafers_does_not_fix_a_count_and_sums_to_all_wafers():
+    """spec §B-1 핵심: 알람 개수를 고정하지 않는다. 다섯 분류(None 포함)의
+    합은 언제나 평가 wafer 수와 같다."""
     df = _synthetic_df(n=200, seed=1)
     train_df, eval_df = df.iloc[:150], df.iloc[150:]
     features = ["Step1_R1", "Step2_R1"]
     pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
-    thresholds = compute_grade_thresholds(train_df)
-    alarms = score_alarms(eval_df, pred, thresholds)
-    assert len(alarms) <= len(eval_df)
-    assert all(a.grade in ("심각", "위험", "주의") for a in alarms)
-    assert all(0.0 <= a.risk_percentile <= 100.0 for a in alarms)
+    sigma = float(train_df["Y"].std())
+    scored = score_wafers(eval_df, pred, target=85.0, sensitivity=0.5, sigma=sigma)
+    assert len(scored) == len(eval_df)
+    assert all(s.grade in ("심각", "위험", "주의", "정상", None) for s in scored)
+    assert all(0.0 <= s.risk_percentile <= 100.0 for s in scored)
+
+
+def test_score_wafers_marks_unmeasured_wafers_as_ungraded():
+    """spec §B-2 핵심: measured_ids에 없는 wafer는 measured=False이고
+    grade는 항상 None(판별불가-미계측)이어야 한다."""
+    df = _synthetic_df(n=100, seed=2)
+    train_df, eval_df = df.iloc[:60], df.iloc[60:]
+    features = ["Step1_R1", "Step2_R1"]
+    pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    sigma = float(train_df["Y"].std())
+    scored = score_wafers(eval_df, pred, target=200.0, sensitivity=1.0, sigma=sigma, measured_ids=set())
+    assert all(not s.measured for s in scored)
+    assert all(s.grade is None for s in scored)
+
+
+def test_compute_holdout_predictions_covers_full_train_out_of_fold():
+    df = _synthetic_df(n=300, n_lots=60, seed=3)
+    features = ["Step1_R1", "Step2_R1"]
+    holdout = compute_holdout_predictions(df, features, n_splits=5)
+    assert holdout is not None
+    assert len(holdout.actual_y) == len(holdout.pred_point) == len(df)
+    assert holdout.residual_std >= 0
+
+
+def test_compute_holdout_predictions_returns_none_when_too_few_lots():
+    df = _synthetic_df(n=50, n_lots=2, seed=2)
+    features = ["Step1_R1", "Step2_R1"]
+    assert compute_holdout_predictions(df, features, n_splits=5) is None
 
 
 def test_cross_validate_auc_returns_none_when_too_few_lots():

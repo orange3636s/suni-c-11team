@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from api.routes.datasets import get_dataset_registry
 from api.schemas.analysis import (
     AlarmListResponse,
-    AlarmSummaryResponse,
+    AlertsDataResponse,
     AnalysisContextResponse,
     AnalysisReportResponse,
     CategoricalScatterResponse,
@@ -416,76 +416,107 @@ def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
     }
 
 
-def _scored_alarms_if_gate_passes(
-    train: str, eval: str, train_df: pd.DataFrame, eval_df: pd.DataFrame
+def _measured_ids_for_alarm_factors(train_df: pd.DataFrame, eval_df: pd.DataFrame, schema) -> set[str]:
+    """알람 판정에 쓸 "선정 인자 계측 여부" -- 기존 unmeasured_id_set과
+    동일한 기준(FDR-유의 인자 중 하나라도 계측)이다 (spec 사전 알람 로그
+    전면 개편 §B-2 "미계측").
+    """
+    factors, _ = _alarm_factors(train_df, schema)
+    control_ranges = [compute_control_range(train_df, factor) for factor in factors]
+    alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
+    verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
+    return {v.lot_wafer_id for v in verdicts if v.status != "unmeasured"}
+
+
+def _scored_wafers(
+    train: str,
+    eval: str,
+    train_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    *,
+    target: float = alarm_gbdt.DEFAULT_TARGET_YIELD,
+    sensitivity: float = alarm_gbdt.DEFAULT_SENSITIVITY,
 ) -> tuple[list, float | None, bool]:
     """공유 파이프라인 -- `get_alarms`와 `compute_alarm_notification_items`가
     똑같이 게이트를 적용하도록 한 곳에 모았다 (spec 알람 신뢰도 게이트
     §A-2: "신뢰할 수 없으면 0건이 된다"가 어디서 알람을 불러오든 항상
-    성립해야 한다). 게이트 미달이면 빈 리스트를 반환한다 -- 부트스트랩
-    예측조차 계산하지 않는다(둘 다 필요 없다).
+    성립해야 한다). 사전 알람 로그 전면 개편 이후로는 목표 수율/민감도
+    기준 classify_wafer를 쓴다 -- 이 두 파라미터를 직접 조절하는 화면이
+    없는 호출자(원인 분석 탭의 알람 삼각형 마커, 알림 발송)는 기본값
+    (목표 85.0·민감도 0.5)을 그대로 쓴다.
+
+    게이트 미달이어도 정상/판별불가는 여전히 계산해야 하므로(spec §B-4)
+    부트스트랩 예측 자체는 건너뛰지 않는다 -- 이전(품질 게이트 시
+    예측조차 안 함)과 달라진 부분이다.
     """
     auc_lo, gate_passed = _auc_gate(train, eval)
-    if not gate_passed:
-        return [], auc_lo, False
 
     prediction = _cached_bootstrap_prediction(train, eval)
     if prediction is None:
         return [], auc_lo, gate_passed
 
-    thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
-    scored = alarm_gbdt.score_alarms(eval_df, prediction, thresholds)
+    schema = parse_schema(train_df)
+    measured_ids = _measured_ids_for_alarm_factors(train_df, eval_df, schema)
+    sigma = float(pd.to_numeric(train_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").std())
+    scored = alarm_gbdt.score_wafers(
+        eval_df, prediction,
+        target=target, sensitivity=sensitivity, sigma=sigma,
+        gate_passed=gate_passed, measured_ids=measured_ids,
+    )
     return scored, auc_lo, gate_passed
+
+
+def _reason_for(score, eval_by_id, warning_lines) -> str:
+    row = None
+    if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
+        match = eval_by_id.loc[score.lot_wafer_id]
+        row = match.iloc[0] if isinstance(match, pd.DataFrame) else match
+    return (
+        warning_line.build_alarm_reason(row, warning_lines)
+        if row is not None and warning_lines
+        else warning_line.NO_EXCEEDANCE_REASON
+    )
 
 
 @router.get("/alarms", response_model=AlarmListResponse)
 def get_alarms(train: str = "train", eval: str = "test", grade: str | None = None) -> dict[str, Any]:
-    """알람 판정 GBDT 전환 (spec §A) -- 관리한계 이탈량이 아니라 부트스트랩
-    앙상블로 예측한 최종 수율(Y) 신뢰구간 상한(pred_hi)이 Y 분위수 임계
-    아래인 wafer만 알람으로 낸다. 개수를 고정하지 않는다: 신뢰할 수 없는
-    데이터셋(예: killing_event)에서는 알람이 0~1건만 나오는 것이 설계
-    의도다.
+    """알람 판정 GBDT 전환 (spec §A) + 사전 알람 로그 전면 개편 (spec §B-1) --
+    부트스트랩 앙상블로 예측한 최종 수율(Y) 신뢰구간 상한(pred_hi)이 목표
+    수율 - 민감도 오프셋*σ 아래인 wafer만 알람으로 낸다. 이 라우트는 목표
+    수율/민감도를 직접 조절하는 UI가 없는 호출자(원인 분석 탭의 알람
+    삼각형 마커)가 쓰므로 기본값(85.0/0.5)을 쓴다 -- 사전 알람 로그
+    화면 자체는 `/alarms/predictions`에서 원시 예측치를 받아 클라이언트가
+    실시간으로 재분류한다.
 
     알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
-    AUC 하한이 0.65 미만이면 알람을 아예 내지 않는다. 임계를 학습 Y
-    분위수로만 잡으면 평가 데이터의 분포가 다를 때 예측값이 통째로
-    낮게 나와 대량 오경보가 발생하기 때문이다 (실측: 분포가 어긋난
-    조합에서 정밀도 6~7%까지 떨어진다).
+    AUC 하한이 0.65 미만이면 알람을 아예 내지 않는다.
     """
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
 
-    scored, auc_lo, gate_passed = _scored_alarms_if_gate_passes(train, eval, train_df, eval_df)
+    scored, auc_lo, gate_passed = _scored_wafers(train, eval, train_df, eval_df)
+    alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
     warning_lines = _cached_all_warning_lines(train)
     id_column = "Lot_Wafer_ID"
     eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
 
     items: list[dict[str, Any]] = []
-    for score in scored:
+    for score in alarm_scored:
         if grade and score.grade != grade:
             continue
-        row = None
-        if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
-            match = eval_by_id.loc[score.lot_wafer_id]
-            row = match.iloc[0] if isinstance(match, pd.DataFrame) else match
-        reason = (
-            warning_line.build_alarm_reason(row, warning_lines)
-            if row is not None and warning_lines
-            else warning_line.NO_EXCEEDANCE_REASON
-        )
         items.append(
             {
                 "lot_wafer_id": score.lot_wafer_id,
                 "lot_id": score.lot_id,
                 "grade": score.grade,
                 "risk_percentile": score.risk_percentile,
-                "reason": reason,
+                "reason": _reason_for(score, eval_by_id, warning_lines),
             }
         )
     items.sort(key=lambda item: item["risk_percentile"])
 
-    alarm_total = len(scored)  # 심각/위험/주의만 score_alarms가 반환한다
+    alarm_total = len(alarm_scored)
     evaluated_total = len(eval_df)
     alarm_share_warning = (
         evaluated_total > 0 and (alarm_total / evaluated_total) > alarm_gbdt.ALARM_SHARE_WARNING_THRESHOLD
@@ -509,9 +540,9 @@ def get_alarms(train: str = "train", eval: str = "test", grade: str | None = Non
 
 def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, Any]] | None:
     """알림 발송(src.notifications.dispatch)이 쓰는 알람 목록 -- `get_alarms`와
-    같은 파이프라인(게이트 포함)을 그대로 재사용한다. 데이터셋을 찾을 수
-    없으면 예외 대신 None을 반환한다 -- 알림 발송은 best-effort라 404로
-    스케줄러 잡 전체를 죽이면 안 된다.
+    같은 파이프라인(게이트 + 기본 목표/민감도)을 그대로 재사용한다.
+    데이터셋을 찾을 수 없으면 예외 대신 None을 반환한다 -- 알림 발송은
+    best-effort라 404로 스케줄러 잡 전체를 죽이면 안 된다.
     """
     try:
         train_df = _dataframe_or_404(train)
@@ -519,30 +550,22 @@ def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, An
     except HTTPException:
         return None
 
-    scored, _auc_lo, _gate_passed = _scored_alarms_if_gate_passes(train, eval, train_df, eval_df)
+    scored, _auc_lo, _gate_passed = _scored_wafers(train, eval, train_df, eval_df)
+    alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
     warning_lines = _cached_all_warning_lines(train)
     id_column = "Lot_Wafer_ID"
     eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
 
     items: list[dict[str, Any]] = []
-    for score in scored:
-        row = None
-        if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
-            match = eval_by_id.loc[score.lot_wafer_id]
-            row = match.iloc[0] if isinstance(match, pd.DataFrame) else match
-        reason = (
-            warning_line.build_alarm_reason(row, warning_lines)
-            if row is not None and warning_lines
-            else warning_line.NO_EXCEEDANCE_REASON
-        )
+    for score in alarm_scored:
         items.append(
             {
                 "lot_wafer_id": score.lot_wafer_id,
                 "lot_id": score.lot_id,
                 "grade": score.grade,
                 "risk_percentile": score.risk_percentile,
-                "reason": reason,
+                "reason": _reason_for(score, eval_by_id, warning_lines),
             }
         )
     return items
@@ -568,111 +591,120 @@ def _factor_band_dict(band) -> dict[str, Any]:
     }
 
 
-@router.get("/alarms/summary", response_model=AlarmSummaryResponse)
-def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any]:
+@router.get("/alarms/predictions", response_model=AlertsDataResponse)
+def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str, Any]:
+    """사전 알람 로그 전면 개편 (spec §A-3) -- 등급을 서버가 매겨 내려주지
+    않고, wafer별 원시 예측치(pred_mean/pred_lo/pred_hi)와 목표 수율 조정에
+    필요한 학습 Y 통계(sigma·분위수)를 내려준다. 목표 수율·민감도를 조절할
+    때마다 이 응답을 다시 받아올 필요가 없다 -- frontend의 classifyWafer가
+    `src.analysis.alarm_gbdt.classify_wafer`와 동일한 공식으로 클라이언트
+    에서 즉시 재분류한다(§A-3: "API를 재호출하지 마라").
+    """
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
     schema = parse_schema(train_df)
-    factors, _ = _alarm_factors(train_df, schema)
 
-    control_ranges = [compute_control_range(train_df, factor) for factor in factors]
-    alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
-    verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
-
-    # 판정불가(미계측) 정의는 그대로 둔다 (spec 알람 신뢰도 게이트 §C-1:
-    # "별도 카드, 현행 유지") -- 알람 판정 기준이 GBDT로 바뀌어도, 선정
-    # 인자가 하나도 계측되지 않은 wafer는 여전히 판정 자체가 불가능하다.
-    unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
-    unmeasured_id_set = set(unmeasured_ids)
-
-    # 알람 구간 (spec §C-1): GBDT 예측 수율 상한이 학습 Y 하위 15% 분위
-    # 이하 -- 신뢰도 게이트(spec §A) 통과 시에만 계산한다. 게이트 미달이면
-    # 알람은 0건이고, 나머지 판정 가능 wafer 전부가 최적구간밖/정상 후보로
-    # 넘어간다.
     auc_lo, gate_passed = _auc_gate(train, eval)
-    alarm_ids: list[str] = []
-    if gate_passed:
-        prediction = _cached_bootstrap_prediction(train, eval)
-        if prediction is not None:
-            thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
-            for i, wafer_id in enumerate(prediction.lot_wafer_id):
-                if wafer_id in unmeasured_id_set:
-                    continue
-                if alarm_gbdt.grade_of(float(prediction.pred_hi[i]), thresholds) is not None:
-                    alarm_ids.append(wafer_id)
-    alarm_id_set = set(alarm_ids)
-    normal_candidate_ids = [
-        v.lot_wafer_id for v in verdicts if v.status != "unmeasured" and v.lot_wafer_id not in alarm_id_set
-    ]
+    prediction = _cached_bootstrap_prediction(train, eval)
 
-    # 최적 구간 밖 / 정상 (spec §C-1): 알람 제외, "원인 분석에서 채택된
-    # 권장구간"(SPC 또는 ML) 기준 -- classify_measured_bands가 내부에서
-    # compute_factor_recommendation(→ window_methods.compare_methods)을
-    # 그대로 호출하므로 adopted 방식을 별도로 재계산하지 않는다 (spec
-    # §C-1: "중간 구간은 원인 분석의 채택 방식을 그대로 따른다").
-    bands = classify_measured_bands(
-        train_df, eval_df, alarm_ids, normal_candidate_ids, unmeasured_ids, factors, control_ranges
+    # "미계측" 정의는 그대로 둔다 (spec §B-2) -- 선정 인자가 하나도
+    # 계측되지 않은 wafer는 예측이 있어도 신뢰할 수 없어 등급을 매기지
+    # 않는다.
+    measured_id_set = _measured_ids_for_alarm_factors(train_df, eval_df, schema)
+
+    warning_lines = _cached_all_warning_lines(train)
+    id_column = "Lot_Wafer_ID"
+    eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
+
+    predictions: list[dict[str, Any]] = []
+    if prediction is not None:
+        lot_column = "Lot_ID"
+        lot_ids = (
+            eval_df[lot_column].astype(str).where(eval_df[lot_column].notna(), None).tolist()
+            if lot_column in eval_df.columns
+            else [None] * len(prediction.lot_wafer_id)
+        )
+        for i, wafer_id in enumerate(prediction.lot_wafer_id):
+            measured = wafer_id in measured_id_set
+            reason = None
+            if measured and eval_by_id is not None and wafer_id in eval_by_id.index:
+                match = eval_by_id.loc[wafer_id]
+                row = match.iloc[0] if isinstance(match, pd.DataFrame) else match
+                if warning_lines:
+                    reason = warning_line.build_alarm_reason(row, warning_lines)
+            predictions.append(
+                {
+                    "lot_wafer_id": wafer_id,
+                    "lot_id": lot_ids[i],
+                    "measured": measured,
+                    "pred_mean": float(prediction.pred_mean[i]),
+                    "pred_lo": float(prediction.pred_lo[i]),
+                    "pred_hi": float(prediction.pred_hi[i]),
+                    "reason": reason,
+                }
+            )
+
+    # 정밀도·재현율 실시간 추정용 홀드아웃 (spec §A-4) -- train을 LOT
+    # 기준으로 5-fold 잘라 얻은 out-of-fold 예측치. 표본이 부족하면 None
+    # (frontend가 "추정 불가"로 표시한다).
+    features = alarm_gbdt.feature_columns(schema)
+    holdout_result = alarm_gbdt.compute_holdout_predictions(train_df, features) if features else None
+    holdout = (
+        {
+            "actual_y": holdout_result.actual_y.tolist(),
+            "pred_point": holdout_result.pred_point.tolist(),
+            "residual_std": holdout_result.residual_std,
+        }
+        if holdout_result is not None
+        else None
     )
-    measured_wafers = len(verdicts) - len(unmeasured_ids)
 
-    # Per-factor 인자별 불량률 breakdown (카드②, spec §E-2) -- 강함·보통
-    # 등급으로 분류된 인자 전부 (기존에는 타깃당 1위 인자 5개뿐이었다).
-    # `_cached_ranked_rows`는 Pareto 화면이 이미 조회한 타깃이면 즉시
-    # 반환되는 프로세스 전역 캐시라 여기서 다시 스코어링하지 않는다.
+    y_train = pd.to_numeric(train_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").dropna()
+    has_y = len(y_train) > 0
+    sigma = float(y_train.std()) if has_y else 0.0
+
+    # Per-factor 인자별 불량률 breakdown (§D-1, 그대로 유지) -- 강함·보통
+    # 등급 인자 전부. `_cached_ranked_rows`는 Pareto 화면이 이미 조회한
+    # 타깃이면 즉시 반환되는 프로세스 전역 캐시라 여기서 다시 스코어링하지
+    # 않는다.
     factor_bands_with_eps2: list[tuple[float, dict[str, Any]]] = []
     qualifying_factors: list[ParetoFactor] = []
-    for target in schema.target_cols:
-        for row in _cached_ranked_rows(train, target):
+    for t in schema.target_cols:
+        for row in _cached_ranked_rows(train, t):
             tier = confidence_tier(row["eps2"], row["p_value"])
             if tier not in ("strong", "moderate"):
                 continue
-            factor = _row_to_factor(train_df, target, row)
+            factor = _row_to_factor(train_df, t, row)
             qualifying_factors.append(factor)
             control_range = compute_control_range(train_df, factor)
             band = compute_factor_band(train_df, eval_df, factor, control_range)
             if band is not None:
                 factor_bands_with_eps2.append((row["eps2"], {**_factor_band_dict(band), "confidence_tier": tier}))
-    # 기본 선택은 ε²가 가장 높은 인자다 (spec §E-2) -- 프런트는 이 목록의
-    # 0번 인덱스를 기본값으로 쓰므로, 여기서 ε² 내림차순으로 정렬해 둔다.
     factor_bands_with_eps2.sort(key=lambda pair: pair[0], reverse=True)
     factor_bands = [item for _eps2, item in factor_bands_with_eps2]
 
-    # 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- per-factor check, not
-    # the old whole-wafer aggregate (see report.py's identical comment for
-    # why the aggregate can hide a real per-factor selection effect). 이제
-    # 위 강함·보통 인자 전체를 대상으로 한다 (드롭다운과 같은 범위).
+    # 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- 위 강함·보통 인자
+    # 전체를 대상으로 한다 (드롭다운과 같은 범위).
     measurement_bias = summarize_measurement_bias(per_factor_measurement_bias(train_df, qualifying_factors))
 
     return round_floats(
         {
             "train_dataset_id": train,
             "eval_dataset_id": eval,
-            "total_wafers": len(verdicts),
-            "measured_wafers": measured_wafers,
-            # 집계 카드 3-tile (spec §B-4): 알람/정상/판정불가. "정상"은
-            # 최적구간 안팎을 가리지 않은, 알람이 아닌 판정 가능 wafer 전부다.
-            "counts": {
-                "alarm": bands.alarm.count,
-                "normal": bands.out_of_recommended.count + bands.in_recommended.count,
-                "unmeasured": len(unmeasured_ids),
-            },
-            # 구간별 평균 수율 카드(spec §C-1)의 3구간 -- 합은 항상 measured_wafers.
-            "band_counts": {
-                "alarm": bands.alarm.count,
-                "out_of_recommended": bands.out_of_recommended.count,
-                "in_recommended": bands.in_recommended.count,
-            },
-            "band_yield": {
-                "alarm": bands.alarm.mean_yield,
-                "out_of_recommended": bands.out_of_recommended.mean_yield,
-                "in_recommended": bands.in_recommended.mean_yield,
-                "unmeasured": bands.unmeasured.mean_yield,
-            },
-            "measurement_bias": measurement_bias,
-            "factor_bands": factor_bands,
+            "total_wafers": len(eval_df),
+            "sigma": sigma,
+            "train_y_min": float(y_train.min()) if has_y else 0.0,
+            "train_y_max": float(y_train.max()) if has_y else 0.0,
+            "train_y_median": float(y_train.median()) if has_y else 0.0,
+            "train_y_p1": float(y_train.quantile(0.01)) if has_y else 0.0,
+            "train_y_p99": float(y_train.quantile(0.99)) if has_y else 0.0,
+            "predictions": predictions,
+            "holdout": holdout,
             "auc_lower_bound": auc_lo,
             "auc_gate_passed": gate_passed,
             "auc_gate_threshold": alarm_gbdt.AUC_GATE,
+            "factor_bands": factor_bands,
+            "measurement_bias": measurement_bias,
         }
     )
 
@@ -742,8 +774,8 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     }
 
     # "판정 가능 여부"(조치 불가/추가 판정)는 알람 목록과 동일한 FDR-유의
-    # 인자 전체 집합으로 판단한다 -- get_alarm_summary가 쓰는 것과 같은
-    # 개념(_alarm_factors). 타깃마다 1위 인자 하나만 쓰면(select_primary_factor)
+    # 인자 전체 집합으로 판단한다 -- get_alarms_predictions가 쓰는 것과
+    # 같은 개념(_alarm_factors). 타깃마다 1위 인자 하나만 쓰면(select_primary_factor)
     # 여러 타깃이 같은 인자를 1위로 뽑는 데이터셋(예:
     # mentorship_dataset_final은 5개 타깃 모두 Step20_D1이 1위)에서 사실상
     # 서로 다른 컬럼 1개만 보는 셈이 되어, 그 인자 하나의 계측률만으로

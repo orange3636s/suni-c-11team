@@ -4,8 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { getLatestState } from "@/lib/api";
 import type {
   AlarmGrade,
-  AlarmListResponse,
-  AlarmSummaryResponse,
+  AlertsDataResponse,
   CategoricalScatterResponse,
   MeasurementExpansionResponse,
   ModelPerformanceResponse,
@@ -13,6 +12,11 @@ import type {
   ParetoRankingResponse,
   ScreeningScatterResponse,
 } from "@/types/data";
+
+// 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 설정한 적 없거나
+// 첫 접속이면 이 값이 기본이다.
+export const DEFAULT_TARGET_YIELD = 85.0;
+export const DEFAULT_SENSITIVITY = 0.5;
 
 const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
   slack: { connected: false, target: null, webhook_masked: null, verified_at: null },
@@ -69,8 +73,14 @@ export type AlarmsState = {
   trainDataset: string;
   evalDataset: string;
   createdAt: string;
-  summary: AlarmSummaryResponse;
-  alarms: AlarmListResponse;
+  // 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 조절한 설정.
+  // 서버에도 이 두 값만 저장된다(가벼움).
+  targetYield: number;
+  sensitivity: number;
+  // wafer 수만큼 커질 수 있어(spec §A/analysis의 alarmGradeByWaferId와
+  // 동일한 원칙) 서버에는 저장하지 않는다 -- 재접속 직후에는 null이고,
+  // 페이지가 배경에서 다시 불러와 채운다.
+  data: AlertsDataResponse | null;
 } | null;
 
 type AnalysisStateValue = {
@@ -145,8 +155,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             trainDataset: state.alarms.train_dataset,
             evalDataset: state.alarms.eval_dataset,
             createdAt: state.alarms.created_at,
-            summary: state.alarms.payload.summary,
-            alarms: state.alarms.payload.alarms,
+            targetYield: state.alarms.payload.targetYield ?? DEFAULT_TARGET_YIELD,
+            sensitivity: state.alarms.payload.sensitivity ?? DEFAULT_SENSITIVITY,
+            data: null,
           });
         }
         if (state.notifications) {

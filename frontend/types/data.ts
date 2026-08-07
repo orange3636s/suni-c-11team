@@ -721,29 +721,46 @@ export type FactorBand = {
   in_recommended: FactorBandPoint;
 };
 
-export type AlarmSummaryResponse = {
+// 사전 알람 로그 전면 개편 (spec §A-3) -- 등급 없는 wafer별 원시 예측치.
+// 목표 수율/민감도를 조절할 때마다 이 배열을 다시 받아올 필요가 없다 --
+// lib/alertsClassify.ts의 classifyWafer가 여기서 즉시 5분류를 계산한다.
+export type WaferPrediction = {
+  lot_wafer_id: string;
+  lot_id: string | null;
+  measured: boolean;
+  pred_mean: number;
+  pred_lo: number;
+  pred_hi: number;
+  reason: string | null;
+};
+
+// 정밀도·재현율 실시간 추정용 학습 홀드아웃 (spec §A-4) -- train을 LOT
+// 기준 5-fold로 잘라 얻은 out-of-fold 점추정치 + 잔차 표준편차.
+export type HoldoutData = {
+  actual_y: number[];
+  pred_point: number[];
+  residual_std: number;
+};
+
+export type AlertsDataResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
   total_wafers: number;
-  measured_wafers: number;
-  // 집계 카드 3-tile (spec 알람 신뢰도 게이트 §B-4): 알람/정상/판정불가.
-  counts: { alarm: number; normal: number; unmeasured: number };
-  // 구간별 평균 수율 카드(spec §C-1)의 3구간 -- 알람/최적 구간 밖/정상.
-  // 합은 항상 measured_wafers와 같다.
-  band_counts: { alarm: number; out_of_recommended: number; in_recommended: number };
-  band_yield: {
-    alarm: number | null;
-    out_of_recommended: number | null;
-    in_recommended: number | null;
-    unmeasured: number | null;
-  };
-  measurement_bias: MeasurementBiasSummary | null;
-  factor_bands: FactorBand[];
+  sigma: number;
+  train_y_min: number;
+  train_y_max: number;
+  train_y_median: number;
+  train_y_p1: number;
+  train_y_p99: number;
+  predictions: WaferPrediction[];
+  holdout: HoldoutData | null;
   // 알람 신뢰도 게이트 -- AlarmListResponse와 같은 (train,eval) 쌍이면
   // 항상 일치한다.
   auc_lower_bound: number | null;
   auc_gate_passed: boolean;
   auc_gate_threshold: number;
+  factor_bands: FactorBand[];
+  measurement_bias: MeasurementBiasSummary | null;
 };
 
 // 인자별 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- 전체 wafer 집계가
@@ -861,9 +878,15 @@ export type LatestAnalysisRecord = {
   payload: LatestAnalysisPayload;
 };
 
+// wafer 수만큼 커지는 predictions/holdout는 서버에 저장하지 않는다 (spec
+// 학습·분석 결과 상태 유지와 같은 원칙 -- AnalysisState의
+// alarmGradeByWaferId/scatterByKey와 동일하게, 재접속 시 가벼운 설정값만
+// 복원하고 무거운 데이터는 배경에서 다시 불러온다). 목표 수율·민감도만
+// 저장해 두면 재접속 시 사용자가 마지막으로 보던 설정 그대로 다시
+// 조회할 수 있다.
 export type LatestAlarmsPayload = {
-  summary: AlarmSummaryResponse;
-  alarms: AlarmListResponse;
+  targetYield: number;
+  sensitivity: number;
 };
 
 export type LatestAlarmsRecord = {

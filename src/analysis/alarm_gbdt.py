@@ -33,15 +33,21 @@ FINAL_YIELD_COLUMN = "Y"
 N_BOOTSTRAP = 30
 GBDT_MAX_ITER = 200
 
-# §A-2: 등급 임계는 Y 분위수. §A-4/§E: AUC 평가용 "불량" 라벨도 같은
-# 5% 분위수를 재사용한다 (spec §0 배경 표의 "하위 5% = 52장"과 동일 정의).
-# "개선 권고" 등급(하위 20% 분위, pred_mean 기준)은 정밀도가 무작위 수준과
-# 다르지 않아 삭제됐다 (spec 알람 신뢰도 게이트 §B-1: train→problem
-# 정밀도 5% = 무작위 기준). 심각/위험/주의만 남는다.
-GRADE_QUANTILES = {"심각": 0.05, "위험": 0.10, "주의": 0.15}
+# 사전 알람 로그 전면 개편 (spec §B-1) -- 등급 임계는 더 이상 Y 분위수가
+# 아니라 "목표 수율 ± 민감도로 조절한 σ 배수" 기준이다 (classify_wafer).
+# AUC 평가용 "불량" 라벨은 여전히 Y 하위 5% 분위수를 쓴다 (spec §0 배경
+# 표의 "하위 5% = 52장"과 동일 정의 -- 이건 신뢰도 게이트 전용이라
+# 사용자가 조절하는 목표 수율과 별개다).
 BAD_LABEL_QUANTILE = 0.05
 
 ALARM_SHARE_WARNING_THRESHOLD = 0.10  # spec §A-2: 평가 대상의 10% 초과 시 경고
+
+# 사용자가 아직 목표 수율/민감도를 설정하지 않은 화면(예: 원인 분석 탭의
+# 알람 삼각형 마커, 알림 발송 스케줄러)이 쓰는 기본값 -- 사전 알람 로그
+# 화면 자체의 기본값과 동일하다 (spec §A-1/§A-2: 목표 85.0, 민감도 균형
+# 0.5).
+DEFAULT_TARGET_YIELD = 85.0
+DEFAULT_SENSITIVITY = 0.5
 
 # 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- 교차 데이터셋 홀드아웃
 # AUC 하한이 이 값 미만이면 알람을 아예 내지 않는다. 통계적으로 도출된
@@ -124,52 +130,76 @@ def fit_bootstrap_ensemble(
     )
 
 
-@dataclass
-class GradeThresholds:
-    severe: float  # 심각: Y 하위 5% 분위수
-    danger: float  # 위험: Y 하위 10% 분위수
-    caution: float  # 주의: Y 하위 15% 분위수
-
-
-def compute_grade_thresholds(train_df: pd.DataFrame, target_col: str = FINAL_YIELD_COLUMN) -> GradeThresholds:
-    y = pd.to_numeric(train_df[target_col], errors="coerce").dropna()
-    return GradeThresholds(
-        severe=float(y.quantile(GRADE_QUANTILES["심각"])),
-        danger=float(y.quantile(GRADE_QUANTILES["위험"])),
-        caution=float(y.quantile(GRADE_QUANTILES["주의"])),
-    )
-
-
-def grade_of(pred_hi: float, thresholds: GradeThresholds) -> str | None:
-    """§A-2: 알람은 pred_hi(상한) 기준. "개선 권고"(pred_mean 기준) 등급은
-    삭제됐다 (spec 알람 신뢰도 게이트 §B-1: 정밀도가 무작위 수준).
+def classify_offset(sensitivity: float) -> float:
+    """사전 알람 로그 전면 개편 (spec §A-3/§B-1) -- 민감도 s(0~1)를 σ
+    배수 오프셋으로 매핑한다. s=0(오경보 최소)일수록 보수적(+0.6σ),
+    s=1(미탐 최소)일수록 민감(-0.2σ)해진다. 이 하나의 함수를 서버(알림
+    발송 기본값)와 클라이언트(실시간 재계산)가 동일하게 구현해야 두 쪽의
+    판정이 어긋나지 않는다.
     """
-    if pred_hi <= thresholds.severe:
-        return "심각"
-    if pred_hi <= thresholds.danger:
-        return "위험"
-    if pred_hi <= thresholds.caution:
-        return "주의"
+    return 0.6 - sensitivity * 0.8
+
+
+def classify_wafer(
+    pred_hi: float,
+    pred_lo: float,
+    *,
+    target: float,
+    sensitivity: float,
+    sigma: float,
+    gate_passed: bool = True,
+) -> str | None:
+    """사전 알람 로그 전면 개편 (spec §B-1) -- 목표 수율 기준 5분류.
+    심각/위험/주의는 신뢰도 게이트를 통과했을 때만 나온다(게이트 미달이면
+    정상/판별불가만 계산, spec §B-4: "정상·판별불가는 그대로 계산해
+    표시한다"). 다섯 분류는 서로 겹치지 않는다 -- 심각 -> 위험 -> 주의 ->
+    정상 순으로 먼저 맞는 조건 하나만 반환하고, 전부 해당 없으면
+    None(판별불가: 구간이 목표를 가로지름)이다.
+    """
+    off = classify_offset(sensitivity)
+    if gate_passed:
+        if pred_hi <= target - (off + 0.4) * sigma:
+            return "심각"
+        if pred_hi <= target - (off + 0.2) * sigma:
+            return "위험"
+        if pred_hi <= target - off * sigma:
+            return "주의"
+    if pred_lo >= target:
+        return "정상"
     return None
 
 
 @dataclass
-class WaferAlarmScore:
+class WaferClassification:
     lot_wafer_id: str
     lot_id: str | None
-    grade: str  # "심각" | "위험" | "주의"
-    risk_percentile: float  # 0-100, 낮을수록 위험 (하위 X%)
+    grade: str | None  # "심각" | "위험" | "주의" | "정상" | None(판별불가)
+    pred_mean: float
+    pred_lo: float
+    pred_hi: float
+    risk_percentile: float  # 0-100, 낮을수록 위험 (pred_mean 기준 순위)
+    measured: bool  # False면 grade는 항상 None (판별불가·미계측)
 
 
-def score_alarms(
+def score_wafers(
     eval_df: pd.DataFrame,
     prediction: BootstrapPrediction,
-    thresholds: GradeThresholds,
     *,
-    id_column: str = "Lot_Wafer_ID",
+    target: float,
+    sensitivity: float,
+    sigma: float,
+    gate_passed: bool = True,
+    measured_ids: set[str] | None = None,
     lot_column: str = "Lot_ID",
-) -> list[WaferAlarmScore]:
-    """전체 wafer 중 등급이 매겨진 것만 반환한다 (개수 고정 없음, spec §A-2)."""
+) -> list[WaferClassification]:
+    """전체 eval wafer의 5분류 결과 (spec §B-1: "합이 평가 wafer 수와
+    정확히 일치해야 한다" -- 개수를 거르지 않고 전부 반환한다. 알람만
+    걸러 쓰려는 호출자는 결과에서 grade가 "심각"/"위험"/"주의"인 것만
+    추리면 된다). `measured_ids`가 주어지면 그 밖의 wafer는
+    measured=False로 표시되고 grade는 항상 None이다 -- 선정 인자가
+    계측되지 않은 예측은 신뢰할 수 없어 등급을 매기지 않는다 (기존
+    unmeasured_id_set 제외 로직과 동일한 기준, spec §B-2 "미계측").
+    """
     n = len(prediction.pred_mean)
     order = np.argsort(prediction.pred_mean)  # 오름차순: 가장 낮은 예측이 0번째
     rank = np.empty(n, dtype=float)
@@ -182,17 +212,28 @@ def score_alarms(
         else [None] * n
     )
 
-    results: list[WaferAlarmScore] = []
+    results: list[WaferClassification] = []
     for i in range(n):
-        grade = grade_of(float(prediction.pred_hi[i]), thresholds)
-        if grade is None:
-            continue
+        wafer_id = prediction.lot_wafer_id[i]
+        measured = measured_ids is None or wafer_id in measured_ids
+        grade = (
+            classify_wafer(
+                float(prediction.pred_hi[i]), float(prediction.pred_lo[i]),
+                target=target, sensitivity=sensitivity, sigma=sigma, gate_passed=gate_passed,
+            )
+            if measured
+            else None
+        )
         results.append(
-            WaferAlarmScore(
-                lot_wafer_id=prediction.lot_wafer_id[i],
+            WaferClassification(
+                lot_wafer_id=wafer_id,
                 lot_id=lot_ids[i],
                 grade=grade,
+                pred_mean=float(prediction.pred_mean[i]),
+                pred_lo=float(prediction.pred_lo[i]),
+                pred_hi=float(prediction.pred_hi[i]),
                 risk_percentile=float(percentile[i]),
+                measured=measured,
             )
         )
     return results
@@ -305,3 +346,62 @@ def cross_validate_transfer_auc(
         delayed(_fold_auc)(fold, tr_idx) for fold, (tr_idx, _ev_idx) in fold_args
     )
     return results if results else None
+
+
+@dataclass
+class HoldoutPredictions:
+    actual_y: np.ndarray
+    pred_point: np.ndarray
+    residual_std: float
+
+
+def compute_holdout_predictions(
+    train_df: pd.DataFrame,
+    features: list[str],
+    *,
+    target_col: str = FINAL_YIELD_COLUMN,
+    group_col: str = "Lot_ID",
+    n_splits: int = 5,
+) -> HoldoutPredictions | None:
+    """사전 알람 로그 전면 개편 (spec §A-4) -- "정밀도·재현율은 학습 데이터
+    홀드아웃 기준 추정치"의 근거 데이터. 평가 데이터(eval)의 실제 Y는
+    모르므로 정밀도/재현율을 잴 수 없다 -- 대신 train을 LOT 기준
+    GroupKFold로 잘라 매 wafer가 자신이 속하지 않은 fold의 모델로만
+    예측되게 한(out-of-fold) 점추정치를 모은다. 전체 잔차의 표준편차
+    (`residual_std`)로 90% 구간(±1.645σ)을 근사해 pred_lo/pred_hi를 만들 수
+    있게 한다 -- 실제 알람 판정에 쓰는 30회 부트스트랩 앙상블만큼
+    정교하지는 않지만("추정치"라 명시하는 이유), fold마다 앙상블을 다시
+    도는 것보다 5배 이상 가볍다.
+
+    Lot당 표본이 `n_splits`보다 적으면 None (표본 부족 -- 호출자가 안내로
+    처리한다).
+    """
+    valid = train_df[pd.to_numeric(train_df[target_col], errors="coerce").notna()]
+    if group_col not in valid.columns or valid[group_col].nunique() < n_splits:
+        return None
+
+    y = pd.to_numeric(valid[target_col], errors="coerce")
+    x = prepare_feature_matrix(valid, features)
+    groups = valid[group_col]
+
+    gkf = GroupKFold(n_splits=n_splits)
+    fold_args = list(enumerate(gkf.split(valid, groups=groups)))
+
+    def _fold_predict(fold: int, tr_idx: np.ndarray, ev_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        model = HistGradientBoostingRegressor(max_iter=GBDT_MAX_ITER, random_state=fold)
+        model.fit(x.iloc[tr_idx], y.iloc[tr_idx])
+        return ev_idx, model.predict(x.iloc[ev_idx])
+
+    results: list[tuple[np.ndarray, np.ndarray]] = Parallel(n_jobs=-1, prefer="processes")(
+        delayed(_fold_predict)(fold, tr_idx, ev_idx) for fold, (tr_idx, ev_idx) in fold_args
+    )
+    oof_pred = np.full(len(valid), np.nan)
+    for ev_idx, pred in results:
+        oof_pred[ev_idx] = pred
+
+    y_arr = y.to_numpy()
+    covered = ~np.isnan(oof_pred)
+    if not covered.any():
+        return None
+    residual_std = float(np.std(y_arr[covered] - oof_pred[covered]))
+    return HoldoutPredictions(actual_y=y_arr[covered], pred_point=oof_pred[covered], residual_std=residual_std)
