@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
@@ -218,6 +219,8 @@ function RootCauseContent() {
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
   const [selectedWafer, setSelectedWafer] = useState<ScatterPoint | null>(null);
   const [compareFeature, setCompareFeature] = useState<string | null>(null);
+  // Y1~Y5 비교 모달과 서로 배타적으로 열린다 (아래 openCompare/openTrellis).
+  const [trellisFactor, setTrellisFactor] = useState<{ feature: string; step: number } | null>(null);
   // 판정 기준 토글 (spec §B-6) -- 기본값은 "유의한 인자만" (§B-2 규칙 적용).
   // 타깃 선택·데이터셋 변경 시 기본값으로 되돌아간다 (아래 selectTarget과
   // datasetId 변경 이펙트에서 초기화).
@@ -478,6 +481,17 @@ function RootCauseContent() {
   /** 인자 카드 하나를 그린다 (numeric -> ScatterChart, Config -> Box Plot) --
    * 메인 그리드가 이 함수를 쓴다. `target`을 클로저의 activeTarget에 기대지
    * 않고 인자로 받는다. */
+  // Y1~Y5 비교 / 장비별 Trellis 모달은 서로 배타적으로 열린다 -- 하나를
+  // 열 때 다른 쪽을 닫아 동시에 뜨는 일이 없게 한다.
+  function openCompare(feature: string) {
+    setTrellisFactor(null);
+    setCompareFeature(feature);
+  }
+  function openTrellis(feature: string, step: number) {
+    setCompareFeature(null);
+    setTrellisFactor({ feature, step });
+  }
+
   function renderFactorCard(target: string, item: ParetoRankingItem, index: number) {
     const isConfig = item.kind === "Config";
     const key = `${target}::${item.feature}`;
@@ -490,7 +504,8 @@ function RootCauseContent() {
           activeTarget={target}
           numericData={scatterByKey[key]}
           onSelectWafer={setSelectedWafer}
-          onCompare={setCompareFeature}
+          onCompare={openCompare}
+          onTrellis={openTrellis}
           hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
           alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
           paretoItems={paretoByTarget[target]?.items ?? []}
@@ -828,6 +843,15 @@ function RootCauseContent() {
           onSelectTarget={(target) => selectTarget(target)}
         />
       )}
+      {trellisFactor && (
+        <CompareAcrossConfigsModal
+          feature={trellisFactor.feature}
+          step={trellisFactor.step}
+          target={activeTarget}
+          datasetId={datasetId}
+          onClose={() => setTrellisFactor(null)}
+        />
+      )}
     </DashboardShell>
   );
 }
@@ -1036,6 +1060,7 @@ function NumericFactorCard({
   numericData,
   onSelectWafer,
   onCompare,
+  onTrellis,
   hasConfig,
   alarmGradeByWaferId,
   paretoItems,
@@ -1048,6 +1073,7 @@ function NumericFactorCard({
   numericData: ScreeningScatterResponse | undefined;
   onSelectWafer: (point: ScatterPoint) => void;
   onCompare: (feature: string) => void;
+  onTrellis: (feature: string, step: number) => void;
   hasConfig: boolean;
   alarmGradeByWaferId?: Record<string, AlarmGrade>;
   // Pareto 보기(spec "Pareto를 산점도 카드로 병합")용 데이터 -- 카드마다
@@ -1084,14 +1110,24 @@ function NumericFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
-            <button
-              type="button"
-              className="compareTriggerButton"
-              title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
-              onClick={() => onCompare(item.feature)}
-            >
-              ⊞ Y1~Y5 비교
-            </button>
+            <div className="factorCompareGroup" role="group" aria-label="비교 보기">
+              <button
+                type="button"
+                className="compareTriggerButton"
+                title="이 인자가 다른 불량 유형에도 영향을 주는지 확인"
+                onClick={() => onCompare(item.feature)}
+              >
+                ⊞ Y1~Y5 비교
+              </button>
+              <button
+                type="button"
+                className="compareTriggerButton"
+                title="이 인자의 효과가 장비에 따라 달라지는지 확인"
+                onClick={() => onTrellis(item.feature, item.step)}
+              >
+                ⊞ 장비별 Trellis
+              </button>
+            </div>
             <ColorBySelect value={colorMode} onChange={setColorMode} hasConfig={hasConfig} />
           </div>
           <div className="factorChartToggleStack">

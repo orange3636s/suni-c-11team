@@ -9097,6 +9097,16 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareTriggerButton:active{ background: #004C85; }
 .compareTriggerButton:focus-visible{ outline: 3px solid rgba(255,255,255,0.55); outline-offset: 2px; }
 
+/* "Y1~Y5 비교"/"장비별 Trellis" 버튼 묶음 -- 두 .compareTriggerButton을
+   나란히 두는 순수 래퍼. 좁은 화면에서는 줄바꿈만 허용한다 (모달 자체는
+   가로 스크롤을 쓰지만, 헤더의 버튼 두 개는 세로 스택이어도 무방하다). */
+.factorCompareGroup{ display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* 장비별 Trellis 패널 중 표본(n<30) 부족 그룹 -- 근거 없는 참조선을 감추는
+   대신, 패널 자체를 흐리게 표시해 "데이터는 있으나 판정은 유보"임을
+   드러낸다 (지시서 "n 부족 처리"). */
+.compareMiniChart.insufficientN{ opacity: 0.55; }
+
 /* ===================================================================
    Table sits inside the card's own padding (spec 재지시: 다른 카드와
    여백 통일 -- full-bleed 지시를 철회) + outer border restored (spec
