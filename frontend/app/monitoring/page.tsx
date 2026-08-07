@@ -48,7 +48,7 @@ function buildActionTriage(
     if (!direction) continue;
     experiment.push({
       key: `exp-${f.target}-${f.feature}`,
-      text: `${f.feature} ${direction} 스플릿랏 (단정 아님)`,
+      text: `${f.feature} ${direction} SPLIT LOT (단정 아님)`,
       href: `/root-cause?target=${encodeURIComponent(f.target)}&feature=${encodeURIComponent(f.feature)}`,
       buttonLabel: "상세",
     });
@@ -171,7 +171,15 @@ export default function MonitoringPage() {
       <div className="rcPage">
         <div className="pageHeading">
           <h1>모니터링</h1>
-          <p>가장 최근 원인 분석 결과를 한눈에 봅니다. 이 화면 자체는 아무것도 실행하지 않습니다.</p>
+          <p>가장 최근 원인 분석 결과를 한눈에 봅니다.</p>
+          {/* 지시서 V: SUMMARY 카드 안에 있던 실행 시각을 페이지 상단으로
+              옮겼다 -- 이력이 없으면(snapshot.createdAt이 없으면) 표시하지
+              않는다. */}
+          {snapshot?.createdAt && (
+            <p className="sectionCaption">
+              <LastRunNote createdAt={snapshot.createdAt} /> · {snapshot.dataset}
+            </p>
+          )}
         </div>
 
         {loading ? (
@@ -243,9 +251,6 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
           <YieldGapBar predLo={queue.yieldSummary.predLo} predHi={queue.yieldSummary.predHi} target={targetYield} />
         </div>
       )}
-      <p className="sectionCaption">
-        <LastRunNote createdAt={snapshot.createdAt} /> · {snapshot.dataset}
-      </p>
 
       <h3 className="monitoringSubheading">유의 인자</h3>
       <div className="tableWrap">
@@ -267,13 +272,13 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
         </table>
       </div>
 
-      <h3 className="monitoringSubheading">지금 할 수 있는 것</h3>
+      <h3 className="monitoringSubheading">실행 과제</h3>
       <ActionList items={triage.doNow} empty="계측 확대가 시급한 랏이 없습니다." />
 
-      <h3 className="monitoringSubheading">실험으로 확인할 것</h3>
+      <h3 className="monitoringSubheading">실험 확인 대상</h3>
       <ActionList items={triage.experiment} empty="실험 후보로 제안할 인자가 없습니다." />
 
-      <h3 className="monitoringSubheading">확인이 필요한 것</h3>
+      <h3 className="monitoringSubheading">확인 필요 대상</h3>
       <ActionList items={triage.needsCheck} empty="확인이 필요한 데이터 이상이 없습니다." />
     </section>
   );
@@ -303,10 +308,11 @@ function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
   );
 }
 
-// 지시서 K-4: 세 레일(지금 할 수 있는 것/실험으로 확인할 것/확인이
-// 필요한 것)의 실행·상세·보기 버튼 크기를 하나로 통일한다 -- 새 버튼
-// 스타일을 만들지 않고 다른 화면과 공유하는 `.button.sm`을 쓴다.
-// "실행"만 강조색(.primary)이고 크기는 동일하다.
+// 지시서 K-4/P-2: 세 레일(실행 과제/실험 확인 대상/확인 필요 대상)의
+// 실행·상세·보기 버튼 크기를 하나로 통일한다 -- 새 버튼 스타일을 만들지
+// 않고 다른 화면과 공유하는 `.button.sm`을 쓴다. 셋 다 흰 배경(secondary)
+// 이다 -- "실행"에도 강조색(.primary)을 쓰지 않는다(지시서 P-2: 세 레일
+// 버튼이 같은 모양이어야 한다).
 function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
   if (items.length === 0) return <p className="emptyMessage">{empty}</p>;
   return (
@@ -314,7 +320,7 @@ function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
       {items.map((item) => (
         <li key={item.key}>
           <span>{item.text}</span>
-          <Link href={item.href} className={`button sm ${item.buttonLabel === "실행" ? "primary" : "secondary"}`}>
+          <Link href={item.href} className="button sm secondary">
             {item.buttonLabel}
           </Link>
         </li>

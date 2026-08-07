@@ -24,8 +24,8 @@ import {
   summarizeClasses,
   targetYieldMismatch,
 } from "@/lib/alertsClassify";
-import { getAlertsData, getReliability, saveAlarmsState } from "@/lib/api";
-import type { ReliabilityResponse } from "@/types/data";
+import { getAlertsData, getDatasets, getReliability, saveAlarmsState } from "@/lib/api";
+import type { DatasetSummary, ReliabilityResponse } from "@/types/data";
 
 const RELIABILITY_GRADE_CLASS: Record<string, string> = { 높음: "high", 보통: "medium", 낮음: "low" };
 
@@ -164,8 +164,42 @@ export default function AlertsPage() {
 function AlertsContent() {
   const searchParams = useSearchParams();
   const { analysisDataset, requestChat } = usePanelState();
-  const { alarms: alarmsState, setAlarms: setAlarmsState, hydrated } = useAnalysisState();
-  const [trainDataset, setTrainDataset] = useState("train");
+  const { alarms: alarmsState, setAlarms: setAlarmsState, training, hydrated } = useAnalysisState();
+
+  // 지시서 O-1: train 셀렉터를 없애고 최근 학습 모델의 데이터셋을 자동으로
+  // 따른다 -- 모델 학습 팝업이 저장한 source_filename을 데이터셋 목록의
+  // original_filename과 매칭한다. 매칭되는 게 없으면(학습에 쓴 파일이
+  // 데이터셋으로 등록되지 않았거나 아직 학습 기록이 없으면) 기존
+  // 기본값(train)으로 폴백한다.
+  const [datasetList, setDatasetList] = useState<DatasetSummary[]>([]);
+  const [datasetsLoaded, setDatasetsLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getDatasets()
+      .then((response) => {
+        if (!cancelled) setDatasetList(response.items);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setDatasetsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const trainDataset = useMemo(() => {
+    const sourceFilename = training?.performance.source_filename;
+    if (sourceFilename) {
+      const match = datasetList.find((item) => item.original_filename === sourceFilename);
+      if (match) return match.dataset_id;
+    }
+    return "train";
+  }, [training, datasetList]);
+  const trainDatasetLabel =
+    datasetList.find((item) => item.dataset_id === trainDataset)?.original_filename
+    ?? training?.performance.source_filename
+    ?? "train.CSV";
+
   const [evalDataset, setEvalDataset] = useState("test");
   const [targetYield, setTargetYield] = useState(DEFAULT_TARGET_YIELD);
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY);
@@ -180,22 +214,21 @@ function AlertsContent() {
     alarmsState && (alarmsState.trainDataset !== trainDataset || alarmsState.evalDataset !== evalDataset),
   );
 
-  // train/eval을 인자로도 받는다 -- 재접속 직후 복원된 데이터셋으로 바로
-  // 조회할 때, 방금 호출한 setTrainDataset/setEvalDataset은 같은 틱 안의
-  // 클로저에 아직 반영되지 않으므로 state를 읽는 대신 명시적으로 넘긴다.
+  // eval을 인자로도 받는다 -- 재접속 직후 복원된 데이터셋으로 바로 조회할
+  // 때, 방금 호출한 setEvalDataset은 같은 틱 안의 클로저에 아직 반영되지
+  // 않으므로 state를 읽는 대신 명시적으로 넘긴다.
   const load = useCallback(
-    async (overrideTrain?: string, overrideEval?: string) => {
-      const train = overrideTrain ?? trainDataset;
+    async (overrideEval?: string) => {
       const evalDs = overrideEval ?? evalDataset;
       setLoading(true);
       setError("");
       try {
         const [dataResponse, reliabilityResponse] = await Promise.all([
-          getAlertsData(train, evalDs),
-          getReliability(train, evalDs).catch(() => null),
+          getAlertsData(trainDataset, evalDs),
+          getReliability(trainDataset, evalDs).catch(() => null),
         ]);
         setAlarmsState((previous) => ({
-          trainDataset: train,
+          trainDataset,
           evalDataset: evalDs,
           createdAt: new Date().toISOString(),
           targetYield: previous?.targetYield ?? targetYield,
@@ -216,26 +249,26 @@ function AlertsContent() {
   // 재접속/새로고침 + 첫 방문을 한 이펙트가 함께 처리한다 -- predictions/
   // holdout은 wafer 수만큼 커질 수 있어 서버에 저장하지 않으므로(spec:
   // alarmGradeByWaferId와 같은 원칙), 복원된 설정(있다면)을 반영한 뒤 항상
-  // 새로 불러온다.
+  // 새로 불러온다. trainDataset은 datasetsLoaded가 끝나야 정확히
+  // 해석되므로 그것도 함께 기다린다.
   const initializedFromHydration = useRef(false);
   useEffect(() => {
-    if (!hydrated || initializedFromHydration.current) return;
+    if (!hydrated || !datasetsLoaded || initializedFromHydration.current) return;
     initializedFromHydration.current = true;
     const timer = window.setTimeout(() => {
       if (alarmsState) {
-        setTrainDataset(alarmsState.trainDataset);
         setEvalDataset(alarmsState.evalDataset);
         setTargetYield(alarmsState.targetYield);
         setSensitivity(alarmsState.sensitivity);
         setActivePreset(null);
-        void load(alarmsState.trainDataset, alarmsState.evalDataset);
+        void load(alarmsState.evalDataset);
       } else {
         void load();
       }
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated]);
+  }, [hydrated, datasetsLoaded]);
 
   // 목표 수율·민감도는 가볍게 서버에 저장해 둔다 (spec: 재접속 시 마지막
   // 설정을 복원) -- 슬라이더를 계속 움직이는 동안 매번 POST하지 않도록
@@ -347,36 +380,32 @@ function AlertsContent() {
       </section>
 
       <section className="uploadCard">
-        <div className="rcControlBar alarmControlBar">
-          <DatasetSelector label="정상범위 산출 (train)" value={trainDataset} onChange={setTrainDataset} />
+        <div className="alertsQueryRow">
           <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
-          <button type="button" className="button primary" disabled={loading} onClick={() => void load()} style={{ alignSelf: "end" }}>
+          <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
+          <SensitivityField value={sensitivity} activePreset={activePreset} onApplyPreset={applyPreset} onChange={handleSensitivityChange} />
+          <button type="button" className="button primary alertsQueryButton" disabled={loading} onClick={() => void load()}>
             {loading ? "조회 중…" : data ? "다시 조회" : "조회"}
           </button>
         </div>
+        <p className="sectionCaption">정상범위 기준: {trainDatasetLabel}</p>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
         {error && <p className="errorMessage">{error}</p>}
+        {data && mismatchWarning && (
+          <div className="alertsMismatchWarning">
+            <strong>⚠ 목표 수율 {targetYield.toFixed(1)}%가 이 데이터셋의 분포와 맞지 않습니다.</strong>
+            <p>
+              현재 데이터 수율은 {data.train_y_min.toFixed(1)} ~ {data.train_y_max.toFixed(1)}% 범위이며 중앙값은 {data.train_y_median.toFixed(1)}%입니다.
+              <br />
+              전체 wafer의 {nonNormalPct.toFixed(1)}%가 미달로 분류됩니다.
+            </p>
+            <button type="button" className="button secondary" onClick={() => handleTargetYieldChange(Number(data.train_y_median.toFixed(1)))}>
+              중앙값으로 설정 ({data.train_y_median.toFixed(1)}%)
+            </button>
+          </div>
+        )}
+        {!data && !loading && <p className="emptyMessage">원인 분석을 실행하면 조회할 수 있습니다</p>}
       </section>
-
-      {data ? (
-        <SettingsBar
-          targetYield={targetYield}
-          onTargetYieldChange={handleTargetYieldChange}
-          sensitivity={sensitivity}
-          onSensitivityChange={handleSensitivityChange}
-          activePreset={activePreset}
-          onApplyPreset={applyPreset}
-          mismatchWarning={mismatchWarning}
-          nonNormalPct={nonNormalPct}
-          trainYMin={data.train_y_min}
-          trainYMax={data.train_y_max}
-          trainYMedian={data.train_y_median}
-        />
-      ) : (
-        <section className="uploadCard alertsSettingsSkeleton">
-          <p className="emptyMessage">{loading ? "불러오는 중…" : "원인 분석을 실행하면 조회할 수 있습니다"}</p>
-        </section>
-      )}
 
       {data && (
         <FiveClassGrid
@@ -391,7 +420,7 @@ function AlertsContent() {
         <div className="sectionHeading compact">
           <div>
             <span className="sectionLabel">ALARMS</span>
-            <h2>알람 목록 ({gradeFilteredAlarmItems.length}건)</h2>
+            <h2>알림 이력 ({gradeFilteredAlarmItems.length}건)</h2>
           </div>
           <div className="alertsAlarmListActions">
             {data?.auc_gate_passed && gradeFilteredAlarmItems.length > 0 && (
@@ -423,7 +452,7 @@ function AlertsContent() {
             sort={alarmTable.sort}
             onSortChange={alarmTable.setSort}
             sortOptions={ALARM_SORT_OPTIONS}
-            placeholder="Wafer ID · 사유 검색"
+            placeholder="LOT_WF_ID · 사유 검색"
           />
         )}
         {loading && <p className="emptyMessage">불러오는 중…</p>}
@@ -466,7 +495,7 @@ function AlertsContent() {
                     <table>
                       <thead>
                         <tr>
-                          <th className="col-wafer colNoTruncate">Wafer</th>
+                          <th className="col-wafer colNoTruncate">LOT_WF_ID</th>
                           <th>예측 수율 구간</th>
                           <th className="col-severity colNoTruncate">등급</th>
                           <th>사유</th>
@@ -501,7 +530,7 @@ function AlertsContent() {
               </>
             )}
             <p className="tableDisclaimer">
-              예측 수율 절대값은 정확도가 낮아 구간으로 표시합니다. 불량의 원인으로 확정된 것은 아니며, 우선 확인 대상을 좁히는 용도입니다.
+              예측 수율 절대값은 정확도가 낮아 구간으로 표시합니다. 원인이 확정된 것은 아니며 우선 확인 대상을 좁히는 용도입니다.
             </p>
           </>
         )}
@@ -611,110 +640,83 @@ function ExplainButton({ onClick, disabled }: { onClick: () => void; disabled?: 
 }
 
 /* ===================================================================
-   §A 설정 바 -- 목표 수율 · 민감도. 조절할 때마다 즉시(디바운스는 큰
-   데이터셋에서만) 재계산되고, API를 다시 부르지 않는다.
+   지시서 O-2: 목표 수율 · 민감도를 판정 대상(eval)·조회 버튼과 같은 카드로
+   통합했다 -- 조절할 때마다 즉시(디바운스는 큰 데이터셋에서만)
+   재계산되고, API를 다시 부르지 않는다.
    =================================================================== */
 
-function SettingsBar({
-  targetYield,
-  onTargetYieldChange,
-  sensitivity,
-  onSensitivityChange,
+function TargetYieldField({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  return (
+    <div className="alertsSettingField alertsTargetField">
+      <span className="alertsSettingLabel">목표 수율</span>
+      <div className="alertsTargetInputRow">
+        <input
+          key={value}
+          type="number" step="0.1" min={0} max={100}
+          defaultValue={value.toFixed(1)}
+          onBlur={(event) => onChange(Number(event.target.value))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onChange(Number((event.target as HTMLInputElement).value));
+          }}
+        />
+        <span>%</span>
+      </div>
+      <span className="alertsSettingHint">이 값 미만을 미달로 봅니다</span>
+    </div>
+  );
+}
+
+function SensitivityField({
+  value,
   activePreset,
   onApplyPreset,
-  mismatchWarning,
-  nonNormalPct,
-  trainYMin,
-  trainYMax,
-  trainYMedian,
+  onChange,
 }: {
-  targetYield: number;
-  onTargetYieldChange: (value: number) => void;
-  sensitivity: number;
-  onSensitivityChange: (value: number) => void;
+  value: number;
   activePreset: PresetKey | null;
   onApplyPreset: (preset: (typeof SENSITIVITY_PRESETS)[number]) => void;
-  mismatchWarning: boolean;
-  nonNormalPct: number;
-  trainYMin: number;
-  trainYMax: number;
-  trainYMedian: number;
+  onChange: (value: number) => void;
 }) {
   return (
-    <section className="resultCard alertsSettingsBar">
-      <div className="alertsSettingsRow">
-        <div className="alertsSettingField alertsTargetField">
-          <span className="alertsSettingLabel">목표 수율</span>
-          <div className="alertsTargetInputRow">
-            <input
-              key={targetYield}
-              type="number" step="0.1" min={0} max={100}
-              defaultValue={targetYield.toFixed(1)}
-              onBlur={(event) => onTargetYieldChange(Number(event.target.value))}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") onTargetYieldChange(Number((event.target as HTMLInputElement).value));
-              }}
-            />
-            <span>%</span>
-          </div>
-          <span className="alertsSettingHint">이 값 미만을 미달로 봅니다</span>
-        </div>
-
-        <div className="alertsSettingField alertsSensitivityField">
-          <span className="alertsSettingLabel">민감도</span>
-          <div className="alertsPresetRow">
-            {SENSITIVITY_PRESETS.map((preset) => (
-              <button
-                key={preset.key}
-                type="button"
-                className={`alertsPresetButton ${activePreset === preset.key ? "active" : ""}`}
-                onClick={() => onApplyPreset(preset)}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <div className="alertsGaugeRow">
-            <div className="alertsGaugeWrap">
-              <div className="alertsGaugeHints"><span>오경보 ↓</span><span>미탐 ↓</span></div>
-              <input
-                type="range" min={0} max={1} step={0.01}
-                value={sensitivity}
-                onChange={(event) => onSensitivityChange(Number(event.target.value))}
-                className="alertsGaugeSlider"
-                aria-label="민감도 직접 조절"
-              />
-              <div className="alertsGaugeEnds"><span>0</span><span>1</span></div>
-            </div>
-            <input
-              key={sensitivity}
-              type="number" min={0} max={1} step={0.01}
-              defaultValue={sensitivity.toFixed(2)}
-              onBlur={(event) => onSensitivityChange(Number(event.target.value))}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") onSensitivityChange(Number((event.target as HTMLInputElement).value));
-              }}
-              className="alertsSensitivityNumber"
-              title="직접 입력"
-            />
-          </div>
-        </div>
-      </div>
-
-      {mismatchWarning && (
-        <div className="alertsMismatchWarning">
-          <strong>⚠ 목표 수율 {targetYield.toFixed(1)}%가 이 데이터셋의 분포와 맞지 않습니다.</strong>
-          <p>
-            현재 데이터 수율은 {trainYMin.toFixed(1)} ~ {trainYMax.toFixed(1)}% 범위이며 중앙값은 {trainYMedian.toFixed(1)}%입니다.
-            <br />
-            전체 wafer의 {nonNormalPct.toFixed(1)}%가 미달로 분류됩니다.
-          </p>
-          <button type="button" className="button secondary" onClick={() => onTargetYieldChange(Number(trainYMedian.toFixed(1)))}>
-            중앙값으로 설정 ({trainYMedian.toFixed(1)}%)
+    <div className="alertsSettingField alertsSensitivityField">
+      <span className="alertsSettingLabel">민감도</span>
+      <div className="alertsPresetRow">
+        {SENSITIVITY_PRESETS.map((preset) => (
+          <button
+            key={preset.key}
+            type="button"
+            className={`alertsPresetButton ${activePreset === preset.key ? "active" : ""}`}
+            onClick={() => onApplyPreset(preset)}
+          >
+            {preset.label}
           </button>
+        ))}
+      </div>
+      <div className="alertsGaugeRow">
+        <div className="alertsGaugeWrap">
+          <div className="alertsGaugeHints"><span>오경보 ↓</span><span>미탐 ↓</span></div>
+          <input
+            type="range" min={0} max={1} step={0.01}
+            value={value}
+            onChange={(event) => onChange(Number(event.target.value))}
+            className="alertsGaugeSlider"
+            aria-label="민감도 직접 조절"
+          />
+          <div className="alertsGaugeEnds"><span>0</span><span>1</span></div>
         </div>
-      )}
-    </section>
+        <input
+          key={value}
+          type="number" min={0} max={1} step={0.01}
+          defaultValue={value.toFixed(2)}
+          onBlur={(event) => onChange(Number(event.target.value))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onChange(Number((event.target as HTMLInputElement).value));
+          }}
+          className="alertsSensitivityNumber"
+          title="직접 입력"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -780,14 +782,11 @@ function FiveClassGrid({
               {item.avgPredMean != null && (
                 <div className="alertsClassCardYield">평균 수율 {item.avgPredMean.toFixed(1)}</div>
               )}
-              {isAlarmTier && <div className="alertsClassCardNote">알람 로그 기록</div>}
             </div>
           );
         })}
       </div>
       <p className="sectionCaption alertsClassGridFoot">
-        심각·위험·주의는 알람 로그에 기록됩니다. 알림 발송 대상은 설정에서 지정합니다.
-        <br />
         판별불가는 예측 구간이 목표 수율을 가로질러 판단을 유보한 wafer입니다.
       </p>
       {!gatePassed && (

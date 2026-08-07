@@ -33,9 +33,9 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
-      <div className="settingsPanel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="설정">
+      <div className="settingsPanel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="알림 설정">
         <div className="settingsPanelHeader">
-          <h2>설정</h2>
+          <h2>알림 설정</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
             <X size={18} />
           </button>
@@ -317,6 +317,13 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
   const [busy, setBusy] = useState<"test" | "connect" | null>(null);
   const [error, setError] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
+  // 버그 수정 (지시서 W): "인증 메일 발송됨" 안내는 서버의 영속 `pending`
+  // 상태가 아니라 이 세션에서 방금 발송했는지만 나타내는 로컬 상태다.
+  // `pending`을 폼 렌더 조건에 쓰면 메일을 못 받거나 주소를 잘못
+  // 입력했을 때 다시 시도할 방법이 없어진다 -- 패널을 닫았다 열면(이
+  // 컴포넌트가 언마운트/재마운트되며) 자동으로 초기화된다. 서버·
+  // localStorage에는 절대 저장하지 않는다.
+  const [justSent, setJustSent] = useState(false);
 
   async function handleConnect() {
     if (!email.trim()) {
@@ -327,7 +334,7 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
     setBusy("connect");
     try {
       onUpdate(await connectGmail(email.trim()));
-      setExpanded(false);
+      setJustSent(true);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "연결에 실패했습니다.");
     } finally {
@@ -359,7 +366,15 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
         {gmail.connected ? (
           <span className="notifyChannelStatus connected">연결됨</span>
         ) : gmail.pending ? (
-          <span className="notifyChannelStatus pending">대기 중</span>
+          <>
+            <span className="notifyChannelStatus pending">대기 중</span>
+            {/* 버그 수정 (지시서 W): pending일 때도 폼을 다시 열 수 있어야
+                한다 -- 메일을 못 받았거나 주소를 잘못 입력한 경우의 유일한
+                복구 경로다. */}
+            <button type="button" className="notifyConnectButton" onClick={() => setExpanded((v) => !v)}>
+              주소 변경
+            </button>
+          </>
         ) : (
           <button type="button" className="notifyConnectButton" onClick={() => setExpanded((v) => !v)}>
             연결하기
@@ -377,20 +392,31 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
           </button>
         </div>
       )}
-      {gmail.pending && !gmail.connected && (
-        <p className="notifyChannelPendingNote">{gmail.email}로 인증 메일이 발송되었습니다. 메일의 링크를 눌러야 연결이 완료됩니다.</p>
+      {justSent && !gmail.connected && (
+        <p className="notifyChannelPendingNote">{email.trim() || gmail.email}로 인증 메일이 발송되었습니다. 메일의 링크를 눌러야 연결이 완료됩니다.</p>
       )}
-      {!gmail.connected && !gmail.pending && expanded && (
+      {!gmail.connected && expanded && (
         <div className="notifyConnectForm">
           <label className="notifyFieldLabel">
             수신 이메일
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" />
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                // 주소를 고치기 시작하면 이전 발송 안내는 더 이상 유효하지
+                // 않다 -- 남겨두면 새 주소를 입력 중인데 옛 주소로 보냈다는
+                // 문구가 그대로 떠 있어 혼동을 준다.
+                setJustSent(false);
+              }}
+              placeholder="name@company.com"
+            />
           </label>
           <p className="notifyChannelNote">인증 메일이 발송됩니다. 메일의 링크를 눌러야 연결이 완료됩니다.</p>
           {error && <p className="notifyFieldError">{error}</p>}
           <TestResultNote result={testResult} />
           <button type="button" className="notifyPrimaryButton" onClick={handleConnect} disabled={busy !== null}>
-            {busy === "connect" ? "발송 중…" : "인증 메일 발송"}
+            {busy === "connect" ? "발송 중…" : justSent ? "인증 메일 다시 보내기" : "인증 메일 발송"}
           </button>
         </div>
       )}
@@ -450,11 +476,11 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
           </button>
           <button
             type="button"
-            className={`notifyTimingToggle ${conditions.timing === "daily_8am" ? "active" : ""}`}
-            onClick={() => void persist(conditions.grades, "daily_8am")}
+            className={`notifyTimingToggle ${conditions.timing === "daily_9am" ? "active" : ""}`}
+            onClick={() => void persist(conditions.grades, "daily_9am")}
             disabled={saving}
           >
-            매일 오전 8시
+            매일 오전 9시
           </button>
         </div>
       </div>

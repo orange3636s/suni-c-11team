@@ -120,10 +120,11 @@ async def lifespan(_: FastAPI):
     else:
         logger.info("TELEGRAM_BOT_TOKEN이 설정되지 않아 Telegram 알림 연동을 건너뜁니다.")
 
-    # 알람 알림 연동 §C-4 "매일 오전 8시" -- n8n 대신 APScheduler로 처리한다
-    # (spec: "서비스가 늘면 메모리와 요금이 증가한다").
+    # 알람 알림 연동 §C-4 "매일 오전 9시" (지시서 N-2: 8시 -> 9시) -- n8n
+    # 대신 APScheduler로 처리한다 (spec: "서비스가 늘면 메모리와 요금이
+    # 증가한다").
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_daily_dispatch_job, CronTrigger(hour=8, minute=0), id="daily_alarm_notification")
+    scheduler.add_job(run_daily_dispatch_job, CronTrigger(hour=9, minute=0), id="daily_alarm_notification")
     scheduler.start()
 
     try:

@@ -5,6 +5,7 @@ shape consumed by both GET /api/state/latest and the settings panel.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -102,13 +103,92 @@ def test_gmail_verify_is_single_use():
         _cleanup(path)
 
 
-def test_conditions_default_is_severe_and_danger_only():
+def test_gmail_pending_expires_after_ttl():
+    # 지시서 W: 5분이 지난 인증 대기 레코드는 조회 시점에 삭제되고
+    # 미연결 상태로 복귀해야 한다.
+    store, path = _store()
+    try:
+        stale_requested_at = (
+            datetime.now(timezone.utc) - timedelta(seconds=settings_store.PENDING_TTL_SECONDS + 1)
+        ).isoformat()
+        store.set_app_state(
+            settings_store.STATE_KEYS["gmail"],
+            {"email": "user@example.com", "verified": False, "token": "tok", "requested_at": stale_requested_at, "verified_at": None},
+        )
+        assert settings_store.get_gmail(store) is None
+        summary = settings_store.get_settings_summary(store)
+        assert summary["gmail"] == {"connected": False, "pending": False, "email": None, "verified_at": None}
+    finally:
+        _cleanup(path)
+
+
+def test_gmail_pending_within_ttl_is_not_expired():
+    store, path = _store()
+    try:
+        token = settings_store.start_gmail_verification(store, email="user@example.com")
+        # 방금 발송했으므로 만료되지 않아야 한다.
+        record = settings_store.get_gmail(store)
+        assert record is not None
+        assert record["token"] == token
+        assert settings_store.get_settings_summary(store)["gmail"]["pending"] is True
+    finally:
+        _cleanup(path)
+
+
+def test_gmail_verify_fails_after_ttl_expired():
+    store, path = _store()
+    try:
+        stale_requested_at = (
+            datetime.now(timezone.utc) - timedelta(seconds=settings_store.PENDING_TTL_SECONDS + 1)
+        ).isoformat()
+        store.set_app_state(
+            settings_store.STATE_KEYS["gmail"],
+            {"email": "user@example.com", "verified": False, "token": "tok", "requested_at": stale_requested_at, "verified_at": None},
+        )
+        # 만료된 뒤에는 정확한 토큰이어도 인증되면 안 된다.
+        assert settings_store.verify_gmail(store, token="tok") is False
+    finally:
+        _cleanup(path)
+
+
+def test_gmail_verified_record_never_expires():
+    # 연결 완료된 레코드는 requested_at이 아무리 오래돼도 만료되지 않는다
+    # -- 서버 재시작·재접속 후에도 계속 연결 상태를 유지해야 한다.
+    store, path = _store()
+    try:
+        old_requested_at = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        store.set_app_state(
+            settings_store.STATE_KEYS["gmail"],
+            {"email": "user@example.com", "verified": True, "verified_at": old_requested_at, "requested_at": old_requested_at},
+        )
+        record = settings_store.get_gmail(store)
+        assert record is not None
+        assert record["verified"] is True
+        assert settings_store.get_settings_summary(store)["gmail"]["connected"] is True
+    finally:
+        _cleanup(path)
+
+
+def test_conditions_default_is_severe_only():
     store, path = _store()
     try:
         conditions = settings_store.get_conditions(store)
-        assert set(conditions["grades"]) == {"심각", "위험"}
+        assert set(conditions["grades"]) == {"심각"}
+        assert "위험" not in conditions["grades"]
         assert "주의" not in conditions["grades"]
         assert conditions["timing"] == settings_store.TIMING_ON_ANALYSIS
+    finally:
+        _cleanup(path)
+
+
+def test_conditions_migrates_legacy_daily_8am_timing():
+    store, path = _store()
+    try:
+        # 지시서 N-2: 예전에 "daily_8am"으로 저장된 설정을 읽으면 새 값
+        # "daily_9am"으로 변환되어야 한다 -- 깨진 값으로 남으면 안 된다.
+        store.set_app_state(settings_store.STATE_KEYS["conditions"], {"grades": ["심각"], "timing": "daily_8am"})
+        conditions = settings_store.get_conditions(store)
+        assert conditions["timing"] == settings_store.TIMING_DAILY_9AM
     finally:
         _cleanup(path)
 

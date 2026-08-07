@@ -668,21 +668,20 @@ function RootCauseContent() {
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">ROOT CAUSE</span>
         <h1>원인 분석</h1>
-        {/* 3줄 고정 (spec 문구 전수 검토 PART C) -- Box Plot, SPC/ML 비교,
-            계측 확대 제안을 언급한다. 배치는 히트맵 → Pareto → 산점도 →
-            계측 확대 제안 순으로 유지한다 (spec §A-0/§A-2: 발표 흐름상
-            계측 확대 제안은 결론이므로 가장 아래). 원인 분석 탭에 새 기능이
-            추가되거나 제거되면 이 문구도 함께 갱신해야 한다. 첫 줄은
-            1280px에서 한 줄에 들어가도록 (spec §A-1) word-break: keep-all만
-            쓴다 -- white-space: nowrap과 함께 쓰지 않는다 (좁은 화면에서
-            잘림). */}
+        {/* 지시서 U-1: 기능 안내 문구(계측 확대 시 기대 효과…)는 삭제했다
+            (이전 지시서 G의 삭제 기준 -- 기능 설명이지 수치 정보가 아니다).
+            첫 줄은 1280px에서 한 줄에 들어가도록 (spec §A-1) word-break:
+            keep-all만 쓴다 -- white-space: nowrap과 함께 쓰지 않는다(좁은
+            화면에서 잘림). */}
         <p className="rootCauseIntro">
           타깃별 Pareto와 강함·보통 등급 인자의 산점도·Box Plot을 확인합니다.
           <br />
           권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
-          <br />
-          산점도·Box Plot 아래에서 계측 확대 시 기대 효과를 확인할 수 있습니다.
         </p>
+        {/* 지시서 U-2: 마지막 분석 실행 시각 -- 회색 설명 바로 아래, 이력이
+            없으면(analysis가 null) LastRunNote가 스스로 아무것도 렌더하지
+            않는다. */}
+        <LastRunNote createdAt={analysis?.createdAt} />
       </section>
 
       <section className="uploadCard">

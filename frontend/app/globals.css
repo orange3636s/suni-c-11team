@@ -7115,14 +7115,20 @@ root-cause{
   font-size: 13px;
 }
 
-/* 지시서 K-4: 액션 레일(모니터링 홈)의 실행/상세/보기 버튼 전용 -- 다른
-   화면에서도 컴팩트한 버튼이 필요하면 이 한 종류를 재사용한다. 두
-   클래스(.button.sm)라 위 .button보다 우선한다. */
+/* 지시서 K-4/P-2: 액션 레일(모니터링 홈)의 실행/상세/보기 버튼 전용 --
+   다른 화면에서도 컴팩트한 버튼이 필요하면 이 한 종류를 재사용한다. 두
+   클래스(.button.sm)라 위 .button보다 우선한다. inline-flex+center+
+   line-height:1로 글자를 정중앙에 둔다(패딩 비대칭이나 상속된
+   line-height로 세로 중앙이 어긋나지 않게). */
 .button.sm{
-  min-height: 26px;
-  min-width: 64px;
-  padding: 0 10px;
-  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  min-height: 24px;
+  min-width: 60px;
+  padding: 0 9px;
+  font-size: 11px;
 }
 
 .modelSelectorOption{
@@ -9096,6 +9102,9 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 .tableDisclaimer{
   margin: 10px 2px 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5;
   word-break: keep-all;
+  /* 지시서 O-6: 한두 글자만 셋째 줄로 넘어가는 고아 줄을 막는다 --
+     미지원 브라우저에서는 그냥 무시되고 기존 줄바꿈으로 폴백한다. */
+  text-wrap: pretty;
 }
 
 
@@ -9507,21 +9516,30 @@ html[data-theme="dark"] .explainButton:hover:not(:disabled){ background: rgba(96
 /* First column pinned while scrolling horizontally -- opaque background
    (a transparent sticky cell would let scrolled-under text show through)
    plus a right-edge shadow standing in for a border so the frozen
-   column reads as separate from the scrolling ones. */
+   column reads as separate from the scrolling ones.
+
+   지시서 T 버그 수정: 이 규칙이 th/td에 똑같이 카드 배경(흰색)을 줬던
+   것이 헤더의 첫 칸(Wafer/LOT_WF_ID)만 다른 헤더 칸(회색)과 다르게
+   보이던 원인이다 -- 헤더 칸은 다른 헤더 칸과 같은 --table-header-bg를
+   써야 하고, 본문 칸만 카드 배경을 쓴다. */
 .tableScroll.hScroll th:first-child,
 .tableScroll.hScroll td:first-child{
   position: sticky;
   left: 0;
   z-index: 1;
-  background: var(--surface-card, var(--surface));
   box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.18);
+}
+.tableScroll.hScroll td:first-child{
+  background: var(--surface-card, var(--surface));
 }
 /* Header's own first cell is sticky on *both* axes (top from the base
    .tableWrap th rule, left from above) -- it needs to out-rank the
    plain sticky header row (z-sticky-seg) and the sticky body column
-   (z-index:1 above) so the corner cell never sits under either. */
+   (z-index:1 above) so the corner cell never sits under either, and it
+   keeps the same header background as every other header cell. */
 .tableScroll.hScroll th:first-child{
   z-index: calc(var(--z-sticky-seg) + 1);
+  background: var(--table-header-bg);
 }
 html[data-theme="dark"] .tableScroll.hScroll th:first-child,
 html[data-theme="dark"] .tableScroll.hScroll td:first-child{
@@ -9555,10 +9573,15 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
   text-overflow: clip;
   white-space: nowrap;
 }
-.col-wafer{ min-width: 88px; }
+/* 지시서 S: 헤더 텍스트가 Wafer -> LOT_WF_ID로 길어져 줄바꿈되지 않도록
+   최소 폭을 넓힌다. */
+.col-wafer{ min-width: 110px; }
 /* 배지 폭에 맞춰 열이 좁아진다 (spec §C-2) -- 고정 min-width 대신
    width:1%(table-layout:auto에서 "내용만큼만") + nowrap. */
-.col-severity{ width: 1%; white-space: nowrap; }
+/* 지시서 O-4: 등급 배지와 다음 칸(사유)이 너무 붙어 보여 여유를 준다 --
+   min-width로 배지가 줄바꿈되지 않을 폭을 확보하고, 오른쪽 여백을
+   키워 다음 칸과 거리를 둔다. */
+.col-severity{ width: 1%; min-width: 76px; white-space: nowrap; padding-right: 22px; }
 
 /* 지시서 H-3: 판정 원리·인자별 불량률 카드를 없애면서 이 구간 색상
    변수/트랙/스탯 CSS 전체를 삭제했다 (사용처가 그 두 카드뿐이었음).
@@ -9570,10 +9593,11 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
    알림 이력 -- §A 설정 바 · §B 5분류 카드.
    =================================================================== */
 
-.alertsSettingsSkeleton{ display: flex; align-items: center; justify-content: center; min-height: 80px; }
-
-.alertsSettingsBar{ display: flex; flex-direction: column; gap: 14px; }
-.alertsSettingsRow{ display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+/* 지시서 O-2: 판정 대상(eval)·목표 수율·민감도·조회 버튼을 한 카드 한
+   줄에 -- 안 들어가면 감싸되(flex-wrap) 같은 카드 안에 둔다. */
+.alertsQueryRow{ display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+.alertsQueryRow > .fieldGroup{ min-width: 220px; }
+.alertsQueryButton{ align-self: end; }
 .alertsSettingField{ display: flex; flex-direction: column; gap: 6px; }
 .alertsTargetField{ min-width: 160px; }
 .alertsSettingLabel{ font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
@@ -9591,34 +9615,39 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .alertsTargetInputRow span{ font-size: 13px; color: var(--text-secondary); }
 .alertsSettingHint{ font-size: 11.5px; color: var(--text-secondary); }
 
-.alertsSensitivityField{ flex: 1 1 340px; min-width: 280px; }
+/* 지시서 R: 민감도 조절부가 카드 폭 대부분을 차지하던 걸 줄인다 --
+   flex-grow를 없애 남는 공간을 더 이상 채우지 않고, 목표 수율 블록과
+   높이가 비슷해지도록 프리셋 버튼·게이지 행의 세로 여백도 줄였다. */
+.alertsSensitivityField{ flex: 0 1 300px; max-width: 300px; min-width: 240px; }
 .alertsPresetRow{ display: flex; gap: 6px; flex-wrap: wrap; }
 .alertsPresetButton{
-  height: 30px; padding: 0 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+  min-height: 26px; padding: 0 10px; border-radius: 8px; font-size: 11.5px; font-weight: 600;
   border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
   cursor: pointer; transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 .alertsPresetButton:hover{ background: var(--surface-secondary, var(--surface-muted)); }
 .alertsPresetButton.active{ background: var(--accent); border-color: var(--accent); color: #fff; }
 
-.alertsGaugeRow{ display: flex; align-items: center; gap: 12px; margin-top: 8px; }
-.alertsGaugeWrap{ flex: 1 1 auto; min-width: 160px; }
+.alertsGaugeRow{ display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+/* 트랙 폭 고정 -- 남은 flex 공간을 채우지 않는다. */
+.alertsGaugeWrap{ flex: 0 1 auto; width: 100%; max-width: 220px; min-width: 140px; }
 .alertsGaugeHints{
   display: flex; justify-content: space-between;
-  font-size: 10.5px; color: var(--text-secondary); margin-bottom: 2px;
+  font-size: 10px; color: var(--text-secondary); margin-bottom: 1px;
 }
 .alertsGaugeSlider{
   width: 100%; margin: 0; accent-color: var(--accent);
 }
 .alertsGaugeEnds{
   display: flex; justify-content: space-between;
-  font-size: 10px; color: var(--text-secondary); margin-top: 2px;
+  font-size: 10px; color: var(--text-secondary); margin-top: 1px;
   font-variant-numeric: tabular-nums;
 }
 .alertsSensitivityNumber{
-  width: 64px; height: 34px; padding: 0 8px; border-radius: 8px;
+  flex: 0 0 auto;
+  width: 52px; height: 28px; padding: 0 6px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface);
-  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
   color: var(--text-primary); text-align: center;
 }
 
@@ -9649,7 +9678,6 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .alertsClassCardValue{ font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .alertsClassCardPct{ font-size: 11.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .alertsClassCardYield{ font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; }
-.alertsClassCardNote{ font-size: 10.5px; font-weight: 600; color: var(--class-color); margin-top: 4px; }
 .alertsClassGridFoot{ margin-top: 8px; }
 .alertsGateNote{
   margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
@@ -9657,9 +9685,16 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 }
 
 .alertsAlarmListActions{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 지시서 O-4: 등급 필터(라벨+select가 세로로 쌓이는 기본 .fieldGroup)와
+   CSV 버튼의 높이가 달라 보였다 -- 이 줄에서만 라벨을 옆으로 눕히고
+   select·button 높이를 같은 값으로 맞춘다. 새 클래스 없이 기존
+   .fieldGroup/.button을 이 컨테이너 안에서만 재정의한다. */
+.alertsAlarmListActions .fieldGroup{ flex-direction: row; align-items: center; gap: 8px; }
+.alertsAlarmListActions .fieldGroup select,
+.alertsAlarmListActions .button{ height: 34px; min-height: 34px; }
 
 @media (max-width: 640px){
-  .alertsSettingsRow{ gap: 18px; }
+  .alertsQueryRow{ gap: 18px; }
 }
 
 /* ===================================================================
@@ -9841,28 +9876,6 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 /* -- 본문 컨텐츠: ≤767px 세로 1열, 좌우 16px --------------------------- */
 @media (max-width: 767px){
   .mainContent.uploadPage{ padding-left: 16px; padding-right: 16px; }
-}
-
-/* BUG FIX: 사전 알람 로그의 train/eval 셀렉터 + 심각성 + 조회 버튼 행은
-   `.rcControlBar` 위에 인라인 `style={{gridTemplateColumns:...}}`로
-   4컬럼을 직접 지정하고 있었다 -- 인라인 스타일은 어떤 `@media` 규칙보다도
-   우선하므로, `.rcControlBar`가 이미 갖고 있던 1050px/640px 반응형
-   그리드(위 §165/176)가 전혀 적용되지 못했고, `minmax(200px,1fr)`이 두 번
-   들어간 채로 375px 화면에 그대로 고정돼 가로 스크롤을 만들었다 (spec
-   §B-4/§15의 "가로 스크롤이 생기면 안 된다"). 인라인 스타일을 제거하고
-   이 전용 클래스로 옮겨, 아래 미디어쿼리가 정상적으로 이길 수 있게 한다. */
-.alarmControlBar{ grid-template-columns: minmax(200px, 1fr) minmax(200px, 1fr) minmax(140px, .6fr) auto; }
-@media (max-width: 767px){
-  /* `display:flex` (not `grid-template-columns:1fr`) so this can't be
-     re-contested by any other still-live `.rcControlBar` grid rule --
-     and `.datasetSelector`'s own hard-coded `min-width:260px` (unrelated
-     to this container entirely) is what actually forced the 2-up layout
-     regardless of the parent's column count, so it needs its own reset
-     here too. */
-  .alarmControlBar{ display: flex; flex-direction: column; gap: 10px; }
-  .alarmControlBar > *{ width: 100%; }
-  .alarmControlBar .datasetSelector{ min-width: 0; }
-  .alarmControlBar .button{ width: 100%; }
 }
 
 /* -- 집계 카드 2x2 (사전 알람 로그, ≤767px) ------------------------------

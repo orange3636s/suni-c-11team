@@ -186,6 +186,20 @@ export default function Sidebar({ activeItem = "모니터링", collapsed = false
             <span className="themeTriggerIcon" aria-hidden="true"><Database size={18} /></span>
             <span className="themeTriggerLabel">모델 학습</span>
           </button>
+          {/* 지시서 Q: 사이드바 하단 순서 -- 모델 학습 / 알림 설정 / 화면
+              모드. */}
+          <button
+            type="button"
+            className={`themeToggle settingsTrigger ${collapsed ? "railIconButton" : ""}`}
+            aria-label="알림 설정"
+            aria-haspopup="dialog"
+            aria-expanded={settingsPanelOpen}
+            title="알림 설정"
+            onClick={() => setSettingsPanelOpen((open) => !open)}
+          >
+            <span className="themeTriggerIcon" aria-hidden="true"><Settings size={18} /></span>
+            <span className="themeTriggerLabel">알림 설정</span>
+          </button>
           <div className="themeTriggerCol" ref={themeMenuRef}>
             {/* 펼침 상태는 기존 그대로 컨테이너 내부에 렌더 (spec §D-2 대상은
                 접힘 상태뿐이라 여기는 건드리지 않는다). */}
@@ -210,18 +224,6 @@ export default function Sidebar({ activeItem = "모니터링", collapsed = false
               <ChevronDown />
             </button>
           </div>
-          <button
-            type="button"
-            className={`themeToggle settingsTrigger ${collapsed ? "railIconButton" : ""}`}
-            aria-label="설정"
-            aria-haspopup="dialog"
-            aria-expanded={settingsPanelOpen}
-            title="설정"
-            onClick={() => setSettingsPanelOpen((open) => !open)}
-          >
-            <span className="themeTriggerIcon" aria-hidden="true"><Settings size={18} /></span>
-            <span className="themeTriggerLabel">설정</span>
-          </button>
         </div>
       </div>
       {/* 접힘 상태 전용 포털 (spec §D-2) -- document.body에 그려 .sidebarSurface의

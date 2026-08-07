@@ -119,11 +119,14 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 ## 화면 구성
 
-3개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다.
+4개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다. 모델 학습은 더 이상 별도 탭이 아니라 사이드바 하단(`모델 학습 / 알림 설정 / 화면 모드` 순) 버튼으로 여는 팝업입니다 — 최근 학습 정보 3줄, SQL 호스트·포트, Refresh 주기, 파일 첨부·수동 학습 실행만 담습니다. 재학습은 기존 모델보다 성능이 나쁘면 승격되지 않는 게이트를 거칩니다.
 
-- **모델 학습**(`/training`) — 데이터셋 선택/업로드, 학습 실행(비동기 Job 폴링), 타깃별 R²/MAE/ε² 통합 테이블, 데이터 전처리 방식 비교표, 전체 상관관계 히트맵, 인자 스크리닝 Pareto 차트 및 테이블
-- **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵 + 타깃(Y1~Y5)별 Pareto 상위 5개 + 산점도. 실행 완료 후 `JSON 보고서 저장` 버튼으로 p<0.05 인자·알람 전건을 담은 보고서를 다운로드할 수 있습니다(항상 전체 R+D+Config 인자 풀 기준)
-- **사전 알람 로그**(`/alerts`) — 알람/정상/판정불가 집계 카드, 알람 목록(관리한계 이탈, `해설` 버튼으로 SUNI에게 질문), LOT별 알람 집계, 개선 권장 목록(권장 구간 이탈, `해설` 버튼)
+- **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록, 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
+- **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형 ρ/ε² · 범주형 ε², `보기` 토글로 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
+- **알림 이력**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 알림 이력 목록(최대 7건, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기
+- **즐겨찾기**(`/favorites`) — 원인 분석에서 저장한 그래프를 최신순 카드 그리드로 모아 보여줍니다. 점 데이터는 저장하지 않고 저장된 조건(데이터셋·타깃·인자·뷰 종류)으로 다시 조회해 썸네일을 그립니다. 카드 클릭 시 해당 인자의 원인 분석 화면으로 이동합니다
+
+원인 분석·모니터링·알림 이력 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
 
 데이터셋은 각 탭의 선택 UI에서 CSV를 업로드해 추가할 수 있고(`POST /api/datasets`), 내장 4종과 함께 목록에 표시됩니다.
 
@@ -137,6 +140,7 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 - 두 모드 모두 `/api/analysis/context`가 만드는 동일한 분석 결과 JSON(타깃별 1위 인자, 관리한계, 권장 구간, 챔버 교호작용, 알람·개선 권장 레코드, config 스크리닝, 한계)을 근거로 답하며, 시스템 프롬프트(`prompts/report_system.md`, `prompts/chat_system.md`)가 **숫자 생성 금지, 인과 표현 금지, "값을 조정하라" 같은 설정값 표현 금지**를 명시적으로 규정합니다
 - `confidence`(신뢰도)는 LLM이 아니라 코드가 판정한 값을 그대로 따르게 합니다 — 판정 근거가 부족한 인자에 LLM이 임의로 관리 대역을 만들어내지 못하게 하는 장치입니다
 - 원인 분석이 아직 실행되지 않은 상태의 질문은 LLM을 호출하지 않고 백엔드가 즉시 안내 메시지로 응답합니다
+- 화면에서 걷어낸 해석 유의사항(계측률 한계, 인과 아님, 근거 부족 등급의 의미, 정밀도·재현율이 추정치라는 점 등)은 `LIMITATIONS`(`src/analysis/report.py`)로 옮겨 챗봇 컨텍스트에 실리며, "이 분석의 한계는?" 프리셋 질문으로 확인할 수 있습니다
 - 환경변수: `UPSTAGE_API_KEY`, `UPSTAGE_BASE_URL`(기본 `https://api.upstage.ai/v1`), `UPSTAGE_MODEL`(기본 `solar-pro3`). 키는 백엔드 프로세스에만 두며 프런트 번들에는 절대 노출하지 않습니다(`NEXT_PUBLIC_` 접두사 미사용)
 - API 키가 설정되지 않은 환경에서는 `/api/chat`이 503과 안내 메시지를 반환하며 서버 자체는 정상 동작합니다
 
@@ -162,18 +166,19 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 ## 구조
 
 ```text
-api/            FastAPI 라우트(data/datasets/analysis/chat)·스키마·설정
+api/            FastAPI 라우트(data/datasets/analysis/chat/state/notify/favorites/monitoring)·스키마·설정
 src/analysis/   인자 스크리닝(ε², BH-FDR), 히트맵, SPC 관리한계, 권장 구간, 챗봇 컨텍스트용 통계, JSON 보고서
 src/ml/         학습 파이프라인(HistGradientBoostingRegressor), 추론 메타데이터, 모델 저장
-src/runtime/    데이터셋 레지스트리, 학습 Job, SQLite 이력 저장
-frontend/       Next.js UI (app/training, app/root-cause, app/alerts, components/ai-panel)
+src/runtime/    데이터셋 레지스트리, 학습 Job, SQLite 이력 저장(즐겨찾기·모델 승격 이력 포함)
+src/notifications/ Slack/Telegram/Gmail 발송, 채널 설정 영속화(대기 상태 TTL 포함)
+frontend/       Next.js UI (app/monitoring, app/root-cause, app/alerts, app/favorites, components/ai-panel)
 prompts/        SUNI 챗봇 시스템 프롬프트(report_system.md, chat_system.md)
 tests/          Python 테스트(pytest)
 scripts/        오프라인 벤치마크(전처리 방식 비교)
 config/         결측 스키마·알람 severity·전처리 정책 YAML
 ```
 
-`src/analytics/`, `src/automation/`은 `__init__.py`만 있는 빈 자리표시자 패키지입니다. `src/ml/training.py`, `src/ml/ensemble.py`, `src/ml/hybrid.py`의 `train_hybrid_multi_y`는 저장소에 남아 있지만 API 경로에서는 사용되지 않고 테스트에서만 실행됩니다.
+`src/automation/`은 `__init__.py`만 있는 빈 자리표시자 패키지입니다. `src/ml/training.py`, `src/ml/ensemble.py`, `src/ml/hybrid.py`의 `train_hybrid_multi_y`는 저장소에 남아 있지만 API 경로에서는 사용되지 않고 테스트에서만 실행됩니다.
 
 ## 로컬 실행
 
@@ -220,6 +225,8 @@ SMTP_PASSWORD=
 SMTP_FROM_EMAIL=
 ```
 
+Gmail 연결은 인증 메일을 보낸 뒤 링크를 눌러야 완료됩니다(대기 상태, `pending`). **이 대기 상태는 5분이 지나면 서버에서 자동으로 만료되어 미연결로 돌아갑니다** — 5분 안에 메일의 링크를 눌러야 합니다. 만료 판정은 조회 시점에 이루어지며(`src/notifications/settings_store.py`의 `PENDING_TTL_SECONDS`), 이미 연결 완료(`verified: true`)된 채널은 만료 대상이 아니라 재시작·재접속 후에도 계속 유지됩니다.
+
 ## 비밀값 취급
 
 - API 키·토큰·Webhook URL을 코드에 직접 쓰지 않습니다
@@ -247,10 +254,14 @@ SMTP_FROM_EMAIL=
 - CSV 검증·전처리(현재 UI에서는 호출하지 않는 독립 엔드포인트): `POST /api/validate`, `POST /api/preprocess`
 - 학습: `POST /api/train`(동기), `POST /api/train/jobs`(비동기) + `GET /api/train/jobs/{job_id}`
 - 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/model/latest`
-- 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`, `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
-- SPC/알람/권장: `GET /api/control-ranges`, `GET /api/alarms`, `GET /api/alarms/summary`, `GET /api/recommendations`
-- 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용, 같은 내용을 다른 응답 헤더로 제공)
+- 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical`, `config_level: model|eq|chamber` 파라미터로 수치형/범주형 보기 전환), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
+- SPC/알람: `GET /api/control-ranges`, `GET /api/alarms`, `GET /api/alarms/predictions`
+- 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/measurement-expansion`, `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`
 - SUNI 챗봇: `POST /api/chat`(SSE 스트리밍, `mode: "report" | "chat"`)
+- 탭 상태 저장(재접속 시 최근 결과 복원): `GET /api/state/latest`, `POST /api/state/training`, `POST /api/state/analysis`, `POST /api/state/alarms`
+- 알림 채널: `GET /api/notify/settings`, `POST /api/notify/slack`(+`/test`), `POST /api/notify/telegram/verify`(+`/test`), `POST /api/notify/gmail`(+`/test`), `GET /api/notify/gmail/verify`, `POST /api/notify/conditions`, `DELETE /api/notify/{channel}`, `POST /api/notify/dispatch`
+- 즐겨찾기: `POST /api/favorites`, `GET /api/favorites`, `DELETE /api/favorites/{id}`
+- 모니터링: `GET /api/monitoring/config-treemap`
 
 ## Railway 배포
 

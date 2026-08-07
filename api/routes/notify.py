@@ -185,7 +185,7 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
 
 
 def run_daily_dispatch_job() -> None:
-    """APScheduler가 매일 08:00에 호출한다 (spec §C-4 "매일 오전 8시").
+    """APScheduler가 매일 09:00에 호출한다 (지시서 N-2: 8시 -> 9시).
     n8n 같은 별도 서비스 없이 FastAPI 프로세스 안에서 도는 잡이다. 가장
     최근에 저장된 알람 조회(사전 알람 로그 탭에서 마지막으로 조회한
     train/eval 데이터셋 쌍)를 기준으로 재계산해 발송한다 -- 저장된 조회가

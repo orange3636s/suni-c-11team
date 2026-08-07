@@ -45,7 +45,7 @@ def get_latest() -> dict[str, Any]:
             "slack": {"connected": False, "target": None, "webhook_masked": None, "verified_at": None},
             "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
             "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
-            "conditions": {"grades": ["심각", "위험"], "timing": "on_analysis"},
+            "conditions": {"grades": ["심각"], "timing": "on_analysis"},
         }
     return {**state, "notifications": notifications}
 

@@ -543,17 +543,6 @@ const ZONE_STYLE: Record<PointZone, { light: string; dark: string; size: number;
 // 형태가 드러나게 한다 (spec §3).
 const OUT_CONTROL_BORDER = { light: "#1E3A8A", dark: "#DBEAFE" };
 
-// Point-tooltip zone label (spec §5) -- the legend itself no longer names
-// these zones (row 1's color-by breakdown was removed per spec §5-4: the
-// legend describes reference lines/box elements only, never how points
-// are colored), but the tooltip still needs a plain-language "which zone
-// is this point in" line for "기본" Color By.
-const ZONE_LABEL: Record<PointZone, string> = {
-  in_recommended: "권장 구간 안",
-  in_control: "권장 구간 밖 · 관리한계 안",
-  out_control: "관리한계 밖",
-};
-
 function colorForPoint(
   point: ScatterPoint,
   mode: ScatterColorMode,
@@ -1899,9 +1888,6 @@ export default function ScatterChart({
           <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
           {pointHover.isOutlier && (
             <div className="heatmapTooltipRow"><span /><b className="scatterOutlierTag">이상치</b></div>
-          )}
-          {colorMode === "default" && (
-            <div className="heatmapTooltipRow"><span>구간</span><b>{ZONE_LABEL[zoneOf(pointHover.point, recommendedRangeValue)]}</b></div>
           )}
           {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다
               (spec §5-3). 항상 최신 colorMode를 읽으므로 전환 시 즉시 반영된다. */}

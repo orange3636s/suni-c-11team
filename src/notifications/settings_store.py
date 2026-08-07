@@ -27,18 +27,44 @@ STATE_KEYS = {
 ChannelName = Literal["slack", "telegram", "gmail"]
 AlarmGrade = Literal["심각", "위험", "주의"]
 
-DEFAULT_GRADES: list[AlarmGrade] = ["심각", "위험"]  # spec §C-4: 기본값, 주의는 기본 해제
+DEFAULT_GRADES: list[AlarmGrade] = ["심각"]  # 지시서 N-3: 기본값은 심각만, 위험·주의는 기본 해제
 TIMING_ON_ANALYSIS = "on_analysis"
-TIMING_DAILY_8AM = "daily_8am"
-VALID_TIMINGS = {TIMING_ON_ANALYSIS, TIMING_DAILY_8AM}
+TIMING_DAILY_9AM = "daily_9am"
+VALID_TIMINGS = {TIMING_ON_ANALYSIS, TIMING_DAILY_9AM}
 DEFAULT_CONDITIONS = {"grades": list(DEFAULT_GRADES), "timing": TIMING_ON_ANALYSIS}
+
+# 지시서 N-2: 발송 시각을 오전 8시 -> 9시로 옮기며 타이밍 값 이름도
+# daily_8am -> daily_9am으로 바꿨다. 이미 "daily_8am"으로 저장된 기존
+# 사용자 설정을 읽을 때 깨진 값으로 남기지 않도록 여기서 변환한다.
+_LEGACY_TIMING_MIGRATIONS = {"daily_8am": TIMING_DAILY_9AM}
 
 SLACK_WEBHOOK_DOMAIN = "hooks.slack.com"
 GMAIL_TOKEN_TTL_MINUTES = 60  # 인증 메일 링크 유효 시간
 
+# 지시서 W: 인증 대기(pending) 레코드가 무기한 남아 있으면 사용자가 메일을
+# 못 받거나 주소를 잘못 입력했을 때 영영 복구할 수 없다. 조회 시점에
+# 만료를 판정한다 -- 별도 백그라운드 정리 잡은 두지 않는다.
+PENDING_TTL_SECONDS = 300  # 5분
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_pending_expired(record: dict[str, Any]) -> bool:
+    """연결이 완료된(verified) 레코드는 절대 만료시키지 않는다 -- 이 함수는
+    "인증 대기 중" 레코드에만 적용된다."""
+    if record.get("verified"):
+        return False
+    requested = record.get("requested_at")
+    if not requested:
+        return True  # 시각 없는 레코드는 만료 처리
+    try:
+        requested_at = datetime.fromisoformat(requested)
+    except ValueError:
+        return True
+    age = (datetime.now(timezone.utc) - requested_at).total_seconds()
+    return age > PENDING_TTL_SECONDS
 
 
 # -- 마스킹 (spec §D-2) -----------------------------------------------------
@@ -102,7 +128,13 @@ def is_valid_email(email: str) -> bool:
 
 
 def get_gmail(store: RuntimeStore) -> dict[str, Any] | None:
-    return store.get_app_state(STATE_KEYS["gmail"])
+    """지시서 W: 만료된 인증 대기 레코드는 읽는 즉시 지우고 `None`을
+    반환한다 -- 연결 완료(`verified: true`)분은 절대 만료되지 않는다."""
+    record = store.get_app_state(STATE_KEYS["gmail"])
+    if record and _is_pending_expired(record):
+        store.delete_app_state(STATE_KEYS["gmail"])
+        return None
+    return record
 
 
 def start_gmail_verification(store: RuntimeStore, *, email: str) -> str:
@@ -137,7 +169,18 @@ def verify_gmail(store: RuntimeStore, *, token: str) -> bool:
 
 
 def get_conditions(store: RuntimeStore) -> dict[str, Any]:
-    return store.get_app_state(STATE_KEYS["conditions"]) or dict(DEFAULT_CONDITIONS)
+    record = store.get_app_state(STATE_KEYS["conditions"])
+    if not record:
+        return dict(DEFAULT_CONDITIONS)
+    timing = record.get("timing")
+    migrated = _LEGACY_TIMING_MIGRATIONS.get(timing)
+    if migrated:
+        record = {**record, "timing": migrated}
+    elif timing not in VALID_TIMINGS:
+        # 알 수 없는 값이면(과거 스키마 변경 등) 기본값으로 폴백한다 --
+        # 깨진 값을 그대로 화면에 흘려보내지 않는다.
+        record = {**record, "timing": TIMING_ON_ANALYSIS}
+    return record
 
 
 def save_conditions(store: RuntimeStore, *, grades: list[str], timing: str) -> dict[str, Any]:

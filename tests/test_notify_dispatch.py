@@ -112,6 +112,11 @@ def test_escalated_grade_resends_within_24h(monkeypatch):
     try:
         _connect_slack(store)
         monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: (True, None))
+        # 지시서 N-3: 발송 대상 등급 기본값이 "심각"만으로 바뀌었다 -- 이
+        # 테스트는 등급 승격(위험 -> 심각) 시 24시간 내에도 재발송되는지를
+        # 보는 것이 목적이므로, 기본값에 기대지 않고 두 등급 모두 대상으로
+        # 명시적으로 설정한다.
+        settings_store.save_conditions(store, grades=["위험", "심각"], timing=settings_store.TIMING_ON_ANALYSIS)
 
         first = dispatch.dispatch_alarm_notifications(
             store, dataset_id="train", dataset_label="train.CSV", alarms=[_alarm(grade="위험")],

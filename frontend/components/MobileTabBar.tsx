@@ -67,7 +67,7 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
           aria-selected={settingsPanelOpen}
           onClick={() => setSettingsPanelOpen((value) => !value)}
         >
-          설정
+          알림 설정
         </button>
       </div>
     </nav>

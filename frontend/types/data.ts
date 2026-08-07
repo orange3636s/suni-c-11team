@@ -633,7 +633,7 @@ export type ReliabilityResponse = {
 
 // -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
 
-export type NotificationTiming = "on_analysis" | "daily_8am";
+export type NotificationTiming = "on_analysis" | "daily_9am";
 export type NotificationGrade = "심각" | "위험" | "주의";
 
 export type SlackChannelSummary = {
