@@ -6,7 +6,11 @@ import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ParetoRankingItem } from "@/types/data";
 
 const MAX_BAR = 48;
-const MIN_BAR = 28;
+// PARETO_TOP_N=10으로 늘면서 28px 하한으로는 10개가 가로 스크롤 없이
+// 들어가는 폭을 확보하기 어려운 카드 크기가 있었다 -- 20까지 더 좁힐 수
+// 있게 낮춘다. computeBarLayout은 이 하한에서도 해를 못 찾으면 그대로
+// MIN_BAR로 폴백하고 .paretoPlotScroll이 가로 스크롤을 넘겨받는다.
+const MIN_BAR = 20;
 const PADDING = 56;
 const PLOT_HEIGHT = 360;
 const FLAT_LABEL_HEIGHT = 18; // one horizontal line of label text, tightly boxed
@@ -122,7 +126,11 @@ export default function ParetoChart({
 
   const xCenter = (i: number) => PADDING + i * layout.slot + layout.barWidth / 2;
   const xLeft = (i: number) => PADDING + i * layout.slot;
-  const yFor = (pct: number) => PLOT_HEIGHT * (1 - Math.min(pct, 100) / 100);
+  // plotHeight를 닫는다 -- embedded 모드에서는 이 값이 PLOT_HEIGHT(360)와
+  // 다르다(카드 높이 480/240을 그대로 받음). 막대·눈금 컬럼은 이미
+  // plotHeight를 쓰는데 이 함수만 PLOT_HEIGHT를 참조하면, 누적선/마커/80%
+  // 임계선이 막대·눈금과 다른 좌표계로 그려진다(버그 원인).
+  const yFor = (pct: number) => plotHeight * (1 - Math.min(pct, 100) / 100);
 
   function handlePlotMouseMove(event: React.MouseEvent<HTMLDivElement>) {
     const rect = plotRef.current?.getBoundingClientRect();
@@ -172,13 +180,20 @@ export default function ParetoChart({
                 <text x={layout.plotWidth - 4} y={yFor(80) - 4} textAnchor="end" className="paretoThresholdLabel">80%</text>
 
                 {items.map((item, i) => {
-                  const barHeight = Math.max((item.contribution_pct / 100) * plotHeight, 2);
+                  // 막대 상단도 yFor()로 계산한다 (누적 마커/임계선과 같은
+                  // 식) -- 두 계산이 갈라져 있으면 한쪽만 고쳤을 때 다시
+                  // 어긋난다. 최소 높이 보정은 height에만 적용하고 yTop은
+                  // 건드리지 않는다 -- 그래야 기여율이 0에 가까운 막대에서
+                  // 상단이 실제 값보다 위로 튀지 않는다(하단으로만 살짝
+                  // 넘치는 쪽을 택한다).
+                  const yTop = yFor(item.contribution_pct);
+                  const barHeight = Math.max(plotHeight - yTop, 2);
                   return (
                     <rect
                       key={item.feature}
                       className={["paretoBar", `tier-${item.confidence_tier}`, activeFeature === item.feature ? "active" : ""].join(" ")}
                       x={xLeft(i)}
-                      y={plotHeight - barHeight}
+                      y={yTop}
                       width={layout.barWidth}
                       height={barHeight}
                       rx={4}

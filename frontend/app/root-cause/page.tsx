@@ -666,7 +666,7 @@ function RootCauseContent() {
             <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
               {runState === "done"
                 ? "완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다."
-                : "타깃 5개 각각의 전체 인자 풀(R+D+Eq.) 기준 Pareto 상위 5개를 계산합니다."}
+                : "타깃 5개 각각의 전체 인자 풀(R+D+Eq.) 기준 Pareto 상위 10개를 계산합니다."}
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center" }}>

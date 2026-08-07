@@ -444,8 +444,14 @@ export function getScreeningHeatmap(dataset: string, metric: HeatmapMetric): Pro
   return getJson(`/api/screening/heatmap?${new URLSearchParams({ dataset, metric }).toString()}`);
 }
 
-export function getScreeningPareto(dataset: string, target: string): Promise<ParetoRankingResponse> {
-  return getJson(`/api/screening/pareto?${new URLSearchParams({ dataset, target }).toString()}`);
+// `topN`은 백엔드의 PARETO_TOP_N(10) 기본값을 그대로 쓴다 -- 원인 분석 탭은
+// 생략해서 그 기본값을 받고, 학습 탭 스크리닝 표는 5로 고정해 넘긴다(같은
+// 엔드포인트를 두 곳이 서로 다른 개수로 쓰므로 기본값에 암묵적으로 기대면
+// 한쪽이 조용히 따라 바뀐다).
+export function getScreeningPareto(dataset: string, target: string, topN?: number): Promise<ParetoRankingResponse> {
+  const params = new URLSearchParams({ dataset, target });
+  if (topN != null) params.set("top_n", String(topN));
+  return getJson(`/api/screening/pareto?${params.toString()}`);
 }
 
 export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {

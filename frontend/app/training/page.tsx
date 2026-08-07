@@ -33,6 +33,10 @@ import type {
 
 const BUNDLED_TRAIN_ID = "train";
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
+// getScreeningPareto는 원인 분석 탭의 Pareto 차트와도 같은 엔드포인트를
+// 쓴다 -- 그쪽이 상위 10개로 늘어나도 이 탭의 "상위 5개" 스크리닝 표는
+// 영향받지 않도록 개수를 명시적으로 고정한다.
+const SCREENING_TABLE_TOP_N = 5;
 
 const showMetric = (value?: number | null, digits = 3) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "-";
@@ -172,7 +176,7 @@ export default function TrainingPage() {
           setProgress(99);
           try {
             const paretoResults = await Promise.all(
-              TARGETS.map((t) => getScreeningPareto(trainedDataset, t).then((response) => [t, response] as const)),
+              TARGETS.map((t) => getScreeningPareto(trainedDataset, t, SCREENING_TABLE_TOP_N).then((response) => [t, response] as const)),
             );
             const paretoMap = Object.fromEntries(paretoResults) as Record<string, ParetoRankingResponse>;
             await getScreeningHeatmap(trainedDataset, "spearman").catch(() => {});

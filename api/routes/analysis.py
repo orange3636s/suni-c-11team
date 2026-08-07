@@ -43,7 +43,7 @@ from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import (
-    DEFAULT_TOP_N,
+    PARETO_TOP_N,
     ParetoFactor,
     confidence_tier,
     find_factor,
@@ -320,7 +320,7 @@ def _auc_gate(train_dataset_id: str, eval_dataset_id: str) -> tuple[float | None
     return auc_lo, auc_lo >= alarm_gbdt.AUC_GATE
 
 
-def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
+def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
     t0 = time.perf_counter()
     hits_before = _cached_ranked_rows.cache_info().hits
     ranked = list(_cached_ranked_rows(dataset_id, target))
@@ -329,7 +329,7 @@ def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
         "screening_pareto %.1fms (cached=%s, dataset=%s, target=%s)",
         (time.perf_counter() - t0) * 1000, cached, dataset_id, target,
     )
-    top = ranked[: DEFAULT_TOP_N]
+    top = ranked[:top_n]
     items = [
         {
             "feature": row["feature"],
@@ -366,17 +366,20 @@ def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
 
 
 @router.get("/screening/pareto", response_model=ParetoRankingResponse)
-def get_screening_pareto(dataset: str = "train", target: str = "Y1") -> dict[str, Any]:
-    """The fixed top-5-by-eps2 Pareto ranking for one target across the
-    full R+D+Config pool -- the single shared source for both the
-    training tab's and the root-cause tab's Pareto chart. Not gated by
-    FDR significance: every one of the 5 is included regardless of
-    p-value, tiered by confidence_tier instead of filtered out. `n80`
-    reports the rank (across the FULL pool, not just these 5) at which
-    cumulative contribution first reaches 80%, so the caller can render
-    "80%에 도달하지 못했습니다 -- N개 더 필요" without a second request.
+def get_screening_pareto(dataset: str = "train", target: str = "Y1", top_n: int = PARETO_TOP_N) -> dict[str, Any]:
+    """The top-eps2 Pareto ranking for one target across the full
+    R+D+Config pool -- the shared source for both the training tab's
+    screening table and the root-cause tab's Pareto chart, which show
+    different counts (5 vs 10) and so must each pass their own `top_n`
+    explicitly rather than rely on this default drifting under them.
+    Not gated by FDR significance: every returned row is included
+    regardless of p-value, tiered by confidence_tier instead of
+    filtered out. `n80` reports the rank (across the FULL pool, not
+    just `top_n`) at which cumulative contribution first reaches 80%,
+    so the caller can render "80%에 도달하지 못했습니다 -- N개 더 필요"
+    without a second request.
     """
-    return _pareto_payload(dataset, target)
+    return _pareto_payload(dataset, target, top_n)
 
 
 def _alarm_factors(train_df, schema) -> tuple[list[ParetoFactor], list[str]]:

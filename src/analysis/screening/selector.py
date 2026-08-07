@@ -34,7 +34,8 @@ from src.analysis.screening.shape import classify_shape
 DEFAULT_FDR_ALPHA = 0.05
 DEFAULT_MIN_N_NUMERIC = 100
 DEFAULT_MIN_N_CATEGORICAL = 20
-DEFAULT_TOP_N = 5
+DEFAULT_TOP_N = 5  # select_top_factors 기본 limit -- 학습 탭 스크리닝 등 다른 호출부가 함께 쓴다
+PARETO_TOP_N = 10  # Pareto 차트(원인 분석 탭) 표시용 -- 위와 독립적으로 조정한다
 
 CONFIDENCE_TIERS = ("strong", "moderate", "weak", "reference")
 
