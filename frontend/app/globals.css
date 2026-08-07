@@ -8866,6 +8866,13 @@ html[data-theme="dark"] .scatterViewToggleBtn.active{ background: #3B5DA8; color
    of tiny per-glyph width differences. */
 .factorChartToggleStack{ display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .factorChartToggleStack .scatterViewToggleLabel{ display: inline-block; min-width: 28px; }
+/* Pareto/Scatter/Box 보기 토글 (spec "Pareto를 산점도 카드로 병합") -- 버튼이
+   2개에서 3개로 늘며 좁은 카드에서 넘칠 수 있다. 세그먼트 형태를 유지하는
+   게 우선이므로 줄바꿈 대신 패딩/폰트만 줄인다 (§4-4의 다른 규칙과 같은
+   패턴). */
+@container factorCard (max-width: 480px){
+  .factorChartToggleStack .scatterViewToggleBtn{ padding: 0 8px; font-size: 11.5px; }
+}
 .methodAdoptedBadge{ margin-left: 4px; font-size: 11px; }
 .scatterChartSvg{ display: block; overflow: visible; }
 /* Dark-mode-only plot background, one shade darker than the card

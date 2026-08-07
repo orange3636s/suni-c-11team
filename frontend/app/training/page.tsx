@@ -27,7 +27,6 @@ import type {
   DatasetSchemaResponse,
   DatasetSummary,
   ModelPerformanceResponse,
-  ParetoRankingItem,
   ParetoRankingResponse,
   PreprocessingComparisonResponse,
 } from "@/types/data";
@@ -282,10 +281,6 @@ export default function TrainingPage() {
     router.push(`/root-cause?target=${encodeURIComponent(selection.target)}&feature=${encodeURIComponent(selection.feature)}`);
   }
 
-  function handleParetoBarClick(item: ParetoRankingItem) {
-    router.push(`/root-cause?target=${encodeURIComponent(activeTarget)}&feature=${encodeURIComponent(item.feature)}`);
-  }
-
   const selectedDataset = datasets.find((item) => item.dataset_id === datasetId);
   const isBundledTrain = datasetId === BUNDLED_TRAIN_ID;
 
@@ -485,10 +480,8 @@ export default function TrainingPage() {
         // exactly the "다른 데이터셋의 결과를 보게 된다" bug that guards against).
         datasetId={training?.dataset ?? datasetId}
         enabled={analysisReady}
-        paretoByTarget={paretoByTarget}
         activeTarget={activeTarget}
         onActiveTargetChange={setActiveTarget}
-        onBarClick={handleParetoBarClick}
         onHeatmapCellSelect={handleHeatmapSelect}
       />
 

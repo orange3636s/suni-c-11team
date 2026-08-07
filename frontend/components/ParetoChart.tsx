@@ -77,17 +77,28 @@ export default function ParetoChart({
   n80,
   onBarClick,
   activeFeature,
+  embedded = false,
+  height,
 }: {
   target: string;
   items: ParetoRankingItem[];
   n80: number | null;
   onBarClick: (item: ParetoRankingItem) => void;
   activeFeature?: string | null;
+  // 인자 카드의 보기 토글 안에서 렌더될 때 true (spec: Pareto를 산점도
+  // 카드로 병합) -- 바깥 resultCard 래퍼와 자체 제목/범례 헤더를 생략하고
+  // 차트 본문만 반환한다. 기본값 false는 기존 호출부(HeatmapParetoSection
+  // 등 독립 카드로 쓰는 곳)를 그대로 유지하기 위함이다.
+  embedded?: boolean;
+  // embedded일 때만 사용 -- 카드의 chartHeight(데스크톱/모바일)에 맞춘다.
+  // 생략 시 기존 PLOT_HEIGHT 상수로 대체한다.
+  height?: number;
 }) {
   const theme = useResolvedTheme();
   const [containerRef, containerWidth] = useContainerWidth();
   const [tooltip, setTooltip] = useState<TooltipState>(null);
   const plotRef = useRef<HTMLDivElement>(null);
+  const plotHeight = embedded && height ? height : PLOT_HEIGHT;
 
   const n = items.length;
   const reached80 = items.length > 0 && items[items.length - 1].cumulative_pct >= 80;
@@ -123,25 +134,16 @@ export default function ParetoChart({
 
   const tooltipItem = tooltip ? items[tooltip.index] : null;
 
-  return (
-    <section className="resultCard paretoChartCard">
-      <div className="paretoChartHeader">
-        <div>
-          <span className="sectionLabel">PARETO</span>
-          <h2>{target} 상관 인자 기여도</h2>
-        </div>
-        <div className="paretoLegend paretoLegendInline">
-          <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
-          <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
-          <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
-          <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
-        </div>
-      </div>
-
+  // Chart body -- shared as-is between the standalone card (non-embedded)
+  // and the embedded-in-a-factor-card mode; only the wrapper around it
+  // (resultCard section + title/legend header) differs (see `embedded`
+  // below).
+  const body = (
+    <>
       <div className="paretoChartBody" ref={containerRef}>
-        <div className="paretoAxisCol paretoAxisCol-left" style={{ height: PLOT_HEIGHT }}>
+        <div className="paretoAxisCol paretoAxisCol-left" style={{ height: plotHeight }}>
           <span className="paretoAxisLabel"><span className="paretoAxisLabelText">기여율 (%)</span></span>
-          <div className="paretoTickCol" style={{ height: PLOT_HEIGHT }}>
+          <div className="paretoTickCol" style={{ height: plotHeight }}>
             {LEFT_TICKS.map((tick) => (
               <span key={tick} className="paretoTick" style={{ bottom: `${tick}%` }}>{tick}</span>
             ))}
@@ -153,14 +155,14 @@ export default function ParetoChart({
             <div
               ref={plotRef}
               className="paretoPlotArea"
-              style={{ width: layout.plotWidth, height: PLOT_HEIGHT }}
+              style={{ width: layout.plotWidth, height: plotHeight }}
               onMouseMove={n > 1 ? handlePlotMouseMove : undefined}
               onMouseLeave={() => setTooltip(null)}
             >
               <svg
                 className="paretoOverlay"
                 width={layout.plotWidth}
-                height={PLOT_HEIGHT}
+                height={plotHeight}
                 aria-hidden="true"
               >
                 <line
@@ -170,13 +172,13 @@ export default function ParetoChart({
                 <text x={layout.plotWidth - 4} y={yFor(80) - 4} textAnchor="end" className="paretoThresholdLabel">80%</text>
 
                 {items.map((item, i) => {
-                  const barHeight = Math.max((item.contribution_pct / 100) * PLOT_HEIGHT, 2);
+                  const barHeight = Math.max((item.contribution_pct / 100) * plotHeight, 2);
                   return (
                     <rect
                       key={item.feature}
                       className={["paretoBar", `tier-${item.confidence_tier}`, activeFeature === item.feature ? "active" : ""].join(" ")}
                       x={xLeft(i)}
-                      y={PLOT_HEIGHT - barHeight}
+                      y={plotHeight - barHeight}
                       width={layout.barWidth}
                       height={barHeight}
                       rx={4}
@@ -223,7 +225,7 @@ export default function ParetoChart({
 
                 {tooltip && n > 1 && (
                   <line
-                    x1={xCenter(tooltip.index)} y1={0} x2={xCenter(tooltip.index)} y2={PLOT_HEIGHT}
+                    x1={xCenter(tooltip.index)} y1={0} x2={xCenter(tooltip.index)} y2={plotHeight}
                     className="paretoGuideLine"
                   />
                 )}
@@ -249,8 +251,8 @@ export default function ParetoChart({
           </div>
         </div>
 
-        <div className="paretoAxisCol paretoAxisCol-right" style={{ height: PLOT_HEIGHT }}>
-          <div className="paretoTickCol" style={{ height: PLOT_HEIGHT }}>
+        <div className="paretoAxisCol paretoAxisCol-right" style={{ height: plotHeight }}>
+          <div className="paretoTickCol" style={{ height: plotHeight }}>
             {RIGHT_TICKS.map((tick) => (
               <span key={tick} className="paretoTick" style={{ bottom: `${tick}%`, color: rightAxisColor }}>{tick}</span>
             ))}
@@ -286,6 +288,26 @@ export default function ParetoChart({
           <div className="heatmapTooltipRow"><span>등급</span><b>{TIER_LABEL[tooltipItem.confidence_tier]}</b></div>
         </div>
       )}
+    </>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <section className="resultCard paretoChartCard">
+      <div className="paretoChartHeader">
+        <div>
+          <span className="sectionLabel">PARETO</span>
+          <h2>{target} 상관 인자 기여도</h2>
+        </div>
+        <div className="paretoLegend paretoLegendInline">
+          <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
+          <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
+          <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
+          <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
+        </div>
+      </div>
+      {body}
     </section>
   );
 }

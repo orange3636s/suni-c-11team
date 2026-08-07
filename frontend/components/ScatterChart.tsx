@@ -16,7 +16,14 @@ function isAlarmMarkerGrade(grade: AlarmGrade): grade is AlarmMarkerGrade {
 }
 
 export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
-export type ScatterView = "scatter" | "box";
+// 인자 카드 "보기" 토글 전체 상태 (Pareto/Scatter/Box) -- Pareto는 이
+// ScatterChart 컴포넌트가 아니라 카드가 직접 분기해 ParetoChart를 그리므로,
+// 이 컴포넌트 자신은 QuickLookView(아래)만 받는다.
+export type ScatterView = "pareto" | "scatter" | "box";
+// ScatterChart가 실제로 렌더하는 뷰. Quick Look 패널에도 Pareto 옵션이 없어
+// 그대로 재사용한다 -- ScatterView와 분리해 두면 quickLookView 같은 state에
+// "pareto"가 흘러들 여지 자체가 타입 레벨에서 없어진다.
+export type QuickLookView = "scatter" | "box";
 // Unified with the trend curve's 12-quantile profile (spec §2: "Box Plot
 // 도 12구간을 쓴다") -- was 10 (qcut decile) before, which is why the same
 // factor's outlier count reads differently between the two profiles even
@@ -128,7 +135,7 @@ function buildInterpretationTip(
   shape: RelationShape,
   optimalCenter: number | null,
   targetLabel: string,
-  view: ScatterView,
+  view: QuickLookView,
 ): string {
   const category = classifyShape(eps2, shape);
   let first: string;
@@ -685,8 +692,10 @@ export default function ScatterChart({
   colorMode: ScatterColorMode;
   // Owned by the caller now (spec §1-3: 보기 토글 lives in the card header,
   // same row as the title) -- this component only reads it to decide what
-  // to render, it never renders the toggle buttons itself.
-  view: ScatterView;
+  // to render, it never renders the toggle buttons itself. Never "pareto"
+  // -- the card renders ParetoChart itself for that state instead of
+  // reaching this component (see QuickLookView above).
+  view: QuickLookView;
   // Which of data.methods.{spc,ml} drives the recommended-range band and
   // optimal-center line (spec §3) -- same "caller owns the toggle state"
   // pattern as `view`. Defaults to "spc" when the caller hasn't resolved

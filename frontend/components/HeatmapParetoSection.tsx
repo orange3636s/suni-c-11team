@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import CorrelationHeatmap, { type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
-import ParetoChart from "@/components/ParetoChart";
-import type { ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 
@@ -12,24 +10,18 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 // "stuck" class flipping at exactly the moment position:sticky engages.
 const STICKY_OFFSET_PX = 61;
 
-/** The one shared "전체 히트맵 → 타깃 세그먼트 → Pareto" block used
- * identically by the 모델 학습 tab and the 원인 분석 tab (see the
- * "원인 분석 단순화" prompt §2-2: "히트맵·세그먼트·Pareto는 동일
- * 컴포넌트를 재사용한다"). Each caller runs its own execution flow that
- * fetches `getScreeningPareto(dataset, target)` for all 5 targets and
- * hands the results in as `paretoByTarget` -- the backend LRU cache
- * (keyed by dataset+target) guarantees both tabs see byte-identical
- * numbers for the same target even though each tab fetches
- * independently. Only the scatter section (원인 분석 전용) lives outside
- * this component.
+/** The shared "전체 히트맵 → 타깃 세그먼트" block used identically by the
+ * 모델 학습 tab and the 원인 분석 tab (see the "원인 분석 단순화" prompt
+ * §2-2: "히트맵·세그먼트는 동일 컴포넌트를 재사용한다"). Pareto no longer
+ * renders here (spec "Pareto를 산점도 카드로 병합") -- 원인 분석 탭은 각
+ * 인자 카드의 보기 토글 안에서 Pareto를 그리고, 모델 학습 탭은 인자
+ * 스크리닝 테이블만 남는다.
  */
 export default function HeatmapParetoSection({
   datasetId,
   enabled,
-  paretoByTarget,
   activeTarget,
   onActiveTargetChange,
-  onBarClick,
   onHeatmapCellSelect,
   // 표시 기준 토글 (spec §A-3) -- Y 세그먼트와 같은 줄, 우측 정렬로 얹는
   // 선택적 슬롯. 모델 학습 탭은 이 토글이 없으므로 넘기지 않으면 아무것도
@@ -38,14 +30,11 @@ export default function HeatmapParetoSection({
 }: {
   datasetId: string;
   enabled: boolean;
-  paretoByTarget: Record<string, ParetoRankingResponse>;
   activeTarget: string;
   onActiveTargetChange: (target: string) => void;
-  onBarClick: (item: ParetoRankingItem) => void;
   onHeatmapCellSelect: (selection: HeatmapCellSelection) => void;
   criterionControl?: ReactNode;
 }) {
-  const activeResponse = paretoByTarget[activeTarget];
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
 
@@ -86,19 +75,6 @@ export default function HeatmapParetoSection({
             </div>
             {criterionControl && <div className="targetSegmentCriterion">{criterionControl}</div>}
           </div>
-
-          {activeResponse ? (
-            <ParetoChart
-              target={activeTarget}
-              items={activeResponse.items}
-              n80={activeResponse.n80}
-              onBarClick={onBarClick}
-            />
-          ) : (
-            <section className="resultCard">
-              <p className="emptyMessage">불러오는 중…</p>
-            </section>
-          )}
         </>
       )}
     </>

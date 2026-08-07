@@ -10,9 +10,10 @@ import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
+import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
-import ScatterChart, { type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
+import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
@@ -258,7 +259,7 @@ function RootCauseContent() {
   const [quickLookData, setQuickLookData] = useState<ScreeningScatterResponse | CategoricalScatterResponse | null>(null);
   const [quickLookError, setQuickLookError] = useState("");
   const [quickLookColorMode, setQuickLookColorMode] = useState<ColorMode>("default");
-  const [quickLookView, setQuickLookView] = useState<ScatterView>("scatter");
+  const [quickLookView, setQuickLookView] = useState<QuickLookView>("scatter");
   const initialDeepLinkHandled = useRef(false);
 
   // Unlike the main 5-card grid (each NumericFactorCard remounts on a new
@@ -492,6 +493,9 @@ function RootCauseContent() {
           onCompare={setCompareFeature}
           hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
           alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
+          paretoItems={paretoByTarget[target]?.items ?? []}
+          paretoN80={paretoByTarget[target]?.n80 ?? null}
+          onParetoBarClick={handleParetoBarClick}
         />
       );
     }
@@ -684,10 +688,8 @@ function RootCauseContent() {
       <HeatmapParetoSection
         datasetId={datasetId}
         enabled={runState === "done"}
-        paretoByTarget={paretoByTarget}
         activeTarget={activeTarget}
         onActiveTargetChange={selectTarget}
-        onBarClick={handleParetoBarClick}
         onHeatmapCellSelect={handleHeatmapSelect}
         criterionControl={<ChartCriterionToggle value={chartCriterion} onChange={setChartCriterion} />}
       />
@@ -709,7 +711,7 @@ function RootCauseContent() {
                     )}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    {!quickLook.isConfig && <ViewToggle value={quickLookView} onChange={setQuickLookView} />}
+                    {!quickLook.isConfig && <QuickLookViewToggle value={quickLookView} onChange={setQuickLookView} />}
                     <button
                       className="button"
                       type="button"
@@ -859,12 +861,40 @@ function ChartCriterionToggle({ value, onChange }: { value: ChartCriterion; onCh
   );
 }
 
-/** Scatter/Box view toggle (spec §1-3) -- lives in the card header, same
- * row/height as the title, not inside ScatterChart itself: the toggle
- * state is owned by whichever card renders the chart (spec §2-2:
- * "산점도마다 독립적인 상태"), purely a client-side re-render of
- * already-fetched points/bins, no new API call on switch. */
+/** Pareto/Scatter/Box view toggle (spec "Pareto를 산점도 카드로 병합") --
+ * lives in the card header, same row/height as the title, not inside
+ * ScatterChart/ParetoChart themselves: the toggle state is owned by
+ * whichever card renders the chart (spec §2-2: "산점도마다 독립적인
+ * 상태"), purely a client-side re-render of already-fetched
+ * points/bins/pareto items, no new API call on switch. Pareto sits first
+ * (탐색 뷰 -> 검증 뷰 순서) but is never the *default* view -- see
+ * NumericFactorCard's `useState<ScatterView>("scatter")`. */
 function ViewToggle({ value, onChange }: { value: ScatterView; onChange: (view: ScatterView) => void }) {
+  return (
+    <div className="scatterViewToggleRow">
+      <span className="scatterViewToggleLabel">보기</span>
+      <div className="scatterViewToggle" role="group" aria-label="차트 보기 방식">
+        <button type="button" className={`scatterViewToggleBtn ${value === "pareto" ? "active" : ""}`} onClick={() => onChange("pareto")}>
+          Pareto
+        </button>
+        <button type="button" className={`scatterViewToggleBtn ${value === "scatter" ? "active" : ""}`} onClick={() => onChange("scatter")}>
+          Scatter Plot
+        </button>
+        <button type="button" className={`scatterViewToggleBtn ${value === "box" ? "active" : ""}`} onClick={() => onChange("box")}>
+          Box Plot
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Scatter/Box-only toggle for the heatmap/Pareto-bar Quick Look panel
+ * (spec: Quick Look에는 Pareto 옵션이 없다 -- 이미 Pareto에서 골라 연 인자를
+ * 보는 자리이므로 다시 Pareto로 돌아갈 이유가 없다). Kept as a separate
+ * component (rather than reusing ViewToggle with a shown/hidden Pareto
+ * button) so quickLookView's QuickLookView type never has to accept
+ * "pareto" at the type level. */
+function QuickLookViewToggle({ value, onChange }: { value: QuickLookView; onChange: (view: QuickLookView) => void }) {
   return (
     <div className="scatterViewToggleRow">
       <span className="scatterViewToggleLabel">보기</span>
@@ -1008,6 +1038,9 @@ function NumericFactorCard({
   onCompare,
   hasConfig,
   alarmGradeByWaferId,
+  paretoItems,
+  paretoN80,
+  onParetoBarClick,
 }: {
   item: ParetoRankingItem;
   index: number;
@@ -1017,6 +1050,12 @@ function NumericFactorCard({
   onCompare: (feature: string) => void;
   hasConfig: boolean;
   alarmGradeByWaferId?: Record<string, AlarmGrade>;
+  // Pareto 보기(spec "Pareto를 산점도 카드로 병합")용 데이터 -- 카드마다
+  // 다시 fetch하지 않고 부모(RootCauseContent)가 이미 갖고 있는
+  // paretoByTarget에서 한 번만 내려준다.
+  paretoItems: ParetoRankingItem[];
+  paretoN80: number | null;
+  onParetoBarClick: (item: ParetoRankingItem) => void;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
@@ -1057,7 +1096,9 @@ function NumericFactorCard({
           </div>
           <div className="factorChartToggleStack">
             <ViewToggle value={view} onChange={setView} />
-            {numericData?.methods && (
+            {/* SPC/ML 방식 토글은 Scatter/Box 보기 전용이다 (spec §2-2/§3-3)
+                -- Pareto 보기에서는 아무 것도 바꾸지 않으므로 숨긴다. */}
+            {view !== "pareto" && numericData?.methods && (
               <MethodToggle value={method} adopted={numericData.methods.adopted} onChange={setMethod} />
             )}
           </div>
@@ -1078,7 +1119,21 @@ function NumericFactorCard({
           이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 경고선은 예측 수율을 기준으로 별도 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
-      {numericData ? (
+      {view === "pareto" ? (
+        // Pareto는 paretoItems(부모의 paretoByTarget)만 있으면 그릴 수 있다
+        // -- numericData(산점도 좌표)를 기다릴 이유가 없다. 복원 직후처럼
+        // Pareto는 이미 채워졌는데 좌표만 배경에서 다시 채워지는 중일 때도
+        // (spec §3-1) Pareto 보기는 즉시 보여야 한다.
+        <ParetoChart
+          target={activeTarget}
+          items={paretoItems}
+          n80={paretoN80}
+          activeFeature={item.feature}
+          onBarClick={onParetoBarClick}
+          embedded
+          height={chartHeight}
+        />
+      ) : numericData ? (
         <>
           <ScatterChart
             data={numericData}
