@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from src.analysis.alarm_gbdt import AUC_GATE
+
 HIGH_GRADE_MIN_SCORE = 75
 MEDIUM_GRADE_MIN_SCORE = 45
 
@@ -43,6 +45,9 @@ def _banded_score(value: float | None, bands: list[tuple[float, int]], floor: in
 class ReliabilityBreakdown:
     auc_lower_bound: float | None
     auc_score: int
+    # 알람 신뢰도 게이트 §D-3: AUC 항목에 게이트 통과 여부를 함께 담는다.
+    auc_gate_passed: bool
+    auc_gate_message: str | None
     n_significant_factors: int
     n_significant_score: int
     max_eps2: float | None
@@ -79,6 +84,10 @@ def compute_reliability(
     """
     auc_lower = float(np.percentile(fold_aucs, 5)) if fold_aucs else None
     auc_score = _banded_score(auc_lower, AUC_BANDS)
+    auc_gate_passed = auc_lower is not None and auc_lower >= AUC_GATE
+    auc_gate_message = (
+        f"기준 {AUC_GATE:.2f} 미달 — 알람을 제공하지 않습니다" if auc_lower is not None and not auc_gate_passed else None
+    )
 
     n_sig_score = _banded_score(float(n_significant_factors), N_SIG_BANDS)
     eps2_score = _banded_score(max_eps2, MAX_EPS2_BANDS)
@@ -89,6 +98,8 @@ def compute_reliability(
     return ReliabilityBreakdown(
         auc_lower_bound=auc_lower,
         auc_score=auc_score,
+        auc_gate_passed=auc_gate_passed,
+        auc_gate_message=auc_gate_message,
         n_significant_factors=n_significant_factors,
         n_significant_score=n_sig_score,
         max_eps2=max_eps2,

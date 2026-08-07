@@ -35,11 +35,19 @@ GBDT_MAX_ITER = 200
 
 # §A-2: 등급 임계는 Y 분위수. §A-4/§E: AUC 평가용 "불량" 라벨도 같은
 # 5% 분위수를 재사용한다 (spec §0 배경 표의 "하위 5% = 52장"과 동일 정의).
+# "개선 권고" 등급(하위 20% 분위, pred_mean 기준)은 정밀도가 무작위 수준과
+# 다르지 않아 삭제됐다 (spec 알람 신뢰도 게이트 §B-1: train→problem
+# 정밀도 5% = 무작위 기준). 심각/위험/주의만 남는다.
 GRADE_QUANTILES = {"심각": 0.05, "위험": 0.10, "주의": 0.15}
-IMPROVEMENT_QUANTILE = 0.20
 BAD_LABEL_QUANTILE = 0.05
 
 ALARM_SHARE_WARNING_THRESHOLD = 0.10  # spec §A-2: 평가 대상의 10% 초과 시 경고
+
+# 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- 교차 데이터셋 홀드아웃
+# AUC 하한이 이 값 미만이면 알람을 아예 내지 않는다. 통계적으로 도출된
+# 값이 아니라 실측 AUC 분포의 빈 구간(0.55~0.70 사이에 값이 없음) 가운데를
+# 잡은 경험값이다 -- 화면에도 이 사실을 명시한다 (§D-2).
+AUC_GATE = 0.65
 
 
 def feature_columns(schema) -> list[str]:
@@ -121,7 +129,6 @@ class GradeThresholds:
     severe: float  # 심각: Y 하위 5% 분위수
     danger: float  # 위험: Y 하위 10% 분위수
     caution: float  # 주의: Y 하위 15% 분위수
-    improve: float  # 개선 권고: Y 하위 20% 분위수
 
 
 def compute_grade_thresholds(train_df: pd.DataFrame, target_col: str = FINAL_YIELD_COLUMN) -> GradeThresholds:
@@ -130,20 +137,19 @@ def compute_grade_thresholds(train_df: pd.DataFrame, target_col: str = FINAL_YIE
         severe=float(y.quantile(GRADE_QUANTILES["심각"])),
         danger=float(y.quantile(GRADE_QUANTILES["위험"])),
         caution=float(y.quantile(GRADE_QUANTILES["주의"])),
-        improve=float(y.quantile(IMPROVEMENT_QUANTILE)),
     )
 
 
-def grade_of(pred_hi: float, pred_mean: float, thresholds: GradeThresholds) -> str | None:
-    """§A-2: 알람은 pred_hi(상한) 기준, 개선 권고는 pred_mean 기준(알람 제외)."""
+def grade_of(pred_hi: float, thresholds: GradeThresholds) -> str | None:
+    """§A-2: 알람은 pred_hi(상한) 기준. "개선 권고"(pred_mean 기준) 등급은
+    삭제됐다 (spec 알람 신뢰도 게이트 §B-1: 정밀도가 무작위 수준).
+    """
     if pred_hi <= thresholds.severe:
         return "심각"
     if pred_hi <= thresholds.danger:
         return "위험"
     if pred_hi <= thresholds.caution:
         return "주의"
-    if pred_mean <= thresholds.improve:
-        return "개선 권고"
     return None
 
 
@@ -151,7 +157,7 @@ def grade_of(pred_hi: float, pred_mean: float, thresholds: GradeThresholds) -> s
 class WaferAlarmScore:
     lot_wafer_id: str
     lot_id: str | None
-    grade: str  # "심각" | "위험" | "주의" | "개선 권고"
+    grade: str  # "심각" | "위험" | "주의"
     risk_percentile: float  # 0-100, 낮을수록 위험 (하위 X%)
 
 
@@ -178,7 +184,7 @@ def score_alarms(
 
     results: list[WaferAlarmScore] = []
     for i in range(n):
-        grade = grade_of(float(prediction.pred_hi[i]), float(prediction.pred_mean[i]), thresholds)
+        grade = grade_of(float(prediction.pred_hi[i]), thresholds)
         if grade is None:
             continue
         results.append(
@@ -241,3 +247,61 @@ def cross_validate_auc(
     )
     aucs = [a for a in results if a is not None]
     return aucs if aucs else None
+
+
+def cross_validate_transfer_auc(
+    train_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    features: list[str],
+    *,
+    target_col: str = FINAL_YIELD_COLUMN,
+    group_col: str = "Lot_ID",
+    n_splits: int = 5,
+    bad_quantile: float = BAD_LABEL_QUANTILE,
+) -> list[float] | None:
+    """알람 신뢰도 게이트 §A-1/§A-2 -- `cross_validate_auc`는 train 자기 자신에
+    대한 등급이라 분포가 다른 eval로 옮기면 그대로 무너지는 상황을 감지하지
+    못한다 (train만 보고 계산하므로 eval이 무엇이든 같은 값이 나온다). 이
+    함수는 train을 LOT 기준 5-fold GroupKFold로 나눠 각 fold 모델을
+    **eval_df에 대해** 평가한다 -- "이 train으로 학습한 모델이 이 특정
+    eval 분포에서도 통한다"는 실제 전이 성능을 잰다.
+
+    "불량" 라벨은 train의 하위 5% 분위수 **값**을 eval의 실측 Y에 그대로
+    적용한다 (spec의 알람 임계 자체가 train 분위수를 eval에 적용하는
+    방식과 같은 기준을 쓴다).
+
+    Lot당 표본이 `n_splits`보다 적으면(train) 또는 eval에 유효 라벨이
+    하나도 없으면(bad가 전부 같은 클래스) None -- 호출자가 "표본 부족"으로
+    처리한다.
+    """
+    train_valid = train_df[pd.to_numeric(train_df[target_col], errors="coerce").notna()]
+    if group_col not in train_valid.columns or train_valid[group_col].nunique() < n_splits:
+        return None
+
+    y_train = pd.to_numeric(train_valid[target_col], errors="coerce")
+    bad_threshold = float(y_train.quantile(bad_quantile))
+    x_train = prepare_feature_matrix(train_valid, features)
+    groups = train_valid[group_col]
+
+    eval_valid = eval_df[pd.to_numeric(eval_df[target_col], errors="coerce").notna()]
+    if eval_valid.empty:
+        return None
+    y_eval = pd.to_numeric(eval_valid[target_col], errors="coerce")
+    bad_eval = (y_eval <= bad_threshold).to_numpy()
+    if bad_eval.sum() == 0 or bad_eval.sum() == len(bad_eval):
+        return None  # AUC undefined with a single class
+    x_eval = prepare_feature_matrix(eval_valid, features)
+
+    gkf = GroupKFold(n_splits=n_splits)
+    fold_args = list(enumerate(gkf.split(train_valid, groups=groups)))
+
+    def _fold_auc(fold: int, tr_idx: np.ndarray) -> float:
+        model = HistGradientBoostingRegressor(max_iter=GBDT_MAX_ITER, random_state=fold)
+        model.fit(x_train.iloc[tr_idx], y_train.iloc[tr_idx])
+        pred = model.predict(x_eval)
+        return float(roc_auc_score(bad_eval, -pred))
+
+    results: list[float] = Parallel(n_jobs=-1, prefer="processes")(
+        delayed(_fold_auc)(fold, tr_idx) for fold, (tr_idx, _ev_idx) in fold_args
+    )
+    return results if results else None

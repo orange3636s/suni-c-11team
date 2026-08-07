@@ -68,10 +68,10 @@ def _resolve_mode(request: ChatRequest) -> Literal["report", "chat"]:
 
 
 def _context_user_message(dataset: str, message: str) -> str:
-    # Grouped {summary, records} alarms/recommendations (see
-    # build_chat_context's docstring) -- individual-wafer questions
-    # ("L401W07 알람이 왜 떴어?") need the record-level data, not just the
-    # aggregate counts a raw report payload would give.
+    # Grouped {summary, records} alarms (see build_chat_context's
+    # docstring) -- individual-wafer questions ("L401W07 알람이 왜 떴어?")
+    # need the record-level data, not just the aggregate counts a raw
+    # report payload would give.
     context = build_chat_context(_build_report_payload(dataset))
     return (
         f"다음은 분석 결과 JSON이다.\n\n```json\n{json.dumps(context, ensure_ascii=False)}\n```\n\n"

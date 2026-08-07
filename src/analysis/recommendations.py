@@ -1,19 +1,17 @@
-"""'개선 권장 목록' -- wafers outside a factor's *recommended* range
-(spec §3), as distinct from '알람 목록' (wafers outside its *control
-limit*, control_range.py). Same train-derives-the-boundary /
-eval-gets-judged pattern as alarms, plus:
+"""인자별 권장 구간(recommended range) 계산 -- '개선 권장 목록'(per-wafer
+list)은 정밀도가 무작위 수준과 다르지 않아 삭제됐다 (spec 알람 신뢰도
+게이트 §B-1: train→problem 정밀도 5%). `compute_factor_recommendation`은
+여전히 남아있는 두 소비처가 쓴다:
 
-  - the recommended range is itself derived from train (bin-profile
-    threshold, see `_recommended_range_raw`) and clamped into the
-    control range so a recommendation never asks someone to push a
-    value past its own alarm boundary (spec §5-3)
-  - "이미 알람에 잡힌 건" (same factor+target+wafer already flagged by
-    control_range.evaluate_alarms) is excluded so the same deviation
-    doesn't show up in both lists
-  - the expected-improvement percentage is a property of the factor
-    (train-derived: overall train mean vs. the train mean *within* the
-    clamped range), not recomputed per evaluation run -- every
-    recommendation row for a given factor carries the same figure
+  - `src/analysis/alarm_bands.py`의 `classify_measured_bands`/
+    `compute_factor_band` -- 사전 알람 로그의 "구간별 평균 수율" 카드이
+    "채택된 권장구간"(SPC 또는 ML) 밖/안을 가르는 데 이 창을 그대로 쓴다
+    (spec 알람 신뢰도 게이트 §C-1).
+  - `src/analysis/report.py` -- JSON 보고서의 인자별 window 필드.
+
+recommended range 자체는 train 기준(bin-profile threshold, see
+`_recommended_range_raw`)으로 산출되고 control range 안쪽으로 clamp된다
+(spec §5-3) -- 값을 자신의 알람 경계 밖으로 밀어내는 권장은 없다.
 """
 
 from __future__ import annotations
@@ -22,9 +20,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from src.analysis.control_range import ControlRange, WaferAlarm, compute_control_range, evaluate_alarms
+from src.analysis.control_range import ControlRange, compute_control_range
 from src.analysis.screening.quantile_profile import quantile_bins, window_from_bins
-from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import ParetoFactor, confidence_tier
 from src.analysis.window_methods import MethodComparison, compare_methods
 
@@ -34,11 +31,6 @@ GRADE_TAG = {
     "weak": "reference",
     "reference": "reference",
 }
-TAG_LABEL = {"priority": "우선 권장", "recommended": "권장", "reference": "참고"}
-# Only 강함/보통 feed the JSON report's `recommendations` array (spec §3-6,
-# same rule alarms already apply elsewhere: 약함/참고 aren't confident
-# enough to print as an actionable finding).
-REPORT_TAG_TIERS = ("strong", "moderate")
 
 
 def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | None:
@@ -76,22 +68,6 @@ class FactorRecommendation:
     ratio: float | None
     n_in_window: int
     methods: MethodComparison
-
-
-@dataclass
-class WaferRecommendation:
-    lot_wafer_id: str
-    lot_id: str | None
-    step: int
-    feature: str
-    kind: str
-    target: str
-    value: float
-    recommended_lo: float
-    recommended_hi: float
-    direction: str  # "up" | "down"
-    expected_improvement_pct: float | None
-    tag: str
 
 
 def compute_factor_recommendation(
@@ -149,65 +125,3 @@ def compute_factor_recommendation(
         n_in_window=int(in_range_mask.sum()),
         methods=methods,
     )
-
-
-def compute_recommendations(
-    train_df: pd.DataFrame,
-    eval_df: pd.DataFrame,
-    schema: Schema,
-    *,
-    primary_factors: dict[str, ParetoFactor],
-) -> tuple[list[WaferRecommendation], dict[str, FactorRecommendation]]:
-    """`primary_factors` is the caller's target -> select_primary_factor()
-    result (the same "1위 인자" already shown everywhere else) -- the
-    recommendation list is scoped to exactly those factors, not the full
-    R+D+Config pool, so it stays aligned with what the training/root-cause
-    tabs call "the" factor for a target.
-    """
-    factor_summaries: dict[str, FactorRecommendation] = {}
-    rows: list[WaferRecommendation] = []
-
-    for target, factor in primary_factors.items():
-        control_range = compute_control_range(train_df, factor)
-        summary = compute_factor_recommendation(train_df, factor, control_range)
-        if summary is None:
-            continue
-        factor_summaries[target] = summary
-
-        already_alarmed: set[str] = {
-            alarm.lot_wafer_id for alarm in evaluate_alarms(eval_df, control_range)
-        }
-
-        if factor.feature not in eval_df.columns:
-            continue
-        ex = pd.to_numeric(eval_df[factor.feature], errors="coerce")
-        id_col = eval_df["Lot_Wafer_ID"] if "Lot_Wafer_ID" in eval_df.columns else None
-        lot_col = eval_df["Lot_ID"] if "Lot_ID" in eval_df.columns else None
-        y_col = eval_df[target] if target in eval_df.columns else None
-
-        for position, value in ex.items():
-            if pd.isna(value):
-                continue
-            if summary.recommended_lo <= value <= summary.recommended_hi:
-                continue
-            wafer_id = str(id_col.loc[position]) if id_col is not None else str(position)
-            if wafer_id in already_alarmed:
-                continue
-            rows.append(
-                WaferRecommendation(
-                    lot_wafer_id=wafer_id,
-                    lot_id=(str(lot_col.loc[position]) if lot_col is not None and pd.notna(lot_col.loc[position]) else None),
-                    step=factor.step,
-                    feature=factor.feature,
-                    kind=factor.kind,
-                    target=target,
-                    value=float(value),
-                    recommended_lo=summary.recommended_lo,
-                    recommended_hi=summary.recommended_hi,
-                    direction="down" if value > summary.recommended_hi else "up",
-                    expected_improvement_pct=summary.expected_improvement_pct,
-                    tag=summary.tag,
-                )
-            )
-
-    return rows, factor_summaries

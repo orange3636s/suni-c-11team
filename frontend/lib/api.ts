@@ -24,7 +24,6 @@ import type {
   ParetoRankingResponse,
   PreprocessingComparisonResponse,
   PreprocessResponse,
-  RecommendationListResponse,
   ReliabilityResponse,
   ScreeningScatterResponse,
   SendTestResponse,
@@ -433,12 +432,8 @@ export function getAlarmSummary(trainDataset: string, evalDataset: string): Prom
   return getJson(`/api/alarms/summary?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
 }
 
-export function getReliability(dataset: string): Promise<ReliabilityResponse> {
-  return getJson(`/api/analysis/reliability?${new URLSearchParams({ dataset }).toString()}`);
-}
-
-export function getRecommendations(trainDataset: string, evalDataset: string): Promise<RecommendationListResponse> {
-  return getJson(`/api/recommendations?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
+export function getReliability(dataset: string, evalDataset: string): Promise<ReliabilityResponse> {
+  return getJson(`/api/analysis/reliability?${new URLSearchParams({ dataset, eval: evalDataset }).toString()}`);
 }
 
 export function getModelPerformance(): Promise<ModelPerformanceResponse> {

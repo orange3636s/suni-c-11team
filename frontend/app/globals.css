@@ -9023,7 +9023,6 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 .alarmSummaryCaption{
   margin: 0 0 20px; font-size: 12px; color: var(--text-secondary);
 }
-.alarmSummaryCard.tone-neutral .alarmSummaryValue{ color: var(--band-outrec-text); }
 .alarmSummaryCard.tone-good .alarmSummaryValue{ color: var(--band-inrec-text); }
 .alarmSummaryCard.tone-faint{ background: var(--surface-secondary, var(--surface-muted)); }
 .alarmSummaryCard.tone-faint .alarmSummaryValue,
@@ -9453,29 +9452,7 @@ html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 25
   pointer-events: none;
 }
 
-/* 개선 권장 목록 태그 -- 기존 confidenceBadge와 같은 형태를 재사용하되
-   (우선 권장=강함/채움, 권장=보통/외곽선) 색을 다르게 써서 알람 등급
-   배지와 시각적으로 구분한다. 참고 태그는 회색으로 기본 숨김(토글). */
-.recommendationTag{
-  display: inline-flex; align-items: center; padding: 2px 9px;
-  border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: middle;
-  line-height: 1.6; white-space: nowrap;
-}
-.recommendationTag.tag-priority{ background: #059669; color: #fff; }
-.recommendationTag.tag-recommended{ background: transparent; border: 1.5px solid #059669; color: #059669; }
-.recommendationTag.tag-reference{
-  background: var(--surface-muted); color: var(--text-secondary); border: 1px solid var(--border);
-}
-html[data-theme="dark"] .recommendationTag.tag-priority{ background: #34D399; color: #052e1f; }
-html[data-theme="dark"] .recommendationTag.tag-recommended{ border-color: #34D399; color: #34D399; }
-
-.recommendationToggle{
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  color: var(--text-secondary); cursor: pointer; user-select: none; margin-right: 4px;
-}
-.recommendationToggle input{ cursor: pointer; }
-
-/* 알람/개선 권장 목록의 "해설" 버튼 (spec A-3) -- 작은 외곽선 버튼, 행
+/* 알람 목록의 "해설" 버튼 (spec A-3) -- 작은 외곽선 버튼, 행
    높이(--scroll-row-h: 42px)를 늘리지 않도록 세로 패딩을 최소로 둔다. */
 .explainButton{
   display: inline-flex; align-items: center; gap: 3px;
@@ -9489,16 +9466,8 @@ html[data-theme="dark"] .recommendationTag.tag-recommended{ border-color: #34D39
 .explainButton:disabled{ opacity: .4; cursor: not-allowed; }
 html[data-theme="dark"] .explainButton:hover:not(:disabled){ background: rgba(96,148,255,.14); color: #9db8ff; border-color: #9db8ff; }
 
-.recommendationDirection{
-  display: inline-flex; align-items: center; gap: 2px; font-weight: 600;
-}
-.recommendationDirection.dir-down{ color: #2563EB; }
-.recommendationDirection.dir-up{ color: #DC2626; }
-html[data-theme="dark"] .recommendationDirection.dir-down{ color: #60A5FA; }
-html[data-theme="dark"] .recommendationDirection.dir-up{ color: #F87171; }
-
 /* ===================================================================
-   알람/개선 권장 테이블 가로 스크롤 (PART C) -- .tableScroll's base rule
+   알람 테이블 가로 스크롤 (PART C) -- .tableScroll's base rule
    forces table-layout:fixed + per-cell ellipsis, which is exactly right
    for tables sized to their container (training/benchmark tables) but
    wrong here: a fixed percentage width truncates a value ("75....")
@@ -9568,9 +9537,6 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
   white-space: nowrap;
 }
 .col-wafer{ min-width: 88px; }
-.col-value{ min-width: 72px; }
-.col-range{ min-width: 110px; }
-.col-deviation{ min-width: 72px; }
 /* 배지 폭에 맞춰 열이 좁아진다 (spec §C-2) -- 고정 min-width 대신
    width:1%(table-layout:auto에서 "내용만큼만") + nowrap. */
 .col-severity{ width: 1%; white-space: nowrap; }
@@ -9669,6 +9635,13 @@ html[data-theme="dark"]{
 .yieldBandSeg.seg-out{ background: var(--band-out-bg); color: var(--band-out-text); }
 .yieldBandSeg.seg-outrec{ background: var(--band-outrec-bg); color: var(--band-outrec-text); }
 .yieldBandSeg.seg-inrec{ background: var(--band-inrec-bg); color: var(--band-inrec-text); }
+/* 구간별 평균 수율 카드(카드①) 전용 톤 (spec 알람 신뢰도 게이트 §C-3) --
+   고정 hex다. 인자별 불량률(카드②)의 seg-out/outrec/inrec과는 별개라
+   같은 --band-* 변수를 재사용하지 않는다(라이트/다크 공통, spec이 준
+   값을 그대로 쓴다). */
+.yieldBandSeg.seg-alarm{ background: color-mix(in srgb, #DC2626 14%, transparent); color: #DC2626; }
+.yieldBandSeg.seg-optimalOut{ background: color-mix(in srgb, #6B7280 16%, transparent); color: #6B7280; }
+.yieldBandSeg.seg-normal{ background: color-mix(in srgb, #0D9668 14%, transparent); color: #0D9668; }
 .yieldBandLine{
   position: absolute; top: 0; bottom: 0; width: 0;
   border-left: 2px dashed var(--band-line-control);
@@ -9700,6 +9673,9 @@ html[data-theme="dark"]{
 .yieldBandStatCol.seg-out .yieldBandStatValue{ color: var(--band-out-text); }
 .yieldBandStatCol.seg-outrec .yieldBandStatValue{ color: var(--band-outrec-text); }
 .yieldBandStatCol.seg-inrec .yieldBandStatValue{ color: var(--band-inrec-text); }
+.yieldBandStatCol.seg-alarm .yieldBandStatValue{ color: #DC2626; }
+.yieldBandStatCol.seg-optimalOut .yieldBandStatValue{ color: #6B7280; }
+.yieldBandStatCol.seg-normal .yieldBandStatValue{ color: #0D9668; }
 
 .yieldBandArrowGap{
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -9712,6 +9688,11 @@ html[data-theme="dark"]{
 
 .yieldBandCaptionRow{ display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .yieldBandFoonote{ font-size: 12px; color: var(--text-secondary); margin: 10px 0 0; }
+/* 총 격차 (spec 알람 신뢰도 게이트 §C-3) -- 화살표와 같은 초록. */
+.yieldBandTotalGap{
+  margin: 4px 0 0; text-align: center; font-size: 12.5px; font-weight: 700;
+  color: var(--band-arrow-yield); font-variant-numeric: tabular-nums;
+}
 
 /* 카드③ 판정불가 -- 톤을 낮춘다: 보조 텍스트 색만 사용, 큰 숫자 없음, 위
    카드들과 분리된 별도 섹션(margin으로 구분)이라 90.24가 "최고 구간"으로
@@ -9948,7 +9929,6 @@ html[data-theme="dark"]{
    text doesn't suddenly look oversized, just gets more breathing room. */
 @media (max-width: 767px){
   .severityBadge,
-  .recommendationTag,
   .confidenceBadge,
   .explainButton,
   .mobileTab,
@@ -10088,19 +10068,17 @@ html[data-theme="dark"]{
 
 /* 알람 등급 배지 (spec §A-3/§B-1 색상 재사용: 심각 #DC2626, 위험 #EA580C,
    주의 #CA8A04 -- 빈 삼각형은 테두리만 보이므로 밝은 노랑 대신 진한
-   황갈색을 쓴다). "개선 권고"는 알람이 아니라 회색 참고 배지. */
+   황갈색을 쓴다). "개선 권고" 등급은 삭제됐다 (spec 알람 신뢰도 게이트
+   §B-1: 정밀도가 무작위 수준과 다르지 않았다). */
 .severityBadge-grade-severe{ background: rgba(220,38,38,.14); color: #DC2626; }
 .severityBadge-grade-severe::before{ background: #DC2626; }
 .severityBadge-grade-danger{ background: rgba(234,88,12,.14); color: #C2570A; }
 .severityBadge-grade-danger::before{ background: #EA580C; }
 .severityBadge-grade-caution{ background: rgba(202,138,4,.14); color: #9A6B03; }
 .severityBadge-grade-caution::before{ background: #CA8A04; }
-.severityBadge-grade-improve{ background: rgba(142,142,147,.14); color: var(--text-secondary); }
-.severityBadge-grade-improve::before{ background: #8E8E93; }
 html[data-theme="dark"] .severityBadge-grade-severe{ color: #F87171; }
 html[data-theme="dark"] .severityBadge-grade-danger{ color: #FB923C; }
 html[data-theme="dark"] .severityBadge-grade-caution{ color: #FACC15; }
-html[data-theme="dark"] .severityBadge-grade-improve{ color: var(--text-secondary); }
 
 .alarmReasonCell{ color: var(--text-secondary); font-size: 12.5px; max-width: 360px; }
 .alarmShareWarning{
@@ -10145,6 +10123,21 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
   margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
   background: var(--surface-secondary); color: var(--text-secondary);
 }
+
+/* 알람 신뢰도 게이트 안내 (spec 알람 신뢰도 게이트 §A-3) -- 빈 목록만
+   보여주면 기능 오류로 오해하므로, 카드 형태로 사유를 설명한다. */
+.alarmGateBanner{
+  margin: 4px 0; padding: 16px 18px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning, #D97706) 30%, var(--border-card, rgba(0,0,0,.1)));
+  background: var(--warning-soft, color-mix(in srgb, #D97706 8%, transparent));
+}
+.alarmGateBanner strong{ display: block; font-size: 14px; margin-bottom: 8px; color: var(--text-primary); }
+.alarmGateBanner p{ margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.alarmGateBannerScore{ margin-top: 10px !important; font-size: 13px; color: var(--text-primary) !important; }
+
+/* 신뢰성 상세 패널의 게이트 안내 행 (spec §D-3). */
+.reliabilityGateRow td{ color: var(--danger); font-size: 12px; padding-top: 0 !important; border-bottom: none !important; }
+html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 
 /* 산점도/Box Plot 알람 삼각형 범례 (spec §B-3) */
 .scatterAlarmLegendRow{ align-items: center; }

@@ -13,6 +13,7 @@ from src.analysis.alarm_gbdt import (
     BAD_LABEL_QUANTILE,
     compute_grade_thresholds,
     cross_validate_auc,
+    cross_validate_transfer_auc,
     fit_bootstrap_ensemble,
     grade_of,
     prepare_feature_matrix,
@@ -62,14 +63,13 @@ def test_grade_of_uses_pred_hi_not_pred_mean():
     (구간이 넓은) wafer는 상한이 높아 알람에서 자동 제외되어야 한다."""
     from src.analysis.alarm_gbdt import GradeThresholds
 
-    thresholds = GradeThresholds(severe=80.0, danger=82.0, caution=84.0, improve=86.0)
-    # pred_mean 79 (심각 기준보다 낮음)이지만 pred_hi가 85(주의 기준보다도 높음)면
-    # "심각/위험/주의" 알람이 아니어야 한다 -- 예측이 불안정하다는 뜻이다.
-    # (개선 권고는 pred_mean만 보는 별개 기준이라 spec대로 여전히 트리거된다.)
-    grade = grade_of(pred_hi=85.0, pred_mean=79.0, thresholds=thresholds)
-    assert grade not in ("심각", "위험", "주의")
-    assert grade == "개선 권고"
-    assert grade_of(pred_hi=79.0, pred_mean=79.0, thresholds=thresholds) == "심각"
+    thresholds = GradeThresholds(severe=80.0, danger=82.0, caution=84.0)
+    # pred_hi가 85(주의 기준보다도 높음)면 "심각/위험/주의" 알람이 아니어야
+    # 한다 -- 예측이 불안정하다는 뜻이다. ("개선 권고" 등급은 삭제됐다 --
+    # spec 알람 신뢰도 게이트 §B-1: 정밀도가 무작위 수준과 다르지 않았다.)
+    grade = grade_of(pred_hi=85.0, thresholds=thresholds)
+    assert grade is None
+    assert grade_of(pred_hi=79.0, thresholds=thresholds) == "심각"
 
 
 def test_grade_thresholds_use_quantiles_not_std():
@@ -79,7 +79,7 @@ def test_grade_thresholds_use_quantiles_not_std():
     df = pd.DataFrame({"Y": skewed_y})
     thresholds = compute_grade_thresholds(df)
     assert thresholds.severe > 0
-    assert thresholds.severe <= thresholds.danger <= thresholds.caution <= thresholds.improve
+    assert thresholds.severe <= thresholds.danger <= thresholds.caution
 
 
 def test_score_alarms_does_not_fix_a_count():
@@ -92,7 +92,7 @@ def test_score_alarms_does_not_fix_a_count():
     thresholds = compute_grade_thresholds(train_df)
     alarms = score_alarms(eval_df, pred, thresholds)
     assert len(alarms) <= len(eval_df)
-    assert all(a.grade in ("심각", "위험", "주의", "개선 권고") for a in alarms)
+    assert all(a.grade in ("심각", "위험", "주의") for a in alarms)
     assert all(0.0 <= a.risk_percentile <= 100.0 for a in alarms)
 
 
@@ -111,3 +111,45 @@ def test_cross_validate_auc_ranks_better_than_chance_on_clear_signal():
     # Step1_R1 is a strong, clean signal for Y by construction -- expect
     # meaningfully-better-than-random ranking on average.
     assert float(np.mean(aucs)) > 0.6
+
+
+def test_cross_validate_transfer_auc_stays_high_when_eval_shares_train_distribution():
+    """알람 신뢰도 게이트 §A-1 -- train과 같은 생성 과정을 따르는 eval이면
+    (분포가 같은 정상 조합) 전이 AUC도 self-CV와 비슷하게 높아야 한다."""
+    df = _synthetic_df(n=600, n_lots=60, seed=3)
+    train_df, eval_df = df.iloc[:400], df.iloc[400:]
+    aucs = cross_validate_transfer_auc(train_df, eval_df, ["Step1_R1", "Step2_R1"], n_splits=5)
+    assert aucs is not None
+    assert len(aucs) == 5
+    assert float(np.percentile(aucs, 5)) > 0.6
+
+
+def test_cross_validate_transfer_auc_collapses_when_eval_distribution_shifts():
+    """알람 신뢰도 게이트 §A-1 핵심: eval의 Y가 train의 인자와 무관한
+    분포로 바뀌면(전형적인 "문제" 데이터셋) 전이 AUC가 무작위 수준으로
+    떨어져야 한다 -- 이게 바로 게이트가 잡아야 하는 상황이다."""
+    train_df = _synthetic_df(n=600, n_lots=60, seed=3)
+    rng = np.random.default_rng(99)
+    n = 300
+    shifted_eval = pd.DataFrame(
+        {
+            "Lot_Wafer_ID": [f"SW{i}" for i in range(n)],
+            "Lot_ID": [f"SLOT{i % 30:03d}" for i in range(n)],
+            "Step1_R1": rng.normal(50, 10, n),
+            "Step2_R1": rng.normal(20, 5, n),
+            # Y is pure noise, unrelated to the features -- no model can
+            # transfer discrimination onto this distribution.
+            "Y": rng.normal(60, 15, n),
+        }
+    )
+    aucs = cross_validate_transfer_auc(train_df, shifted_eval, ["Step1_R1", "Step2_R1"], n_splits=5)
+    assert aucs is not None
+    auc_lo = float(np.percentile(aucs, 5))
+    assert auc_lo < 0.65  # falls under the AUC_GATE threshold
+
+
+def test_cross_validate_transfer_auc_returns_none_when_too_few_lots():
+    train_df = _synthetic_df(n=50, n_lots=2, seed=2)
+    eval_df = _synthetic_df(n=50, n_lots=10, seed=4)
+    result = cross_validate_transfer_auc(train_df, eval_df, ["Step1_R1", "Step2_R1"], n_splits=5)
+    assert result is None

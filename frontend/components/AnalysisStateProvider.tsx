@@ -11,7 +11,6 @@ import type {
   ModelPerformanceResponse,
   NotificationSettingsSummary,
   ParetoRankingResponse,
-  RecommendationListResponse,
   ScreeningScatterResponse,
 } from "@/types/data";
 
@@ -56,7 +55,7 @@ export type AnalysisState = {
   // point-fill fetch) -- false right after a server restore, before that
   // fetch resolves.
   pointsComplete: boolean;
-  // '계측 확대 권고' 카드 (spec 문구 전수 검토 PART B) -- 분석 실행 시 한
+  // '계측 확대 제안' 카드 (spec 문구 전수 검토 PART B) -- 분석 실행 시 한
   // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
   // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
   measurementExpansion: MeasurementExpansionResponse | null;
@@ -72,7 +71,6 @@ export type AlarmsState = {
   createdAt: string;
   summary: AlarmSummaryResponse;
   alarms: AlarmListResponse;
-  recommendations: RecommendationListResponse;
 } | null;
 
 type AnalysisStateValue = {
@@ -149,7 +147,6 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             createdAt: state.alarms.created_at,
             summary: state.alarms.payload.summary,
             alarms: state.alarms.payload.alarms,
-            recommendations: state.alarms.payload.recommendations,
           });
         }
         if (state.notifications) {

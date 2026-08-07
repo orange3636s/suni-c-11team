@@ -6,6 +6,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Response, status
 
@@ -22,7 +23,6 @@ from api.schemas.analysis import (
     ModelPerformanceResponse,
     ParetoRankingResponse,
     PreprocessingComparisonResponse,
-    RecommendationListResponse,
     ReliabilityResponse,
     ScreeningScatterResponse,
 )
@@ -36,7 +36,7 @@ from src.analysis.control_range import (
 )
 from src.analysis.llm_stats import per_factor_measurement_bias, summarize_measurement_bias
 from src.analysis.measurement_expansion import MIN_ACTION_BLOCKED_SHARE, compute_measurement_expansion
-from src.analysis.recommendations import compute_recommendations
+from src.analysis.recommendations import FactorRecommendation, compute_factor_recommendation
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
@@ -49,7 +49,6 @@ from src.analysis.screening.selector import (
     find_factor,
     score_all_factors,
     select_fdr_significant_factors,
-    select_primary_factor,
 )
 from src.analysis.screening.selector import _ranked_rows_with_contribution as _ranked_rows
 from src.analysis.screening.selector import _row_to_factor
@@ -283,6 +282,44 @@ def _cached_bootstrap_prediction(train_dataset_id: str, eval_dataset_id: str):
     return result
 
 
+AUC_GATE_CACHE_PAIRS = 4
+
+
+@lru_cache(maxsize=AUC_GATE_CACHE_PAIRS)
+def _cached_transfer_auc_folds(train_dataset_id: str, eval_dataset_id: str) -> tuple[float, ...] | None:
+    """알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-1/§A-2) -- (train, eval)
+    쌍마다 한 번만 계산해 캐시한다 (5-fold GBDT 적합이 주 비용이다).
+
+    train==eval이면 같은 wafer로 학습하고 평가하는 누출을 피하려 기존
+    out-of-fold self-CV(`cross_validate_auc`)를 쓴다. train과 eval이
+    다르면 "이 train으로 학습한 모델이 이 eval 분포에서도 통하는가"를
+    직접 재는 전이 AUC(`cross_validate_transfer_auc`)를 쓴다 -- self-CV는
+    eval이 무엇이든 같은 값이 나와 분포 이동을 감지하지 못한다.
+    """
+    train_df = _dataframe_or_404(train_dataset_id)
+    schema = parse_schema(train_df)
+    features = alarm_gbdt.feature_columns(schema)
+    if not features or alarm_gbdt.FINAL_YIELD_COLUMN not in train_df.columns:
+        return None
+    if train_dataset_id == eval_dataset_id:
+        fold_aucs = alarm_gbdt.cross_validate_auc(train_df, features)
+    else:
+        eval_df = _dataframe_or_404(eval_dataset_id)
+        fold_aucs = alarm_gbdt.cross_validate_transfer_auc(train_df, eval_df, features)
+    return tuple(fold_aucs) if fold_aucs else None
+
+
+def _auc_gate(train_dataset_id: str, eval_dataset_id: str) -> tuple[float | None, bool]:
+    """Returns (auc_lower_bound, gate_passed). 표본 부족 등으로 AUC 자체를
+    산출할 수 없으면 (None, False) -- 신뢰도를 확인할 수 없으니 통과시키지
+    않는다 (spec §A-2: 기본값은 "알람을 내지 않는다")."""
+    fold_aucs = _cached_transfer_auc_folds(train_dataset_id, eval_dataset_id)
+    if not fold_aucs:
+        return None, False
+    auc_lo = float(np.percentile(fold_aucs, 5))
+    return auc_lo, auc_lo >= alarm_gbdt.AUC_GATE
+
+
 def _pareto_payload(dataset_id: str, target: str) -> dict[str, Any]:
     t0 = time.perf_counter()
     hits_before = _cached_ranked_rows.cache_info().hits
@@ -379,6 +416,28 @@ def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
     }
 
 
+def _scored_alarms_if_gate_passes(
+    train: str, eval: str, train_df: pd.DataFrame, eval_df: pd.DataFrame
+) -> tuple[list, float | None, bool]:
+    """공유 파이프라인 -- `get_alarms`와 `compute_alarm_notification_items`가
+    똑같이 게이트를 적용하도록 한 곳에 모았다 (spec 알람 신뢰도 게이트
+    §A-2: "신뢰할 수 없으면 0건이 된다"가 어디서 알람을 불러오든 항상
+    성립해야 한다). 게이트 미달이면 빈 리스트를 반환한다 -- 부트스트랩
+    예측조차 계산하지 않는다(둘 다 필요 없다).
+    """
+    auc_lo, gate_passed = _auc_gate(train, eval)
+    if not gate_passed:
+        return [], auc_lo, False
+
+    prediction = _cached_bootstrap_prediction(train, eval)
+    if prediction is None:
+        return [], auc_lo, gate_passed
+
+    thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
+    scored = alarm_gbdt.score_alarms(eval_df, prediction, thresholds)
+    return scored, auc_lo, gate_passed
+
+
 @router.get("/alarms", response_model=AlarmListResponse)
 def get_alarms(train: str = "train", eval: str = "test", grade: str | None = None) -> dict[str, Any]:
     """알람 판정 GBDT 전환 (spec §A) -- 관리한계 이탈량이 아니라 부트스트랩
@@ -386,26 +445,17 @@ def get_alarms(train: str = "train", eval: str = "test", grade: str | None = Non
     아래인 wafer만 알람으로 낸다. 개수를 고정하지 않는다: 신뢰할 수 없는
     데이터셋(예: killing_event)에서는 알람이 0~1건만 나오는 것이 설계
     의도다.
+
+    알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
+    AUC 하한이 0.65 미만이면 알람을 아예 내지 않는다. 임계를 학습 Y
+    분위수로만 잡으면 평가 데이터의 분포가 다를 때 예측값이 통째로
+    낮게 나와 대량 오경보가 발생하기 때문이다 (실측: 분포가 어긋난
+    조합에서 정밀도 6~7%까지 떨어진다).
     """
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
-    empty_response = {
-        "train_dataset_id": train,
-        "eval_dataset_id": eval,
-        "items": [],
-        "total": 0,
-        "alarm_total": 0,
-        "improvement_total": 0,
-        "evaluated_total": len(eval_df),
-        "alarm_share_warning": False,
-    }
 
-    prediction = _cached_bootstrap_prediction(train, eval)
-    if prediction is None:
-        return empty_response
-
-    thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
-    scored = alarm_gbdt.score_alarms(eval_df, prediction, thresholds)
+    scored, auc_lo, gate_passed = _scored_alarms_if_gate_passes(train, eval, train_df, eval_df)
 
     warning_lines = _cached_all_warning_lines(train)
     id_column = "Lot_Wafer_ID"
@@ -435,8 +485,7 @@ def get_alarms(train: str = "train", eval: str = "test", grade: str | None = Non
         )
     items.sort(key=lambda item: item["risk_percentile"])
 
-    alarm_total = sum(1 for s in scored if s.grade in ("심각", "위험", "주의"))
-    improvement_total = sum(1 for s in scored if s.grade == "개선 권고")
+    alarm_total = len(scored)  # 심각/위험/주의만 score_alarms가 반환한다
     evaluated_total = len(eval_df)
     alarm_share_warning = (
         evaluated_total > 0 and (alarm_total / evaluated_total) > alarm_gbdt.ALARM_SHARE_WARNING_THRESHOLD
@@ -449,19 +498,20 @@ def get_alarms(train: str = "train", eval: str = "test", grade: str | None = Non
             "items": items,
             "total": len(items),
             "alarm_total": alarm_total,
-            "improvement_total": improvement_total,
             "evaluated_total": evaluated_total,
             "alarm_share_warning": alarm_share_warning,
+            "auc_lower_bound": auc_lo,
+            "auc_gate_passed": gate_passed,
+            "auc_gate_threshold": alarm_gbdt.AUC_GATE,
         }
     )
 
 
 def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, Any]] | None:
     """알림 발송(src.notifications.dispatch)이 쓰는 알람 목록 -- `get_alarms`와
-    같은 파이프라인이지만 개선 권고는 제외한다 (발송 대상 등급은 항상
-    심각/위험/주의의 부분집합이라 개선 권고를 보낼 일이 없다). 데이터셋을
-    찾을 수 없으면 예외 대신 None을 반환한다 -- 알림 발송은 best-effort라
-    404로 스케줄러 잡 전체를 죽이면 안 된다.
+    같은 파이프라인(게이트 포함)을 그대로 재사용한다. 데이터셋을 찾을 수
+    없으면 예외 대신 None을 반환한다 -- 알림 발송은 best-effort라 404로
+    스케줄러 잡 전체를 죽이면 안 된다.
     """
     try:
         train_df = _dataframe_or_404(train)
@@ -469,12 +519,7 @@ def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, An
     except HTTPException:
         return None
 
-    prediction = _cached_bootstrap_prediction(train, eval)
-    if prediction is None:
-        return []
-
-    thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
-    scored = alarm_gbdt.score_alarms(eval_df, prediction, thresholds)
+    scored, _auc_lo, _gate_passed = _scored_alarms_if_gate_passes(train, eval, train_df, eval_df)
 
     warning_lines = _cached_all_warning_lines(train)
     id_column = "Lot_Wafer_ID"
@@ -482,8 +527,6 @@ def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, An
 
     items: list[dict[str, Any]] = []
     for score in scored:
-        if score.grade not in ("심각", "위험", "주의"):
-            continue
         row = None
         if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
             match = eval_by_id.loc[score.lot_wafer_id]
@@ -536,48 +579,41 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
     alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
     verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
 
-    # 판정불가(미계측) 정의는 그대로 둔다 (spec §E-2: "현행 유지") -- 알람
-    # 판정 기준이 GBDT로 바뀌어도, 선정 인자가 하나도 계측되지 않은
-    # wafer는 여전히 판정 자체가 불가능하다.
+    # 판정불가(미계측) 정의는 그대로 둔다 (spec 알람 신뢰도 게이트 §C-1:
+    # "별도 카드, 현행 유지") -- 알람 판정 기준이 GBDT로 바뀌어도, 선정
+    # 인자가 하나도 계측되지 않은 wafer는 여전히 판정 자체가 불가능하다.
     unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
     unmeasured_id_set = set(unmeasured_ids)
 
-    # 구간별 평균 수율 카드 재정의 (spec §E-2) -- 관리한계(IQR) 이탈이 아니라
-    # /api/alarms(get_alarms)와 같은 부트스트랩 예측 수율·등급 임계로 나눈다:
-    # 알람(심각·위험·주의) / 개선 권고(예측 평균이 하위 20% 분위 이하,
-    # 알람 제외) / 정상(그 외). 판정불가는 위에서 이미 제외했으므로 여기
-    # 세 구간의 합은 항상 "판정 가능 wafer 수"와 같다.
-    prediction = _cached_bootstrap_prediction(train, eval)
-    band_counts = {"alarm": 0, "out_of_recommended": 0, "in_recommended": 0}
-    band_yield_sum = {"alarm": 0.0, "out_of_recommended": 0.0, "in_recommended": 0.0}
-    band_yield_n = {"alarm": 0, "out_of_recommended": 0, "in_recommended": 0}
-    if prediction is not None:
-        thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
-        y_values = (
-            pd.to_numeric(eval_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce")
-            if alarm_gbdt.FINAL_YIELD_COLUMN in eval_df.columns
-            else None
-        )
-        for i, wafer_id in enumerate(prediction.lot_wafer_id):
-            if wafer_id in unmeasured_id_set:
-                continue
-            grade = alarm_gbdt.grade_of(float(prediction.pred_hi[i]), float(prediction.pred_mean[i]), thresholds)
-            # "out_of_recommended"/"in_recommended" 필드명은 그대로 두되
-            # (API 하위 호환), 이제는 각각 개선 권고/정상 구간을 담는다.
-            bucket = "alarm" if grade in ("심각", "위험", "주의") else "out_of_recommended" if grade == "개선 권고" else "in_recommended"
-            band_counts[bucket] += 1
-            if y_values is not None and i < len(y_values) and pd.notna(y_values.iloc[i]):
-                band_yield_sum[bucket] += float(y_values.iloc[i])
-                band_yield_n[bucket] += 1
+    # 알람 구간 (spec §C-1): GBDT 예측 수율 상한이 학습 Y 하위 15% 분위
+    # 이하 -- 신뢰도 게이트(spec §A) 통과 시에만 계산한다. 게이트 미달이면
+    # 알람은 0건이고, 나머지 판정 가능 wafer 전부가 최적구간밖/정상 후보로
+    # 넘어간다.
+    auc_lo, gate_passed = _auc_gate(train, eval)
+    alarm_ids: list[str] = []
+    if gate_passed:
+        prediction = _cached_bootstrap_prediction(train, eval)
+        if prediction is not None:
+            thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
+            for i, wafer_id in enumerate(prediction.lot_wafer_id):
+                if wafer_id in unmeasured_id_set:
+                    continue
+                if alarm_gbdt.grade_of(float(prediction.pred_hi[i]), thresholds) is not None:
+                    alarm_ids.append(wafer_id)
+    alarm_id_set = set(alarm_ids)
+    normal_candidate_ids = [
+        v.lot_wafer_id for v in verdicts if v.status != "unmeasured" and v.lot_wafer_id not in alarm_id_set
+    ]
 
-    def _band_mean_yield(bucket: str) -> float | None:
-        n = band_yield_n[bucket]
-        return band_yield_sum[bucket] / n if n > 0 else None
-
-    # 판정불가 wafer의 평균 수율만 필요하므로 alarm_factors를 빈 목록으로
-    # 넘겨 classify_measured_bands를 그 용도로만 재사용한다 (기존 로직
-    # 재사용 -- 새 id-정렬 코드를 또 만들지 않는다).
-    unmeasured_band = classify_measured_bands(train_df, eval_df, [], [], unmeasured_ids, [], []).unmeasured
+    # 최적 구간 밖 / 정상 (spec §C-1): 알람 제외, "원인 분석에서 채택된
+    # 권장구간"(SPC 또는 ML) 기준 -- classify_measured_bands가 내부에서
+    # compute_factor_recommendation(→ window_methods.compare_methods)을
+    # 그대로 호출하므로 adopted 방식을 별도로 재계산하지 않는다 (spec
+    # §C-1: "중간 구간은 원인 분석의 채택 방식을 그대로 따른다").
+    bands = classify_measured_bands(
+        train_df, eval_df, alarm_ids, normal_candidate_ids, unmeasured_ids, factors, control_ranges
+    )
+    measured_wafers = len(verdicts) - len(unmeasured_ids)
 
     # Per-factor 인자별 불량률 breakdown (카드②, spec §E-2) -- 강함·보통
     # 등급으로 분류된 인자 전부 (기존에는 타깃당 1위 인자 5개뿐이었다).
@@ -612,86 +648,33 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
             "train_dataset_id": train,
             "eval_dataset_id": eval,
             "total_wafers": len(verdicts),
-            "measured_wafers": len(verdicts) - len(unmeasured_ids),
+            "measured_wafers": measured_wafers,
+            # 집계 카드 3-tile (spec §B-4): 알람/정상/판정불가. "정상"은
+            # 최적구간 안팎을 가리지 않은, 알람이 아닌 판정 가능 wafer 전부다.
             "counts": {
-                "alarm": band_counts["alarm"],
-                "out_of_recommended": band_counts["out_of_recommended"],
-                "in_recommended": band_counts["in_recommended"],
+                "alarm": bands.alarm.count,
+                "normal": bands.out_of_recommended.count + bands.in_recommended.count,
                 "unmeasured": len(unmeasured_ids),
             },
+            # 구간별 평균 수율 카드(spec §C-1)의 3구간 -- 합은 항상 measured_wafers.
+            "band_counts": {
+                "alarm": bands.alarm.count,
+                "out_of_recommended": bands.out_of_recommended.count,
+                "in_recommended": bands.in_recommended.count,
+            },
             "band_yield": {
-                "alarm": _band_mean_yield("alarm"),
-                "out_of_recommended": _band_mean_yield("out_of_recommended"),
-                "in_recommended": _band_mean_yield("in_recommended"),
-                "unmeasured": unmeasured_band.mean_yield,
+                "alarm": bands.alarm.mean_yield,
+                "out_of_recommended": bands.out_of_recommended.mean_yield,
+                "in_recommended": bands.in_recommended.mean_yield,
+                "unmeasured": bands.unmeasured.mean_yield,
             },
             "measurement_bias": measurement_bias,
             "factor_bands": factor_bands,
+            "auc_lower_bound": auc_lo,
+            "auc_gate_passed": gate_passed,
+            "auc_gate_threshold": alarm_gbdt.AUC_GATE,
         }
     )
-
-
-@router.get("/recommendations", response_model=RecommendationListResponse)
-def get_recommendations(train: str = "train", eval: str = "test") -> dict[str, Any]:
-    """개선 권장 목록: wafers outside the recommended range of each
-    target's primary (1위) factor -- the same factor already shown on
-    the training/root-cause screens, not the full R+D+Config pool. Rows
-    already caught by that same factor's alarm (LCL/UCL) are excluded
-    (spec §3-1: "관리한계 이탈로 이미 알람에 잡힌 건은 개선 권장 목록에서
-    제외한다").
-    """
-    train_df = _dataframe_or_404(train)
-    eval_df = _dataframe_or_404(eval)
-    schema = parse_schema(train_df)
-
-    primary_factors: dict[str, ParetoFactor] = {}
-    for target in schema.target_cols:
-        factor = select_primary_factor(train_df, schema, target)
-        if factor is not None:
-            primary_factors[target] = factor
-
-    rows, factor_summaries = compute_recommendations(train_df, eval_df, schema, primary_factors=primary_factors)
-
-    excluded_alarm_count = 0
-    for target, factor in primary_factors.items():
-        summary = factor_summaries.get(target)
-        if summary is None or factor.feature not in eval_df.columns:
-            continue
-        control_range = compute_control_range(train_df, factor)
-        already_alarmed = {a.lot_wafer_id for a in evaluate_alarms(eval_df, control_range)}
-        ex = pd.to_numeric(eval_df[factor.feature], errors="coerce")
-        id_col = eval_df["Lot_Wafer_ID"] if "Lot_Wafer_ID" in eval_df.columns else None
-        for position, value in ex.items():
-            if pd.isna(value) or summary.recommended_lo <= value <= summary.recommended_hi:
-                continue
-            wafer_id = str(id_col.loc[position]) if id_col is not None else str(position)
-            if wafer_id in already_alarmed:
-                excluded_alarm_count += 1
-
-    items = [
-        {
-            "lot_wafer_id": row.lot_wafer_id,
-            "lot_id": row.lot_id,
-            "step": row.step,
-            "feature": row.feature,
-            "kind": row.kind,
-            "target": row.target,
-            "value": row.value,
-            "recommended_range": [row.recommended_lo, row.recommended_hi],
-            "direction": row.direction,
-            "expected_improvement_pct": row.expected_improvement_pct,
-            "tag": row.tag,
-        }
-        for row in rows
-    ]
-    items.sort(key=lambda item: item["lot_wafer_id"])
-    return {
-        "train_dataset_id": train,
-        "eval_dataset_id": eval,
-        "items": items,
-        "total": len(items),
-        "excluded_alarm_count": excluded_alarm_count,
-    }
 
 
 def _build_report_payload(dataset: str) -> dict[str, Any]:
@@ -803,7 +786,15 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
             target: _row_to_factor(train_df, target, rows[0]) for target, rows in rows_by_target.items() if rows
         }
 
-        _rows, factor_summaries = compute_recommendations(train_df, eval_df, schema, primary_factors=primary_factors)
+        # 인자별 권장구간(SPC/ML 채택 방식)만 필요하다 -- 개선 권장 목록
+        # (per-wafer 행)은 삭제됐으므로 compute_factor_recommendation을
+        # 직접 부른다 (spec 알람 신뢰도 게이트 §B-2).
+        factor_summaries: dict[str, FactorRecommendation] = {}
+        for target, factor in primary_factors.items():
+            control_range = compute_control_range(train_df, factor)
+            factor_summary = compute_factor_recommendation(train_df, factor, control_range)
+            if factor_summary is not None:
+                factor_summaries[target] = factor_summary
 
         judgment_features = [factor.feature for factor in judgment_factors]
         summary = compute_measurement_expansion(
@@ -846,17 +837,22 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     )
 
 
-RELIABILITY_CACHE_DATASETS = 4
+RELIABILITY_CACHE_PAIRS = 8
 
 
-@lru_cache(maxsize=RELIABILITY_CACHE_DATASETS)
-def _cached_reliability(dataset_id: str) -> dict[str, Any]:
-    """spec §E: 5개 지표 100점 -- 데이터셋당 한 번만 계산해 캐시한다
-    (GroupKFold 5-fold 검증이 주 비용이다).
+@lru_cache(maxsize=RELIABILITY_CACHE_PAIRS)
+def _cached_reliability(dataset_id: str, eval_dataset_id: str) -> dict[str, Any]:
+    """spec §E: 5개 지표 100점 -- (train, eval) 쌍마다 한 번만 계산해
+    캐시한다 (GroupKFold 5-fold 검증이 주 비용이다).
+
+    AUC 지표는 알람 신뢰도 게이트 §A-1/§A-2가 도입된 뒤로 train 자기
+    자신만의 self-CV가 아니라 **선택된 eval에 대한 전이 AUC**다
+    (`_cached_transfer_auc_folds`, `/api/alarms`와 동일한 값을 공유) --
+    같은 train이라도 eval 분포가 다르면 다른 값이 나와야 게이트가 실제로
+    잡아내려는 상황(분포 이동)을 신뢰도 점수에도 반영할 수 있다.
     """
     df = _dataframe_or_404(dataset_id)
     schema = parse_schema(df)
-    features = alarm_gbdt.feature_columns(schema)
 
     fallback = target_fallback.select_analysis_targets(df)
 
@@ -869,7 +865,7 @@ def _cached_reliability(dataset_id: str) -> dict[str, Any]:
                 n_sig_features.add(row["feature"])
             max_eps2 = row["eps2"] if max_eps2 is None else max(max_eps2, row["eps2"])
 
-    fold_aucs = alarm_gbdt.cross_validate_auc(df, features) if features else None
+    fold_aucs = _cached_transfer_auc_folds(dataset_id, eval_dataset_id)
 
     bad_threshold = (
         pd.to_numeric(df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").quantile(alarm_gbdt.BAD_LABEL_QUANTILE)
@@ -885,6 +881,7 @@ def _cached_reliability(dataset_id: str) -> dict[str, Any]:
     # "판정 커버리지": 전체 R+D 인자 중 하나라도 계측된 행의 비율 --
     # GBDT는 값이 하나도 없어도 예측 자체는 내놓지만, 그런 행은 사실상
     # 모델의 편향(bias)만으로 예측한 것이라 신뢰성 점수에 반영한다.
+    features = alarm_gbdt.feature_columns(schema)
     coverage_pct: float | None = None
     if features:
         present = [f for f in features if f in df.columns]
@@ -892,7 +889,7 @@ def _cached_reliability(dataset_id: str) -> dict[str, Any]:
             coverage_pct = float(df[present].notna().any(axis=1).mean() * 100.0)
 
     breakdown = reliability.compute_reliability(
-        fold_aucs=fold_aucs,
+        fold_aucs=list(fold_aucs) if fold_aucs else None,
         n_significant_factors=len(n_sig_features),
         max_eps2=max_eps2,
         n_train=len(df),
@@ -901,10 +898,13 @@ def _cached_reliability(dataset_id: str) -> dict[str, Any]:
     )
     return {
         "dataset_id": dataset_id,
+        "eval_dataset_id": eval_dataset_id,
         "grade": breakdown.grade,
         "total_score": breakdown.total_score,
         "auc_lower_bound": breakdown.auc_lower_bound,
         "auc_score": breakdown.auc_score,
+        "auc_gate_passed": breakdown.auc_gate_passed,
+        "auc_gate_message": breakdown.auc_gate_message,
         "n_significant_factors": breakdown.n_significant_factors,
         "n_significant_score": breakdown.n_significant_score,
         "max_eps2": breakdown.max_eps2,
@@ -967,18 +967,18 @@ def get_preprocessing_comparison(dataset: str) -> dict[str, Any]:
 
 
 @router.get("/analysis/reliability", response_model=ReliabilityResponse)
-def get_reliability(dataset: str = "train") -> dict[str, Any]:
-    return round_floats(_cached_reliability(dataset))
+def get_reliability(dataset: str = "train", eval: str = "test") -> dict[str, Any]:
+    return round_floats(_cached_reliability(dataset, eval))
 
 
 @router.get("/analysis/context", response_model=AnalysisContextResponse)
 def get_analysis_context(dataset: str = "train", *, response: Response) -> dict[str, Any]:
     """The SUNI chatbot's grounding context -- same underlying report as
-    /api/analysis/report, but `alarms`/`recommendations` are reshaped into
-    `{summary, records}` (see build_chat_context's docstring) so the
-    chatbot can answer a question about one specific wafer's alarm, not
-    just the aggregate counts. No Content-Disposition, and explicitly
-    non-cached since the frontend calls this right before /api/chat.
+    /api/analysis/report, but `alarms` is reshaped into `{summary,
+    records}` (see build_chat_context's docstring) so the chatbot can
+    answer a question about one specific wafer's alarm, not just the
+    aggregate counts. No Content-Disposition, and explicitly non-cached
+    since the frontend calls this right before /api/chat.
     """
     response.headers["Cache-Control"] = "no-store"
     return build_chat_context(_build_report_payload(dataset))

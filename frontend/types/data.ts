@@ -575,9 +575,9 @@ export type ControlRangeListResponse = {
 };
 
 /** 알람 판정 GBDT 전환 (spec §A-2) -- 관리한계 이탈량이 아니라 부트스트랩
- * 앙상블 예측 수율의 신뢰구간 상한 기준 등급. "개선 권고"는 알람이
- * 아니라 참고용(예측 평균 기준, 알람 제외)이다. */
-export type AlarmGrade = "심각" | "위험" | "주의" | "개선 권고";
+ * 앙상블 예측 수율의 신뢰구간 상한 기준 등급. "개선 권고" 등급은 삭제됐다
+ * (spec 알람 신뢰도 게이트 §B-1: 정밀도가 무작위 수준과 다르지 않았다). */
+export type AlarmGrade = "심각" | "위험" | "주의";
 
 export type AlarmItem = {
   lot_wafer_id: string;
@@ -595,19 +595,27 @@ export type AlarmListResponse = {
   items: AlarmItem[];
   total: number;
   alarm_total: number;
-  improvement_total: number;
   evaluated_total: number;
   alarm_share_warning: boolean;
+  // 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- auc_gate_passed가
+  // false면 items/total/alarm_total 모두 0이다.
+  auc_lower_bound: number | null;
+  auc_gate_passed: boolean;
+  auc_gate_threshold: number;
 };
 
 export type ReliabilityGrade = "높음" | "보통" | "낮음";
 
 export type ReliabilityResponse = {
   dataset_id: string;
+  eval_dataset_id: string;
   grade: ReliabilityGrade;
   total_score: number;
   auc_lower_bound: number | null;
   auc_score: number;
+  // 알람 신뢰도 게이트 §D-3: AUC 항목에 게이트 통과 여부를 덧붙인다.
+  auc_gate_passed: boolean;
+  auc_gate_message: string | null;
   n_significant_factors: number;
   n_significant_score: number;
   max_eps2: number | null;
@@ -718,10 +726,11 @@ export type AlarmSummaryResponse = {
   eval_dataset_id: string;
   total_wafers: number;
   measured_wafers: number;
-  // 필드명은 그대로지만(하위 호환), 이제 GBDT 예측 수율 등급 기준이다
-  // (spec §E-2): alarm=알람(심각·위험·주의), out_of_recommended=개선 권고,
-  // in_recommended=정상.
-  counts: { alarm: number; out_of_recommended: number; in_recommended: number; unmeasured: number };
+  // 집계 카드 3-tile (spec 알람 신뢰도 게이트 §B-4): 알람/정상/판정불가.
+  counts: { alarm: number; normal: number; unmeasured: number };
+  // 구간별 평균 수율 카드(spec §C-1)의 3구간 -- 알람/최적 구간 밖/정상.
+  // 합은 항상 measured_wafers와 같다.
+  band_counts: { alarm: number; out_of_recommended: number; in_recommended: number };
   band_yield: {
     alarm: number | null;
     out_of_recommended: number | null;
@@ -730,6 +739,11 @@ export type AlarmSummaryResponse = {
   };
   measurement_bias: MeasurementBiasSummary | null;
   factor_bands: FactorBand[];
+  // 알람 신뢰도 게이트 -- AlarmListResponse와 같은 (train,eval) 쌍이면
+  // 항상 일치한다.
+  auc_lower_bound: number | null;
+  auc_gate_passed: boolean;
+  auc_gate_threshold: number;
 };
 
 // 인자별 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- 전체 wafer 집계가
@@ -738,30 +752,6 @@ export type MeasurementBiasSummary = {
   tested_count: number;
   significant_count: number;
   direction: "low" | "high" | "mixed" | null;
-};
-
-export type RecommendationTag = "priority" | "recommended" | "reference";
-
-export type RecommendationItem = {
-  lot_wafer_id: string;
-  lot_id: string | null;
-  step: number;
-  feature: string;
-  kind: string;
-  target: string;
-  value: number;
-  recommended_range: [number, number];
-  direction: "up" | "down";
-  expected_improvement_pct: number | null;
-  tag: RecommendationTag;
-};
-
-export type RecommendationListResponse = {
-  train_dataset_id: string;
-  eval_dataset_id: string;
-  items: RecommendationItem[];
-  total: number;
-  excluded_alarm_count: number;
 };
 
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";
@@ -874,7 +864,6 @@ export type LatestAnalysisRecord = {
 export type LatestAlarmsPayload = {
   summary: AlarmSummaryResponse;
   alarms: AlarmListResponse;
-  recommendations: RecommendationListResponse;
 };
 
 export type LatestAlarmsRecord = {

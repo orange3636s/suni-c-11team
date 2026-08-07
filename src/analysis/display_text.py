@@ -68,13 +68,6 @@ def format_pct1(value: float | None) -> str | None:
     return f"{_quantize(value, 1)}%"
 
 
-def format_pct0(value: float | None) -> str | None:
-    """기대 개선율 -- 화면의 `expected_improvement_pct.toFixed(0)`과 동일."""
-    if value is None:
-        return None
-    return f"{_quantize(value, 0)}%"
-
-
 def format_range_1dp(lo: float | None, hi: float | None) -> str | None:
     """수치 범위 표기 -- `[46.97, 62.15]` 대신 `"47.0 ~ 62.2"`."""
     if lo is None or hi is None:
@@ -197,18 +190,6 @@ def _annotate_alarm_record(record: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _annotate_recommendation_record(record: dict[str, Any]) -> dict[str, Any]:
-    out = dict(record)
-    if out.get("value") is not None:
-        out["value_text"] = format_1dp(out["value"])
-    recommended_range = out.get("recommended_range")
-    if isinstance(recommended_range, (list, tuple)) and len(recommended_range) == 2:
-        out["recommended_range_text"] = format_range_1dp(recommended_range[0], recommended_range[1])
-    if out.get("expected_reduction_pct") is not None:
-        out["expected_reduction_pct_text"] = format_pct0(out["expected_reduction_pct"])
-    return out
-
-
 def add_display_text(context: dict[str, Any]) -> dict[str, Any]:
     """Adds `_text` siblings throughout a `build_chat_context` payload
     in-place-equivalent (returns a new dict; never mutates the input).
@@ -251,13 +232,5 @@ def add_display_text(context: dict[str, Any]) -> dict[str, Any]:
         alarms = dict(alarms)
         alarms["records"] = [_annotate_alarm_record(record) for record in alarms["records"]]
         out["alarms"] = alarms
-
-    recommendations = out.get("recommendations")
-    if isinstance(recommendations, dict) and isinstance(recommendations.get("records"), list):
-        recommendations = dict(recommendations)
-        recommendations["records"] = [
-            _annotate_recommendation_record(record) for record in recommendations["records"]
-        ]
-        out["recommendations"] = recommendations
 
     return out

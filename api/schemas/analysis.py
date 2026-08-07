@@ -196,7 +196,7 @@ class AlarmItemSchema(BaseModel):
 
     lot_wafer_id: str
     lot_id: str | None
-    grade: str  # "심각" | "위험" | "주의" | "개선 권고"
+    grade: str  # "심각" | "위험" | "주의"
     risk_percentile: float  # 0-100, 낮을수록 위험
     reason: str
 
@@ -206,21 +206,37 @@ class AlarmListResponse(BaseModel):
     eval_dataset_id: str
     items: list[AlarmItemSchema]
     total: int
-    # 심각+위험+주의 합계 (개선 권고 제외) -- spec §A-2 "알람이 평가 대상의
-    # 10%를 넘을 때 경고" 판단에 쓴다.
     alarm_total: int
-    improvement_total: int
     evaluated_total: int
     alarm_share_warning: bool
+    # 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
+    # AUC 하한이 auc_gate_threshold 미만이면 알람을 아예 내지 않는다
+    # (auc_gate_passed=False, items/total/alarm_total 모두 0). §A-3 화면
+    # 안내가 이 값들로 렌더된다.
+    auc_lower_bound: float | None
+    auc_gate_passed: bool
+    auc_gate_threshold: float
 
 
 class WaferStatusCounts(BaseModel):
+    """집계 카드(spec 알람 신뢰도 게이트 §B-4)의 3개 tile -- 알람/정상/
+    판정불가. "정상"은 최적 구간 안팎을 가리지 않은, 판정 가능 wafer 중
+    알람이 아닌 전부다 (= band_counts.out_of_recommended +
+    band_counts.in_recommended)."""
+
     alarm: int
-    # 필드명은 그대로 두지만(하위 호환), 이제 각각 개선 권고/정상 구간의
-    # 개수다 (spec §E-2: 예측 수율 GBDT 등급 기준으로 재정의).
+    normal: int
+    unmeasured: int
+
+
+class YieldBandCounts(BaseModel):
+    """구간별 평균 수율 카드(spec §C-1)의 3구간 -- 알람 구간/최적 구간
+    밖/정상. 셋의 합은 언제나 `measured_wafers`(판정 가능 wafer 수)와
+    같다."""
+
+    alarm: int
     out_of_recommended: int
     in_recommended: int
-    unmeasured: int
 
 
 class BandYieldSchema(BaseModel):
@@ -266,31 +282,16 @@ class AlarmSummaryResponse(BaseModel):
     total_wafers: int
     measured_wafers: int
     counts: WaferStatusCounts
+    band_counts: YieldBandCounts
     band_yield: BandYieldSchema
     measurement_bias: MeasurementBiasSummary | None
     factor_bands: list[FactorBandSchema] = Field(default_factory=list)
-
-
-class RecommendationItemSchema(BaseModel):
-    lot_wafer_id: str
-    lot_id: str | None
-    step: int
-    feature: str
-    kind: str
-    target: str
-    value: float
-    recommended_range: list[float]
-    direction: str
-    expected_improvement_pct: float | None
-    tag: str
-
-
-class RecommendationListResponse(BaseModel):
-    train_dataset_id: str
-    eval_dataset_id: str
-    items: list[RecommendationItemSchema]
-    total: int
-    excluded_alarm_count: int
+    # 알람 신뢰도 게이트 -- AlarmListResponse와 동일한 값(같은 (train,eval)
+    # 쌍이면 항상 일치한다). 게이트 미달이면 counts.alarm/band_counts.alarm
+    # 모두 0이다.
+    auc_lower_bound: float | None
+    auc_gate_passed: bool
+    auc_gate_threshold: float
 
 
 class TargetPerformanceSchema(BaseModel):
@@ -505,16 +506,15 @@ class AnalysisReportResponse(BaseModel):
     summary: ReportSummarySchema
     targets: list[ReportTargetEntrySchema]
     alarms: list[ReportAlarmRecordSchema]
-    recommendations: list[RecommendationItemSchema] = Field(default_factory=list)
     config_screening: ReportConfigScreeningSchema
     limitations: list[str]
 
 
 # ---------------------------------------------------------------------------
-# SUNI chatbot context (/api/analysis/context): same report, but `alarms`/
-# `recommendations` are grouped into {summary, records[, records_truncated,
-# records_total]} instead of a flat list, so the LLM can cite an individual
-# wafer's alarm/recommendation record, not just the aggregate counts.
+# SUNI chatbot context (/api/analysis/context): same report, but `alarms`
+# is grouped into {summary, records[, records_truncated, records_total]}
+# instead of a flat list, so the LLM can cite an individual wafer's alarm
+# record, not just the aggregate counts.
 # ---------------------------------------------------------------------------
 
 
@@ -552,38 +552,12 @@ class ContextAlarmsSchema(BaseModel):
     records_total: int
 
 
-class ContextRecommendationRecordSchema(BaseModel):
-    lot_wafer_id: str
-    lot_id: str | None
-    step: int
-    feature: str
-    kind: str
-    target: str
-    value: float
-    recommended_range: list[float]
-    direction: str
-    expected_reduction_pct: float | None
-    tag: str
-
-
-class ContextRecommendationsSummarySchema(BaseModel):
-    n_records: int
-
-
-class ContextRecommendationsSchema(BaseModel):
-    summary: ContextRecommendationsSummarySchema
-    records: list[ContextRecommendationRecordSchema]
-    records_truncated: bool
-    records_total: int
-
-
 class AnalysisContextResponse(BaseModel):
     meta: dict[str, Any]
     method: ReportMethodSchema
     summary: ReportSummarySchema
     targets: list[ContextTargetEntrySchema]
     alarms: ContextAlarmsSchema
-    recommendations: ContextRecommendationsSchema
     config_screening: ReportConfigScreeningSchema
     limitations: list[str]
 
@@ -623,13 +597,23 @@ RELIABILITY_THRESHOLDS_DISCLAIMER = (
 
 
 class ReliabilityResponse(BaseModel):
-    """종합 신뢰성 등급 (spec 알람 판정 GBDT 전환 §E)."""
+    """종합 신뢰성 등급 (spec 알람 판정 GBDT 전환 §E, 알람 신뢰도 게이트 §D-3).
+
+    AUC는 이제 train 자기 자신이 아니라 **선택된 (train, eval) 쌍**에
+    대한 전이 성능이다 (spec 알람 신뢰도 게이트 §A-1/§A-2) -- train만
+    보는 self-CV는 eval 분포가 달라져도 값이 바뀌지 않아 게이트 목적에
+    맞지 않는다.
+    """
 
     dataset_id: str
+    eval_dataset_id: str
     grade: str  # "높음" | "보통" | "낮음"
     total_score: int
     auc_lower_bound: float | None
     auc_score: int
+    # 알람 신뢰도 게이트 §D-3: AUC 항목에 게이트 정보를 덧붙인다.
+    auc_gate_passed: bool
+    auc_gate_message: str | None
     n_significant_factors: int
     n_significant_score: int
     max_eps2: float | None

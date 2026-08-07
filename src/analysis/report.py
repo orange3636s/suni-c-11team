@@ -42,7 +42,7 @@ from src.analysis.llm_stats import (
     per_factor_measurement_bias,
     summarize_measurement_bias,
 )
-from src.analysis.recommendations import REPORT_TAG_TIERS, compute_factor_recommendation, compute_recommendations
+from src.analysis.recommendations import compute_factor_recommendation
 from src.analysis.rounding import round_floats
 from src.analysis.screening.quantile_profile import quantile_bins
 from src.analysis.screening.schema import Schema, parse_schema
@@ -57,13 +57,11 @@ from src.analysis.screening.selector import (
 REPORT_INCLUSION_P_THRESHOLD = 0.05
 BINNED_PROFILE_BINS = 12
 
-# SUNI chatbot context (spec "챗봇 알람 답변 확장" A-2): safety caps so an
-# uploaded dataset with many more alarms/recommendations than the bundled
-# train.CSV can't blow up the LLM context payload.
+# SUNI chatbot context (spec "챗봇 알람 답변 확장" A-2): safety cap so an
+# uploaded dataset with many more alarms than the bundled train.CSV can't
+# blow up the LLM context payload.
 ALARM_RECORD_TRUNCATE_THRESHOLD = 200
 ALARM_RECORD_TRUNCATE_KEEP = 100
-RECOMMENDATION_RECORD_KEEP = 50
-_TAG_PRIORITY_RANK = {"priority": 2, "recommended": 1, "reference": 0}
 
 _INTERPRETATION_BY_SHAPE = {
     "monotonic_increasing": "값이 클수록 불량률이 상승하는 관계다. 값을 낮추는 방향의 조치가 유효하다.",
@@ -445,34 +443,6 @@ def build_analysis_report(
         mean_yield_alarm - mean_yield_normal if mean_yield_alarm is not None and mean_yield_normal is not None else None
     )
 
-    # 개선 권장 목록 (spec §3-6) -- scoped to the same "1위 인자" set as
-    # targets[].factors above, not the full pool; only 강함/보통 rows are
-    # exported here (참고-tagged rows still show on the live screen with
-    # its own hide-by-default toggle, but don't belong in a report meant
-    # to be cited as findings).
-    primary_factors_by_target = {factor.target: factor for factor in included_factors}
-    recommendation_rows, recommendation_summaries = compute_recommendations(
-        train_df, eval_df, schema, primary_factors=primary_factors_by_target
-    )
-    recommendation_records = [
-        {
-            "lot_wafer_id": row.lot_wafer_id,
-            "lot_id": row.lot_id,
-            "step": row.step,
-            "feature": row.feature,
-            "kind": row.kind,
-            "target": row.target,
-            "value": row.value,
-            "recommended_range": [row.recommended_lo, row.recommended_hi],
-            "direction": row.direction,
-            "expected_improvement_pct": row.expected_improvement_pct,
-            "tag": row.tag,
-        }
-        for row in recommendation_rows
-        if (summary := recommendation_summaries.get(row.target)) is not None and summary.grade in REPORT_TAG_TIERS
-    ]
-    recommendation_records.sort(key=lambda item: item["lot_wafer_id"])
-
     config_screening = config_main_effect_screening(train_df, schema)
     limitations = [_measurement_rate_limitation(train_df, schema), *LIMITATIONS]
 
@@ -539,7 +509,6 @@ def build_analysis_report(
         },
         "targets": target_entries,
         "alarms": alarm_records,
-        "recommendations": recommendation_records,
         "config_screening": {
             "n_tested": config_screening.n_tested,
             "n_significant_fdr": config_screening.n_significant_fdr,
@@ -628,43 +597,7 @@ def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
         "records_total": len(alarm_records),
     }
 
-    # Already excludes 근거부족-equivalent factors (recommendation_records
-    # in build_analysis_report is filtered to REPORT_TAG_TIERS = 강함/보통
-    # before this function ever sees it) -- only re-sorted here (태그
-    # 우선순위 -> 기대 개선 내림차순) for the chatbot's presentation; the
-    # download report keeps its own lot_wafer_id order.
-    recommendation_records = sorted(
-        report["recommendations"],
-        key=lambda item: (
-            _TAG_PRIORITY_RANK.get(item["tag"], 0),
-            item["expected_improvement_pct"] if item["expected_improvement_pct"] is not None else float("-inf"),
-        ),
-        reverse=True,
-    )
-    recommendations_truncated = len(recommendation_records) > RECOMMENDATION_RECORD_KEEP
-    recommendations_out = {
-        "summary": {"n_records": len(recommendation_records)},
-        "records": [
-            {
-                "lot_wafer_id": row["lot_wafer_id"],
-                "lot_id": row["lot_id"],
-                "step": row["step"],
-                "feature": row["feature"],
-                "kind": row["kind"],
-                "target": row["target"],
-                "value": row["value"],
-                "recommended_range": row["recommended_range"],
-                "direction": row["direction"],
-                "expected_reduction_pct": row["expected_improvement_pct"],
-                "tag": row["tag"],
-            }
-            for row in recommendation_records[:RECOMMENDATION_RECORD_KEEP]
-        ],
-        "records_truncated": recommendations_truncated,
-        "records_total": len(recommendation_records),
-    }
-
-    context = {**report, "targets": targets_out, "alarms": alarms_out, "recommendations": recommendations_out}
+    context = {**report, "targets": targets_out, "alarms": alarms_out}
 
     # `_text` companions (spec "LLM 답변·보고서 서술 다듬기" §7) -- pre-round
     # and pre-phrase every field the chat/report prompts are prone to
