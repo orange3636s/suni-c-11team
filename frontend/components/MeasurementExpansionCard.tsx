@@ -19,10 +19,26 @@ const DISCOVERY_CARD_COLOR = "#9333EA";
 const RELIABILITY_CARD_COLOR = "#0891B2";
 const FALSE_POSITIVE_CARD_COLOR = "#0D9668";
 
-/** '계측 확대 권고' 카드 (spec 문구 전수 검토 PART B, 배치 순서 변경 §A-2) --
- * 원인 분석 탭에서 Pareto 바로 아래, 인자별 산점도/Box Plot보다 먼저
- * 렌더된다. 값은 분석 실행 시 한 번 계산되어 `data`로 그대로 전달되며,
- * 이 컴포넌트는 어떤 통계도 재계산하지 않는다 (spec §B-7).
+// `_recommend()`(src/analysis/measurement_expansion.py)가 내려주는 고정된
+// 4개 reason 문구 중 하나를 그대로 매칭해 "기대 효과"를 미래형으로 다시
+// 쓴다 (spec §B-1/§B-2) -- reason 자체("사유")는 툴팁으로 옮기고, 이
+// 열에는 결과만 미래형으로 보여준다. 백엔드 문구가 바뀌면 이 매칭도 함께
+// 갱신해야 한다.
+function expectedEffectText(reason: string, additionalJudged: number): string {
+  if (reason === "계측률이 가장 낮아 판정 공백이 큽니다") {
+    return `판정 공백이 ${additionalJudged.toLocaleString()}장 줄어듭니다`;
+  }
+  if (reason === "추정이 흔들려 권장구간 신뢰도가 낮습니다") return "권장구간 추정이 안정됩니다";
+  if (reason === "추정 안정화로 권장구간이 정밀해집니다") return "권장구간이 정밀해집니다";
+  return "추가 계측이 필요하지 않습니다";
+}
+
+/** '계측 확대 제안' 카드 (spec 문구 전수 검토 PART B, 배치 순서는 §A-0
+ * 참고 -- 산점도·Box Plot 아래, 가장 마지막에 렌더된다). 값은 분석 실행
+ * 시 한 번 계산되어 `data`로 그대로 전달되며, 이 컴포넌트는 어떤 통계도
+ * 재계산하지 않는다 (spec §B-7). "권고"라는 단어가 사전 알람 로그의
+ * "개선 권고"(wafer 대상)와 겹쳐 혼동을 주므로 화면 표시는 "제안"으로
+ * 바꿨다 -- 내부 API 필드명(MeasurementExpansionResponse 등)은 그대로다.
  */
 export default function MeasurementExpansionCard({ data }: { data: MeasurementExpansionResponse | null }) {
   if (!data) return null;
@@ -31,7 +47,7 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
     const judgeable = data.total_wafers - data.action_blocked_wafers;
     return (
       <section className="resultCard measurementExpansionCollapsed">
-        계측률이 충분해 추가 계측 권고가 없습니다 (판정 가능 {judgeable.toLocaleString()}장 / {data.total_wafers.toLocaleString()}장)
+        계측률이 충분해 계측 확대 제안이 없습니다 (판정 가능 {judgeable.toLocaleString()}장 / {data.total_wafers.toLocaleString()}장)
       </section>
     );
   }
@@ -43,7 +59,7 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
       <div className="sectionHeading compact">
         <div>
           <span className="sectionLabel">MEASUREMENT</span>
-          <h2>계측 확대 권고</h2>
+          <h2>계측 확대 제안</h2>
         </div>
       </div>
 
@@ -92,11 +108,17 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
                   <td>{priority.feature} → {priority.target}</td>
                   <td className={`numCol${isLowest ? " meRateLowest" : ""}`}>{formatRate(priority.measurement_rate)}</td>
                   <td>
-                    <span className={`meRecommendationBadge${isMaintain ? " meRecommendationMaintain" : ""}`}>
+                    {/* 사유(reason)는 배지 툴팁으로 옮긴다 (spec §B-2) -- 열이
+                        많아 좁으므로, 문제 서술은 호버로만 보여주고 표에는
+                        결과(기대 효과)만 남긴다. */}
+                    <span
+                      className={`meRecommendationBadge${isMaintain ? " meRecommendationMaintain" : ""}`}
+                      title={priority.reason}
+                    >
                       {priority.recommendation}
                     </span>
                   </td>
-                  <td className="meReasonCell">{priority.reason}</td>
+                  <td className="meReasonCell">{expectedEffectText(priority.reason, priority.additional_judged)}</td>
                   <td className="numCol">+{priority.additional_judged.toLocaleString()}장</td>
                   <td className="numCol">{formatYieldPp(priority.yield_contribution_pp)}</td>
                 </tr>
@@ -105,6 +127,9 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
           </tbody>
         </table>
       </div>
+      <p className="meFootnote">
+        미계측 wafer 중 무작위로 추가 계측한다고 가정한 추정치입니다.
+      </p>
 
       <div className="meSideEffectRow">
         {discoveryCard && (

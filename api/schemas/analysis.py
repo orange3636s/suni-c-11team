@@ -216,14 +216,11 @@ class AlarmListResponse(BaseModel):
 
 class WaferStatusCounts(BaseModel):
     alarm: int
+    # 필드명은 그대로 두지만(하위 호환), 이제 각각 개선 권고/정상 구간의
+    # 개수다 (spec §E-2: 예측 수율 GBDT 등급 기준으로 재정의).
     out_of_recommended: int
     in_recommended: int
     unmeasured: int
-
-
-class LotAlarmCount(BaseModel):
-    lot_id: str
-    alarm_count: int
 
 
 class BandYieldSchema(BaseModel):
@@ -242,6 +239,9 @@ class FactorBandSchema(BaseModel):
     feature: str
     target: str
     kind: str
+    # 강함/보통 (spec §E-2: 드롭다운에 강함·보통 등급 인자 전부) -- 화면
+    # 배지 표시용.
+    confidence_tier: str
     x_min: float
     x_max: float
     lcl: float | None
@@ -267,7 +267,6 @@ class AlarmSummaryResponse(BaseModel):
     measured_wafers: int
     counts: WaferStatusCounts
     band_yield: BandYieldSchema
-    top_lots: list[LotAlarmCount] = Field(default_factory=list)
     measurement_bias: MeasurementBiasSummary | None
     factor_bands: list[FactorBandSchema] = Field(default_factory=list)
 

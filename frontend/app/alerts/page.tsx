@@ -8,7 +8,6 @@ import DatasetSelector from "@/components/DatasetSelector";
 import {
   HScrollTableBody,
   NoSearchResults,
-  ScrollTableBody,
   TableCaption,
   TableToolbar,
   useTableSearchSort,
@@ -16,12 +15,14 @@ import {
 } from "@/components/DataTablePanel";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
+import { measurementRateDisclaimer } from "@/lib/measurementDisclaimer";
 import { niceTicks } from "@/lib/niceTicks";
-import { getAlarmSummary, getAlarms, getRecommendations, getReliability, saveAlarmsState } from "@/lib/api";
+import { getAlarmSummary, getAlarms, getDatasetSchema, getRecommendations, getReliability, saveAlarmsState } from "@/lib/api";
 import type {
   AlarmGrade,
   AlarmItem,
   AlarmSummaryResponse,
+  DatasetSchemaResponse,
   FactorBand,
   MeasurementBiasSummary,
   RecommendationItem,
@@ -207,6 +208,24 @@ export default function AlertsPage() {
   // train 기준으로 다시 가져온다.
   const [reliability, setReliability] = useState<ReliabilityResponse | null>(null);
   const [reliabilityPanelOpen, setReliabilityPanelOpen] = useState(false);
+  // 해석 시 한계의 계측률 문구는 데이터셋마다 다르므로 (spec §E-3: "계측률
+  // 하드코딩" -> "실측값") train 데이터셋 스키마를 불러와 반영한다 --
+  // 원인 분석 탭의 analysisSchema와 같은 패턴.
+  const [trainSchema, setTrainSchema] = useState<DatasetSchemaResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDatasetSchema(trainDataset)
+      .then((result) => {
+        if (!cancelled) setTrainSchema(result);
+      })
+      .catch(() => {
+        if (!cancelled) setTrainSchema(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [trainDataset]);
 
   const summary = alarmsState?.summary ?? null;
   const alarms = alarmsState?.alarms ?? null;
@@ -327,7 +346,13 @@ export default function AlertsPage() {
             <ReliabilityBadge reliability={reliability} open={reliabilityPanelOpen} onToggle={() => setReliabilityPanelOpen((v) => !v)} />
           )}
         </div>
-        <p>학습 데이터셋에서 산출한 정상범위를 평가 데이터셋에 적용해 이탈 여부를 판정합니다.</p>
+        {/* 탭 상단 캡션 (spec §E-3) -- 알람 판정 기준이 관리한계(IQR) 이탈에서
+            예측 수율(GBDT) 기준으로 바뀐 뒤로 갱신한다. */}
+        <p>
+          알람은 예측 수율이 가장 낮은 wafer이며, 전체 인자를 종합해 판정합니다.
+          <br />
+          경고선은 인자별 위험 구간을 보여주는 참고 지표이며 알람 판정 기준이 아닙니다.
+        </p>
         {reliability && reliabilityPanelOpen && <ReliabilityPanel reliability={reliability} />}
         {reliability && reliability.grade === "낮음" && (
           <p className="reliabilityLowWarning">
@@ -370,23 +395,23 @@ export default function AlertsPage() {
             <AlarmSummaryCard
               label="알람 wafer"
               value={`${summary.counts.alarm}장`}
-              aux={pct(summary.counts.alarm, summary.total_wafers)}
+              aux={pct(summary.counts.alarm, summary.measured_wafers)}
               tone="highlight"
-              title="관리한계(LCL/UCL) 이탈"
+              title="예측 수율 신뢰구간 상한이 하위 15% 분위수 이하 (판정 가능 기준 비율)"
             />
             <AlarmSummaryCard
-              label="개선 권장 wafer"
+              label="개선 권고 wafer"
               value={`${summary.counts.out_of_recommended}장`}
-              aux={pct(summary.counts.out_of_recommended, summary.total_wafers)}
+              aux={pct(summary.counts.out_of_recommended, summary.measured_wafers)}
               tone="neutral"
-              title="권장구간 밖 (관리한계 내)"
+              title="알람 제외, 예측 수율 평균이 하위 20% 분위수 이하 (판정 가능 기준 비율)"
             />
             <AlarmSummaryCard
               label="정상 wafer"
               value={`${summary.counts.in_recommended}장`}
-              aux={pct(summary.counts.in_recommended, summary.total_wafers)}
+              aux={pct(summary.counts.in_recommended, summary.measured_wafers)}
               tone="good"
-              title="권장구간 내"
+              title="그 외 판정 가능 wafer (판정 가능 기준 비율)"
             />
             <AlarmSummaryCard
               label="판정불가 (미계측) wafer"
@@ -400,12 +425,18 @@ export default function AlertsPage() {
 
           <ConceptYieldBandCard summary={summary} />
 
-          {activeFactorBand && (
+          {activeFactorBand ? (
             <FactorYieldBandCard
               bands={factorBands}
               activeIndex={factorBands.indexOf(activeFactorBand)}
               onChange={setFactorBandIndex}
             />
+          ) : (
+            // 강함·보통 등급 인자가 0개인 데이터셋 (spec §E-2, 예: killing_event).
+            <section className="resultCard yieldBandCard">
+              <div className="yieldBandCardTitle"><h3>인자별 불량률 (%)</h3></div>
+              <p className="emptyMessage">강함·보통 등급 인자가 없어 인자별 불량률을 표시할 수 없습니다.</p>
+            </section>
           )}
 
           <UnmeasuredCard summary={summary} />
@@ -513,37 +544,6 @@ export default function AlertsPage() {
       <section className="resultCard">
         <div className="sectionHeading compact">
           <div>
-            <span className="sectionLabel">LOT</span>
-            <h2>LOT별 알람 집계 (상위)</h2>
-          </div>
-        </div>
-        {summary && summary.top_lots.length > 0 ? (
-          <>
-            <ScrollTableBody rows={5}>
-              <table className="lotSummaryTable">
-                <thead><tr><th style={{ width: "70%" }}>LOT</th><th className="numCol" style={{ width: "30%" }}>알람 건수</th></tr></thead>
-                <tbody>
-                  {summary.top_lots.map((lot) => (
-                    <tr key={lot.lot_id}><td>{lot.lot_id}</td><td className="numCol">{lot.alarm_count}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </ScrollTableBody>
-            <TableCaption
-              total={summary.top_lots.length}
-              shown={Math.min(5, summary.top_lots.length)}
-              totalUnit="개 LOT"
-              shownUnit="개"
-            />
-          </>
-        ) : (
-          <p className="emptyMessage">알람이 발생한 LOT이 없습니다.</p>
-        )}
-      </section>
-
-      <section className="resultCard">
-        <div className="sectionHeading compact">
-          <div>
             <span className="sectionLabel">RECOMMENDATIONS</span>
             <h2>개선 권장 목록 ({recommendations?.total ?? 0}건)</h2>
           </div>
@@ -622,14 +622,21 @@ export default function AlertsPage() {
           </>
         )}
         <p className="tableDisclaimer">
-          알람은 관리한계(LCL/UCL) 이탈을 나타내는 이상 탐지이고, 개선 권장은 권장 구간 이탈을 나타내는 개선 제안입니다. 이미 알람으로 잡힌 wafer는 같은 인자에 대해 중복 집계하지 않습니다.
+          알람은 예측 수율(GBDT) 기준으로 판정되며, 개선 권장은 인자별 권장 구간 이탈을 나타내는 개선 제안입니다. 이미 알람으로 잡힌 wafer는 같은 인자에 대해 중복 집계하지 않습니다.
         </p>
       </section>
 
       <section className="analysisDisclaimers">
         <strong>해석 시 한계</strong>
         <ul>
-          <li>정상범위는 학습 데이터셋에서 해당 인자 자신의 분포로 산출한 IQR×1.5 관리한계(LCL~UCL)이며, 타깃(Y) 값과는 무관하게 계산됩니다. 인과관계가 아닌 통계적 이탈 판정입니다.</li>
+          {/* 계측률 하드코딩 -> 실측값 (spec §E-3) -- 데이터셋별로 최대
+              4.7배까지 차이 나므로 고정 문구를 쓰지 않는다. */}
+          <li>{measurementRateDisclaimer(trainSchema)}</li>
+          {summary?.measurement_bias && (
+            <li>{describeMeasurementBias(summary.measurement_bias)}</li>
+          )}
+          <li>알람은 관측 데이터의 통계적 연관성에 기반하며 인과관계를 의미하지 않습니다.</li>
+          <li>분석 신뢰도가 낮은 데이터셋에서는 알람 정확도를 보장할 수 없습니다.</li>
           <li>판정불가 wafer는 선정 인자가 계측되지 않아 판정 자체가 불가능한 것이며, 정상을 의미하지 않습니다.</li>
           <li>개선 권장 구간은 관리한계(LCL/UCL) 안쪽으로 clamp되며, clamp 결과 구간이 사라지면 해당 인자는 권장 목록에서 제외됩니다.</li>
         </ul>
@@ -790,36 +797,46 @@ function BandStatsRow({
   );
 }
 
-/** 카드①: 구간별 평균 수율 -- 개념도. 다섯 구간 폭을 균등하게 그린다(실제
- * 인자 값 축이 아니다) -- 축 눈금·"인자 값" 캡션 없음, 특정 인자를 가리키지
- * 않는다. */
+// 구간별 평균 수율 카드 전용 라벨 (spec §E-2) -- 예측 수율(GBDT) 등급
+// 기준으로 재정의되어 "이탈/권장 밖/권장 내"라는 관리한계 이탈 개념이 더
+// 이상 맞지 않는다. 인자별 불량률(카드②, FactorYieldBandCard)은 여전히
+// 각 인자 자신의 관리한계·권장구간 기준이라 공유 TONE_LABEL을 그대로
+// 쓴다 -- 이 카드만 별도 라벨을 쓴다.
+const CONCEPT_TONE_LABEL: Record<BandTone, string> = { out: "알람", outrec: "개선 권고", inrec: "정상" };
+
+/** 카드①: 구간별 평균 수율 -- 개념도. 예측 수율(위험) 낮음→높음 한 방향
+ * 순서라 (spec §E-2) 기존의 좌우 대칭 5구간(관리한계 이탈이 양쪽에 있는
+ * 그림)이 아니라 알람 → 개선 권고 → 정상 3구간을 순서대로 그린다. 폭은
+ * 개념도라 균등하다(실제 값 축이 아니다). */
 function ConceptYieldBandCard({ summary }: { summary: AlarmSummaryResponse }) {
   const segments: BandSegment[] = [
-    { tone: "out", label: "이탈", widthPct: 20 },
-    { tone: "outrec", label: "권장 밖", widthPct: 20 },
-    { tone: "inrec", label: "권장 내", widthPct: 20 },
-    { tone: "outrec", label: "권장 밖", widthPct: 20 },
-    { tone: "out", label: "이탈", widthPct: 20 },
+    { tone: "out", label: CONCEPT_TONE_LABEL.out, widthPct: 100 / 3 },
+    { tone: "outrec", label: CONCEPT_TONE_LABEL.outrec, widthPct: 100 / 3 },
+    { tone: "inrec", label: CONCEPT_TONE_LABEL.inrec, widthPct: 100 / 3 },
   ];
   const lines: BandLine[] = [
-    { tone: "control", pct: 20 },
-    { tone: "recommended", pct: 40 },
-    { tone: "recommended", pct: 60 },
-    { tone: "control", pct: 80 },
+    { tone: "recommended", pct: 100 / 3 },
+    { tone: "recommended", pct: 200 / 3 },
   ];
 
   const measured = summary.measured_wafers;
   const stats = [
-    { name: TONE_LABEL.out, tone: "out" as const, value: summary.band_yield.alarm, count: summary.counts.alarm, pct: measured > 0 ? (summary.counts.alarm / measured) * 100 : 0 },
     {
-      name: TONE_LABEL.outrec,
+      name: CONCEPT_TONE_LABEL.out,
+      tone: "out" as const,
+      value: summary.band_yield.alarm,
+      count: summary.counts.alarm,
+      pct: measured > 0 ? (summary.counts.alarm / measured) * 100 : 0,
+    },
+    {
+      name: CONCEPT_TONE_LABEL.outrec,
       tone: "outrec" as const,
       value: summary.band_yield.out_of_recommended,
       count: summary.counts.out_of_recommended,
       pct: measured > 0 ? (summary.counts.out_of_recommended / measured) * 100 : 0,
     },
     {
-      name: TONE_LABEL.inrec,
+      name: CONCEPT_TONE_LABEL.inrec,
       tone: "inrec" as const,
       value: summary.band_yield.in_recommended,
       count: summary.counts.in_recommended,
@@ -831,10 +848,14 @@ function ConceptYieldBandCard({ summary }: { summary: AlarmSummaryResponse }) {
     <section className="resultCard yieldBandCard">
       <div className="yieldBandCaptionRow">
         <div className="yieldBandCardTitle"><h3>구간별 평균 수율 (%)</h3></div>
-        <span className="yieldBandCardMeta">{measured.toLocaleString()}장 판정 완료</span>
+        <span className="yieldBandCardMeta">{measured.toLocaleString()}장 판정 가능</span>
       </div>
-      <BandTrack segments={segments} lines={lines} lclPct={20} uclPct={80} recLoPct={40} recHiPct={60} />
-      <BandStatsRow stats={stats} arrowTone="yield" pctDenominatorLabel="판정 완료 기준" />
+      <BandTrack segments={segments} lines={lines} lclPct={null} uclPct={null} recLoPct={null} recHiPct={null} />
+      <BandStatsRow stats={stats} arrowTone="yield" pctDenominatorLabel="판정 가능 기준" />
+      {/* 개선 권고 하단 안내 (spec §E-3) -- 예전엔 "권장구간 이탈" 기준이었다. */}
+      <p className="sectionCaption">
+        개선 권고는 알람을 제외한 wafer 중 예측 수율 평균이 하위 20% 분위수 이하인 경우입니다.
+      </p>
     </section>
   );
 }
@@ -915,7 +936,7 @@ function FactorYieldBandCard({
             >
               {bands.map((item, index) => (
                 <option key={`${item.feature}-${item.target}`} value={index}>
-                  {item.feature} → {item.target}
+                  {item.feature} → {item.target} · {item.confidence_tier === "strong" ? "강함" : "보통"}
                 </option>
               ))}
             </select>

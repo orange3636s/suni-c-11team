@@ -3,6 +3,7 @@
 import { Monitor, Moon, Settings, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
@@ -30,14 +31,26 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
   const { settingsPanelOpen, setSettingsPanelOpen } = usePanelState();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
+  // 접힘 상태 전용 (spec §D-2) -- 트리거 아이콘의 실제 위치를 읽어 패널을
+  // document.body에 포털로 띄운다. .sidebarSurface가 overflow:hidden이라
+  // (좁은 rail 폭에 갇혀) 펼침 상태처럼 컨테이너 안에 absolute로 두면
+  // 잘린다. 펼침 상태는 그대로 컨테이너 내부에 렌더돼 기존 동작을
+  // 건드리지 않는다.
+  const themeTriggerButtonRef = useRef<HTMLButtonElement>(null);
+  const themePortalRef = useRef<HTMLDivElement>(null);
+  const [themeMenuPos, setThemeMenuPos] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     if (!themeMenuOpen) return;
 
+    function isOutside(target: Node) {
+      if (themeMenuRef.current?.contains(target)) return false;
+      if (themePortalRef.current?.contains(target)) return false;
+      return true;
+    }
+
     function closeThemeMenu(event: MouseEvent) {
-      if (!themeMenuRef.current?.contains(event.target as Node)) {
-        setThemeMenuOpen(false);
-      }
+      if (isOutside(event.target as Node)) setThemeMenuOpen(false);
     }
 
     function handleEscape(event: KeyboardEvent) {
@@ -51,6 +64,16 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
       document.removeEventListener("keydown", handleEscape);
     };
   }, [themeMenuOpen]);
+
+  function toggleThemeMenu() {
+    if (collapsed && !themeMenuOpen) {
+      const rect = themeTriggerButtonRef.current?.getBoundingClientRect();
+      // 아이콘 우측에 띄운다 (spec §D-2) -- 접힌 rail 폭이 좁아 아래로
+      // 띄우면 화면을 벗어난다.
+      if (rect) setThemeMenuPos({ left: rect.right + 8, top: rect.top });
+    }
+    setThemeMenuOpen((open) => !open);
+  }
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -125,43 +148,23 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
             분기를 늘리는 대신 같은 마크업을 CSS로만 다르게 보이게 한다. */}
         <div className="sidebarFooter">
           <div className="themeTriggerCol" ref={themeMenuRef}>
-            {themeMenuOpen && (
+            {/* 펼침 상태는 기존 그대로 컨테이너 내부에 렌더 (spec §D-2 대상은
+                접힘 상태뿐이라 여기는 건드리지 않는다). */}
+            {themeMenuOpen && !collapsed && (
               <div className="themeMenu" role="menu" aria-label="Theme 선택">
                 <strong>Theme</strong>
-                <div className="themeOptions">
-                  {(
-                    [
-                      ["system", "System", Monitor],
-                      ["light", "Light", Sun],
-                      ["dark", "Dark", Moon],
-                    ] as [ThemePreference, string, typeof Monitor][]
-                  ).map(([value, label, Icon]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={theme === value ? "active" : ""}
-                      onClick={() => {
-                        setTheme(value);
-                        setThemeMenuOpen(false);
-                      }}
-                      role="menuitemradio"
-                      aria-checked={theme === value}
-                    >
-                      <Icon aria-hidden="true" className="themeOptionIcon" />
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                <ThemeOptionsList theme={theme} onSelect={(value) => { setTheme(value); setThemeMenuOpen(false); }} />
               </div>
             )}
             <button
-              className="themeToggle themeTrigger"
+              ref={themeTriggerButtonRef}
+              className={`themeToggle themeTrigger ${collapsed ? "railIconButton" : ""}`}
               type="button"
               aria-expanded={themeMenuOpen}
               aria-label="Theme 선택"
               aria-haspopup="menu"
               title="Theme 선택"
-              onClick={() => setThemeMenuOpen((open) => !open)}
+              onClick={toggleThemeMenu}
             >
               <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
               <span className="themeTriggerLabel">Theme</span>
@@ -170,7 +173,7 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
           </div>
           <button
             type="button"
-            className="themeToggle settingsTrigger"
+            className={`themeToggle settingsTrigger ${collapsed ? "railIconButton" : ""}`}
             aria-label="설정"
             aria-haspopup="dialog"
             aria-expanded={settingsPanelOpen}
@@ -182,7 +185,50 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
           </button>
         </div>
       </div>
+      {/* 접힘 상태 전용 포털 (spec §D-2) -- document.body에 그려 .sidebarSurface의
+          overflow:hidden을 벗어난다. 위치는 themeTriggerButtonRef의
+          getBoundingClientRect()로 매 오픈마다 계산한다. */}
+      {themeMenuOpen && collapsed && themeMenuPos && createPortal(
+        <div
+          ref={themePortalRef}
+          className="themeMenuPortal"
+          role="menu"
+          aria-label="Theme 선택"
+          style={{ left: themeMenuPos.left, top: themeMenuPos.top }}
+        >
+          <strong>Theme</strong>
+          <ThemeOptionsList theme={theme} onSelect={(value) => { setTheme(value); setThemeMenuOpen(false); }} />
+        </div>,
+        document.body,
+      )}
     </aside>
+  );
+}
+
+// 펼침 상태(컨테이너 내부)와 접힘 상태(포털)가 옵션 목록 마크업을 공유한다.
+function ThemeOptionsList({ theme, onSelect }: { theme: ThemePreference; onSelect: (value: ThemePreference) => void }) {
+  return (
+    <div className="themeOptions">
+      {(
+        [
+          ["system", "System", Monitor],
+          ["light", "Light", Sun],
+          ["dark", "Dark", Moon],
+        ] as [ThemePreference, string, typeof Monitor][]
+      ).map(([value, label, Icon]) => (
+        <button
+          key={value}
+          type="button"
+          className={theme === value ? "active" : ""}
+          onClick={() => onSelect(value)}
+          role="menuitemradio"
+          aria-checked={theme === value}
+        >
+          <Icon aria-hidden="true" className="themeOptionIcon" />
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

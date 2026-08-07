@@ -700,6 +700,8 @@ export type FactorBand = {
   feature: string;
   target: string;
   kind: string;
+  // 강함/보통 (spec §E-2: 드롭다운에 강함·보통 등급 인자 전부).
+  confidence_tier: "strong" | "moderate";
   x_min: number;
   x_max: number;
   lcl: number | null;
@@ -716,6 +718,9 @@ export type AlarmSummaryResponse = {
   eval_dataset_id: string;
   total_wafers: number;
   measured_wafers: number;
+  // 필드명은 그대로지만(하위 호환), 이제 GBDT 예측 수율 등급 기준이다
+  // (spec §E-2): alarm=알람(심각·위험·주의), out_of_recommended=개선 권고,
+  // in_recommended=정상.
   counts: { alarm: number; out_of_recommended: number; in_recommended: number; unmeasured: number };
   band_yield: {
     alarm: number | null;
@@ -723,7 +728,6 @@ export type AlarmSummaryResponse = {
     in_recommended: number | null;
     unmeasured: number | null;
   };
-  top_lots: Array<{ lot_id: string; alarm_count: number }>;
   measurement_bias: MeasurementBiasSummary | null;
   factor_bands: FactorBand[];
 };

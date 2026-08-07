@@ -536,67 +536,95 @@ def get_alarm_summary(train: str = "train", eval: str = "test") -> dict[str, Any
     alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
     verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
 
-    alarm_ids = [v.lot_wafer_id for v in verdicts if v.status == "alarm"]
-    normal_ids = [v.lot_wafer_id for v in verdicts if v.status == "normal"]
+    # 판정불가(미계측) 정의는 그대로 둔다 (spec §E-2: "현행 유지") -- 알람
+    # 판정 기준이 GBDT로 바뀌어도, 선정 인자가 하나도 계측되지 않은
+    # wafer는 여전히 판정 자체가 불가능하다.
     unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
+    unmeasured_id_set = set(unmeasured_ids)
 
-    lot_counts: dict[str, int] = {}
-    for v in verdicts:
-        if v.status == "alarm" and v.lot_id:
-            lot_counts[v.lot_id] = lot_counts.get(v.lot_id, 0) + 1
-    top_lots = sorted(
-        ({"lot_id": lot_id, "alarm_count": count} for lot_id, count in lot_counts.items()),
-        key=lambda item: item["alarm_count"],
-        reverse=True,
-    )
+    # 구간별 평균 수율 카드 재정의 (spec §E-2) -- 관리한계(IQR) 이탈이 아니라
+    # /api/alarms(get_alarms)와 같은 부트스트랩 예측 수율·등급 임계로 나눈다:
+    # 알람(심각·위험·주의) / 개선 권고(예측 평균이 하위 20% 분위 이하,
+    # 알람 제외) / 정상(그 외). 판정불가는 위에서 이미 제외했으므로 여기
+    # 세 구간의 합은 항상 "판정 가능 wafer 수"와 같다.
+    prediction = _cached_bootstrap_prediction(train, eval)
+    band_counts = {"alarm": 0, "out_of_recommended": 0, "in_recommended": 0}
+    band_yield_sum = {"alarm": 0.0, "out_of_recommended": 0.0, "in_recommended": 0.0}
+    band_yield_n = {"alarm": 0, "out_of_recommended": 0, "in_recommended": 0}
+    if prediction is not None:
+        thresholds = alarm_gbdt.compute_grade_thresholds(train_df)
+        y_values = (
+            pd.to_numeric(eval_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce")
+            if alarm_gbdt.FINAL_YIELD_COLUMN in eval_df.columns
+            else None
+        )
+        for i, wafer_id in enumerate(prediction.lot_wafer_id):
+            if wafer_id in unmeasured_id_set:
+                continue
+            grade = alarm_gbdt.grade_of(float(prediction.pred_hi[i]), float(prediction.pred_mean[i]), thresholds)
+            # "out_of_recommended"/"in_recommended" 필드명은 그대로 두되
+            # (API 하위 호환), 이제는 각각 개선 권고/정상 구간을 담는다.
+            bucket = "alarm" if grade in ("심각", "위험", "주의") else "out_of_recommended" if grade == "개선 권고" else "in_recommended"
+            band_counts[bucket] += 1
+            if y_values is not None and i < len(y_values) and pd.notna(y_values.iloc[i]):
+                band_yield_sum[bucket] += float(y_values.iloc[i])
+                band_yield_n[bucket] += 1
 
-    # 3-way band split for the redesigned 사전 알람 로그 summary (spec PART B):
-    # 관리한계 이탈 (alarm, already computed above) / 권장구간 밖 / 권장구간 내,
-    # reusing the same alarm-eligible factor set and its recommended windows
-    # so these numbers never disagree with /api/alarms or /api/recommendations.
-    bands = classify_measured_bands(
-        train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, factors, control_ranges
-    )
+    def _band_mean_yield(bucket: str) -> float | None:
+        n = band_yield_n[bucket]
+        return band_yield_sum[bucket] / n if n > 0 else None
 
-    # Per-factor 인자별 불량률 breakdown (카드②): the 5 primary (1위) factors,
-    # one per target -- the same "1위 인자" concept used everywhere else
-    # (training summary, 개선 권장 목록), not the full alarm-eligible set.
-    factor_bands: list[dict[str, Any]] = []
-    primary_factors: list[ParetoFactor] = []
+    # 판정불가 wafer의 평균 수율만 필요하므로 alarm_factors를 빈 목록으로
+    # 넘겨 classify_measured_bands를 그 용도로만 재사용한다 (기존 로직
+    # 재사용 -- 새 id-정렬 코드를 또 만들지 않는다).
+    unmeasured_band = classify_measured_bands(train_df, eval_df, [], [], unmeasured_ids, [], []).unmeasured
+
+    # Per-factor 인자별 불량률 breakdown (카드②, spec §E-2) -- 강함·보통
+    # 등급으로 분류된 인자 전부 (기존에는 타깃당 1위 인자 5개뿐이었다).
+    # `_cached_ranked_rows`는 Pareto 화면이 이미 조회한 타깃이면 즉시
+    # 반환되는 프로세스 전역 캐시라 여기서 다시 스코어링하지 않는다.
+    factor_bands_with_eps2: list[tuple[float, dict[str, Any]]] = []
+    qualifying_factors: list[ParetoFactor] = []
     for target in schema.target_cols:
-        primary = select_primary_factor(train_df, schema, target)
-        if primary is None:
-            continue
-        primary_factors.append(primary)
-        primary_control_range = compute_control_range(train_df, primary)
-        band = compute_factor_band(train_df, eval_df, primary, primary_control_range)
-        if band is not None:
-            factor_bands.append(_factor_band_dict(band))
+        for row in _cached_ranked_rows(train, target):
+            tier = confidence_tier(row["eps2"], row["p_value"])
+            if tier not in ("strong", "moderate"):
+                continue
+            factor = _row_to_factor(train_df, target, row)
+            qualifying_factors.append(factor)
+            control_range = compute_control_range(train_df, factor)
+            band = compute_factor_band(train_df, eval_df, factor, control_range)
+            if band is not None:
+                factor_bands_with_eps2.append((row["eps2"], {**_factor_band_dict(band), "confidence_tier": tier}))
+    # 기본 선택은 ε²가 가장 높은 인자다 (spec §E-2) -- 프런트는 이 목록의
+    # 0번 인덱스를 기본값으로 쓰므로, 여기서 ε² 내림차순으로 정렬해 둔다.
+    factor_bands_with_eps2.sort(key=lambda pair: pair[0], reverse=True)
+    factor_bands = [item for _eps2, item in factor_bands_with_eps2]
 
     # 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- per-factor check, not
     # the old whole-wafer aggregate (see report.py's identical comment for
-    # why the aggregate can hide a real per-factor selection effect).
-    measurement_bias = summarize_measurement_bias(per_factor_measurement_bias(train_df, primary_factors))
+    # why the aggregate can hide a real per-factor selection effect). 이제
+    # 위 강함·보통 인자 전체를 대상으로 한다 (드롭다운과 같은 범위).
+    measurement_bias = summarize_measurement_bias(per_factor_measurement_bias(train_df, qualifying_factors))
 
     return round_floats(
         {
             "train_dataset_id": train,
             "eval_dataset_id": eval,
             "total_wafers": len(verdicts),
-            "measured_wafers": len(alarm_ids) + len(normal_ids),
+            "measured_wafers": len(verdicts) - len(unmeasured_ids),
             "counts": {
-                "alarm": len(alarm_ids),
-                "out_of_recommended": bands.out_of_recommended.count,
-                "in_recommended": bands.in_recommended.count,
+                "alarm": band_counts["alarm"],
+                "out_of_recommended": band_counts["out_of_recommended"],
+                "in_recommended": band_counts["in_recommended"],
                 "unmeasured": len(unmeasured_ids),
             },
             "band_yield": {
-                "alarm": bands.alarm.mean_yield,
-                "out_of_recommended": bands.out_of_recommended.mean_yield,
-                "in_recommended": bands.in_recommended.mean_yield,
-                "unmeasured": bands.unmeasured.mean_yield,
+                "alarm": _band_mean_yield("alarm"),
+                "out_of_recommended": _band_mean_yield("out_of_recommended"),
+                "in_recommended": _band_mean_yield("in_recommended"),
+                "unmeasured": unmeasured_band.mean_yield,
             },
-            "top_lots": top_lots,
             "measurement_bias": measurement_bias,
             "factor_bands": factor_bands,
         }

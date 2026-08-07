@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import CorrelationHeatmap, { type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import ParetoChart from "@/components/ParetoChart";
 import type { ParetoRankingItem, ParetoRankingResponse } from "@/types/data";
@@ -31,6 +31,10 @@ export default function HeatmapParetoSection({
   onActiveTargetChange,
   onBarClick,
   onHeatmapCellSelect,
+  // 표시 기준 토글 (spec §A-3) -- Y 세그먼트와 같은 줄, 우측 정렬로 얹는
+  // 선택적 슬롯. 모델 학습 탭은 이 토글이 없으므로 넘기지 않으면 아무것도
+  // 렌더되지 않는다 (이 컴포넌트는 두 탭이 공유한다).
+  criterionControl,
 }: {
   datasetId: string;
   enabled: boolean;
@@ -39,6 +43,7 @@ export default function HeatmapParetoSection({
   onActiveTargetChange: (target: string) => void;
   onBarClick: (item: ParetoRankingItem) => void;
   onHeatmapCellSelect: (selection: HeatmapCellSelection) => void;
+  criterionControl?: ReactNode;
 }) {
   const activeResponse = paretoByTarget[activeTarget];
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -67,16 +72,19 @@ export default function HeatmapParetoSection({
         <>
           <div ref={sentinelRef} aria-hidden="true" style={{ height: 0 }} />
           <div className={`targetSegmentBar ${stuck ? "stuck" : ""}`}>
-            {TARGETS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={`targetSegment ${activeTarget === t ? "active" : ""}`}
-                onClick={() => onActiveTargetChange(t)}
-              >
-                {t}
-              </button>
-            ))}
+            <div className="targetSegmentGroup">
+              {TARGETS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`targetSegment ${activeTarget === t ? "active" : ""}`}
+                  onClick={() => onActiveTargetChange(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            {criterionControl && <div className="targetSegmentCriterion">{criterionControl}</div>}
           </div>
 
           {activeResponse ? (

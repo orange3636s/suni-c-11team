@@ -8378,9 +8378,11 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 }
 .referenceOnlyRow{ color: var(--text-secondary, #6e6e73); }
 
-/* Severity badges for the pre-alert log */
-.severityBadge{ display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-.severityBadge::before{ content: ""; width: 7px; height: 7px; border-radius: 50%; }
+/* Severity badges for the pre-alert log -- 텍스트 폭에 맞춘다, 고정 폭을
+   주지 않는다 (spec §C-2). 열 쪽의 고정 min-width도 .col-severity에서
+   함께 제거한다 -- 배지가 좁아져도 열이 그대로 넓으면 소용없다. */
+.severityBadge{ display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.severityBadge::before{ content: ""; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 .severityBadge-low{ background: rgba(255,159,10,.12); color: #b8720a; }
 .severityBadge-low::before{ background: #FF9F0A; }
 .severityBadge-medium{ background: rgba(255,149,0,.16); color: #a35800; }
@@ -8459,7 +8461,7 @@ html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
    stuck or not, so engaging the sticky state changes only the
    background/border, never the box's size. */
 .targetSegmentBar{
-  display: flex; gap: 6px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap;
   margin: var(--target-segment-gap, 24px) 0;
   padding: 6px 4px;
   position: sticky;
@@ -8484,6 +8486,12 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   background: rgba(28, 28, 30, 0.72);
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
+/* Y1~Y5 그룹 (좌측) / 표시 기준 토글 (우측, spec §A-3) -- 같은 sticky
+   .targetSegmentBar 안의 두 flex 자식. margin-left:auto로 우측에 붙여,
+   좁은 화면에서 줄바꿈되어도(플렉스 각 줄이 독립적으로 정렬되므로) 토글은
+   항상 그 줄의 오른쪽 끝에 남는다. */
+.targetSegmentGroup{ display: flex; gap: 6px; flex-wrap: wrap; }
+.targetSegmentCriterion{ margin-left: auto; }
 .targetSegment{
   display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px;
   border: 1px solid var(--border-card, rgba(0,0,0,.1)); background: var(--surface, transparent);
@@ -9563,7 +9571,9 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .col-value{ min-width: 72px; }
 .col-range{ min-width: 110px; }
 .col-deviation{ min-width: 72px; }
-.col-severity{ min-width: 80px; }
+/* 배지 폭에 맞춰 열이 좁아진다 (spec §C-2) -- 고정 min-width 대신
+   width:1%(table-layout:auto에서 "내용만큼만") + nowrap. */
+.col-severity{ width: 1%; white-space: nowrap; }
 
 /* ===================================================================
    사전 알람 로그 구간별 수율/불량률 카드 (PART B, 카드①②③).
@@ -9959,10 +9969,12 @@ html[data-theme="dark"]{
   .scatterLegendCard{ flex-basis: 45%; }
 }
 
-/* -- Y1~Y5 세그먼트: 가로 스크롤 허용, 줄바꿈 금지 (spec §B-6) ----------- */
+/* -- Y1~Y5 세그먼트: 가로 스크롤 허용, 줄바꿈 금지 (spec §B-6) -----------
+   표시 기준 토글(spec §A-3)이 같은 sticky 바에 추가된 뒤로는 Y1~Y5
+   버튼만 스크롤 대상이다 -- 토글까지 nowrap에 묶이면 화면 밖으로 밀려난다. */
 @media (max-width: 767px){
-  .targetSegmentBar{ overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
-  .targetSegmentBar::-webkit-scrollbar{ display: none; }
+  .targetSegmentGroup{ overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .targetSegmentGroup::-webkit-scrollbar{ display: none; }
 }
 
 /* -- 알람/개선 권장 목록: 테이블 -> 카드형 전환 (≤767px, spec §B-6) -----
@@ -9994,10 +10006,9 @@ html[data-theme="dark"]{
 .alarmCardStatsRow b{ font-weight: 700; }
 .alarmCardActions{ display: flex; justify-content: flex-end; margin-top: 2px; }
 
-/* -- LOT별 알람 집계 / 데이터 전처리: 카드 전환 없이 폰트·패딩만 축소
+/* -- 데이터 전처리 벤치마크 표: 카드 전환 없이 폰트·패딩만 축소
    (spec §B-6: "컬럼이 적으므로 카드 전환 없이") -------------------------- */
 @media (max-width: 767px){
-  .lotSummaryTable th, .lotSummaryTable td,
   .benchmarkTable th, .benchmarkTable td{
     padding: 6px 8px; font-size: 12px;
   }
@@ -10055,37 +10066,20 @@ html[data-theme="dark"]{
   .meMetricRow{ grid-template-columns: 1fr; }
 }
 
+/* 1280px에서 한 줄에 들어가야 한다 (spec §A-1) -- keep-all만 쓴다.
+   white-space: nowrap과 함께 쓰면 좁은 화면에서 텍스트가 잘린다. */
 .rootCauseIntro{ word-break: keep-all; }
 
-/* -- 판정 기준 토글 (spec §B-6) -- 차트 영역(산점도/Box Plot) 상단, 등급
-   무관 escape hatch. 버튼 자체는 .scatterViewToggle/.scatterViewToggleBtn
-   을 그대로 재사용한다. */
+/* -- 표시 기준 토글 (spec §A-2/§A-3) -- Y1~Y5 세그먼트와 같은 sticky 줄
+   우측에 얹힌다 (targetSegmentCriterion). 버튼 자체는
+   .scatterViewToggle/.scatterViewToggleBtn을 그대로 재사용한다. */
 .chartCriterionBar{ display: flex; align-items: center; gap: 10px; }
 .chartCriterionLabel{ font-size: 12px; color: var(--text-secondary); font-weight: 600; }
 
-/* -- 차트 표시 규칙 §B-4/§B-5: 그릴 차트가 0개인 타깃/데이터셋 안내 -- */
+/* -- 차트 표시 규칙 §A-4: 그릴 차트가 0개인 타깃/데이터셋 안내 -- */
 .noChartMessage{ display: flex; flex-direction: column; gap: 8px; }
 .noChartMessage h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
-.noChartMessage h3{ margin: 0 0 12px; font-size: 13px; font-weight: 700; color: var(--text-secondary); }
 .noChartStats{ margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
-.noChartFallback{ margin-top: 4px; }
-.noChartFallback > summary{
-  cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
-  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-card, rgba(0,0,0,.1));
-  background: transparent; color: var(--text-secondary, #6e6e73); list-style: none; width: fit-content;
-}
-.noChartFallback > summary::-webkit-details-marker{ display: none; }
-.noChartFallback[open] > summary{ margin-bottom: 20px; }
-.noChartFallbackTarget + .noChartFallbackTarget{ margin-top: 32px; padding-top: 32px; border-top: 1px solid var(--border-card, rgba(0,0,0,.08)); }
-
-/* §B-4/§B-5 접힘 목록에서만 켜지는 경고 배지 -- 이 인자는 정의상 전부
-   `관계 없음` 등급이므로 confidenceBadge와 나란히 붙는 보조 경고다. */
-.fallbackWarningBadge{
-  display: inline-flex; align-items: center; margin-left: 6px; padding: 2px 9px; border-radius: 999px;
-  font-size: 11px; font-weight: 600; color: var(--warning, #a96208);
-  background: color-mix(in srgb, var(--warning, #a96208) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning, #a96208) 35%, transparent);
-}
 
 /* `보통` 등급 인자의 설명력 캡션 (spec §C-4). */
 .moderateTierCaption{ margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
@@ -10172,10 +10166,18 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
   align-items: stretch;
 }
 .sidebar .themeTriggerCol{ position: relative; flex: 1 1 0; min-width: 0; }
+/* 겹침 원인 진단 (spec §D-1): line 39의 레거시 `.sidebar .themeTrigger{
+   min-width:118px }`가 이 flex 2분할 레이아웃이 생기기 전부터 남아있었다.
+   부모(.themeTriggerCol)는 min-width:0으로 줄어들 수 있지만 버튼 자신은
+   118px 밑으로 줄지 못해, 좁은 사이드바에서 두 버튼 폭의 합이 컨테이너를
+   넘기고 설정 버튼과 겹친다. box-sizing:border-box + min-width:0으로 그
+   레거시 값을 무력화해 flex:1 1 0이 실제로 반씩 나눠 갖게 한다. */
 .sidebar .themeTriggerCol .themeTrigger,
 .sidebar .settingsTrigger{
   width: 100%;
   height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .sidebar .settingsTrigger{
   flex: 1 1 0;
@@ -10206,6 +10208,48 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
 .sidebar.collapsed .themeTriggerLabel,
 .sidebar.collapsed .themeChevron{
   display: none;
+}
+
+/* 접힘 상태 호버 배경 (spec §D-3) -- railNavItem(.railNav 아이콘)과 완전히
+   같은 값(rgba(255,255,255,.1), radius 12px)을 쓴다. .themeTrigger는
+   line 8353의 레거시 규칙에서 항상 켜진 배경/테두리(rgba(255,255,255,.1)
+   ~.22)를 물려받아 hover가 "새로 뜨는 배경"으로 보이지 않았다 -- 접힘
+   상태에서는 그 배경/테두리를 지우고 다른 rail 아이콘처럼 기본 투명,
+   hover에서만 배경이 뜨게 만든다. Theme·설정 버튼 모두 같은 클래스를 쓴다. */
+.sidebar.collapsed .railIconButton{
+  background: transparent;
+  border-color: transparent;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.sidebar.collapsed .railIconButton:hover,
+.sidebar.collapsed .railIconButton:focus-visible{
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+/* 접힘 상태 Theme 패널 포털 (spec §D-2) -- .sidebarSurface가
+   overflow:hidden이라(카드 코너를 둥글게 유지하기 위해) 컨테이너 내부에
+   그대로 두면 잘린다. document.body로 포털돼 더 이상 `.sidebar` 하위가
+   아니므로, 기존 `.sidebar .themeMenu`(네이비 유리 카드) 스타일에 기대지
+   않고 이 카드 자체로 완결된 스타일을 갖는다 -- 일반 드롭다운 카드와
+   같은 톤(라이트/다크 모두 var()로 대응)이며, z-index도 기존 드롭다운
+   포털(DatasetSelector)과 같은 레이어(--z-dropdown)를 쓴다. */
+.themeMenuPortal{
+  position: fixed;
+  z-index: var(--z-dropdown);
+  width: 140px;
+  padding: 6px;
+  border-radius: 13px;
+  border: 1px solid var(--border-card, rgba(0, 0, 0, .1));
+  background: var(--surface-card, #fff);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .16);
+  color: var(--text-primary);
+}
+.themeMenuPortal > strong{
+  display: block;
+  margin: 2px 4px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 /* -- §B: Theme 옵션 아이콘 (lucide-react, 이모지 아님) ------------------ */
