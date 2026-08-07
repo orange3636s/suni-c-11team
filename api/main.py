@@ -18,6 +18,7 @@ from api.routes.data import (
 from api.routes.analysis import router as analysis_router
 from api.routes.chat import router as chat_router
 from api.routes.datasets import get_dataset_registry, router as datasets_router
+from api.routes.monitoring import router as monitoring_router
 from api.routes.notify import router as notify_router, run_daily_dispatch_job
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
@@ -183,6 +184,7 @@ app.include_router(analysis_router)
 app.include_router(chat_router)
 app.include_router(datasets_router)
 app.include_router(data_router)
+app.include_router(monitoring_router)
 app.include_router(notify_router)
 app.include_router(state_router)
 

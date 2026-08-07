@@ -5,17 +5,14 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
+import { useApiStatus } from "@/lib/useApiStatus";
 import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
-
-type ApiStatus = "checking" | "online" | "offline";
-
-function apiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
-}
 
 export default function Header() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
-  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  // Sidebar의 연결 상태 점과 같은 훅을 구독한다 -- 폴링은 앱 전체에서
+  // 한 번만 돈다 (frontend/lib/useApiStatus.ts).
+  const apiStatus = useApiStatus();
   const headerRef = useRef<HTMLElement>(null);
   const { aiPanelOpen, setAiPanelOpen } = usePanelState();
   // ≤1023px: AiPanel no longer renders its own always-visible floating
@@ -52,28 +49,6 @@ export default function Header() {
     updateCurrentTime();
     const intervalId = window.setInterval(updateCurrentTime, 1000);
     return () => window.clearInterval(intervalId);
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let controller: AbortController | null = null;
-    const check = async () => {
-      controller?.abort(); controller = new AbortController();
-      const timeout = window.setTimeout(() => controller?.abort(), 5000);
-      setApiStatus("checking");
-      try {
-        const response = await fetch(`${apiBaseUrl()}/health`, { signal: controller.signal, cache: "no-store" });
-        const body = await response.json() as { status?: string };
-        if (!disposed) setApiStatus(response.ok && body.status === "ok" ? "online" : "offline");
-      } catch {
-        if (!disposed) setApiStatus("offline");
-      } finally { window.clearTimeout(timeout); }
-    };
-    void check();
-    const interval = window.setInterval(() => void check(), 30_000);
-    const visible = () => { if (document.visibilityState === "visible") void check(); };
-    document.addEventListener("visibilitychange", visible);
-    return () => { disposed = true; controller?.abort(); window.clearInterval(interval); document.removeEventListener("visibilitychange", visible); };
   }, []);
 
   const currentDate = currentTime

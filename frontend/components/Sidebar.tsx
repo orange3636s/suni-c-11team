@@ -8,15 +8,23 @@ import { createPortal } from "react-dom";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
+import { useApiStatus } from "@/lib/useApiStatus";
 
 // Exported so MobileTabBar (≤1023px horizontal tab bar, same nav set) can
 // share one source of truth instead of a second hardcoded list drifting
 // out of sync with this one.
 export const navigationItems = [
+  { label: "모니터링", href: "/monitoring", icon: "monitor" },
   { label: "모델 학습", href: "/training", icon: "model" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "사전 알람 로그", href: "/alerts", icon: "alert" },
 ] as const;
+
+const API_STATUS_LABEL: Record<"checking" | "online" | "offline", string> = {
+  checking: "확인 중",
+  online: "연결됨",
+  offline: "연결 끊김",
+};
 
 export type NavigationLabel = (typeof navigationItems)[number]["label"];
 
@@ -34,6 +42,7 @@ type SidebarProps = {
 
 export default function Sidebar({ activeItem = "모델 학습", collapsed = false, onToggleCollapse }: SidebarProps) {
   const { theme, setTheme } = useTheme();
+  const apiStatus = useApiStatus();
   const { settingsPanelOpen, setSettingsPanelOpen } = usePanelState();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
@@ -171,6 +180,14 @@ export default function Sidebar({ activeItem = "모델 학습", collapsed = fals
             .sidebar.collapsed 쪽 CSS가 라벨/셰브론을 숨기고 세로로 쌓는다 --
             분기를 늘리는 대신 같은 마크업을 CSS로만 다르게 보이게 한다. */}
         <div className="sidebarFooter">
+          <div
+            className={`sidebarConnectionStatus apiStatus-${apiStatus}`}
+            aria-label={`API 연결 상태: ${API_STATUS_LABEL[apiStatus]}`}
+            title={API_STATUS_LABEL[apiStatus]}
+          >
+            <span aria-hidden="true" />
+            {!collapsed && <small>{API_STATUS_LABEL[apiStatus]}</small>}
+          </div>
           <div className="themeTriggerCol" ref={themeMenuRef}>
             {/* 펼침 상태는 기존 그대로 컨테이너 내부에 렌더 (spec §D-2 대상은
                 접힘 상태뿐이라 여기는 건드리지 않는다). */}
@@ -258,6 +275,7 @@ function ThemeOptionsList({ theme, onSelect }: { theme: ThemePreference; onSelec
 
 function NavIcon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
+    monitor: <><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /><path d="m6 12 3-3 3 2 4-5" /></>,
     model: <><path d="M12 2v4" /><path d="M12 18v4" /><path d="M4.93 4.93l2.83 2.83" /><path d="M16.24 16.24l2.83 2.83" /><path d="M2 12h4" /><path d="M18 12h4" /><path d="M4.93 19.07l2.83-2.83" /><path d="M16.24 7.76l2.83-2.83" /><circle cx="12" cy="12" r="4" /></>,
     analysis: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /><path d="M8 11h6" /><path d="M11 8v6" /></>,
     alert: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,

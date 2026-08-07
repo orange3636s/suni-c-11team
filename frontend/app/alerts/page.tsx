@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { DEFAULT_SENSITIVITY, DEFAULT_TARGET_YIELD, useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
@@ -157,6 +158,15 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export default function AlertsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AlertsContent />
+    </Suspense>
+  );
+}
+
+function AlertsContent() {
+  const searchParams = useSearchParams();
   const { analysisDataset, requestChat } = usePanelState();
   const { alarms: alarmsState, setAlarms: setAlarmsState, hydrated } = useAnalysisState();
   const [trainDataset, setTrainDataset] = useState("train");
@@ -303,6 +313,19 @@ export default function AlertsPage() {
     "default",
     alarmTieBreak,
   );
+
+  // 모니터링 홈의 랏 딥링크 (`/alerts?lot=L412`) -- lot_wafer_id가 lot_id로
+  // 시작하므로 검색창에 그대로 채우면 그 랏의 wafer만 걸러진다. 한 번만
+  // 반영하고, 그 뒤로는 사용자가 검색창을 직접 조작하게 둔다.
+  const lotDeepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (lotDeepLinkHandled.current) return;
+    const lot = searchParams.get("lot");
+    if (!lot) return;
+    lotDeepLinkHandled.current = true;
+    alarmTable.setSearch(lot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   function handleTargetYieldChange(next: number) {
     setTargetYield(clamp(next, 0, 100));

@@ -10290,6 +10290,33 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   border-radius: 12px;
 }
 
+/* 모니터링 홈 신설 §2: 사이드바 하단 연결 상태 점. 점 색상은 Header의
+   .apiStatus-online/.apiStatus-offline 색상 선택자를 그대로 재사용한다
+   (globals.css 상단, `.apiStatus-online>span{background:#34C759}` 등) --
+   이 클래스는 레이아웃(위치·간격·라벨 숨김)만 새로 정의한다. */
+.sidebarConnectionStatus{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: rgba(255, 255, 255, 0.76);
+}
+.sidebarConnectionStatus > span{
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8e8e93;
+}
+.sidebarConnectionStatus small{
+  font-size: 12px;
+  font-weight: 500;
+}
+.sidebar.collapsed .sidebarConnectionStatus{
+  justify-content: center;
+  padding: 0;
+}
+
 /* 접힘 상태 Theme 패널 포털 (spec §D-2) -- .sidebarSurface가
    overflow:hidden이라(카드 코너를 둥글게 유지하기 위해) 컨테이너 내부에
    그대로 두면 잘린다. document.body로 포털돼 더 이상 `.sidebar` 하위가
@@ -10496,4 +10523,65 @@ html[data-theme="dark"] .notifyTimingToggle.active{ background: rgba(123, 163, 2
 }
 .preprocessingWinnerNote,
 .preprocessingTieNote{ color: var(--text-muted); }
+
+/* -- 모니터링 홈 §4③: Model > EQ > Chamber 트리맵. 계층별 flex-grow를
+   n(웨이퍼 수)에 비례시켜 "면적 = n"을 얻는다 -- 별도 treemap 라이브러리
+   없이 중첩 flexbox만으로 정확히 비례한다. 이 레이아웃 자체는 기존 카드에
+   없는 새 구조라 전용 클래스가 필요하다(컨테이너/툴팁/빈 상태는
+   .resultCard/.heatmapTooltip/.emptyMessage를 그대로 재사용). -------- */
+.monitoringStepSelect{
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  font-size: 12.5px; color: var(--text-secondary); font-weight: 600;
+}
+.monitoringTreemap{
+  display: flex; gap: 3px; height: 320px;
+  border-radius: 10px; overflow: hidden;
+}
+.monitoringTreemapModel{
+  display: flex; flex-direction: column; gap: 3px; min-width: 90px;
+}
+.monitoringTreemapModelLabel{
+  font-size: 11.5px; font-weight: 700; text-align: center; color: var(--text-secondary);
+  padding: 2px 0;
+}
+.monitoringTreemapEqRows{ display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; }
+.monitoringTreemapEqRow{ display: flex; gap: 3px; min-height: 0; }
+.monitoringTreemapEqLabel{
+  writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg);
+  font-size: 10.5px; font-weight: 600; color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 16px;
+}
+.monitoringTreemapTiles{ display: flex; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.monitoringTreemapTile{
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; min-width: 34px; border: none; border-radius: 4px; cursor: pointer;
+  font-size: 10px; line-height: 1.35; color: #0B0B0B; padding: 2px;
+}
+.monitoringTreemapTile:hover{ outline: 2px solid var(--accent, #0072C6); outline-offset: -2px; }
+.monitoringTreemapTile.insufficientN{
+  background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
+}
+.monitoringTreemapTileTitle{ font-weight: 700; }
+html[data-theme="dark"] .monitoringTreemapTile{ color: #0B0B0B; }
+html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-secondary); }
+.monitoringTreemapUnknown{ margin-top: 8px; font-size: 12px; }
+.monitoringTreemapCaption{ margin: 10px 0 0; font-size: 11.5px; color: var(--text-secondary); }
+@media (max-width: 767px){
+  .monitoringTreemap{ height: 420px; }
+}
+
+/* -- 모니터링 홈 §4①/②: SUMMARY 소제목 · 액션 3분류 리스트 · 랏 큐 표.
+   컨테이너/표/버튼은 .resultCard/.tableWrap/.button을 그대로 쓰고, 이
+   페이지에만 있는 두 요소(소제목, 액션 리스트 행)만 새로 정의한다. */
+.monitoringSubheading{
+  margin: 20px 0 8px; font-size: 13px; font-weight: 700; color: var(--text-primary);
+}
+.monitoringSubheading:first-of-type{ margin-top: 16px; }
+.monitoringActionList{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.monitoringActionList li{
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 12px; border-radius: 10px; background: var(--surface-secondary, var(--surface-muted));
+  font-size: 13px;
+}
+.monitoringLotQueue{ margin-top: 14px; }
 

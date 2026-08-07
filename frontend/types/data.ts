@@ -904,6 +904,25 @@ export type LatestStateResponse = {
   notifications: NotificationSettingsSummary;
 };
 
+// 모니터링 홈 트리맵 -- Config 문자열은 서버에서 Model/EQ/Chamber로
+// 분해하지 않는다(원문 그대로). n<30 회색 처리, ±3%p 고정 색 스케일은
+// 프론트에서 처리한다(ConfigTreemap.tsx).
+export type ConfigTreemapGroup = {
+  config: string;
+  n: number;
+  mean: number;
+  median: number;
+  p5: number;
+  p95: number;
+};
+
+export type ConfigTreemapResponse = {
+  dataset_id: string;
+  step: number;
+  overall_mean: number;
+  groups: ConfigTreemapGroup[];
+};
+
 export type ReportFactorEntry = {
   feature: string;
   kind: string;

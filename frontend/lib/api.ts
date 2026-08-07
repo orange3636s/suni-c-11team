@@ -3,6 +3,7 @@ import type {
   AlertsDataResponse,
   AnalysisReportResponse,
   CategoricalScatterResponse,
+  ConfigTreemapResponse,
   ControlRangeListResponse,
   DatasetListResponse,
   DatasetSchemaResponse,
@@ -460,6 +461,10 @@ export function getAnalysisReport(dataset: string): Promise<AnalysisReportRespon
 
 export function getMeasurementExpansion(dataset: string): Promise<MeasurementExpansionResponse> {
   return getJson(`/api/analysis/measurement-expansion?${new URLSearchParams({ dataset }).toString()}`);
+}
+
+export function getConfigTreemap(dataset: string, step: number): Promise<ConfigTreemapResponse> {
+  return getJson(`/api/monitoring/config-treemap?${new URLSearchParams({ dataset, step: String(step) }).toString()}`);
 }
 
 export function getPreprocessingComparison(dataset: string): Promise<PreprocessingComparisonResponse> {

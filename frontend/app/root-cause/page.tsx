@@ -10,7 +10,6 @@ import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
-import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
@@ -626,6 +625,8 @@ function RootCauseContent() {
 
   const quickLookNumeric = quickLook && !quickLook.isConfig ? (quickLookData as ScreeningScatterResponse | null) : null;
   const quickLookCategorical = quickLook && quickLook.isConfig ? (quickLookData as CategoricalScatterResponse | null) : null;
+  // 모니터링 트리맵 타일 클릭 딥링크 (`?feature=Step7_Config&config=...`).
+  const configFromTreemap = searchParams.get("config");
 
   return (
     <DashboardShell activeItem="원인 분석">
@@ -749,6 +750,14 @@ function RootCauseContent() {
                   )}
                 </div>
               </div>
+              {/* 모니터링 트리맵 타일 클릭으로 들어온 경우 (지시서 §4③
+                  "Config 필터 적용") -- 어떤 Config 값을 보고 왔는지
+                  알려준다. Box Plot 자체는 항상 전체 카테고리를 함께
+                  보여주는 게 맞으므로(비교가 목적), 특정 카테고리만
+                  숨기는 대신 배너로 표시한다. */}
+              {quickLook.isConfig && configFromTreemap && (
+                <p className="sectionCaption">트리맵에서 선택: {configFromTreemap}</p>
+              )}
               {quickLookError && <p className="errorMessage">{quickLookError}</p>}
               {quickLookNumeric && <ModerateTierCaption tier={quickLookNumeric.confidence_tier} eps2={quickLookNumeric.eps2} />}
               {quickLookCategorical && <ModerateTierCaption tier={quickLookCategorical.confidence_tier} eps2={quickLookCategorical.eps2} />}
@@ -810,10 +819,6 @@ function RootCauseContent() {
             </div>
           )}
 
-          {/* 배치는 히트맵 → Pareto → 산점도/Box Plot → 계측 확대 제안
-              순으로 고정한다 (spec §A-0) -- 발표 흐름상 인자를 찾고 근거를
-              본 뒤 결론(계측을 늘려라)으로 이어지므로 가장 아래에 온다. */}
-          <MeasurementExpansionCard data={analysis?.measurementExpansion ?? null} />
         </>
       )}
 
