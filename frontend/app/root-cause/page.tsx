@@ -1212,13 +1212,23 @@ function MethodToggle({
       <span className="scatterViewToggleLabel">방식</span>
       <div className="scatterViewToggle" role="group" aria-label="권장 구간 산출 방식">
         <button type="button" className={`scatterViewToggleBtn ${value === "spc" ? "active" : ""}`} onClick={() => onChange("spc")}>
-          SPC{adopted === "spc" && <span className="methodAdoptedBadge" title="채택된 방식">✓</span>}
+          SPC{adopted === "spc" && <span className="methodAdoptedBadge" title="채택된 방식"><CheckGlyph /></span>}
         </button>
         <button type="button" className={`scatterViewToggleBtn ${value === "ml" ? "active" : ""}`} onClick={() => onChange("ml")}>
-          ML{adopted === "ml" && <span className="methodAdoptedBadge" title="채택된 방식">✓</span>}
+          ML{adopted === "ml" && <span className="methodAdoptedBadge" title="채택된 방식"><CheckGlyph /></span>}
         </button>
       </div>
     </div>
+  );
+}
+
+// U-5: 텍스트 글리프(✓)는 폰트마다 모양·정렬이 달라진다 -- 장식용 문자
+// 대신 크기가 고정된 SVG를 쓴다.
+function CheckGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 8.5 6.5 12 13 4" />
+    </svg>
   );
 }
 

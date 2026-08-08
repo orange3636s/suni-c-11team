@@ -226,7 +226,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
         <div className="settingsPanelHeader">
           <h2>모델 학습·자동화</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
-            <X size={18} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
         <div className="settingsPanelBody">

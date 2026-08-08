@@ -33,6 +33,14 @@ export const navigationItems = [
 
 export type NavigationLabel = (typeof navigationItems)[number]["label"];
 
+// U-4: 화면 모드는 은유 아이콘(☀/☾) 대신 글자로 말한다 -- 계측 도구에서는
+// 상태를 텍스트로 표시하는 편이 정확하다.
+const THEME_LABELS: Record<ThemePreference, string> = {
+  system: "시스템",
+  light: "라이트",
+  dark: "다크",
+};
+
 // 접힘 상태 화면 모드 드롭다운 크기 추정치 (spec §D-2/§D-3) -- 실제 렌더
 // 전에는 높이를 알 수 없으므로, flip 여부를 결정하는 데 쓸 넉넉한 상한.
 const THEME_MENU_MAX_HEIGHT = 170;
@@ -188,7 +196,12 @@ export default function Sidebar({
                       href={item.href}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      <NavIcon name={item.icon} />
+                      {/* U-2: 펼침 상태는 텍스트만 -- 활성 상태는 이미 왼쪽
+                          2px 인디케이터(.navigationItem.active::before)가
+                          표시하므로 아이콘이 추가 정보를 주지 않는다.
+                          항목이 4개뿐이고 라벨이 짧아 텍스트만으로 계측기
+                          다운 인상이 더 강하다. 접힘 상태(railNav, 위)는
+                          라벨이 없으므로 아이콘을 유지한다. */}
                       <span>{item.label}</span>
                     </Link>
                   </li>
@@ -259,7 +272,7 @@ export default function Sidebar({
             title="모델 학습·자동화"
             onClick={() => setTrainingPanelOpen((open) => !open)}
           >
-            <span className="themeTriggerIcon" aria-hidden="true"><Database size={18} /></span>
+            <span className="themeTriggerIcon" aria-hidden="true"><Database size={16} strokeWidth={1.5} /></span>
             <span className="themeTriggerLabel">모델 학습·자동화</span>
           </button>
           {/* 지시서 Q: 사이드바 하단 순서 -- 모델 학습 / 알림 설정 / 화면
@@ -273,7 +286,7 @@ export default function Sidebar({
             title="알림 설정"
             onClick={() => setSettingsPanelOpen((open) => !open)}
           >
-            <span className="themeTriggerIcon" aria-hidden="true"><Settings size={18} /></span>
+            <span className="themeTriggerIcon" aria-hidden="true"><Settings size={16} strokeWidth={1.5} /></span>
             <span className="themeTriggerLabel">알림 설정</span>
           </button>
           <div className="themeTriggerCol" ref={themeMenuRef}>
@@ -295,8 +308,11 @@ export default function Sidebar({
               title="화면 모드 선택"
               onClick={toggleThemeMenu}
             >
+              {/* 접힘 상태(라벨 없음)에서만 아이콘이 보인다 -- CSS
+                  (.sidebar:not(.collapsed) .themeTriggerIcon{display:none}).
+                  펼침 상태는 현재 값을 글자로 말한다 (U-4). */}
               <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
-              <span className="themeTriggerLabel">화면 모드</span>
+              <span className="themeTriggerLabel">화면 모드 · {THEME_LABELS[theme]}</span>
               <ChevronDown />
             </button>
           </div>
@@ -323,16 +339,12 @@ export default function Sidebar({
 }
 
 // 펼침 상태(컨테이너 내부)와 접힘 상태(포털)가 옵션 목록 마크업을 공유한다.
+// U-4: 이 드롭다운은 트리거가 접혀 있어도 항상 뜨는 별도 팝업이라 글자
+// 넣을 공간이 있다 -- 은유 아이콘(🖥️/☀️/🌙) 대신 이름 텍스트만 쓴다.
 function ThemeOptionsList({ theme, onSelect }: { theme: ThemePreference; onSelect: (value: ThemePreference) => void }) {
   return (
     <div className="themeOptions">
-      {(
-        [
-          ["system", "System", Monitor],
-          ["light", "Light", Sun],
-          ["dark", "Dark", Moon],
-        ] as [ThemePreference, string, typeof Monitor][]
-      ).map(([value, label, Icon]) => (
+      {(["system", "light", "dark"] as ThemePreference[]).map((value) => (
         <button
           key={value}
           type="button"
@@ -341,8 +353,7 @@ function ThemeOptionsList({ theme, onSelect }: { theme: ThemePreference; onSelec
           role="menuitemradio"
           aria-checked={theme === value}
         >
-          <Icon aria-hidden="true" className="themeOptionIcon" />
-          {label}
+          {THEME_LABELS[value]}
         </button>
       ))}
     </div>
@@ -360,10 +371,12 @@ function NavIcon({ name }: { name: string }) {
 }
 
 // 설정 패널 신설 §B: 이모지(🖥️☀️🌙) 대신 lucide-react 컴포넌트를 쓴다 --
-// OS/브라우저마다 이모지 모양이 달라지는 문제가 없다.
+// OS/브라우저마다 이모지 모양이 달라지는 문제가 없다. U-4: 펼침 상태는
+// 텍스트("화면 모드 · 시스템")로 말하므로 이 아이콘은 접힘 상태(라벨을
+// 놓을 자리가 없는 40px 레일)에서만 보인다.
 function ThemeIcon({ theme }: { theme: ThemePreference }) {
   const Icon = theme === "dark" ? Moon : theme === "system" ? Monitor : Sun;
-  return <Icon className="themeIcon" aria-hidden="true" />;
+  return <Icon className="themeIcon" aria-hidden="true" size={16} strokeWidth={1.5} />;
 }
 
 function ChevronDown() {

@@ -97,7 +97,7 @@ export default function Header() {
             aria-label="메뉴 열기"
             aria-haspopup="dialog"
           >
-            <Menu size={18} aria-hidden="true" />
+            <Menu size={16} strokeWidth={1.5} aria-hidden="true" />
           </button>
         )}
         {/* SUNI C brand mark -- separate from the sidebar's character logo

@@ -8688,7 +8688,7 @@ html[data-theme="dark"] .scatterViewToggleBtn.active{ background: #3B5DA8; color
 @container factorCard (max-width: 480px){
   .factorChartToggleStack .scatterViewToggleBtn{ padding: 0 8px; font-size: var(--fs-xs); }
 }
-.methodAdoptedBadge{ margin-left: 4px; font-size: var(--fs-xs); }
+.methodAdoptedBadge{ display: inline-flex; align-items: center; margin-left: 4px; font-size: var(--fs-xs); }
 .scatterChartSvg{ display: block; overflow: visible; }
 /* Dark-mode-only plot background, one shade darker than the card
    (#242426 vs. --surface's #252527) so points read as "floating" above
@@ -10240,6 +10240,12 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 }
 .sidebar.collapsed .themeTriggerLabel,
 .sidebar.collapsed .themeChevron{
+  display: none;
+}
+/* U-2: 하단 3버튼(모델 학습·자동화/알림 설정/화면 모드)은 펼침 상태에서
+   텍스트만 -- 라벨이 이미 있으므로 아이콘이 정보를 더하지 않는다. 접힘
+   상태(위 라벨 숨김과 대칭)는 라벨이 없으므로 아이콘을 유지한다. */
+.sidebar:not(.collapsed) .themeTriggerIcon{
   display: none;
 }
 

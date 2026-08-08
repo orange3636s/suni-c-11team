@@ -49,7 +49,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
         <div className="settingsPanelHeader">
           <h2>알림 설정</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
-            <X size={18} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </div>
         <div className="settingsPanelBody">
@@ -501,7 +501,6 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
                 disabled={saving}
                 aria-pressed={active}
               >
-                {active ? "✓ " : ""}
                 {grade}
               </button>
             );
