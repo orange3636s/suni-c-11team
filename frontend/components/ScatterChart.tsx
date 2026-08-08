@@ -5,6 +5,7 @@ import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { ALARM_GRADE_COLOR, parseConfig } from "@/lib/constants";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
+import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { AlarmGrade, RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
 
@@ -357,9 +358,12 @@ const METHOD_LABEL: Record<WindowMethod, string> = { spc: "SPC", ml: "ML" };
 // 중심 = --text, 권장 구간 = 옅은 중립 배경) -- 그래서 별도 상수로
 // 분리했다.
 const OPTIMAL_CENTER_COLOR = { light: "#141A22", dark: "#F5F5F7" };
-// 구간 평균 불량률 곡선은 모델이 만든 추정치이지 실측값이 아니므로
-// --inferred로 (§H-1, §B-2 계측값/추정값 색 분리 원칙과 동일).
-const TREND_COLOR = { light: "#7C8AA5", dark: "#97A3B8" };
+// 구간 평균 불량률 곡선은 "이 구간에서 불량이 얼마나 나는가"를 보여주는
+// 차트의 핵심 판독 대상이다 -- 무채색/추정값 색(--inferred)으로 두면
+// 배경의 점·격자와 명도가 비슷해져 정작 봐야 할 선이 가장 조용해진다.
+// 색 규율의 목적은 색을 줄이는 게 아니라 봐야 할 것에 색이 가게 하는
+// 것이므로, 이 선만은 신호색(--sig-red)을 쓴다.
+const TREND_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 
 // 점 반지름(style.size)의 diameter 기준 1.6배 (spec §B-1: "점이 4px이면
 // 삼각형 한 변 6.5px" -- 점보다 조금 큰 정도로, 주변 점을 가리지 않는다).
@@ -726,6 +730,9 @@ export default function ScatterChart({
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
   const theme = useResolvedTheme();
+  // 모바일 반응형 패치 S-4: ≤767px에서 점 반지름 4px -> 3px(투명도는
+  // 그대로), 눈금은 양끝+중앙(3개)까지 줄인다.
+  const isMobileLayout = useIsMobileLayout();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [containerWidth, setContainerWidth] = useState(680);
@@ -866,10 +873,14 @@ export default function ScatterChart({
   // niceTicksFitted's own overlap backoff alone doesn't reliably reach
   // that few on a chart this compact.
   const isCompactChart = plotHeight < 200;
+  // 모바일 반응형 패치 S-4: ≤767px 뷰포트에서는 chart 픽셀 높이와 무관하게
+  // 항상 3개(양끝+중앙)까지 더 줄인다 -- isCompactChart는 차트 자체의
+  // 렌더 높이(썸네일 등에서도 발생 가능)를 기준으로 하는 기존 규칙이라
+  // 그대로 남겨 두고, 뷰포트 폭 기준 규칙을 그 위에 얹는다.
   const xTicks = useMemo(() => {
-    const [max, min] = isCompactChart ? [5, 4] : X_TICK_COUNT;
+    const [max, min] = isMobileLayout ? [3, 3] : isCompactChart ? [5, 4] : X_TICK_COUNT;
     return niceTicksFitted(xDomain, max, min, plotWidth, formatTick, (label) => measureTextWidth(label, TICK_FONT));
-  }, [xDomain, plotWidth, isCompactChart]);
+  }, [xDomain, plotWidth, isCompactChart, isMobileLayout]);
   // Box mode: one tick per bin, at its column center, labeled with the
   // bin's x-mean rounded to an integer (spec §3-1) -- not the shared
   // niceTicksFitted continuous-axis logic, since these positions are
@@ -888,9 +899,9 @@ export default function ScatterChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boxBins, plotWidth]);
   const yTicks = useMemo(() => {
-    const [max, min] = isCompactChart ? [4, 4] : Y_TICK_COUNT;
+    const [max, min] = isMobileLayout ? [3, 3] : isCompactChart ? [4, 4] : Y_TICK_COUNT;
     return niceTicksFitted(yDomain, max, min, plotHeight, formatTick, () => Y_TICK_LABEL_HEIGHT_PX);
-  }, [yDomain, plotHeight, isCompactChart]);
+  }, [yDomain, plotHeight, isCompactChart, isMobileLayout]);
   // Measured (not guessed) so the y-axis title's 8px clearance (spec §1
   // 재지시) holds regardless of how wide the actual tick numbers render --
   // short domains ("1".."5") get a tighter gutter, wide ones ("-123.4")
@@ -1602,7 +1613,9 @@ export default function ScatterChart({
                 const isHovered = pointHover?.point === point;
                 const isSelected = selectedSet.has(point);
                 const stroke = isHovered ? (theme === "dark" ? "#FFFFFF" : "#0E306D") : "none";
-                const size = thumbnail ? THUMBNAIL_POINT_RADIUS : style.size;
+                // 모바일 반응형 패치 S-4: ≤767px에서 점 반지름 1px 축소
+                // (기본 4px -> 3px, 투명도는 손대지 않는다).
+                const size = thumbnail ? THUMBNAIL_POINT_RADIUS : isMobileLayout ? Math.max(style.size - 1, 2) : style.size;
                 const opacity = thumbnail ? THUMBNAIL_POINT_OPACITY : style.opacity;
                 const baseOpacity = isHovered || isSelected ? 1 : hasSelection ? opacity / 3 : opacity;
                 return (

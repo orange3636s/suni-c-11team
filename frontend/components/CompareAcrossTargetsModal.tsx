@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
+import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { RelationShape, ScreeningScatterResponse } from "@/types/data";
 
@@ -20,9 +21,10 @@ const POINT_HOVER_RADIUS = 16;
 // 이미 "warning_lo"/"warning_hi"로 전환했다) -- 그래서 이 모달의 "관리한계
 // LCL/UCL" 참조선·범례는 항상 빈 상태로 죽어 있었다. 실제 존재하는
 // 경고선(warning_lo/hi) 키로 바꾸고 색도 규율에 맞춘다: 그룹별 최적 중심은
-// --text, 구간 평균 곡선은 --inferred, 경고선은 --sig-amber.
+// --text, 경고선은 --sig-amber. 구간 평균 곡선은 이 차트의 핵심 판독
+// 대상이라 신호색(--sig-red)을 쓴다.
 const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
-const INFERRED_COLOR = { light: "#7C8AA5", dark: "#97A3B8" };
+const INFERRED_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 const WARNING_COLOR = { light: "#B8791A", dark: "#E4A23E" };
 // 산점도 "기본" 모드와 동일한 --measured 단일 점 색.
 const POINT_COLOR = { light: "#0E306D", dark: "#7BA3E8" };
@@ -152,6 +154,10 @@ export default function CompareAcrossTargetsModal({
   const [dataByTarget, setDataByTarget] = useState<Record<string, ScreeningScatterResponse | null>>({});
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 모바일 반응형 패치 S-4: 패널 폭 320px -> 200px (≤767px). 가로 스크롤은
+  // 모든 폭에서 유지한다 -- 패널을 세로로 쌓지 않는다(하지 말 것 목록).
+  const isMobileLayout = useIsMobileLayout();
+  const chartW = isMobileLayout ? 200 : CHART_W;
 
   useEffect(() => {
     let cancelled = false;
@@ -191,8 +197,8 @@ export default function CompareAcrossTargetsModal({
   useEffect(() => {
     if (loading || !scrollRef.current) return;
     const index = TARGETS.indexOf(originTarget as (typeof TARGETS)[number]);
-    if (index >= 0) scrollRef.current.scrollLeft = index * (CHART_W + CHART_GAP);
-  }, [loading, originTarget]);
+    if (index >= 0) scrollRef.current.scrollLeft = index * (chartW + CHART_GAP);
+  }, [loading, originTarget, chartW]);
 
   const xDomain = useMemo<[number, number]>(() => {
     let min = Infinity;
@@ -259,6 +265,7 @@ export default function CompareAcrossTargetsModal({
                 xDomain={xDomain}
                 isOrigin={t === originTarget}
                 theme={theme}
+                width={chartW}
                 onSelectTarget={() => {
                   onSelectTarget(t);
                   onClose();
@@ -288,6 +295,7 @@ function MiniChart({
   xDomain,
   isOrigin,
   theme,
+  width,
   onSelectTarget,
 }: {
   target: string;
@@ -295,12 +303,15 @@ function MiniChart({
   xDomain: [number, number];
   isOrigin: boolean;
   theme: "light" | "dark";
+  // 모바일 반응형 패치 S-4: 320px(데스크톱) / 200px(≤767px) -- 호출부가
+  // CHART_W 상수 대신 이 값을 넘긴다.
+  width: number;
   onSelectTarget: () => void;
 }) {
   const [hover, setHover] = useState<PointHover>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const plotWidth = CHART_W - MARGIN.left - MARGIN.right;
+  const plotWidth = width - MARGIN.left - MARGIN.right;
   const plotHeight = CHART_H - MARGIN.top - MARGIN.bottom;
 
   const rho = data?.spearman_r ?? null;
@@ -357,7 +368,7 @@ function MiniChart({
   const inferredColor = theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light;
 
   return (
-    <div className={`compareMiniChart ${isOrigin ? "origin" : ""}`} style={{ width: CHART_W }}>
+    <div className={`compareMiniChart ${isOrigin ? "origin" : ""}`} style={{ width }}>
       <div className="compareMiniChartHeader">
         <span className="compareMiniChartTitle" style={{ color: titleColor }}>
           {target}{isOrigin && " ★"} {rho != null && <span className="compareMiniChartRho">ρ={rho >= 0 ? "+" : ""}{rho.toFixed(2)}</span>}
@@ -368,7 +379,7 @@ function MiniChart({
       {!data ? (
         <p className="emptyMessage">데이터 없음</p>
       ) : (
-        <svg ref={svgRef} width={CHART_W} height={CHART_H} className="compareMiniChartSvg">
+        <svg ref={svgRef} width={width} height={CHART_H} className="compareMiniChartSvg">
           <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
             {yTicks.map((tick) => (
               <g key={`y-${tick}`}>

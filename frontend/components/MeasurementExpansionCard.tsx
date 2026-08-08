@@ -87,14 +87,20 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
         계측되지 않은 wafer는 이상 여부를 판정할 수 없어 조치 기회 자체가 없습니다. 계측을 늘리면 그만큼 개선 대상이 드러납니다.
       </p>
 
-      <div className="tableWrap">
+      {/* 모바일 반응형 패치 S-3: ≤767px에서는 컬럼을 카드로 접지 않고
+          가로 스크롤을 기본 전략으로 쓴다(하지 말 것: 표 -> 카드 전환).
+          .meScrollTable이 첫 컬럼 sticky·셀 패딩 축소·스크롤 힌트를
+          globals.css에서 켠다. ≤479px에서는 저우선순위 "기대 효과"
+          열(구 "사유")을 숨기되, 아래 캡션으로 숨겼다는 사실 자체는
+          남긴다(정보를 조용히 지우지 않는다). */}
+      <div className="tableWrap meScrollTable">
         <table className="meTable">
           <thead>
             <tr>
               <th>인자</th>
               <th className="numCol">계측률</th>
               <th>권고</th>
-              <th>기대 효과</th>
+              <th className="meReasonColHeader">기대 효과</th>
               <th className="numCol">추가 판정</th>
               <th className="numCol">수율 기여</th>
             </tr>
@@ -146,6 +152,8 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
           </tbody>
         </table>
       </div>
+      <p className="meScrollHint" aria-hidden="true">← 좌우 스크롤</p>
+      <p className="meHiddenColumnNote">기대 효과 열 숨김 — 767px 이상에서 표시</p>
       <p className="meFootnote">
         미계측 wafer 중 무작위로 추가 계측한다고 가정한 추정치입니다.
       </p>

@@ -10,6 +10,12 @@ type PendingChatRequest = { message: string; mode: ChatMode; nonce: number };
 type PanelStateValue = {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (value: BoolUpdater) => void;
+  // 모바일 반응형 패치 S-1: ≤767px에서 사이드바가 오프캔버스 드로어로
+  // 바뀐다 -- 열림/닫힘은 sidebarCollapsed(≥768px 전용, 아이콘 레일
+  // 접힘)와 별개 상태다. 세션 간 지속할 이유가 없어(매번 닫힌 채로
+  // 시작) 쿠키에 쓰지 않는다.
+  sidebarDrawerOpen: boolean;
+  setSidebarDrawerOpen: (value: BoolUpdater) => void;
   aiPanelOpen: boolean;
   setAiPanelOpen: (value: BoolUpdater) => void;
   // 설정 패널 신설 §A-3: 챗봇 패널과 동시에 열리지 않는다 -- 둘 중 하나를
@@ -59,6 +65,7 @@ export default function PanelStateProvider({
   children: ReactNode;
 }) {
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(initialSidebarCollapsed);
+  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpenState] = useState(initialAiPanelOpen);
   const [settingsPanelOpen, setSettingsPanelOpenState] = useState(false);
   const [trainingPanelOpen, setTrainingPanelOpenState] = useState(false);
@@ -119,6 +126,8 @@ export default function PanelStateProvider({
     () => ({
       sidebarCollapsed,
       setSidebarCollapsed,
+      sidebarDrawerOpen,
+      setSidebarDrawerOpen,
       aiPanelOpen,
       setAiPanelOpen,
       settingsPanelOpen,
@@ -134,6 +143,7 @@ export default function PanelStateProvider({
     [
       sidebarCollapsed,
       setSidebarCollapsed,
+      sidebarDrawerOpen,
       aiPanelOpen,
       setAiPanelOpen,
       settingsPanelOpen,

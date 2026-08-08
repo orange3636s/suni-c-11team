@@ -1098,8 +1098,13 @@ function ChartCriterionToggle({ value, onChange }: { value: ChartCriterion; onCh
  * whichever card renders the chart (spec §2-2: "산점도마다 독립적인
  * 상태"), purely a client-side re-render of already-fetched
  * points/bins/pareto items, no new API call on switch. Pareto sits first
- * (탐색 뷰 -> 검증 뷰 순서) but is never the *default* view -- see
- * NumericFactorCard's `useState<ScatterView>("scatter")`. */
+ * (탐색 뷰 -> 검증 뷰 순서) and is also the *default* view -- 처음 열었을
+ * 때는 "어느 인자를 볼까" 전체 조망(Pareto)이 먼저 오고, 개별 인자를
+ * 골라 들어간 뒤에야 "그 인자가 실제로 어떤가" 검증(산점도)으로
+ * 넘어가는 게 순서에 맞다. 카드별 독립 상태이므로(spec §2-2) 다른 인자
+ * 카드를 열어도 각자 Pareto로 시작한다 -- see NumericFactorCard's
+ * `useState<ScatterView>("pareto")`. Quick Look은 별개 용도라 그대로
+ * `"scatter"` 기본값을 쓴다(아래 quickLookView). */
 /** "비교" 줄 -- Y1~Y5 비교/장비별 Trellis 모달을 여는 트리거다. `보기`
  * 토글과 같은 `.scatterViewToggle*` 마크업을 쓰지만 상태 토글이 아니므로
  * (지시서 A: "눌리면 모달이 열리고 토글은 선택 상태로 남지 않는다")
@@ -1345,7 +1350,7 @@ function NumericFactorCard({
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
   // in a shared store/URL/localStorage -- resets for free whenever this
   // card remounts on a new run/target (see its `key` at the call site).
-  const [view, setView] = useState<ScatterView>("scatter");
+  const [view, setView] = useState<ScatterView>("pareto");
   // ≤767px: 산점도 높이 240px (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
   // 전환 §B-6).
   const isMobileLayout = useIsMobileLayout();

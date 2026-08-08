@@ -5,6 +5,7 @@ import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
 import { effectSizeTierFromRho, TIER_TOOLTIP } from "@/lib/confidenceTier";
 import { parseConfig, type ConfigParts } from "@/lib/constants";
+import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
@@ -27,10 +28,11 @@ const BIN_COUNT = 12;
 const CENTER_SPREAD_RATIO = 0.15;
 
 // 발산(초록/빨강) 팔레트 제거 (지시서 N-3) -- 그룹별 최적 중심은 --text,
-// 구간 평균 곡선은 --inferred, 경고선은 --sig-amber. ScatterChart.tsx의
+// 경고선은 --sig-amber. 구간 평균 곡선은 이 차트의 핵심 판독 대상이라
+// 신호색(--sig-red)을 쓴다 -- ScatterChart.tsx의
 // OPTIMAL_CENTER_COLOR/TREND_COLOR/LINE_COLOR.warning과 동일한 상수쌍이다.
 const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
-const INFERRED_COLOR = { light: "#7C8AA5", dark: "#97A3B8" };
+const INFERRED_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 const WARNING_COLOR = { light: "#B8791A", dark: "#E4A23E" };
 const GRAY = { light: "#9CA3AF", dark: "#6B7280" };
 // 산점도 "기본" 모드의 단일 점 색과 동일한 상수(--measured, 지시서 P-1).
@@ -233,6 +235,10 @@ export default function CompareAcrossConfigsModal({
   const [loading, setLoading] = useState(true);
   const [splitMode, setSplitMode] = useState<SplitMode>("model");
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 모바일 반응형 패치 S-4: 패널 폭 320px -> 200px (≤767px). 가로 스크롤은
+  // 모든 폭에서 유지한다 -- 패널을 세로로 쌓지 않는다(하지 말 것 목록).
+  const isMobileLayout = useIsMobileLayout();
+  const panelWidth = isMobileLayout ? 200 : CHART_W;
 
   useEffect(() => {
     let cancelled = false;
@@ -376,7 +382,8 @@ export default function CompareAcrossConfigsModal({
       <div className="compareModal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${feature} 장비별 Trellis 비교`}>
         <div className="compareModalHeader">
           <div>
-            <h2>{feature} vs {target} — 장비별 Trellis</h2>
+            {/* 모바일 반응형 패치 S-5: ≤767px에서 "장비별 Trellis" -> "Trellis" */}
+            <h2>{feature} vs {target} — {isMobileLayout ? "Trellis" : "장비별 Trellis"}</h2>
             {data && <p className="compareModalMeta">n={data.n.toLocaleString()} 계측 · Step{step}</p>}
             <div className="scatterViewToggleRow" style={{ marginTop: 6 }}>
               <span className="scatterViewToggleLabel">분할 기준</span>
@@ -415,7 +422,7 @@ export default function CompareAcrossConfigsModal({
                 key={group.key}
                 group={group}
                 index={index}
-                width={CHART_W}
+                width={panelWidth}
                 xDomain={xDomain}
                 yDomain={yDomain}
                 globalOptimalCenter={data?.optimal_center ?? null}

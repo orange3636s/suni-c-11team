@@ -285,7 +285,11 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
       )}
 
       <h3 className="monitoringSubheading">유의 인자</h3>
-      <div className="tableWrap">
+      {/* 모바일 반응형 패치 S-3: 컬럼을 카드로 접지 않고 가로 스크롤을
+          기본 전략으로 쓴다 -- .meScrollTable 클래스가 첫 컬럼 sticky ·
+          셀 패딩 축소 · 스크롤 힌트를 globals.css에서 켠다(MeasurementExpansionCard.tsx
+          의 계측 확대 표와 공유하는 규칙). */}
+      <div className="tableWrap meScrollTable">
         <table>
           <thead>
             <tr>
@@ -303,6 +307,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
           </tbody>
         </table>
       </div>
+      <p className="meScrollHint" aria-hidden="true">← 좌우 스크롤</p>
 
       <h3 className="monitoringSubheading">실행 과제</h3>
       <ActionList items={triage.doNow} empty="계측 확대가 시급한 랏이 없습니다." />

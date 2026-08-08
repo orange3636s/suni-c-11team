@@ -43,9 +43,24 @@ type SidebarProps = {
   activeItem?: NavigationLabel;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  // 모바일 반응형 패치 S-1: ≤767px에서는 DashboardShell이 이 컴포넌트를
+  // "drawer" 모드로 렌더한다 -- 아이콘 레일(collapsed)이 아니라 오프캔버스
+  // 전체 패널(설정 전용 접근)이다. "shell" 모드(기본값)는 기존 데스크톱/
+  // 태블릿 사이드바 그대로다.
+  mode?: "shell" | "drawer";
+  drawerOpen?: boolean;
+  onCloseDrawer?: () => void;
 };
 
-export default function Sidebar({ activeItem = "모니터링", collapsed = false, onToggleCollapse }: SidebarProps) {
+export default function Sidebar({
+  activeItem = "모니터링",
+  collapsed = false,
+  onToggleCollapse,
+  mode = "shell",
+  drawerOpen = false,
+  onCloseDrawer,
+}: SidebarProps) {
+  const isDrawer = mode === "drawer";
   const { theme, setTheme } = useTheme();
   const { settingsPanelOpen, setSettingsPanelOpen, trainingPanelOpen, setTrainingPanelOpen } = usePanelState();
   const { snapshot } = useAnalysisState();
@@ -114,15 +129,19 @@ export default function Sidebar({ activeItem = "모니터링", collapsed = false
   }
 
   return (
-    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+    <aside
+      className={`sidebar ${collapsed ? "collapsed" : ""}`}
+      data-mode={isDrawer ? "drawer" : undefined}
+      data-open={isDrawer ? (drawerOpen ? "true" : "false") : undefined}
+    >
       <div className="sidebarSurface">
         <button
           type="button"
           className="shellLogoBlock"
-          onClick={onToggleCollapse}
-          aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
-          aria-expanded={!collapsed}
-          title={collapsed ? "펼치기" : undefined}
+          onClick={isDrawer ? onCloseDrawer : onToggleCollapse}
+          aria-label={isDrawer ? "메뉴 닫기" : collapsed ? "메뉴 펼치기" : "메뉴 접기"}
+          aria-expanded={isDrawer ? drawerOpen : !collapsed}
+          title={isDrawer ? "닫기" : collapsed ? "펼치기" : undefined}
         >
           <SuniAvatar size={collapsed ? 32 : 28} />
           {!collapsed && <span className="shellLogoBlockTitle">써니C 11팀</span>}
@@ -190,16 +209,42 @@ export default function Sidebar({ activeItem = "모니터링", collapsed = false
               돌지 않았으면) 없는 값을 지어내지 않고 아예 렌더하지
               않는다. */}
           {snapshot && (
-            <div className="sidebarStatus" aria-live="off">
+            // 모바일 반응형 패치 S-1: 접힘(rail) 상태에서는 이 블록이
+            // 연결 점 하나로 줄어든다 -- CHAMPION/SNAPSHOT 행은 각각
+            // display:none(.sidebar.collapsed .sidebarStatusDetail)이지만
+            // 정보 자체는 지우지 않고, 세 줄을 합친 문자열을 title
+            // 툴팁으로 컨테이너에 올려 접힘 상태에서도 호버로 확인할 수
+            // 있게 한다.
+            <div
+              className="sidebarStatus"
+              aria-live="off"
+              title={
+                collapsed
+                  ? [
+                      snapshot.model.champion_version ? `CHAMPION ${snapshot.model.champion_version}` : null,
+                      formatSnapshotClock(snapshot.created_at) ? `SNAPSHOT ${formatSnapshotClock(snapshot.created_at)}` : null,
+                      snapshot.source.mode === "sql" ? "SQL 연결됨" : "데모 데이터 · SQL 미연결",
+                    ]
+                      .filter((part): part is string => part != null)
+                      .join(" · ")
+                  : undefined
+              }
+            >
               {snapshot.model.champion_version && (
-                <span className="sidebarStatusRow">CHAMPION {snapshot.model.champion_version}</span>
+                <span className="sidebarStatusRow sidebarStatusDetail" title={`CHAMPION ${snapshot.model.champion_version}`}>
+                  CHAMPION {snapshot.model.champion_version}
+                </span>
               )}
               {formatSnapshotClock(snapshot.created_at) && (
-                <span className="sidebarStatusRow">SNAPSHOT {formatSnapshotClock(snapshot.created_at)}</span>
+                <span className="sidebarStatusRow sidebarStatusDetail" title={`SNAPSHOT ${formatSnapshotClock(snapshot.created_at)}`}>
+                  SNAPSHOT {formatSnapshotClock(snapshot.created_at)}
+                </span>
               )}
-              <span className="sidebarStatusRow">
+              <span className="sidebarStatusRow sidebarStatusConnection">
                 <span className={`sidebarStatusDot${snapshot.source.mode === "sql" ? "" : " offline"}`} aria-hidden="true" />
-                {snapshot.source.mode === "sql" ? "SQL 연결됨" : "데모 데이터 · SQL 미연결"}
+                <span className="sidebarStatusConnectionLabel">
+                  {snapshot.source.mode === "sql" ? "SQL 연결됨" : "데모 데이터 · SQL 미연결"}
+                </span>
               </span>
             </div>
           )}

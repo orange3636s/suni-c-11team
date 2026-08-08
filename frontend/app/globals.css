@@ -46,8 +46,8 @@ html,body,button,input,select,textarea{font-family:var(--font-ui)}
 .resultCard,.surfaceCard,.uploadCard{border-radius:var(--card-radius)}
 .button,input,select,.fileSelectButton{min-height:var(--control-height);border-radius:var(--control-radius);font:500 13px/1 var(--font-ui)}
 .intro h1,.uploadIntro h1,.pageHeading h1,.overviewToolbar h2{margin:0;font-family:var(--font-ui);font-size:var(--dashboard-title-size);font-weight:var(--dashboard-title-weight);line-height:var(--dashboard-title-line);letter-spacing:var(--dashboard-title-tracking)}
-@media(max-width:640px){:root{--page-space:16px;--section-gap:18px;--dashboard-title-size:22px}.sidebar .themeTrigger{width:36px;min-width:36px;height:36px;min-height:36px;padding:0;justify-content:center}.sidebar .themeTriggerLabel,.sidebar .themeTrigger .themeChevron{display:none}}
-@media (max-width:820px){.sidebar{flex-basis:0}.contentShell,.mainArea{margin-left:0!important}.mainContent,.pageContent{padding:18px 16px}.topHeader{padding:0 16px}.apiStatus strong{display:none}.apiStatus small{font-size: var(--fs-xs)}.rcControlBar{grid-template-columns:1fr 1fr}.rcControlBar .button{grid-column:span 2}.rcGrid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:767px){:root{--page-space:16px;--section-gap:18px;--dashboard-title-size:22px}.sidebar .themeTrigger{width:36px;min-width:36px;height:36px;min-height:36px;padding:0;justify-content:center}.sidebar .themeTriggerLabel,.sidebar .themeTrigger .themeChevron{display:none}}
+@media (max-width:1023px){.sidebar{flex-basis:0}.contentShell,.mainArea{margin-left:0!important}.mainContent,.pageContent{padding:18px 16px}.topHeader{padding:0 16px}.apiStatus strong{display:none}.apiStatus small{font-size: var(--fs-xs)}.rcControlBar{grid-template-columns:1fr 1fr}.rcControlBar .button{grid-column:span 2}.rcGrid{grid-template-columns:minmax(0,1fr)}}
 .menuStatusDot{width:7px;height:7px;margin-left:auto;border-radius:50%;background:#34C759;box-shadow:0 0 0 2px rgba(52,199,89,.12)}.menuStatusDot.idle{background:#8e8e93;box-shadow:none}
 
 /* Shared dashboard tokens. Root-cause had an older standalone scale, so it
@@ -67,7 +67,7 @@ body,.rcPage,.rcPage button,.rcPage input,.rcPage select,.rcPage table{font-fami
 .rcPage .rcEmpty{min-height:120px;padding:24px;display:grid;place-content:center;text-align:center}.rcPage .rcEmpty h2{font-size: var(--fs-title)}.rcPage .rcEmpty p,.rcPage .errorMessage,.rcPage .emptyMessage{font-size: var(--fs-body);line-height:1.5}.rcPage .errorMessage{padding:13px 14px;border:1px solid color-mix(in srgb,var(--danger) 24%,var(--border-card));border-radius: var(--radius-panel);background:color-mix(in srgb,var(--danger) 7%,transparent)}
 .sidebar .themeToggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);color:#fff;font:500 13px/1 var(--font-ui);box-shadow:none}.sidebar .themeToggle:hover{background:rgba(255,255,255,.11)}.sidebar .themeToggle:active{transform:scale(.98)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}.sidebar .themeMenu>strong{font-size: var(--fs-sm)}.sidebar .themeOptions button{min-height:36px;border-radius:9px;font:500 13px/1 var(--font-ui)}
 html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tableWrap{border-color:rgba(255,255,255,.09)}html[data-theme="dark"] .rcPage .workspaceTabs,html[data-theme="dark"] .rcPage .rcMetricStrip>div{border-color:rgba(255,255,255,.09)}
-@media(max-width:640px){.rcPage{padding:18px 16px;gap:12px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size: var(--fs-display)}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}.rcPage .tableWrap td{max-width:170px}}
+@media(max-width:767px){.rcPage{padding:18px 16px;gap:12px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size: var(--fs-display)}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}.rcPage .tableWrap td{max-width:170px}}
 
 /* Compact root-cause workspace */
 .rcPage{ gap: 14px; }
@@ -162,7 +162,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
 .routeLoadingSpinner{ width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--brand-navy-text); border-radius: 50%; animation: routeSpin .8s linear infinite; }
 @keyframes routeSpin{ to{ transform: rotate(360deg); } }
 
-@media (max-width: 1050px) {
+@media (max-width: 1023px) {
   .rcControlBar{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rcControlBar .button{ width: 100%; }
   .rcGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -173,7 +173,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   .rcLotScroll{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); max-height: 260px; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .rcControlBar,
 .rcGrid{ grid-template-columns: 1fr; }
   .rcSpan2,
@@ -651,7 +651,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   overflow-y: auto;
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 1023px) {
   .overviewChartGrid,
 .overviewRiskGrid{
     grid-template-columns: 1fr;
@@ -674,7 +674,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   .overviewToolbar{
     z-index: 22;
     align-items: stretch;
@@ -692,7 +692,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .overviewErrorBanner,
 .overviewNotice{
     align-items: stretch;
@@ -1201,7 +1201,7 @@ a{
 .retryMessage > span{ display: grid; gap: 3px; }
 .retryMessage small{ opacity: 0.78; }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .retryMessage{ align-items: stretch; flex-direction: column; }
   .retryMessage .button{ width: 100%; }
   .analysisTimeNote{ width: 100%; }
@@ -1562,13 +1562,13 @@ a{
   font-size: var(--fs-sm);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .overviewMetricList{
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .historyRestoreBanner,
 .overviewEmptyActions{
     align-items: stretch;
@@ -1722,7 +1722,7 @@ a{
   justify-content: center;
 }
 
-@media (max-width: 680px) {
+@media (max-width: 767px) {
 }
 
 .fieldGroup input,
@@ -1999,7 +1999,7 @@ a{
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1023px) {
   .cardGrid{
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2029,7 +2029,7 @@ a{
 
 }
 
-@media (max-width: 820px) {
+@media (max-width: 767px) {
   .sidebar{
     position: static;
     width: 100%;
@@ -2098,7 +2098,7 @@ a{
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .cardGrid{
     grid-template-columns: 1fr;
   }
@@ -2465,7 +2465,7 @@ html[data-theme="dark"] .boxStatItem{
   background: var(--surface);
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   .waferQuickSelector{
     width: 100%;
     min-width: 0;
@@ -2476,7 +2476,7 @@ html[data-theme="dark"] .boxStatItem{
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .pathToolbar{
     align-items: stretch;
     flex-direction: column;
@@ -2787,7 +2787,7 @@ html[data-theme="dark"] ::placeholder{
   opacity: 1;
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   .themeTriggerArea{
     width: auto;
   }
@@ -2804,7 +2804,7 @@ html[data-theme="dark"] ::placeholder{
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 767px) {
   .csvUploadPanel,
 .csvUploadPanel.compact{
     min-height: 154px;
@@ -3216,7 +3216,7 @@ html[data-theme="dark"] .savedModelList > button.active{
   background: var(--accent-soft);
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 1023px) {
   .modelHistoryLayout{
     grid-template-columns: 1fr;
   }
@@ -3230,7 +3230,7 @@ html[data-theme="dark"] .savedModelList > button.active{
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 767px) {
   .predictionResultScroll .secondaryColumn{
     display: none;
   }
@@ -4490,7 +4490,7 @@ select,
   font-size: var(--fs-sm);
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1023px) {
   .rankingLayout,
 .pathDetailGrid{
     flex-direction: column;
@@ -4555,7 +4555,7 @@ select,
   stroke: var(--border-strong);
 }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
 }
 
 .chartTooltip{
@@ -4625,7 +4625,7 @@ select,
   padding: 64px 28px;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1023px) {
   .cardGrid,
 .kpiGrid{
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4645,7 +4645,7 @@ select,
   }
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 1023px) {
   .sidebar{
     width: 218px;
   }
@@ -4683,7 +4683,7 @@ select,
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 767px) {
   .sidebar{
     position: sticky;
     top: 0;
@@ -4783,7 +4783,7 @@ select,
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .topHeader{
     top: 97px;
   }
@@ -5170,7 +5170,7 @@ html[data-theme="dark"] .selectedModelSummary{
 .lotSummaryGrid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lotPareto{ margin-top: 20px; }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .selectedModelSummary{ align-items: flex-start; }
   .selectedModelTitleRow{ flex-wrap: wrap; }
   .selectedModelTitleRow .modelCompatibility{ margin-right: auto; }
@@ -5206,7 +5206,7 @@ html[data-theme="dark"] .selectedModelSummary{
 .hybridTrainingCard > strong{ font-size: var(--fs-title); color: #0e306d; }
 .hybridTrainingCard p{ margin: 0; font-size: var(--fs-body); line-height: 1.5; }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
   .modelSelectorToolbar{ grid-template-columns: 1fr; }
   .modelSelectorList{ max-height: 290px; }
 }
@@ -5239,13 +5239,13 @@ html[data-theme="dark"] .selectedModelSummary{
 .targetMetricGrid > div{ display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-subtle); }
 .targetMetricGrid span{ color: var(--text-secondary); font-size: var(--fs-sm); }
 
-@media (max-width: 980px) {
+@media (max-width: 1023px) {
   .dashboardFilters{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboardSplit{ grid-template-columns: 1fr; }
   .dashboardDetail{ position: static; }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 479px) {
   .dashboardFilters{ grid-template-columns: 1fr; }
   .dashboardActions{ flex-direction: column; }
 }
@@ -5329,11 +5329,11 @@ html[data-theme="dark"] .selectedModelSummary{
 .failureBarRow.count i{ background: var(--chart-secondary); }
 .failureBarRow strong{ text-align: right; }
 
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .analysisContextGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .analysisContextGrid,
 .failureBreakdownGrid{ grid-template-columns: 1fr; }
 }
@@ -5702,7 +5702,7 @@ html[data-theme="dark"] .button.secondary:hover:not(:disabled){
   background: var(--surface-tertiary);
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   .sidebar{
     border-bottom-color: rgba(255, 255, 255, 0.14);
     background: #0e306d;
@@ -5733,14 +5733,14 @@ html[data-theme="dark"] .button.secondary:hover:not(:disabled){
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 767px) {
 
   .movingAverageControl{
     justify-content: space-between;
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .waferListTools{
     grid-template-columns: 1fr;
   }
@@ -6010,7 +6010,7 @@ html[data-theme="dark"] .dataTable th{
   background: var(--surface-tertiary);
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   .resultCard,
 .surfaceCard,
 .uploadCard,
@@ -6253,7 +6253,7 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
   color: var(--text-primary);
 }
 
-@media (max-width: 1040px) and (min-width: 821px) {
+@media (max-width: 1023px) {
   .sidebar{
     width: 220px;
   }
@@ -6263,7 +6263,7 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 767px) {
   .sidebar{
     position: sticky;
     inset: 12px auto auto;
@@ -6506,7 +6506,7 @@ html[data-theme="dark"] .historyResetDialog{
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
 }
 
-@media (max-width: 820px) {
+@media (max-width: 767px) {
   .historyResetCard{
     margin-top: 32px;
     grid-template-columns: 1fr;
@@ -6537,7 +6537,7 @@ html[data-theme="dark"] .historyResetDialog{
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 479px) {
   .historyResetDialogActions{
     grid-template-columns: 1fr;
   }
@@ -7395,7 +7395,7 @@ root-cause{
   padding: 12px 14px;
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   :root{
     --compact-page-inline: 18px;
     --compact-page-start: 22px;
@@ -7469,7 +7469,7 @@ root-cause{
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   :root{
     --font-page-title: 23px;
     --compact-page-inline: 16px;
@@ -7597,7 +7597,7 @@ root-cause{
 .rcPage .pageHeading:not(.uploadIntro) h1{font-size:var(--text-page);font-weight:600;line-height:1.2}.rcPage .pageHeading:not(.uploadIntro) p{font-size: var(--fs-body);font-weight:400;line-height:1.5}.rcPage .resultCard h2{font-size:var(--text-section);font-weight:600;line-height:1.3}.rcPage .workspaceTabs{border-radius: var(--radius-panel)}.rcPage .workspaceTabs button{min-height:36px;border-radius:var(--radius-tab);font:500 13px/1.2 var(--font-ui)}
 .rcPage .rcControlBar input,.rcPage .rcControlBar select,.rcPage .button{min-height:38px;border-radius:var(--radius-control);font:500 13px/1 var(--font-ui)}.rcPage .button.primary{font-weight:600}.rcPage .tableWrap{border-radius: var(--radius-panel);border:1px solid var(--border-card)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font:13px/1.45 var(--font-ui)}.rcPage .tableWrap th{font-size: var(--fs-sm);font-weight:600}.rcPage .rcEmpty{min-height:120px;padding:24px}.rcPage .rcGrid,.rcPage .rcGrid>*{min-width:0;max-width:100%}
 .sidebar .themeToggle{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);font:500 13px/1 var(--font-ui)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}
-@media(max-width:640px){.rcPage{padding:18px 16px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size: var(--fs-display)}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}}
+@media(max-width:767px){.rcPage{padding:18px 16px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size: var(--fs-display)}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}}
 
 /* The sidebar used to be fixed while its visual width and main offset diverged
    (236px, 252px and 270px).  Keep one desktop token and let flex allocate the
@@ -7633,7 +7633,7 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 .headerContextSource-fallback{color:var(--sig-amber)}
 .headerContextSource-offline .headerContextDot{background:var(--sig-red)}
 .headerContextSource-offline{color:var(--sig-red)}
-@media (max-width:820px){.sidebar{position:sticky;flex:0 0 auto;width:100%;height:auto;max-height:none}.contentShell,.mainArea{margin-left:0!important}.mainContent,.pageContent{padding:18px 16px}.topHeader{padding:0 16px}.apiStatus strong{display:none}.apiStatus small{font-size: var(--fs-xs)}.rcControlBar{grid-template-columns:1fr 1fr}.rcControlBar .button{grid-column:span 2}.rcGrid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:1023px){.sidebar{position:sticky;flex:0 0 auto;width:100%;height:auto;max-height:none}.contentShell,.mainArea{margin-left:0!important}.mainContent,.pageContent{padding:18px 16px}.topHeader{padding:0 16px}.apiStatus strong{display:none}.apiStatus small{font-size: var(--fs-xs)}.rcControlBar{grid-template-columns:1fr 1fr}.rcControlBar .button{grid-column:span 2}.rcGrid{grid-template-columns:minmax(0,1fr)}}
 
 /* ===================================================================
    Dashboard v2 shell: 3-column grid (sidebar / content / AI panel).
@@ -8847,7 +8847,7 @@ html[data-theme="dark"] .methodComparisonKicker{ color: #C084FC; }
 .methodComparisonHeader h3{ margin: 0; font-size: var(--fs-body); font-weight: 600; flex: 1 1 auto; }
 .methodComparisonSource{ font-size: var(--fs-xs); color: var(--text-secondary); }
 .methodComparisonGrid{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-@media (max-width: 560px){ .methodComparisonGrid{ grid-template-columns: 1fr; } }
+@media (max-width: 479px){ .methodComparisonGrid{ grid-template-columns: 1fr; } }
 .methodComparisonCell{
   position: relative; padding: 12px; border-radius: var(--radius-control);
   border: 1px solid var(--border-card, var(--border)); background: transparent;
@@ -9488,8 +9488,8 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .alertsClassGrid{
   display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 10px 0 4px;
 }
-@media (max-width: 900px){ .alertsClassGrid{ grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 560px){ .alertsClassGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1023px){ .alertsClassGrid{ grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 479px){ .alertsClassGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .alertsClassCard{
   display: flex; flex-direction: column; gap: 4px;
   padding: 14px 14px 12px; border-radius: var(--radius-panel);
@@ -9523,7 +9523,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .alertsAlarmListActions .fieldGroup select,
 .alertsAlarmListActions .button{ height: 34px; min-height: 34px; }
 
-@media (max-width: 640px){
+@media (max-width: 767px){
   .alertsQueryRow{ gap: 18px; }
 }
 
@@ -9552,20 +9552,153 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
    wordmark should still show, just at the existing 24px height above). */
 
 /* ===================================================================
-   모바일 · 축소 화면 레이아웃 (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
-   전환 §B). Additive block, appended at the very end of the file on
-   purpose -- globals.css has several dead pre-v2-shell layout blocks
-   earlier on (see the `@media(max-width:1280px)` specificity fix above
-   for one example); editing any of them has no effect on what actually
+   모바일 · 축소 화면 레이아웃 (모바일/좁은 화면 반응형 패치, S-1~S-7).
+   Additive block, appended at the very end of the file on purpose --
+   globals.css has several dead pre-v2-shell layout blocks earlier on
+   (see the `@media(max-width:1280px)` specificity fix above for one
+   example); editing any of them has no effect on what actually
    renders, only adding rules *after* the live v2-shell section
-   (§7877+) reliably wins the cascade. Breakpoints:
-     1280px+          unchanged (spec: "절대 바꾸지 마라")
-     1024px~1279px    existing collapsible sidebar/panel, just narrower
-     768px~1023px     sidebar -> MobileTabBar, AiPanel -> overlay drawer
-     ≤767px           MobileTabBar, AiPanel -> full-screen drawer, 1-col
+   reliably wins the cascade. R그룹이 ~74개 흩어진 breakpoint를 3단계
+   (1023/767/479)로 정리했고, 이 패치는 그 위에 얹인다. 현재 셸
+   아키텍처(S-1, DashboardShell.tsx/Sidebar.tsx):
+     1280px/1279px    무관 -- 사이드바/AI 패널 오버플로 버그 전용,
+                       이 패치와 무관하게 그대로 둔다.
+     1024px+          데스크톱. <Sidebar> 펼침/접힘은 사용자가 토글.
+     768px~1023px     태블릿. <Sidebar>는 계속 마운트되지만 이 밴드에
+                       "진입"하는 순간 기본 접힘(56px 아이콘 레일)으로
+                       시작한다(DashboardShell.tsx). <MobileTabBar> 없음.
+                       헤더 컨텍스트 스트립은 SOURCE·LAST RUN만 남는다.
+     ≤767px           <Sidebar>는 오프캔버스 드로어(data-mode="drawer")로
+                       전환되고 <MobileTabBar>가 주 내비게이션이 된다.
+                       .headerContextStrip은 완전히 사라지고, 대신 헤더
+                       바로 아래 한 줄 요약 바(.headerMobileContextBar)가
+                       데이터셋/행수/시각/연결 상태를 대신 보여준다.
+     ≤479px           드로어 폭이 min(280px,85vw)로, 요약 바에서 LAST
+                       RUN까지 추가로 빠진다.
    =================================================================== */
 :root{
   --touch-target-min: 44px;
+}
+
+/* -- S-1: 헤더 햄버거 트리거 (≤767px, Header.tsx) -----------------------
+   ≤767px에서 <Sidebar>가 항상 오프캔버스 드로어가 되어 화면에 보이지
+   않으므로, 여는 트리거가 필요하다 -- .headerSuniButton과 같은 원형
+   아이콘 버튼 패턴을 그대로 재사용한다(새 버튼 스타일을 만들지 않는다). */
+.headerMenuButton{
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--touch-target-min); height: var(--touch-target-min);
+  border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface-secondary, var(--surface-muted));
+  cursor: pointer; flex: 0 0 auto; color: var(--text-primary);
+}
+.headerMenuButton:hover{ background: var(--surface-tertiary); }
+
+/* -- S-1: 헤더 컨텍스트 스트립 축약 (768px~1023px 태블릿 티어) -----------
+   767px까지는 그대로(EVAL/WAFERS/LAST RUN/SOURCE 전부), 1023px 이하에서
+   태블릿 폭이 되면 EVAL/WAFERS를 줄이고 SOURCE·LAST RUN만 남긴다 -- 이
+   구간을 축약하는 규칙은 지금까지 없었다(그대로 767px까지 유지되다가
+   전체가 사라지기만 했다). LAST RUN이 시각적으로 첫 항목이 되므로
+   좌측 구분선을 지운다(.headerContextItem:first-child과 같은 효과). */
+@media (max-width: 1023px){
+  .headerContextEval, .headerContextWafers{ display: none; }
+  .headerContextLastRun{ border-left: 0; padding-left: 0; }
+}
+
+/* -- S-1: 사이드바 오프캔버스 드로어 (≤767px, Sidebar.tsx mode="drawer") -
+   기본은 화면 밖(translateX(-100%)), sidebarDrawerOpen이 true면 안으로
+   슬라이드한다. data-mode/data-open 속성으로 구분한다 (.dashboardGrid의
+   data-sidebar="collapsed" 패턴과 동일). 배경 스크림은
+   .sidebarDrawerBackdrop(DashboardShell.tsx)이 맡는다. */
+@media (max-width: 767px){
+  .sidebar[data-mode="drawer"]{
+    position: fixed;
+    top: 0; left: 0; bottom: 0; right: auto;
+    height: 100dvh; max-height: 100dvh;
+    width: 280px;
+    margin: 0;
+    border-radius: 0;
+    z-index: calc(var(--z-panel) + 1);
+    transform: translateX(-100%);
+    transition: transform var(--shell-transition);
+  }
+  .sidebar[data-mode="drawer"][data-open="true"]{
+    transform: translateX(0);
+  }
+  .sidebar[data-mode="drawer"] .sidebarSurface{
+    border-radius: 0;
+    padding: 14px;
+    align-items: stretch;
+  }
+  .sidebarDrawerBackdrop{
+    position: fixed; inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: var(--z-panel);
+  }
+}
+/* 중첩 @media는 빌드 파이프라인(Next.js 기본 PostCSS, CSS 네스팅 플러그인
+   없음)에서 신뢰할 수 없어 -- 두 조건을 and로 합친 평범한 top-level
+   @media로 대신 쓴다. */
+@media (max-width: 767px) and (prefers-reduced-motion: reduce){
+  .sidebar[data-mode="drawer"]{ transition: none; }
+}
+@media (max-width: 479px){
+  .sidebar[data-mode="drawer"]{ width: min(280px, 85vw); }
+}
+
+/* -- S-1: 헤더 아래 한 줄 데이터 컨텍스트 요약 바 (≤767px, Header.tsx) --
+   .headerContextStrip이 !isMobileLayout에서만 렌더돼(이미 존재하는
+   동작, 회귀 없음 확인) 이 폭에서는 데이터셋/소스 정보가 화면에서 완전히
+   사라진다 -- "어떤 데이터를 보고 있는지"가 모든 폭에서 남아 있어야
+   한다는 규칙(지시서 하지 말 것 목록)을 지키는 유일한 자리다. <header>
+   바깥의 형제 요소라 ResizeObserver가 재는 --header-height(52px)에는
+   영향이 없다. 한 줄 고정, 줄바꿈도 가로 스크롤도 없다 -- 넘치면
+   ellipsis로 자른다. */
+@media (max-width: 767px){
+  .headerMobileContextBar{
+    display: flex; align-items: center;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--line-soft, var(--border));
+    font: 500 10px/1.3 var(--font-data);
+    color: var(--text-secondary);
+  }
+  .headerMobileContextItem{ display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex: 0 0 auto; }
+  .headerMobileContextItem:not(:first-child)::before{ content: "·"; margin: 0 6px; color: var(--text-muted); }
+  .headerMobileContextItem .headerContextDot{ width: 5px; height: 5px; }
+}
+@media (max-width: 479px){
+  .headerMobileContextLastRun{ display: none; }
+}
+
+/* -- S-2: 카드 3단계 위계, 좁은 화면에서는 패딩만 줄인다 -----------------
+   .panel-primary(위계1)/.panel(위계2)/.panel-quiet(위계3)/.resultCard(위계2
+   와 동일 규율) 네 클래스 모두 패딩만 건드린다 -- border-top: 2px solid
+   var(--ink)(위계1 식별자)와 border-radius(전부 var(--radius-panel)=4px)는
+   절대 건드리지 않는다(패딩 shorthand로 같이 덮어쓰지 않도록 `padding`
+   프로퍼티 하나만 선언한다). */
+@media (max-width: 767px){
+  /* `.rcPage .resultCard{padding:14px}` (다른, 더 이른 767px 규칙, 두
+     클래스라 명시성이 더 높다) 를 이기려면 여기서도 같은 명시성으로
+     같이 선언해야 한다 -- 안 그러면 .rcPage 안(모니터링/원인분석 등
+     대부분의 실사용 카드)에서는 이 규칙이 조용히 무시된다. */
+  .panel-primary, .resultCard.panel-primary, .rcPage .resultCard.panel-primary,
+  .resultCard.alertsClassSection, .rcPage .resultCard.alertsClassSection{ padding: 12px 13px; }
+  .panel{ padding: 12px 13px; }
+  .panel-quiet,
+  .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet,
+  .resultCard.measurementExpansionCard, .rcPage .resultCard.measurementExpansionCard,
+  .resultCard.measurementExpansionCollapsed, .rcPage .resultCard.measurementExpansionCollapsed{ padding: 12px 13px; }
+  .resultCard, .rcPage .resultCard{ padding: 12px 13px; }
+}
+@media (max-width: 479px){
+  .panel-primary, .resultCard.panel-primary, .rcPage .resultCard.panel-primary,
+  .resultCard.alertsClassSection, .rcPage .resultCard.alertsClassSection{ padding: 10px 11px; }
+  .panel{ padding: 10px 11px; }
+  .panel-quiet,
+  .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet,
+  .resultCard.measurementExpansionCard, .rcPage .resultCard.measurementExpansionCard,
+  .resultCard.measurementExpansionCollapsed, .rcPage .resultCard.measurementExpansionCollapsed{ padding: 10px 11px; }
+  .resultCard, .rcPage .resultCard{ padding: 10px 11px; }
 }
 
 /* BUG FIX: .topHeader has no `position`/`top` declared in the live v2-shell
@@ -9824,6 +9957,120 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .meTable th:nth-child(5), .meTable td:nth-child(5){ width: 15%; }
 .meTable th:nth-child(6), .meTable td:nth-child(6){ width: 15%; }
 .meReasonCell{ color: var(--text-secondary); }
+
+/* -- S-3: 표는 ≤767px에서 카드로 접지 않고 가로 스크롤이 기본 전략이다
+   (하지 말 것 목록: 표 -> 카드 전환 금지 -- 컬럼 간 비교가 표의 목적).
+   .meScrollTable(MeasurementExpansionCard.tsx의 계측 확대 표,
+   monitoring/page.tsx의 유의 인자 표가 공유)이 이 전략을 켠다:
+     - 첫 컬럼(랏/인자 ID) sticky left:0, 불투명 배경 명시(.tableWrap이
+       이미 쓰는 --surface-card/--surface와 같은 값 -- 스크롤 중 아래
+       내용이 비쳐 보이지 않게).
+     - <th>는 이미 상단 sticky(.tableWrap th{position:sticky;top:0}) +
+       개별 불투명 배경(.tableWrap th{background:...})을 갖고 있다 --
+       부모(thead)에만 배경이 있고 자식 th에는 없어서 스크롤 시 헤더가
+       투명해지는 known bug는 이미 없다(확인 완료, 회귀 아님).
+     - 셀 패딩 9px 10px -> 7px 8px (.rcPage .tableWrap th/td 기준값).
+     - 스크롤 힌트 캡션(.meScrollHint). */
+@media (max-width: 767px){
+  .meScrollTable{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* table-layout은 fixed로 둔다 -- 열 폭(nth-child 퍼센트)은 이 표
+     자체의 박스 기준으로 계산되므로, min-width로 박스를 넓히기만 해도
+     (부모 .meScrollTable의 overflow-x:auto가 넘치는 만큼 스크롤을
+     받는다) 열 비율은 그대로 유지된다. */
+  .meScrollTable .meTable{ min-width: 640px; }
+  .meScrollTable table:not(.meTable){ min-width: 560px; }
+  .rcPage .tableWrap th, .rcPage .tableWrap td{ padding: 7px 8px; }
+  .meScrollTable th:first-child, .meScrollTable td:first-child{
+    position: sticky; left: 0;
+    background: var(--surface-card, var(--surface));
+  }
+  .meScrollTable th:first-child{ z-index: calc(var(--z-sticky-seg) + 1); }
+  .meScrollTable td:first-child{ z-index: 1; }
+  .meScrollHint{
+    margin: 4px 2px 0; font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted);
+  }
+}
+@media (min-width: 768px){
+  /* 767px 초과에서는 스크롤 힌트 자체가 필요 없다(표가 이미 폭에 맞게
+     그려진다) -- 데스크톱/태블릿에서는 숨긴다. */
+  .meScrollHint{ display: none; }
+}
+/* -- S-3: ≤479px, 저우선순위 "기대 효과"(구 "사유") 열을 숨긴다 --------
+   ID(인자)·수치(계측률/추가 판정/수율 기여)·등급 배지(권고)는 항상
+   남긴다(하지 말 것 목록). 정보를 조용히 지우지 않도록
+   .meHiddenColumnNote 캡션으로 숨겼다는 사실 자체를 남긴다. */
+.meHiddenColumnNote{ display: none; }
+@media (max-width: 479px){
+  .meTable .meReasonColHeader, .meTable .meReasonCell{ display: none; }
+  .meHiddenColumnNote{
+    display: block; margin: 4px 2px 0; font-size: var(--fs-xs); color: var(--text-secondary);
+  }
+}
+
+/* -- S-4: 비교 모달(Y1~Y5 / 장비별 Trellis) ≤767px -----------------------
+   두 모달 다 가로 스크롤은 항상 유지한다(하지 말 것 목록: 패널을 세로로
+   쌓지 않는다) -- 패널 폭 자체(320px -> 200px)는 CompareAcrossTargetsModal.tsx
+   /CompareAcrossConfigsModal.tsx가 useIsMobileLayout으로 반응형 처리한다
+   (여기서는 SVG width라 CSS만으로 줄일 수 없다). 모달 자체는 전체화면. */
+@media (max-width: 767px){
+  .compareModalBackdrop{ padding: 0; }
+  .compareModal{ width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+}
+
+/* -- S-4: 트리맵 3-Model 분할, ≤767px에서 세로로 쌓는다 ------------------
+   가로 3분할은 이 폭에서 각 Model 폭이 너무 좁아 읽을 수 없다.
+   ConfigTreemap.tsx가 이 폭에서 flexGrow(면적 비례) 대신 flex:0 0 100px
+   (고정 높이)로 인라인 스타일을 바꾼다 -- CSS만으로는 각 Model의 상대
+   면적(totalN)을 무시하고 고정 높이로 바꿀 수 없다(인라인 스타일이
+   이겨서). 타일 텍스트가 좁아지면 n= 카운트부터 뺀다(채널명+값은
+   유지). */
+@media (max-width: 767px){
+  .monitoringTreemap{ flex-direction: column; }
+  .monitoringTreemapModel{ min-width: 0; width: 100%; }
+  .monitoringTreemapTileN{ display: none; }
+}
+
+/* -- S-4: 차트 눈금 폰트 ≤767px에서 더 축소 (10px -> 9px). Pareto의
+   LEFT_TICKS/RIGHT_TICKS(0/25/50/75/100류)는 고정 배열이라(동적 backoff가
+   아니다) 개수는 그대로 두고 폰트만 줄인다 -- 축 스케일 계산과 결합돼
+   있어 배열 자체를 줄이는 건 이번 패치 범위를 넘는 위험이 있다. */
+@media (max-width: 767px){
+  .scatterTickLabel{ font-size: var(--fs-nano); }
+  .paretoTick{ font-size: var(--fs-nano); }
+}
+
+/* -- S-5: 그룹 스크럽 슬라이더 트랙 최소 폭 140px (지시서 최소 트랙 폭
+   규칙 -- 민감도 슬라이더(.alertsGaugeWrap)는 이미 140px을 갖고 있어
+   손대지 않는다, 이 트랙만 120px이었다). */
+.scatterScrubTrack{ min-width: 140px; }
+
+/* -- S-5: 세그먼트/뷰 토글은 넘치면 가로 스크롤, 줄바꿈 금지 ------------- */
+@media (max-width: 767px){
+  .scatterViewToggle{ overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .scatterViewToggle::-webkit-scrollbar{ display: none; }
+  .scatterViewToggleBtn{ flex: 0 0 auto; }
+}
+
+/* -- S-5: 주 터치 대상(.button) 최소 높이 26px -> 32px (≤767px) --------- */
+@media (max-width: 767px){
+  .button{ min-height: 32px; }
+}
+
+/* -- S-6: 근거 밴드(EvidenceBand.tsx의 .evidenceBand / monitoring/page.tsx
+   인라인 kebab-case .evidence-band 둘 다) -----------------------------
+   미니 밴드(96px)는 ≤767px에서 64px로 줄인다 -- 지우지 않는다(시그니처
+   요소). 라벨 폰트는 evidenceBandTick/evidenceBandTargetLabel 둘 다 이미
+   --fs-nano(9px)를 항상 쓰고 있어(모든 폭에서 동일) 이 항목은 이미
+   충족돼 있다 -- 별도 규칙 불필요(회귀 방지 확인만). ≤479px에서는 눈금
+   라벨을 양끝 2개만 남긴다(중간 라벨은 스케일 최소/최대와 겹쳐 읽기
+   어렵다 -- 목표선 라벨(.evidenceBandTargetLabel)은 눈금이 아니라 목표
+   지점 자체를 가리키는 별도 요소라 대상에서 뺀다). */
+@media (max-width: 767px){
+  .evidenceBand.mini, .evidence-band.mini{ width: 64px; }
+}
+@media (max-width: 479px){
+  .evidenceBandTick:not(:first-child):not(:last-child){ display: none; }
+}
 .meRowMuted{ color: var(--text-muted); }
 .meRowMuted td{ color: var(--text-muted); }
 .meRowFlagged{ background: var(--warning-soft); }
@@ -10225,7 +10472,7 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   background: transparent; border: 1px solid var(--line); color: var(--text-secondary);
 }
 
-@media (max-width: 640px){
+@media (max-width: 767px){
   .settingsPanelBackdrop{ padding: 0; align-items: flex-end; justify-content: center; }
   .settingsPanel{ width: 100%; max-height: 90vh; border-radius: 18px 18px 0 0; }
 }
@@ -10661,4 +10908,14 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   background: var(--sig-green);
 }
 .sidebarStatusDot.offline{ background: var(--text-muted); }
-.sidebar.collapsed .sidebarStatus{ display: none; }
+/* 모바일 반응형 패치 S-1: 접힘(rail) 상태에서는 CHAMPION/SNAPSHOT 행을
+   숨기고 연결 점만 남긴다 -- 예전처럼 블록 전체를 display:none하지
+   않는다(정보를 완전히 지우면 접힘 상태에서 확인할 방법이 없어진다).
+   숨겨진 정보는 Sidebar.tsx가 .sidebarStatus의 title 툴팁으로 합쳐
+   올려둔다. */
+.sidebar.collapsed .sidebarStatus{
+  align-items: center; padding: 8px 4px; gap: 0; cursor: default;
+}
+.sidebar.collapsed .sidebarStatusDetail{ display: none; }
+.sidebar.collapsed .sidebarStatusConnection{ gap: 0; }
+.sidebar.collapsed .sidebarStatusConnectionLabel{ display: none; }

@@ -1,5 +1,6 @@
 "use client";
 
+import { Menu } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -28,7 +29,7 @@ export default function Header() {
   const apiStatus = useApiStatus();
   const { snapshot } = useAnalysisState();
   const headerRef = useRef<HTMLElement>(null);
-  const { aiPanelOpen, setAiPanelOpen } = usePanelState();
+  const { aiPanelOpen, setAiPanelOpen, setSidebarDrawerOpen } = usePanelState();
   // ≤1023px: AiPanel no longer renders its own always-visible floating
   // toggle circle once it's an overlay/full-screen drawer (spec §B-5) --
   // this header button is the only way to open it there (spec §B-7:
@@ -81,8 +82,24 @@ export default function Header() {
     : "--:--:--";
 
   return (
+    <>
     <header className="topHeader" ref={headerRef}>
       <div className="headerContext">
+        {/* 모바일 반응형 패치 S-1: ≤767px에서는 <Sidebar>가 오프캔버스
+            드로어로 바뀌어 DOM에서 항상 보이지 않으므로, 여는 트리거가
+            헤더에 하나는 있어야 한다 -- .headerSuniButton과 같은
+            아이콘 버튼 시각 패턴을 그대로 따른다. */}
+        {isMobileLayout && (
+          <button
+            type="button"
+            className="headerMenuButton"
+            onClick={() => setSidebarDrawerOpen(true)}
+            aria-label="메뉴 열기"
+            aria-haspopup="dialog"
+          >
+            <Menu size={18} aria-hidden="true" />
+          </button>
+        )}
         {/* SUNI C brand mark -- separate from the sidebar's character logo
             (SuniAvatar), not a replacement for it. Links to 모니터링 홈 like
             any header logo would (지시서 I: 모델 학습은 더 이상 탭이 아니라
@@ -106,22 +123,26 @@ export default function Header() {
             <div className="headerContextStrip" aria-label="현재 데이터 컨텍스트">
               {snapshot && (
                 <>
-                  <div className="headerContextItem">
+                  {/* 모바일 반응형 패치 S-1: 768~1023px(태블릿) 구간에서는
+                      SOURCE/LAST RUN만 남기고 EVAL/WAFERS를 줄인다 -- 이
+                      두 항목만 새 클래스로 구분해 globals.css의
+                      1023px 티어에서 숨긴다. */}
+                  <div className="headerContextItem headerContextEval">
                     <span className="headerContextKey">EVAL</span>
                     <span className="headerContextValue">{snapshot.source.eval_dataset}</span>
                   </div>
-                  <div className="headerContextItem">
+                  <div className="headerContextItem headerContextWafers">
                     <span className="headerContextKey">WAFERS</span>
                     <span className="headerContextValue">{snapshot.source.row_count.toLocaleString()}</span>
                   </div>
-                  <div className="headerContextItem">
+                  <div className="headerContextItem headerContextLastRun">
                     <span className="headerContextKey">LAST RUN</span>
                     <span className="headerContextValue">{formatHeaderClock(snapshot.created_at) ?? "-"}</span>
                   </div>
                 </>
               )}
               <div
-                className="headerContextItem"
+                className="headerContextItem headerContextSource"
                 title={
                   snapshot
                     ? snapshot.source.mode === "sql"
@@ -167,5 +188,35 @@ export default function Header() {
         )}
       </div>
     </header>
+    {/* 모바일 반응형 패치 S-1: ≤767px에서는 .headerContextStrip 전체가
+        렌더되지 않으므로(위 !isMobileLayout 분기), 데이터셋/행 수/최종
+        실행 시각/연결 상태가 화면에서 완전히 사라진다 -- 그 정보가
+        생존하는 유일한 자리로 헤더 바로 아래 한 줄짜리 요약 바를 둔다.
+        헤더가 이미 읽는 snapshot/apiStatus를 그대로 재사용하고, 새
+        API 조회는 하지 않는다. <header> 바깥(형제)에 둬서 그 안의
+        ResizeObserver가 재는 --header-height(52px)에는 영향을 주지
+        않는다. 479px 이하에서는 LAST RUN을 추가로 뺀다(globals.css). */}
+    {isMobileLayout && (
+      <div className="headerMobileContextBar" aria-label="현재 데이터 컨텍스트 (요약)">
+        {snapshot?.source.eval_dataset && (
+          <span className="headerMobileContextItem">{snapshot.source.eval_dataset}</span>
+        )}
+        {snapshot && (
+          <span className="headerMobileContextItem">{snapshot.source.row_count.toLocaleString()} wf</span>
+        )}
+        {snapshot?.created_at && formatHeaderClock(snapshot.created_at) && (
+          <span className="headerMobileContextItem headerMobileContextLastRun">{formatHeaderClock(snapshot.created_at)}</span>
+        )}
+        <span
+          className={`headerMobileContextItem headerContextSource-${
+            snapshot ? (snapshot.source.mode === "sql" ? "online" : "fallback") : apiStatus === "offline" ? "offline" : "checking"
+          }`}
+        >
+          <span className="headerContextDot" aria-hidden="true" />
+          {snapshot ? (snapshot.source.mode === "sql" ? "SQL" : "데모") : apiStatus === "offline" ? "연결 끊김" : "확인 중"}
+        </span>
+      </div>
+    )}
+    </>
   );
 }

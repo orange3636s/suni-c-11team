@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DIVERGING_GREEN, DIVERGING_RED, parseConfig as parseConfigParts } from "@/lib/constants";
 import { getTreemapData } from "@/lib/monitoringSource";
+import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfigTreemapGroup, ConfigTreemapResponse } from "@/types/data";
 
@@ -75,6 +76,12 @@ export default function ConfigTreemap({
 }) {
   const theme = useResolvedTheme();
   const router = useRouter();
+  // 모바일 반응형 패치 S-4: ≤767px에서 3-Model 가로 분할이 읽기 힘들어
+  // 세로로 쌓는다(각 Model 블록 ~100px). 데스크톱/태블릿의 면적비례
+  // flexGrow는 가로 분할 전제라 세로로 바꾸면 그대로 못 쓴다 -- 폭 대신
+  // 높이가 비례해 버려 Model마다 제각각 높이가 되므로, 이 폭에서는
+  // 고정 높이로 바꾼다.
+  const isMobileLayout = useIsMobileLayout();
   const [step, setStep] = useState(initialStep ?? initialData?.step ?? 1);
   const hasCachedInitial = initialData != null && initialData.step === step;
   const [data, setData] = useState<ConfigTreemapResponse | null>(hasCachedInitial ? initialData!.data : null);
@@ -167,7 +174,11 @@ export default function ConfigTreemap({
         <>
           <div className="monitoringTreemap">
             {models.map((modelRow) => (
-              <div key={modelRow.model} className="monitoringTreemapModel" style={{ flexGrow: modelRow.totalN, flexBasis: 0 }}>
+              <div
+                key={modelRow.model}
+                className="monitoringTreemapModel"
+                style={isMobileLayout ? { flex: "0 0 100px" } : { flexGrow: modelRow.totalN, flexBasis: 0 }}
+              >
                 <div className="monitoringTreemapModelLabel">{modelRow.model}</div>
                 <div className="monitoringTreemapEqRows">
                   {modelRow.eqRows.map((eqRow) => (
@@ -199,7 +210,9 @@ export default function ConfigTreemap({
                             >
                               <span className="monitoringTreemapTileTitle">{chamber.chamber}</span>
                               <span>{insufficientN ? "표본 부족" : `${chamber.mean.toFixed(1)}%`}</span>
-                              <span>n={chamber.n}</span>
+                              {/* 모바일 반응형 패치 S-4: 타일 텍스트가 좁아지면(≤767px)
+                                  n= 카운트부터 뺀다 -- 채널명 + 값은 항상 남긴다. */}
+                              <span className="monitoringTreemapTileN">n={chamber.n}</span>
                             </button>
                           );
                         })}
