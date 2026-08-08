@@ -23,9 +23,10 @@ export type ScatterColorMode = "default" | "config_model" | "lot";
 // 아무 패턴도 안 보인다. 평균 y값 오름차순으로 훑어야 분포가 아래->위로
 // 이동하는 것이 보인다.
 type ScrubSort = "mean" | "name" | "count";
-// 비선택 그룹의 투명도 (spec CA: "0.10 ~ 0.15") -- 색은 유지한 채 이만큼만
-// 낮춘다. 회색으로 바꾸지 않는다.
-const SCRUB_DIM_OPACITY = 0.12;
+// 비선택 그룹의 투명도 (spec CA: "0.10 ~ 0.15", 지시서 X-3: 기본 불투명도가
+// 낮아졌으니 하한 0.10을 쓴다) -- 색은 유지한 채 이만큼만 낮춘다. 회색으로
+// 바꾸지 않는다.
+const SCRUB_DIM_OPACITY = 0.1;
 // 이보다 그룹 수가 많으면(LOT 390개 등) 눈금을 그리지 않는다 -- 스톱이
 // 적은 Config 모드(3~4개)에서만 각 스톱이 어디인지 보이게 한다 (spec CA
 // "그룹 수에 따른 차이").
@@ -556,7 +557,16 @@ function scrubGroupKeyOf(point: ScatterPoint, mode: ScatterColorMode): string | 
 // 구간 안/밖을 포함한 어떤 zone 구분도 점 색·크기로 표현하지 않는다.
 // 권장 구간·경고선은 참조선/밴드로 이미 표시되므로 점에서 중복 인코딩할
 // 필요가 없다. --measured 토큰과 동일한 값.
-const DEFAULT_POINT_STYLE = { light: "#0E306D", dark: "#7BA3E8", size: 4, opacityLight: 0.7, opacityDark: 0.8 };
+//
+// 점 농도 완화 (X-1) -- 이 0.28은 임의값이 아니라 Box Plot의 지터된 일반
+// 점(POINT_OPACITY, 아래)이 이미 실제로 쓰고 있던 값을 그대로 가져온
+// 것이다. 예전에는 Box Plot이 산점도보다 일부러 더 연했는데("점이
+// 상자 위에 얹히므로"), 이제는 반대로 산점도가 Box Plot 무게에 맞춘다 --
+// 두 뷰를 오갈 때 점의 무게가 달라지면 안 되기 때문이다(지시서 X그룹).
+// 세 Color By 모드(기본/Config별/LOT별) 전부 이 값 하나를 공유한다 --
+// 모드마다 다르면 전환할 때 밀도 인상이 바뀌어 비교가 안 된다.
+const POINT_OPACITY = 0.28;
+const DEFAULT_POINT_STYLE = { light: "#0E306D", dark: "#7BA3E8", size: 4 };
 
 function colorForPoint(
   point: ScatterPoint,
@@ -572,12 +582,12 @@ function colorForPoint(
       lotIndex.set(key, idx);
     }
     const palette = mode === "config_model" ? MODEL_COLORS : LOT_PALETTE;
-    return { color: palette[idx % palette.length], size: 5, opacity: 0.85 };
+    return { color: palette[idx % palette.length], size: 5, opacity: POINT_OPACITY };
   }
   return {
     color: theme === "dark" ? DEFAULT_POINT_STYLE.dark : DEFAULT_POINT_STYLE.light,
     size: DEFAULT_POINT_STYLE.size,
-    opacity: theme === "dark" ? DEFAULT_POINT_STYLE.opacityDark : DEFAULT_POINT_STYLE.opacityLight,
+    opacity: POINT_OPACITY,
   };
 }
 
@@ -961,10 +971,17 @@ export default function ScatterChart({
 
   /** 비선택 그룹의 점을 낮은 투명도로 흐리게 한다 (spec CA "시각 처리": 색은
    * 유지, 회색으로 바꾸지 않는다) -- 강조 그룹이 없거나(위치 0) 이 점이
-   * 이미 호버/브러시 선택 중이면 원래 opacity를 그대로 쓴다. */
+   * 이미 호버/브러시 선택 중이면 원래 opacity를 그대로 쓴다.
+   *
+   * 지시서 X-3: 기본 불투명도를 POINT_OPACITY(0.28)로 낮추면서 대비가
+   * 줄었다(이전 0.7~0.85 대 0.12 → 0.28 대 0.10). 선택 그룹은 원래
+   * opacity를 그대로 넘기는 대신 1로 올려, 강조 대비가 오히려 커지게
+   * 한다 -- 비선택 하한(SCRUB_DIM_OPACITY)만 낮추고 선택 쪽을 그대로
+   * 두면 이전보다 덜 도드라져 보였을 것이다. */
   function applyScrubDim(point: ScatterPoint, opacity: number, isHovered: boolean, isSelected: boolean): number {
-    if (!activeScrubGroup || isHovered || isSelected) return opacity;
-    return scrubKeyByPoint?.get(point) === activeScrubGroup ? opacity : SCRUB_DIM_OPACITY;
+    if (isHovered || isSelected) return opacity;
+    if (!activeScrubGroup) return opacity;
+    return scrubKeyByPoint?.get(point) === activeScrubGroup ? 1 : SCRUB_DIM_OPACITY;
   }
 
   // 드래그 중 rAF 스로틀 (spec CA "성능") -- 슬라이더가 프레임당 여러 번
@@ -1657,9 +1674,12 @@ export default function ScatterChart({
                     <line x1={centerX - boxCapWidthPx / 2} x2={centerX + boxCapWidthPx / 2} y1={whiskerLoY} y2={whiskerLoY} stroke={whiskerColor} strokeWidth={1.1} />
                     {/* jittered individual wafers -- inliers filled (painted per
                         the active Color By, spec §3), outliers hollow red
-                        (spec §3-3: "이상치는 속이 빈 원. 채우지 마라"). Lower
-                        radius/opacity than the scatter view (spec §3-2) since
-                        these sit on top of the box itself. */}
+                        (spec §3-3: "이상치는 속이 빈 원. 채우지 마라"). Radius
+                        stays smaller than the scatter view's (spec §3-2) since
+                        these sit on top of the box itself, but opacity is now
+                        POINT_OPACITY -- the same value the scatter view's
+                        colorForPoint uses (지시서 X그룹: 두 뷰의 점 무게가
+                        같아야 한다). */}
                     {bin.members.map((member, mi) => {
                       const cx = catScale(bin.index + 1 + member.jitter);
                       const cy = yScale(member.point.y);
@@ -1693,7 +1713,7 @@ export default function ScatterChart({
                       }
                       if (!boxPointsVisible.inlier) return null;
                       const style = colorForPoint(member.point, colorMode, lotIndex, theme);
-                      const baseOpacity = 0.28;
+                      const baseOpacity = POINT_OPACITY;
                       const opacity = applyScrubDim(
                         member.point,
                         isHovered ? 0.85 : isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity,
