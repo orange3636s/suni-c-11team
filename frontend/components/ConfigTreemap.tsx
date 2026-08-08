@@ -154,6 +154,12 @@ export default function ConfigTreemap({ datasetId }: { datasetId: string }) {
                       <div className="monitoringTreemapTiles">
                         {eqRow.chambers.map((chamber) => {
                           const insufficientN = chamber.n < MIN_TILE_N;
+                          // C-3: 이 스텝 Config가 FDR을 통과했을 때만
+                          // 채색한다 -- 범주형 히트맵과 같은 규칙이다.
+                          // 통과하지 못하면(현재 데이터는 전부 그렇다)
+                          // 검출한계 이하 차이가 적/녹으로 과장되지
+                          // 않도록 전량 중립색 + 텍스트만 보여준다.
+                          const shouldColor = !insufficientN && data.significant;
                           return (
                             <button
                               type="button"
@@ -162,7 +168,7 @@ export default function ConfigTreemap({ datasetId }: { datasetId: string }) {
                               style={{
                                 flexGrow: chamber.n,
                                 flexBasis: 0,
-                                background: insufficientN ? undefined : colorForMean(chamber.mean, data.overall_mean, theme),
+                                background: shouldColor ? colorForMean(chamber.mean, data.overall_mean, theme) : undefined,
                               }}
                               onClick={() => handleTileClick(chamber)}
                               onMouseEnter={(event) => setHover({ group: chamber, x: event.clientX, y: event.clientY })}
@@ -188,6 +194,11 @@ export default function ConfigTreemap({ datasetId }: { datasetId: string }) {
           <p className="monitoringTreemapCaption">
             면적 = 웨이퍼 수 · 색 = 평균 수율(전체 평균 {data.overall_mean.toFixed(1)}% 기준 ±{COLOR_SPAN_PP}%p 고정 스케일) · n&lt;{MIN_TILE_N} 회색
           </p>
+          {!data.significant && (
+            <p className="monitoringTreemapCaption">
+              이 스텝의 장비 구성은 최종 수율 차이를 통계적으로 설명하지 못합니다(FDR 미통과) — 색 대신 수치로만 비교하세요.
+            </p>
+          )}
         </>
       )}
 

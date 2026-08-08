@@ -782,16 +782,30 @@ function FiveClassGrid({
           const tooltip = key === "판별불가"
             ? `구간 걸침 ${item.straddleCount}장 · 미계측 ${item.unmeasuredCount}장`
             : undefined;
+          // C-1: 게이트 미달이면 알람 3등급(심각/위험/주의)은 실제로는
+          // "0장"(알람 없음)이 아니라 "판정 불가"다 -- 배너를 안 읽으면
+          // 숫자만 보고 정반대로("알람 없음 = 좋음") 읽는다. 정상/판별불가는
+          // 게이트와 무관하게 계속 계산되므로 그대로 둔다.
+          const gated = isAlarmTier && !gatePassed;
           return (
             <div key={key} className="alertsClassCard" style={{ ["--class-color" as string]: color }} title={tooltip}>
               <div className="alertsClassCardHead">
                 {isAlarmTier ? <TriangleIcon color={color} /> : <CircleIcon color={color} />}
                 <strong>{key}</strong>
               </div>
-              <div className="alertsClassCardValue">{item.count.toLocaleString()}장</div>
-              <div className="alertsClassCardPct">{item.pct.toFixed(1)}%</div>
-              {item.avgPredMean != null && (
-                <div className="alertsClassCardYield">평균 수율 {item.avgPredMean.toFixed(1)}</div>
+              {gated ? (
+                <>
+                  <div className="alertsClassCardValue alertsClassCardValueGated">—</div>
+                  <span className="alertsClassCardGatedBadge">게이트 미달</span>
+                </>
+              ) : (
+                <>
+                  <div className="alertsClassCardValue">{item.count.toLocaleString()}장</div>
+                  <div className="alertsClassCardPct">{item.pct.toFixed(1)}%</div>
+                  {item.avgPredMean != null && (
+                    <div className="alertsClassCardYield">평균 수율 {item.avgPredMean.toFixed(1)}</div>
+                  )}
+                </>
               )}
             </div>
           );

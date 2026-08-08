@@ -7,7 +7,9 @@ from fastapi import APIRouter, HTTPException, status
 
 from api.routes.datasets import get_dataset_registry
 from api.schemas.monitoring import ConfigTreemapResponse
-from src.analysis.screening.schema import FINAL_YIELD_COLUMN, parse_schema
+from src.analysis.screening.effect_size import eps2_categorical
+from src.analysis.screening.schema import FINAL_YIELD_COLUMN, Schema, parse_schema
+from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, DEFAULT_MIN_N_CATEGORICAL, benjamini_hochberg
 from src.runtime.datasets import DatasetNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -58,5 +60,28 @@ def get_config_treemap(dataset: str, step: int) -> dict[str, Any]:
         "dataset_id": dataset,
         "step": step,
         "overall_mean": overall_mean,
+        "significant": _is_config_significant(df, schema, config_column),
         "groups": groups,
     }
+
+
+def _is_config_significant(df, schema: Schema, config_column: str) -> bool:
+    """C-3: 이 스텝의 Config가 최종 수율(Y) 차이를 설명하는지 -- 범주형
+    히트맵과 같은 규칙(ANOVA eps2 + BH-FDR)이다. FDR 가족은 이
+    데이터셋의 모든 스텝 Config x 최종 수율 검정 전체다 -- 요청받은
+    스텝 하나만 검정하면 다중 비교 보정이 무의미해진다.
+    """
+    p_values: list[float] = []
+    tested_columns: list[str] = []
+    for column in schema.config_cols:
+        if column not in df.columns:
+            continue
+        result = eps2_categorical(df[column], df[FINAL_YIELD_COLUMN], min_n=DEFAULT_MIN_N_CATEGORICAL)
+        if result is None:
+            continue
+        p_values.append(result.p_value)
+        tested_columns.append(column)
+    if config_column not in tested_columns:
+        return False
+    q_values = benjamini_hochberg(p_values)
+    return bool(q_values[tested_columns.index(config_column)] < DEFAULT_FDR_ALPHA)

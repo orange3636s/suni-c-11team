@@ -1380,7 +1380,10 @@ export default function ScatterChart({
       (data.normal_range.hi == null || trendHover.dataX <= data.normal_range.hi)
     : null;
 
-  const interpretationText = buildInterpretationTip(data.eps2, data.relation_shape, data.optimal_center, targetAxisLabel(data.axis.y_label), view);
+  // C-5: data.optimal_center는 SPC 고정값이다 -- ML로 전환하면 라인·범례는
+  // displayedOptimalCenter(ML 중심)를 따르는데 해석 문장만 SPC 값에
+  // 머물러 있었다.
+  const interpretationText = buildInterpretationTip(data.eps2, data.relation_shape, displayedOptimalCenter, targetAxisLabel(data.axis.y_label), view);
 
   // Reference-line legend labels/descriptions (spec §5-1/§5-2) -- the
   // numeric value now rides in the *label* itself ("관리한계 LCL/UCL  49.9

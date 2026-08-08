@@ -22,4 +22,10 @@ class ConfigTreemapResponse(BaseModel):
     # 중앙값으로 쓰인다(스텝을 바꿔도 중앙이 흔들리면 패널 간 비교가
     # 무의미해진다).
     overall_mean: float
+    # C-3: 이 스텝의 Config(장비 구성)가 최종 수율 차이를 설명하는지
+    # (ANOVA eps2 + BH-FDR, 범주형 히트맵과 같은 규칙 -- 가족은 이
+    # 데이터셋의 모든 스텝 Config 검정 전체) -- false면 프론트는 타일을
+    # 전량 중립색으로 렌더한다. 검출한계 이하 차이를 색으로 강조하지
+    # 않기 위함이다.
+    significant: bool
     groups: list[ConfigTreemapGroupSchema]

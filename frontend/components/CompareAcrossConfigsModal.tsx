@@ -27,8 +27,6 @@ const MINI_Y_TICK_COUNT = 4;
 // 구간 평균 불량률 계산은 산점도/Box Plot과 동일한 12분위를 쓴다
 // (ScatterChart.tsx의 BOX_BIN_COUNT와 맞춤).
 const BIN_COUNT = 12;
-// 판정 문구: 부호가 같고 max|rho|/min|rho|가 이 배율 미만이면 "유사"로 본다.
-const SIMILAR_SLOPE_RATIO = 1.5;
 // 최적 중심이 x 범위의 이 비율을 넘게 흩어지면 "따로 분리" 문구를 얹는다.
 const CENTER_SPREAD_RATIO = 0.15;
 
@@ -101,11 +99,8 @@ function spearmanRho(points: { x: number; y: number }[]): number | null {
   return cov / Math.sqrt(varX * varY);
 }
 
-// Abramowitz-Stegun erf approximation -- feeds a normal-approximation
-// significance badge (그룹별 "유의 배지"). Not the same test the backend
-// runs (p-value there comes from scipy on the *unstratified* data), so
-// this is only ever used for the small per-panel badge, never surfaced
-// as a number anywhere in this modal.
+// Abramowitz-Stegun erf approximation -- feeds the Fisher z pairwise
+// difference test below.
 function erf(x: number): number {
   const sign = x < 0 ? -1 : 1;
   const ax = Math.abs(x);
@@ -122,17 +117,25 @@ function erf(x: number): number {
 function normalCdf(z: number): number {
   return 0.5 * (1 + erf(z / Math.SQRT2));
 }
-function approxPValue(rho: number, n: number): number {
-  if (n < 3) return 1;
-  const z = rho * Math.sqrt(n - 1);
+
+// C-2: "다릅니다"를 단정하려면 그룹 쌍을 직접 비교하는 검정이 필요하다 --
+// 예전에는 max|rho|/min|rho| 비율이 임의 상수(1.5) 미만이면 "유사"로
+// 봤는데, 이 앱 전체가 FDR 규율을 쓰면서 이 화면만 검정 없이 결론을
+// 냈다. 두 독립 상관계수의 차이는 Fisher z 변환 후 표준정규로 검정한다
+// (Fisher, 1921) -- 각 그룹의 상관은 서로 다른 wafer 표본에서 나온
+// 독립 추정치이므로 이 검정이 성립한다.
+function fisherZ(r: number): number {
+  const clamped = Math.max(-0.999999, Math.min(r, 0.999999));
+  return 0.5 * Math.log((1 + clamped) / (1 - clamped));
+}
+function pairwiseSlopeDiffPValue(r1: number, n1: number, r2: number, n2: number): number | null {
+  if (n1 <= 3 || n2 <= 3) return null;
+  const se = Math.sqrt(1 / (n1 - 3) + 1 / (n2 - 3));
+  if (se === 0) return null;
+  const z = (fisherZ(r1) - fisherZ(r2)) / se;
   return 2 * (1 - normalCdf(Math.abs(z)));
 }
-// 통계적 유의성(p값, 헤더에 텍스트로 표시)과 효과크기 등급(배지)을
-// 분리한다 (지시서 D-③) -- 예전에는 "유의(강함)" 같은 조합 라벨 하나에
-// 두 개념을 섞어서, Trellis 화면에서는 "이 장비가 다르다"로 오독되기
-// 쉬웠다. p값은 이 함수로 텍스트만, 등급은 lib/confidenceTier의
-// effectSizeTierFromRho로 배지만 담당한다.
-function formatApproxPValue(p: number): string {
+function formatPValue(p: number): string {
   return p < 0.001 ? "p<.001" : `p=${p.toFixed(3)}`;
 }
 
@@ -328,20 +331,39 @@ export default function CompareAcrossConfigsModal({
     if (known.length < 2) return null;
 
     const lines: string[] = [];
-    const hasPositive = known.some((g) => g.rho > 0);
-    const hasNegative = known.some((g) => g.rho < 0);
-    const sameSign = !(hasPositive && hasNegative);
-    const absRhos = known.map((g) => Math.abs(g.rho));
-    const maxAbs = Math.max(...absRhos);
-    const minAbs = Math.min(...absRhos);
-    const ratio = minAbs === 0 ? Infinity : maxAbs / minAbs;
     const rhoList = known.map((g) => `${g.key} ${g.rho >= 0 ? "+" : ""}${g.rho.toFixed(2)}`).join(" / ");
 
-    if (sameSign && ratio < SIMILAR_SLOPE_RATIO) {
-      lines.push(`장비별 기울기가 유사합니다 (${rhoList}). 장비 교란 근거 없음 — 전체 관계를 그대로 해석해도 됩니다.`);
+    // C-2: 모든 쌍을 Fisher z 차이 검정으로 비교하고, 다중 비교이므로
+    // Bonferroni로 유의수준을 쌍 수만큼 보정한다(α=0.05/쌍 수). 임의
+    // 비율 상수로 "다르다"를 단정하던 이전 로직을 대체한다.
+    const pairs: { a: GroupStat & { rho: number }; b: GroupStat & { rho: number }; p: number }[] = [];
+    for (let i = 0; i < known.length; i++) {
+      for (let j = i + 1; j < known.length; j++) {
+        const p = pairwiseSlopeDiffPValue(known[i].rho, known[i].n, known[j].rho, known[j].n);
+        if (p != null) pairs.push({ a: known[i], b: known[j], p });
+      }
+    }
+
+    if (pairs.length === 0) {
+      // 표본이 너무 작아 어떤 쌍도 검정할 수 없다 -- 근거 없이 단정하지 않는다.
     } else {
-      const weakest = known.reduce((min, g) => (Math.abs(g.rho) < Math.abs(min.rho) ? g : min));
-      lines.push(`장비별 기울기가 다릅니다 (${rhoList}). ${weakest.key}에서는 관계가 약합니다 — 전체 상관을 단일 결론으로 쓰지 마세요.`);
+      const alpha = 0.05 / pairs.length;
+      const significant = pairs.filter((pair) => pair.p < alpha);
+      if (significant.length === 0) {
+        lines.push(`장비별 기울기 차이가 통계적으로 확인되지 않습니다 (${rhoList}).`);
+      } else if (significant.length === pairs.length) {
+        const desc = significant.map((pair) => `${pair.a.key}-${pair.b.key} ${formatPValue(pair.p)}`).join(", ");
+        lines.push(`장비별 기울기가 통계적으로 다릅니다 (${desc}, ${pairs.length}쌍 보정). 전체 상관을 단일 결론으로 쓰지 마세요.`);
+      } else {
+        const only = significant.length === 1;
+        const names = significant.map((pair) => `${pair.a.key}과 ${pair.b.key}`).join(", ");
+        const pDesc = only
+          ? formatPValue(significant[0].p)
+          : significant.map((pair) => `${pair.a.key}-${pair.b.key} ${formatPValue(pair.p)}`).join(", ");
+        lines.push(
+          `${names} 사이에${only ? "만" : ""} 차이 근거가 있습니다 (${pDesc}, ${pairs.length}쌍 보정). 나머지 쌍은 구별되지 않습니다.`,
+        );
+      }
     }
 
     const centersKnown = groups.filter((g): g is GroupStat & { optimalCenter: number } => g.optimalCenter != null);
@@ -461,10 +483,10 @@ function TrellisPanel({
   const grayColor = theme === "dark" ? GRAY.dark : GRAY.light;
   const pointColor = theme === "dark" ? POINT_COLOR.dark : POINT_COLOR.light;
 
-  // 유의성(p값)과 효과크기 등급(배지)을 분리한다 (지시서 D-③) -- 둘 다
-  // group.rho에서 나오지만 서로 다른 질문에 답한다: p값은 "이 상관이
-  // 우연일 가능성", 등급은 "관계의 크기". 표본 부족 그룹은 둘 다 비운다.
-  const pValue = !group.insufficientN && group.rho != null ? approxPValue(group.rho, group.n) : null;
+  // C-2: 패널별 무보정 p 배지는 제거했다 -- 장비 간 차이는 이제 모달
+  // 상단의 Fisher z + Bonferroni 쌍별 검정 문구가 담당한다. 효과크기
+  // 등급(배지)만 이 패널에 남는다: "관계의 크기"는 그룹 간 차이와
+  // 무관한 별개 질문이다.
   const tier = !group.insufficientN && group.rho != null ? effectSizeTierFromRho(group.rho) : null;
 
   return (
@@ -475,7 +497,6 @@ function TrellisPanel({
           <span className="compareMiniChartRho">
             {" "}n={group.n}
             {group.rho != null && <> · ρ={group.rho >= 0 ? "+" : ""}{group.rho.toFixed(2)}</>}
-            {pValue != null && <> · {formatApproxPValue(pValue)}</>}
           </span>
         </span>
         {group.insufficientN ? (
