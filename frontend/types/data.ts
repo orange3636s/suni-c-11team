@@ -897,6 +897,13 @@ export type LatestAnalysisPayload = {
   activeTarget: string;
   paretoByTarget: Record<string, ParetoRankingResponse>;
   measurementExpansion?: MeasurementExpansionResponse | null;
+  // 지시서 AJ: 저장된 스냅샷의 응답 형태·내용 규칙(예: PARETO_TOP_N
+  // 5->10)이 여전히 유효한지 프론트가 직접 검사하는 버전 --
+  // frontend/lib/snapshotVersion.ts의 ANALYSIS_SNAPSHOT_VERSION과
+  // 다르면 복원하지 않는다. 백엔드 봉투의 schema_version(app_state.py)과는
+  // 별개다 -- 그쪽이 필터링해 버리면 프론트는 "저장된 적 없음"과 "폐기됨"을
+  // 구분할 수 없어 조용히 빈 화면이 된다.
+  snapshotVersion: number;
 };
 
 export type LatestAnalysisRecord = {

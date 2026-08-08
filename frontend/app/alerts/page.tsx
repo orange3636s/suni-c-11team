@@ -29,10 +29,11 @@ import type { DatasetSummary, ReliabilityResponse } from "@/types/data";
 
 const RELIABILITY_GRADE_CLASS: Record<string, string> = { 높음: "high", 보통: "medium", 낮음: "low" };
 
-// 지시서 H-4: 알람 목록 화면 표시는 7개까지 -- 렌더링부와 캡션이 같은
-// 상수를 참조해야 둘이 어긋나지 않는다. CSV 다운로드는 이 제한과 무관하게
-// alarmTable.sorted 전체를 쓴다.
-const ALARM_PAGE_SIZE = 7;
+// 알람 목록은 전체를 렌더하고 (지시서 AF: 7건 이후를 볼 방법이 없던 문제를
+// 고친다) 표 영역 자체가 세로로 스크롤된다 -- 이 상수는 스크롤 없이 보이는
+// 초기 행 수(HScrollTableBody의 --scroll-rows)일 뿐, 더 이상 렌더링 개수를
+// 제한하지 않는다. CSV 다운로드는 항상 alarmTable.sorted 전체를 쓴다.
+const ALARM_VISIBLE_ROWS = 7;
 
 /** spec §E-3 헤더 배지 -- 클릭하면 상세 패널이 열린다. */
 function ReliabilityBadge({
@@ -237,7 +238,7 @@ function AlertsContent() {
         }));
         setReliability(reliabilityResponse);
       } catch (failure) {
-        setError(failure instanceof Error ? failure.message : "알림 이력을 불러오지 못했습니다.");
+        setError(failure instanceof Error ? failure.message : "알림 기록을 불러오지 못했습니다.");
       } finally {
         setLoading(false);
       }
@@ -351,11 +352,11 @@ function AlertsContent() {
     : 0;
 
   return (
-    <DashboardShell activeItem="알림 이력">
+    <DashboardShell activeItem="알림 기록">
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">ALERT HISTORY</span>
         <div className="pageHeadingTitleRow">
-          <h1>알림 이력</h1>
+          <h1>알림 기록</h1>
           {reliability && (
             <ReliabilityBadge reliability={reliability} open={reliabilityPanelOpen} onToggle={() => setReliabilityPanelOpen((v) => !v)} />
           )}
@@ -380,13 +381,18 @@ function AlertsContent() {
       </section>
 
       <section className="uploadCard">
+        {/* 지시서 AH: 넉넉히 안 들어가면(좁은 화면) 판정 대상이 첫 줄,
+            목표 수율·민감도·조회가 둘째 줄로 떨어진다 -- 안쪽 그룹을 별도
+            flex 아이템으로 묶어 억지로 한 줄에 밀어넣지 않는다. */}
         <div className="alertsQueryRow">
           <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
-          <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
-          <SensitivityField value={sensitivity} activePreset={activePreset} onApplyPreset={applyPreset} onChange={handleSensitivityChange} />
-          <button type="button" className="button primary alertsQueryButton" disabled={loading} onClick={() => void load()}>
-            {loading ? "조회 중…" : data ? "다시 조회" : "조회"}
-          </button>
+          <div className="alertsQueryRowGroup">
+            <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
+            <SensitivityField value={sensitivity} activePreset={activePreset} onApplyPreset={applyPreset} onChange={handleSensitivityChange} />
+            <button type="button" className="button primary alertsQueryButton" disabled={loading} onClick={() => void load()}>
+              {loading ? "조회 중…" : data ? "다시 조회" : "조회"}
+            </button>
+          </div>
         </div>
         <p className="sectionCaption">정상범위 기준: {trainDatasetLabel}</p>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
@@ -420,7 +426,7 @@ function AlertsContent() {
         <div className="sectionHeading compact">
           <div>
             <span className="sectionLabel">ALARMS</span>
-            <h2>알림 이력 ({gradeFilteredAlarmItems.length}건)</h2>
+            <h2>알림 기록 ({gradeFilteredAlarmItems.length}건)</h2>
           </div>
           <div className="alertsAlarmListActions">
             {data?.auc_gate_passed && gradeFilteredAlarmItems.length > 0 && (
@@ -491,7 +497,7 @@ function AlertsContent() {
             {alarmTable.sorted.length > 0 && (
               <>
                 <div className="tableHideOnMobile">
-                  <HScrollTableBody minWidth={760}>
+                  <HScrollTableBody minWidth={760} rows={ALARM_VISIBLE_ROWS}>
                     <table>
                       <thead>
                         <tr>
@@ -504,7 +510,7 @@ function AlertsContent() {
                         </tr>
                       </thead>
                       <tbody>
-                        {alarmTable.sorted.slice(0, ALARM_PAGE_SIZE).map((item, index) => (
+                        {alarmTable.sorted.map((item, index) => (
                           <AlarmRow
                             key={`${item.lot_wafer_id}-${index}`}
                             item={item}
@@ -517,7 +523,7 @@ function AlertsContent() {
                   </HScrollTableBody>
                 </div>
                 <div className="alarmCardList">
-                  {alarmTable.sorted.slice(0, ALARM_PAGE_SIZE).map((item, index) => (
+                  {alarmTable.sorted.map((item, index) => (
                     <AlarmCard
                       key={`card-${item.lot_wafer_id}-${index}`}
                       item={item}
@@ -526,7 +532,7 @@ function AlertsContent() {
                     />
                   ))}
                 </div>
-                <TableCaption total={alarmTable.sorted.length} shown={Math.min(ALARM_PAGE_SIZE, alarmTable.sorted.length)} />
+                <TableCaption total={alarmTable.sorted.length} shown={alarmTable.sorted.length} />
               </>
             )}
             <p className="tableDisclaimer">
@@ -649,7 +655,7 @@ function TargetYieldField({ value, onChange }: { value: number; onChange: (value
   return (
     <div className="alertsSettingField alertsTargetField">
       <span className="alertsSettingLabel">목표 수율</span>
-      <div className="alertsTargetInputRow">
+      <div className="alertsTargetInputRow" title="이 값 미만을 미달로 봅니다">
         <input
           key={value}
           type="number" step="0.1" min={0} max={100}
@@ -661,7 +667,6 @@ function TargetYieldField({ value, onChange }: { value: number; onChange: (value
         />
         <span>%</span>
       </div>
-      <span className="alertsSettingHint">이 값 미만을 미달로 봅니다</span>
     </div>
   );
 }

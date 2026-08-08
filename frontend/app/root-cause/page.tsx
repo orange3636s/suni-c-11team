@@ -19,6 +19,7 @@ import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
 import { formatPValue } from "@/lib/numberFormat";
+import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
   ApiNetworkError,
@@ -188,7 +189,7 @@ function RootCauseContent() {
   // with zero network calls (checklist §탭 이동 #1/#4), and a page
   // reload/reconnect restores a lean (points-less) version of it via
   // GET /api/state/latest.
-  const { analysis, setAnalysis, hydrated } = useAnalysisState();
+  const { analysis, setAnalysis, hydrated, analysisSnapshotStale } = useAnalysisState();
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
@@ -445,7 +446,12 @@ function RootCauseContent() {
       // 넘는다 -- 어차피 복원 직후 배경에서 fetchAllScatterData로 다시
       // 채우므로(위 useEffect), 서버에는 화면 목록 구성에 꼭 필요한
       // Pareto와, 그 자체로 작은 계측 확대 권고 결과만 남긴다.
-      void saveAnalysisState(datasetId, { activeTarget, paretoByTarget: paretoMap, measurementExpansion }).catch(() => {});
+      void saveAnalysisState(datasetId, {
+        activeTarget,
+        paretoByTarget: paretoMap,
+        measurementExpansion,
+        snapshotVersion: ANALYSIS_SNAPSHOT_VERSION,
+      }).catch(() => {});
     } catch (failure) {
       // Never leave a stale result on screen after a failure -- it could
       // be mistaken for the new run's output (spec §5-2).
@@ -536,7 +542,7 @@ function RootCauseContent() {
           onCompare={openCompare}
           onTrellis={openTrellis}
           hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
-          alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
+          alarmGradeByWaferId={analysis?.alarmGradeByWaferId}
           paretoItems={paretoByTarget[target]?.items ?? []}
           paretoN80={paretoByTarget[target]?.n80 ?? null}
           onParetoBarClick={handleParetoBarClick}
@@ -733,6 +739,21 @@ function RootCauseContent() {
             <button type="button" className="button" onClick={() => void runAnalysis()}>다시 시도</button>
           </div>
         )}
+        {/* 지시서 AJ: 서버에 저장된 분석 결과가 있었지만 낡은 버전이거나
+            (예: PARETO_TOP_N 5->10) 그 이후 모델이 재학습돼 폐기된 경우 --
+            runState는 여전히 "idle"이라 위 두 블록과는 겹치지 않는다.
+            조용히 빈 화면만 두지 않고 이유와 재실행 경로를 알려준다. */}
+        {runState === "idle" && analysisSnapshotStale && (
+          <div className="analysisErrorBox" role="alert">
+            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
+            <div className="analysisErrorBody">
+              <p className="analysisErrorMessage">
+                저장된 분석 결과가 이전 버전이라 불러오지 않았습니다. 원인 분석을 다시 실행해 주세요.
+              </p>
+            </div>
+            <button type="button" className="button" onClick={() => void runAnalysis()}>원인 분석 실행</button>
+          </div>
+        )}
       </section>
 
       <HeatmapParetoSection
@@ -813,7 +834,7 @@ function RootCauseContent() {
                   view={quickLookView}
                   onSelectWafer={setSelectedWafer}
                   height={chartHeight}
-                  alarmGradeByWaferId={analysis?.alarmGradeByWaferId ?? undefined}
+                  alarmGradeByWaferId={analysis?.alarmGradeByWaferId}
                 />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={chartHeight} />
@@ -1091,22 +1112,27 @@ function ColorBySelect({
   value: ColorMode;
   onChange: (mode: ColorMode) => void;
   // Config 컬럼이 0개인 데이터셋(mentorship_dataset_v7_killing_event)에서는
-  // "Eq. 모델별" 색상 옵션이 고를 수 있는 값 자체가 없으므로 숨긴다 (spec
+  // "Config별" 색상 옵션이 고를 수 있는 값 자체가 없으므로 숨긴다 (spec
   // 문구 전수 검토 §A-5).
   hasConfig?: boolean;
 }) {
+  // 저장된 즐겨찾기 스냅샷에 옛 값(예: 삭제된 "alarm")이 남아 있어도 화면이
+  // 깨지지 않도록 알 수 없는 값은 기본으로 떨어뜨린다 -- value는 항상
+  // ColorMode 타입으로 좁혀지지만, 향후 즐겨찾기 복원 경로가 생기면 이
+  // 방어가 실제로 쓰인다.
+  const knownValues: ColorMode[] = hasConfig ? ["default", "config_model", "lot"] : ["default", "lot"];
+  const safeValue = knownValues.includes(value) ? value : "default";
   return (
     <label className="colorBySelectField">
       <span>색상</span>
       <select
         className="colorBySelect"
-        value={value}
+        value={safeValue}
         onChange={(event) => onChange(event.target.value as ColorMode)}
       >
         <option value="default">기본</option>
-        {hasConfig && <option value="config_model">Eq. 모델별</option>}
+        {hasConfig && <option value="config_model">Config별</option>}
         <option value="lot">LOT별</option>
-        <option value="alarm">알람 여부</option>
       </select>
     </label>
   );
@@ -1142,7 +1168,7 @@ function NumericFactorCard({
   onCompare: (feature: string) => void;
   onTrellis: (feature: string, step: number) => void;
   hasConfig: boolean;
-  alarmGradeByWaferId?: Record<string, AlarmGrade>;
+  alarmGradeByWaferId?: Record<string, AlarmGrade> | null;
   // Pareto 보기(spec "Pareto를 산점도 카드로 병합")용 데이터 -- 카드마다
   // 다시 fetch하지 않고 부모(RootCauseContent)가 이미 갖고 있는
   // paretoByTarget에서 한 번만 내려준다.

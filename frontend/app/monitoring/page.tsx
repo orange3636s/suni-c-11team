@@ -231,7 +231,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
       </div>
 
       {!queue.yieldSummary || targetYield == null ? (
-        <p className="sectionCaption">예측 없음 — 알림 이력 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>
+        <p className="sectionCaption">예측 없음 — 알림 기록 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>
       ) : (
         <div className="yieldGapSection">
           <div className="yieldGapHeaderRow">

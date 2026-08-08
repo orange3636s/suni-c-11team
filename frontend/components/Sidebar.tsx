@@ -15,7 +15,7 @@ import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 export const navigationItems = [
   { label: "모니터링", href: "/monitoring", icon: "monitor" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
-  { label: "알림 이력", href: "/alerts", icon: "alert" },
+  { label: "알림 기록", href: "/alerts", icon: "alert" },
   { label: "즐겨찾기", href: "/favorites", icon: "star" },
 ] as const;
 

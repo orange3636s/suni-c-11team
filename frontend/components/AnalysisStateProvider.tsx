@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getLatestState } from "@/lib/api";
 import type { MeasurementQueueData, MonitoringSnapshot } from "@/lib/monitoringSource";
+import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
   AlarmGrade,
   AlertsDataResponse,
@@ -109,6 +110,13 @@ type AnalysisStateValue = {
   setTraining: (value: TrainingState | ((previous: TrainingState) => TrainingState)) => void;
   analysis: AnalysisState;
   setAnalysis: (value: AnalysisState | ((previous: AnalysisState) => AnalysisState)) => void;
+  // 지시서 AJ: 서버에 저장된 analysis 레코드가 있었지만
+  // isAnalysisSnapshotUsable이 거부해(구버전/재학습 이후) 복원하지 않았다는
+  // 신호 -- true면 원인 분석 화면이 "저장된 결과가 이전 버전이라 불러오지
+  // 않았습니다" 안내 + 재실행 버튼을 보여준다. 조용히 빈 화면을 만들지
+  // 않기 위한 것이지, `analysis`가 null인 다른 이유(애초에 실행한 적
+  // 없음)와는 구분되어야 한다.
+  analysisSnapshotStale: boolean;
   alarms: AlarmsState;
   setAlarms: (value: AlarmsState | ((previous: AlarmsState) => AlarmsState)) => void;
   monitoringHome: MonitoringHomeState;
@@ -126,6 +134,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [hydrated, setHydrated] = useState(false);
   const [training, setTraining] = useState<TrainingState>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>(null);
+  const [analysisSnapshotStale, setAnalysisSnapshotStale] = useState(false);
   const [alarms, setAlarms] = useState<AlarmsState>(null);
   const [monitoringHome, setMonitoringHome] = useState<MonitoringHomeState>(null);
   const [notifications, setNotifications] = useState<NotificationSettingsSummary>(DEFAULT_NOTIFICATIONS);
@@ -151,26 +160,36 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
           });
         }
         if (state.analysis) {
-          // Server-persisted analysis payload is Pareto-only (spec §6
-          // size budget) -- scatterByKey/categoricalByKey always start
-          // empty on restore and get filled by the page's own background
-          // fetchAllScatterData pass (pointsComplete: false triggers it).
-          setAnalysis({
-            dataset: state.analysis.dataset,
-            createdAt: state.analysis.created_at,
-            activeTarget: state.analysis.payload.activeTarget,
-            paretoByTarget: state.analysis.payload.paretoByTarget,
-            scatterByKey: {},
-            categoricalByKey: {},
-            pointsComplete: false,
-            // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
-            // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
-            measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
-            // wafer 수만큼 커질 수 있어(예: train.CSV 1만 행) 서버에 저장하지
-            // 않는다 -- scatterByKey와 같은 방식으로 복원 직후 배경에서
-            // 다시 채운다 (root-cause/page.tsx의 fetchAllScatterData 이펙트).
-            alarmGradeByWaferId: null,
-          });
+          // 지시서 AJ: 저장된 스냅샷이 지금 화면이 이해하는 형태·모델과
+          // 여전히 맞는지 프론트가 직접 검사한다 -- 서버는 봉투 형식
+          // (schema_version)만 보고 이미 걸러줬을 수 있지만, 그 필터는
+          // PARETO_TOP_N처럼 payload *내용* 규칙이 바뀐 경우를 모른다.
+          // false면 절대 부분 복원하지 않고(신·구 데이터가 섞이면 안 된다)
+          // 통째로 버린 뒤 재실행을 안내한다.
+          if (isAnalysisSnapshotUsable(state.analysis, state.training?.created_at ?? null)) {
+            // Server-persisted analysis payload is Pareto-only (spec §6
+            // size budget) -- scatterByKey/categoricalByKey always start
+            // empty on restore and get filled by the page's own background
+            // fetchAllScatterData pass (pointsComplete: false triggers it).
+            setAnalysis({
+              dataset: state.analysis.dataset,
+              createdAt: state.analysis.created_at,
+              activeTarget: state.analysis.payload.activeTarget,
+              paretoByTarget: state.analysis.payload.paretoByTarget,
+              scatterByKey: {},
+              categoricalByKey: {},
+              pointsComplete: false,
+              // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
+              // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
+              measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
+              // wafer 수만큼 커질 수 있어(예: train.CSV 1만 행) 서버에 저장하지
+              // 않는다 -- scatterByKey와 같은 방식으로 복원 직후 배경에서
+              // 다시 채운다 (root-cause/page.tsx의 fetchAllScatterData 이펙트).
+              alarmGradeByWaferId: null,
+            });
+          } else {
+            setAnalysisSnapshotStale(true);
+          }
         }
         if (state.alarms) {
           setAlarms({
@@ -204,6 +223,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       setTraining,
       analysis,
       setAnalysis,
+      analysisSnapshotStale,
       alarms,
       setAlarms,
       monitoringHome,
@@ -211,7 +231,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       notifications,
       setNotifications,
     }),
-    [hydrated, training, analysis, alarms, monitoringHome, notifications],
+    [hydrated, training, analysis, analysisSnapshotStale, alarms, monitoringHome, notifications],
   );
 
   return <AnalysisStateContext.Provider value={value}>{children}</AnalysisStateContext.Provider>;

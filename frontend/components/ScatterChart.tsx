@@ -5,7 +5,7 @@ import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { AlarmGrade, ReferenceLine, RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
+import type { AlarmGrade, RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
 
 // "개선 권고"는 알람 삼각형 대상이 아니다 (spec §B: 마커는 심각/위험/주의 3
 // 등급만 -- 알람이 아닌 참고용 등급까지 표시하면 무엇이 진짜 알람인지
@@ -15,7 +15,7 @@ function isAlarmMarkerGrade(grade: AlarmGrade): grade is AlarmMarkerGrade {
   return grade === "심각" || grade === "위험" || grade === "주의";
 }
 
-export type ScatterColorMode = "default" | "config_model" | "lot" | "alarm";
+export type ScatterColorMode = "default" | "config_model" | "lot";
 // 인자 카드 "보기" 토글 전체 상태 (Pareto/Scatter/Box) -- Pareto는 이
 // ScatterChart 컴포넌트가 아니라 카드가 직접 분기해 ParetoChart를 그리므로,
 // 이 컴포넌트 자신은 QuickLookView(아래)만 받는다.
@@ -494,13 +494,13 @@ function LegendCard({
   );
   if (onClick) {
     return (
-      <button type="button" className={className} onClick={onClick} title={title}>
+      <button type="button" className={className} onClick={onClick} title={title} aria-disabled={disabled}>
         {inner}
       </button>
     );
   }
   return (
-    <div className={className} title={title}>
+    <div className={className} title={title} aria-disabled={disabled}>
       {inner}
     </div>
   );
@@ -550,11 +550,6 @@ function colorForPoint(
   theme: "light" | "dark",
   recommendedRangeValue: [number, number] | null,
 ): { color: string; size: number; opacity: number } {
-  if (mode === "alarm") {
-    return point.in_range
-      ? { color: "#1D4ED8", size: 4.5, opacity: 0.7 }
-      : { color: "#F59E0B", size: 5.5, opacity: 0.9 };
-  }
   if (mode === "config_model") {
     const key = modelOf(point.config);
     let idx = lotIndex.get(key);
@@ -706,8 +701,12 @@ export default function ScatterChart({
   // 알람 판정 GBDT 전환 (spec §B) -- wafer_id -> 등급. 카드 하나가 한 번의
   // "원인 분석 실행"에서 나온 알람 목록 전체를 공유하므로 caller가 한 번만
   // 가져와 모든 ScatterChart 인스턴스에 그대로 넘긴다 (여기서 재요청하지
-  // 않는다).
-  alarmGradeByWaferId?: Record<string, AlarmGrade>;
+  // 않는다). 세 가지 값을 구분한다 (spec AC): `undefined`는 이 화면에서
+  // 심각도 마커 기능 자체를 지원하지 않음(예: 즐겨찾기 썸네일 -- 범례
+  // 자리를 아예 그리지 않는다), `null`은 값을 가져오는 중(부트스트랩
+  // 앙상블이라 수십 초 걸릴 수 있다), 객체는 로딩이 끝났음(비어 있으면
+  // 대상 없음)을 뜻한다.
+  alarmGradeByWaferId?: Record<string, AlarmGrade> | null;
 }) {
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
@@ -722,6 +721,11 @@ export default function ScatterChart({
   const [visibleAlarmGrades, setVisibleAlarmGrades] = useState<Set<AlarmMarkerGrade>>(
     () => new Set(["심각", "위험", "주의"]),
   );
+  // 심각도 마커 전체 on/off (spec AC) -- 등급별 토글과 별개로, "표시 중일
+  // 때"라는 조건 자체를 켜고 끈다. 기본값은 표시(기존 동작 유지). 카드마다
+  // 독립이며 (이 컴포넌트가 target/run마다 remount되므로) 타깃 변경 시
+  // 자동으로 기본값으로 되돌아간다.
+  const [alarmMarkersVisible, setAlarmMarkersVisible] = useState(true);
   const [trendVisible, setTrendVisible] = useState(true);
   // Box Plot's own togglable elements (spec §4) -- 개별 wafer/이상치 wafer
   // can be switched off from the legend same as every other reference
@@ -1595,7 +1599,7 @@ export default function ScatterChart({
           {/* 알람 심각도 삼각형 -- 항상 최상단(일반 점 < 박스 < 이상치 <
               삼각형, spec §B-2). 관리한계/권장구간과 무관하게 어디에나
               나타날 수 있다(다변량 판정이므로 정상, spec §B-4). */}
-          {hasAnyAlarmMarker && view === "scatter" && (() => {
+          {hasAnyAlarmMarker && alarmMarkersVisible && view === "scatter" && (() => {
             const markers = data.points
               .map((point) => ({ point, grade: alarmGradeOf(point.lot_wafer_id) }))
               .filter((m): m is { point: ScatterPoint; grade: AlarmMarkerGrade } => m.grade != null && visibleAlarmGrades.has(m.grade))
@@ -1615,7 +1619,7 @@ export default function ScatterChart({
               );
             });
           })()}
-          {hasAnyAlarmMarker && view === "box" && (() => {
+          {hasAnyAlarmMarker && alarmMarkersVisible && view === "box" && (() => {
             const markers: { cx: number; cy: number; grade: AlarmMarkerGrade; id: string }[] = [];
             for (const bin of boxBins) {
               for (const member of bin.members) {
@@ -1799,32 +1803,64 @@ export default function ScatterChart({
           />
         </div>
 
-        {/* 알람 심각도 삼각형 범례 -- 등급별로 독립적으로 on/off (spec §B-3).
-            산점도/Box Plot 둘 다 이 범례를 공유한다. */}
-        {alarmGradeByWaferId && (
-          <div className="scatterLegendRow scatterAlarmLegendRow">
-            <span className="scatterAlarmLegendLabel">알람 심각도</span>
-            {(["심각", "위험", "주의"] as const).map((grade) => (
+        {/* 심각도 마커 -- 로딩 중/대상 있음/대상 없음 3상태를 항상 같은
+            자리에 표시한다 (spec AC: "나타났다 사라진다" 문제 -- 등급별
+            판정은 부트스트랩 앙상블이라 수십 초 걸리는 별도 API라서
+            alarmGradeByWaferId가 null인 동안이 로딩 중이다). `undefined`는
+            이 화면 자체가 심각도 마커를 지원하지 않는다는 뜻이라(즐겨찾기
+            썸네일 등) 자리조차 그리지 않는다. 계산은 새로 하지 않고
+            alarmGradeCounts/hasAnyAlarmMarker를 그대로 쓴다. 대상이 있을
+            때만 전체 표시/숨김 토글이 활성화되고, 켜져 있을 때만 등급별
+            개별 토글이 함께 나타난다. */}
+        {alarmGradeByWaferId !== undefined && (
+        <div className="scatterLegendRow scatterAlarmLegendRow">
+          {alarmGradeByWaferId === null ? (
+            <LegendCard
+              icon={<IconTriangle color={theme === "dark" ? "#6B7280" : "#9CA3AF"} />}
+              label="심각도 마커 · 불러오는 중…"
+              disabled
+              title="불러오는 중입니다"
+            />
+          ) : hasAnyAlarmMarker ? (
+            <>
               <LegendCard
-                key={grade}
-                icon={<IconTriangle color={theme === "dark" ? ALARM_GRADE_COLOR[grade].dark : ALARM_GRADE_COLOR[grade].light} />}
-                label={`${grade} ${alarmGradeCounts[grade]}`}
-                onClick={() =>
-                  setVisibleAlarmGrades((current) => {
-                    const next = new Set(current);
-                    if (next.has(grade)) next.delete(grade);
-                    else next.add(grade);
-                    return next;
-                  })
-                }
-                active={visibleAlarmGrades.has(grade)}
-                disabled={alarmGradeCounts[grade] === 0}
-                title={`${grade} 등급 알람 (예측 수율 신뢰구간 상한 기준)`}
+                icon={<IconTriangle color={theme === "dark" ? ALARM_GRADE_COLOR.심각.dark : ALARM_GRADE_COLOR.심각.light} />}
+                label={`심각도 마커 ${alarmMarkersVisible ? "표시" : "숨김"} · ${alarmGradeCounts.심각 + alarmGradeCounts.위험 + alarmGradeCounts.주의}건`}
+                onClick={() => setAlarmMarkersVisible((v) => !v)}
+                active={alarmMarkersVisible}
+                title={alarmMarkersVisible ? "클릭하면 심각도 마커를 숨깁니다" : "클릭하면 심각도 마커를 표시합니다"}
               />
-            ))}
-          </div>
+              {alarmMarkersVisible &&
+                (["심각", "위험", "주의"] as const).map((grade) => (
+                  <LegendCard
+                    key={grade}
+                    icon={<IconTriangle color={theme === "dark" ? ALARM_GRADE_COLOR[grade].dark : ALARM_GRADE_COLOR[grade].light} />}
+                    label={`${grade} ${alarmGradeCounts[grade]}`}
+                    onClick={() =>
+                      setVisibleAlarmGrades((current) => {
+                        const next = new Set(current);
+                        if (next.has(grade)) next.delete(grade);
+                        else next.add(grade);
+                        return next;
+                      })
+                    }
+                    active={visibleAlarmGrades.has(grade)}
+                    disabled={alarmGradeCounts[grade] === 0}
+                    title={`${grade} 등급 알람 (예측 수율 신뢰구간 상한 기준)`}
+                  />
+                ))}
+            </>
+          ) : (
+            <LegendCard
+              icon={<IconTriangle color={theme === "dark" ? "#6B7280" : "#9CA3AF"} />}
+              label="심각도 마커 · 해당 없음"
+              disabled
+              title="이 인자에는 심각도 대상 웨이퍼가 없습니다"
+            />
+          )}
+        </div>
         )}
-        {hasAnyAlarmMarker && (
+        {alarmMarkersVisible && hasAnyAlarmMarker && (
           <p className="scatterAlarmLegendNote">
             삼각형은 전체 인자를 종합한 판정이므로 권장 구간 안에도 나타날 수 있습니다.
           </p>
@@ -1905,11 +1941,6 @@ export default function ScatterChart({
           {colorMode === "lot" && pointHover.point.lot_id && (
             <div className="scatterColorByRow">
               <div className="heatmapTooltipRow"><span>LOT</span><b>{pointHover.point.lot_id}</b></div>
-            </div>
-          )}
-          {colorMode === "alarm" && (
-            <div className="scatterColorByRow">
-              <div className="heatmapTooltipRow"><span>판정</span><b>{alarmVerdict(pointHover.point, data.reference_lines)}</b></div>
             </div>
           )}
         </div>
@@ -2018,13 +2049,4 @@ function parseConfigParts(config: string): { model: string; equipment: string; c
   if (parts.length !== 3) return null;
   const [model, equipment, chamber] = parts;
   return { model, equipment, chamber };
-}
-
-function alarmVerdict(point: ScatterPoint, referenceLines: ReferenceLine[]): string {
-  if (point.in_range) return "관리한계 내";
-  const lo = referenceLines.find((l) => l.key === "iqr_lo");
-  const hi = referenceLines.find((l) => l.key === "iqr_hi");
-  if (hi?.drawable && point.x > hi.value) return `관리한계 밖 (상한 +${(point.x - hi.value).toFixed(1)})`;
-  if (lo?.drawable && point.x < lo.value) return `관리한계 밖 (하한 -${(lo.value - point.x).toFixed(1)})`;
-  return "관리한계 밖";
 }

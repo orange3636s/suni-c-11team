@@ -9590,15 +9590,29 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .yieldBandCardTitle h3{ margin: 0; font-size: var(--text-section, 15px); font-weight: 700; }
 
 /* ===================================================================
-   알림 이력 -- §A 설정 바 · §B 5분류 카드.
+   알림 기록 -- §A 설정 바 · §B 5분류 카드.
    =================================================================== */
 
 /* 지시서 O-2: 판정 대상(eval)·목표 수율·민감도·조회 버튼을 한 카드 한
-   줄에 -- 안 들어가면 감싸되(flex-wrap) 같은 카드 안에 둔다. */
+   줄에 -- 안 들어가면 감싸되(flex-wrap) 같은 카드 안에 둔다.
+   지시서 AH: 넉넉히 안 들어가면 판정 대상만 첫 줄에 남고 나머지 셋이
+   통째로 둘째 줄로 내려간다 -- .alertsQueryRowGroup을 별도 flex 아이템으로
+   묶어서, 넷을 낱개로 흩어 감싸지 않는다(.alertsQueryRowGroup 자신도 너무
+   좁으면 내부에서 한 번 더 wrap한다). */
 .alertsQueryRow{ display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
 .alertsQueryRow > .fieldGroup{ min-width: 220px; }
+.alertsQueryRowGroup{ display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; flex: 1 1 auto; }
 .alertsQueryButton{ align-self: end; }
 .alertsSettingField{ display: flex; flex-direction: column; gap: 6px; }
+/* 지시서 AG: DatasetSelector는 .fieldGroup의 범용 라벨/간격을 쓰지만,
+   같은 줄의 다른 세 컨트롤은 .alertsSettingField/.alertsSettingLabel의
+   더 좁은 라벨(12.5px/600)·간격(6px)을 쓴다 -- 이 카드 안에서만 새
+   클래스 없이 같은 값으로 맞춘다. 버튼(.button)의 min-height(38px,
+   --compact-control-height)를 기준으로 DatasetSelector의 트리거 높이도
+   맞춘다(기존 40px). */
+.alertsQueryRow .fieldGroup{ gap: 6px; }
+.alertsQueryRow .fieldGroup > span{ font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
+.alertsQueryRow .datasetSelectorButton{ min-height: var(--compact-control-height, 38px); font-size: 13px; }
 .alertsTargetField{ min-width: 160px; }
 .alertsSettingLabel{ font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
 .alertsTargetInputRow{
@@ -9613,7 +9627,6 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 }
 .alertsTargetInputRow input:focus{ outline: none; }
 .alertsTargetInputRow span{ font-size: 13px; color: var(--text-secondary); }
-.alertsSettingHint{ font-size: 11.5px; color: var(--text-secondary); }
 
 /* 지시서 R: 민감도 조절부가 카드 폭 대부분을 차지하던 걸 줄인다 --
    flex-grow를 없애 남는 공간을 더 이상 채우지 않고, 목표 수율 블록과
@@ -9629,8 +9642,10 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .alertsPresetButton.active{ background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .alertsGaugeRow{ display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-/* 트랙 폭 고정 -- 남은 flex 공간을 채우지 않는다. */
-.alertsGaugeWrap{ flex: 0 1 auto; width: 100%; max-width: 220px; min-width: 140px; }
+/* 트랙 폭 고정 -- 남은 flex 공간을 채우지 않는다. 지시서 AI: 값 칸을
+   넓히는 만큼(52px -> 64px+) 트랙 상한을 20px 줄여, 카드 전체 폭
+   (.alertsSensitivityField max-width: 300px)은 그대로 유지한다. */
+.alertsGaugeWrap{ flex: 0 1 auto; width: 100%; max-width: 200px; min-width: 140px; }
 .alertsGaugeHints{
   display: flex; justify-content: space-between;
   font-size: 10px; color: var(--text-secondary); margin-bottom: 1px;
@@ -9643,9 +9658,13 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
   font-size: 10px; color: var(--text-secondary); margin-top: 1px;
   font-variant-numeric: tabular-nums;
 }
+/* 지시서 AI: "0.50" 네 글자 + 여백이 잘리지 않게 min-width를 52px ->
+   66px로 늘린다(고정 width가 아니라 min-width라 폰트를 줄이지 않고도
+   여유가 생긴다). tabular-nums는 이미 있었다 -- 값이 바뀌어도 폭이
+   흔들리지 않는다. */
 .alertsSensitivityNumber{
   flex: 0 0 auto;
-  width: 52px; height: 28px; padding: 0 6px; border-radius: 8px;
+  min-width: 66px; height: 28px; padding: 0 8px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface);
   font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
   color: var(--text-primary); text-align: center;
@@ -9926,7 +9945,10 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
    siblings and toggles which one is visible purely by width class here
    (both are always in the DOM; CSS decides which is display:none) so no
    duplicate data-fetch/state logic is needed per breakpoint. */
-.alarmCardList{ display: none; flex-direction: column; gap: 10px; }
+/* 지시서 AF: 데스크톱 표와 마찬가지로 7건 이후도 스크롤로 볼 수 있어야
+   한다 -- 카드 리스트는 <table>이 아니라 sticky 헤더 개념이 없으므로
+   max-height + overflow-y만으로 충분하다. */
+.alarmCardList{ display: none; flex-direction: column; gap: 10px; max-height: 620px; overflow-y: auto; }
 @media (max-width: 767px){
   .tableHideOnMobile{ display: none; }
   .alarmCardList{ display: flex; }

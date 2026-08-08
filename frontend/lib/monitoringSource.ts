@@ -12,6 +12,7 @@ import {
   getLatestState,
   getScreeningScatter,
 } from "@/lib/api";
+import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
   ConfidenceTier,
   ConfigTreemapResponse,
@@ -149,7 +150,11 @@ export type MonitoringSnapshot = {
 export async function getLatestSnapshot(): Promise<MonitoringSnapshot> {
   const state = await getLatestState();
   const analysis = state.analysis;
-  if (!analysis) {
+  // 지시서 AJ-4: 원인 분석 화면(AnalysisStateProvider)과 같은 판정 함수를
+  // 써서 낡은 스냅샷(구버전 또는 재학습 이후)을 "분석 없음"으로 취급한다
+  // -- 이 판정을 따로 하면 원인 분석은 재실행을 안내하는데 모니터링
+  // 홈만 옛 결과를 계속 보여주는 어긋남이 생긴다.
+  if (!analysis || !isAnalysisSnapshotUsable(analysis, state.training?.created_at ?? null)) {
     return {
       hasAnalysis: false,
       createdAt: null,
