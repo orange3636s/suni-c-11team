@@ -117,6 +117,11 @@ type AnalysisStateValue = {
   // 않기 위한 것이지, `analysis`가 null인 다른 이유(애초에 실행한 적
   // 없음)와는 구분되어야 한다.
   analysisSnapshotStale: boolean;
+  // 지시서 CB: 저장된 학습/분석/알람 결과 중 하나 이상이 이미 삭제된
+  // 데이터셋(구버전 내장 데이터셋 등)을 가리켜 서버가 통째로 버렸다는
+  // 신호. true면 "이전에 선택한 데이터셋이 더 이상 없어 train으로
+  // 전환했습니다" 안내를 보여준다.
+  datasetFallbackNotice: boolean;
   alarms: AlarmsState;
   setAlarms: (value: AlarmsState | ((previous: AlarmsState) => AlarmsState)) => void;
   monitoringHome: MonitoringHomeState;
@@ -135,6 +140,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [training, setTraining] = useState<TrainingState>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>(null);
   const [analysisSnapshotStale, setAnalysisSnapshotStale] = useState(false);
+  const [datasetFallbackNotice, setDatasetFallbackNotice] = useState(false);
   const [alarms, setAlarms] = useState<AlarmsState>(null);
   const [monitoringHome, setMonitoringHome] = useState<MonitoringHomeState>(null);
   const [notifications, setNotifications] = useState<NotificationSettingsSummary>(DEFAULT_NOTIFICATIONS);
@@ -204,6 +210,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         if (state.notifications) {
           setNotifications(state.notifications);
         }
+        if (state.dataset_fallback_applied) {
+          setDatasetFallbackNotice(true);
+        }
       })
       .catch(() => {
         // spec: 복원 실패가 앱을 막으면 안 된다 -- start empty, silently.
@@ -224,6 +233,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       analysis,
       setAnalysis,
       analysisSnapshotStale,
+      datasetFallbackNotice,
       alarms,
       setAlarms,
       monitoringHome,
@@ -231,7 +241,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       notifications,
       setNotifications,
     }),
-    [hydrated, training, analysis, analysisSnapshotStale, alarms, monitoringHome, notifications],
+    [hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, alarms, monitoringHome, notifications],
   );
 
   return <AnalysisStateContext.Provider value={value}>{children}</AnalysisStateContext.Provider>;

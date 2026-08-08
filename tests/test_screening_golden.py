@@ -29,8 +29,8 @@ TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.C
 # `_best_center` value) to the x_mean of the quantile-bin with the lowest
 # y_mean (see screening/quantile_profile.py) -- the same bin the
 # recommended window and 구간 평균 불량률 curve already used, so a factor's
-# "최적 중심" can no longer land outside its own "권장구간" the way it did
-# for mentorship_dataset_v7_killing_event's Step26_R1 -> Y1.
+# "최적 중심" can no longer land outside its own "권장구간" the way it used
+# to for some factor/target pairs before this fix.
 GOLDEN_TABLE = {
     "Y1": {"feature": "Step28_R1", "eps2": 0.192, "shape": "u_shape", "center": 57.9},
     "Y2": {"feature": "Step16_R1", "eps2": 0.159, "shape": "u_shape", "center": 56.5},

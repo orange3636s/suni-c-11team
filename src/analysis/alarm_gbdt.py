@@ -65,10 +65,10 @@ def feature_columns(schema) -> list[str]:
 
 def prepare_feature_matrix(df: pd.DataFrame, features: list[str]) -> pd.DataFrame:
     """`features` 중 `df`에 없는 컬럼은 전부 NaN으로 채운다 -- train과 eval의
-    컬럼 구성이 다른 데이터셋 조합(예: mentorship_dataset_final을 train으로,
-    test를 eval로)에서도 HistGradientBoostingRegressor가 그대로 동작하게
-    한다. 컬럼이 아예 없다고 예측을 거부할 이유가 없다: NaN이 늘어날 뿐이고
-    그 자체가 이미 네이티브로 처리된다.
+    컬럼 구성이 다른 데이터셋 조합(예: 스키마가 다른 업로드 데이터셋을
+    train으로, 내장 test를 eval로)에서도 HistGradientBoostingRegressor가
+    그대로 동작하게 한다. 컬럼이 아예 없다고 예측을 거부할 이유가 없다:
+    NaN이 늘어날 뿐이고 그 자체가 이미 네이티브로 처리된다.
     """
     out = pd.DataFrame(index=df.index)
     for f in features:

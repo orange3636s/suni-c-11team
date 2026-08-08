@@ -22,11 +22,11 @@ WAFER_SLOT_COLUMN = "Wafer_Slot"
 # Step{n}_Config and Step{n}_EQ are the same concept -- the step's
 # equipment configuration (Model/Equipment/Chamber) -- under a different
 # column name depending on the dataset. `Step{n}_EQ1`/`Step{n}_EQ2`/...
-# (multiple numbered equipment channels per step, as in
-# mentorship_dataset_v7_killing_event.csv) are deliberately NOT matched
-# here -- those are a different, unrelated shape and stay whatever
-# category they already fall into (the broader `equipment` pattern in
-# config/data_schema.yaml keeps excluding them from numeric features).
+# (multiple numbered equipment channels per step) are deliberately NOT
+# matched here -- those are a different, unrelated shape and stay
+# whatever category they already fall into (the broader `equipment`
+# pattern in config/data_schema.yaml keeps excluding them from numeric
+# features).
 _EQ_COLUMN_RE = re.compile(r"^Step(\d+)_EQ$", re.IGNORECASE)
 _CONFIG_COLUMN_RE = re.compile(r"^Step(\d+)_Config$", re.IGNORECASE)
 _LOT_WAFER_RE = re.compile(r"^(?P<lot>.+?)W(?P<slot>\d+)$", re.IGNORECASE)

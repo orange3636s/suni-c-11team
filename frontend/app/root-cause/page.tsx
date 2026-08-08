@@ -56,9 +56,9 @@ import type {
 // 데이터셋 자기 자신(build_scatter_data(df, df, factor)와 동일하게
 // train=eval=datasetId)이므로, 마커도 같은 데이터셋을 자기 자신에 대해
 // 판정한 결과를 쓴다. train≠eval로 판정하면(예: 항상 eval="test") 두
-// 데이터셋의 분포가 다를 때 알람이 사실상 0건으로 사라질 수 있다(실측:
-// mentorship_dataset_final을 test.csv로 판정하면 0건, 자기 자신으로
-// 판정하면 634건).
+// 데이터셋의 분포가 다를 때 알람이 사실상 0건으로 사라질 수 있다(스키마가
+// 크게 다른 데이터셋 조합에서 실측: 다른 데이터셋을 test.csv로 판정하면
+// 0건, 자기 자신으로 판정하면 수백 건).
 async function fetchAlarmGradeByWaferId(datasetId: string): Promise<Record<string, AlarmGrade>> {
   const response = await getAlarms(datasetId, datasetId);
   const map: Record<string, AlarmGrade> = {};
@@ -189,7 +189,7 @@ function RootCauseContent() {
   // with zero network calls (checklist §탭 이동 #1/#4), and a page
   // reload/reconnect restores a lean (points-less) version of it via
   // GET /api/state/latest.
-  const { analysis, setAnalysis, hydrated, analysisSnapshotStale } = useAnalysisState();
+  const { analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice } = useAnalysisState();
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
@@ -754,6 +754,21 @@ function RootCauseContent() {
             <button type="button" className="button" onClick={() => void runAnalysis()}>원인 분석 실행</button>
           </div>
         )}
+        {/* 지시서 CB: 저장된 학습/분석/알람 결과가 이미 삭제된 데이터셋을
+            가리켜 통째로 버려진 경우 -- 조용히 train으로 바꿔치기하지
+            않고(다른 스키마의 옛 payload가 train 라벨을 달고 뜨면 더
+            나쁘다) 이유를 안내하고 재실행을 유도한다. */}
+        {runState === "idle" && datasetFallbackNotice && (
+          <div className="analysisErrorBox" role="alert">
+            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
+            <div className="analysisErrorBody">
+              <p className="analysisErrorMessage">
+                이전에 선택한 데이터셋이 더 이상 없어 train으로 전환했습니다. 원인 분석을 다시 실행해 주세요.
+              </p>
+            </div>
+            <button type="button" className="button" onClick={() => void runAnalysis()}>원인 분석 실행</button>
+          </div>
+        )}
       </section>
 
       <HeatmapParetoSection
@@ -1111,7 +1126,7 @@ function ColorBySelect({
 }: {
   value: ColorMode;
   onChange: (mode: ColorMode) => void;
-  // Config 컬럼이 0개인 데이터셋(mentorship_dataset_v7_killing_event)에서는
+  // Config 컬럼이 0개인 데이터셋(업로드 데이터셋 등)에서는
   // "Config별" 색상 옵션이 고를 수 있는 값 자체가 없으므로 숨긴다 (spec
   // 문구 전수 검토 §A-5).
   hasConfig?: boolean;
@@ -1368,7 +1383,7 @@ function WaferDetailPopover({
   point: ScatterPoint;
   target: string;
   onClose: () => void;
-  // 데이터셋에 Config 컬럼이 아예 없으면(mentorship_dataset_v7_killing_event)
+  // 데이터셋에 Config 컬럼이 아예 없으면(업로드 데이터셋 등)
   // 모든 wafer가 "미계측"으로만 표시되어 "계측 안 됨"인지 "그런 항목 자체가
   // 없음"인지 구분이 안 되므로, 행 자체를 숨긴다 (spec 문구 전수 검토 §A-5).
   hasConfig: boolean;

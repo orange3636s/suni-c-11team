@@ -226,9 +226,8 @@ def evaluate_alarms(
     alarms: list[WaferAlarm] = []
     if control_range.feature not in eval_df.columns:
         # eval 데이터셋에 train에서 선정된 인자 컬럼이 아예 없는 조합(예:
-        # train=mentorship_dataset_final, eval=test -- 두 데이터셋은 컬럼
-        # 구성이 다르다)에서도 그 인자는 "판정 불가"로 취급될 뿐 오류가 나면
-        # 안 된다.
+        # 컬럼 구성이 다른 업로드 데이터셋을 eval로 쓰는 경우)에서도 그
+        # 인자는 "판정 불가"로 취급될 뿐 오류가 나면 안 된다.
         return alarms
     values = pd.to_numeric(eval_df[control_range.feature], errors="coerce")
     for position, value in values.items():

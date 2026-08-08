@@ -6,6 +6,7 @@ from typing import Any
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import APIRouter, Request
 
+from api.routes.datasets import get_dataset_registry
 from api.schemas.state import (
     AlarmsStateSaveRequest,
     AnalysisStateSaveRequest,
@@ -22,9 +23,39 @@ from src.runtime.store import RuntimeStore
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/state", tags=["state"])
 
+# 각 저장 종류가 dataset_id를 싣는 필드 (지시서 CB) -- 하나라도 더 이상
+# 존재하지 않는 데이터셋을 가리키면 그 레코드를 통째로 버린다.
+_DATASET_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "training": ("dataset",),
+    "analysis": ("dataset",),
+    "alarms": ("train_dataset", "eval_dataset"),
+}
+
 
 def _store() -> RuntimeStore:
     return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+
+
+def _drop_records_for_missing_datasets(state: dict[str, Any]) -> bool:
+    """지시서 CB: 저장된 결과가 이미 삭제된 데이터셋(구버전 내장
+    데이터셋 등)을 가리키면 그 결과를 통째로 버린다 -- dataset 필드만
+    "train"으로 바꿔치기하면, 사라진 데이터셋 스키마로 계산된 옛
+    payload(예: 다른 Pareto 인자 목록)가 "train" 라벨을 달고 화면에
+    뜨는 더 나쁜 상황이 된다(부분 복원 금지). `_dataframe_or_404`가
+    그대로 404를 던지게 두면 앱이 빈 화면으로 굳으므로(예외 무시가
+    아니라 폴백), 여기서 미리 걸러 반환값을 "저장된 적 없음"과 같은
+    모양(null)으로 만들되, 프론트가 "폐기됐다"를 안내할 수 있도록
+    별도 플래그를 반환한다."""
+    registry = get_dataset_registry()
+    fallback_applied = False
+    for kind, fields in _DATASET_FIELDS_BY_KIND.items():
+        record = state.get(kind)
+        if not record:
+            continue
+        if any(registry.get_summary(record.get(field)) is None for field in fields):
+            state[kind] = None
+            fallback_applied = True
+    return fallback_applied
 
 
 @router.get("/latest", response_model=LatestStateResponse)
@@ -40,6 +71,13 @@ def get_latest() -> dict[str, Any]:
         logger.warning("최근 결과 조회 실패", exc_info=True)
         state = {"training": None, "analysis": None, "alarms": None}
     try:
+        dataset_fallback_applied = _drop_records_for_missing_datasets(state)
+    except Exception:
+        # 데이터셋 레지스트리 조회 자체가 실패해도 저장된 결과를 그대로
+        # 돌려준다 -- 이 방어 로직 때문에 정상 복원까지 막히면 안 된다.
+        logger.warning("데이터셋 존재 여부 확인 실패", exc_info=True)
+        dataset_fallback_applied = False
+    try:
         notifications = get_settings_summary(store)
     except Exception:
         logger.warning("알림 설정 조회 실패", exc_info=True)
@@ -49,7 +87,7 @@ def get_latest() -> dict[str, Any]:
             "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
             "conditions": {"grades": ["심각"], "timing": "on_analysis"},
         }
-    return {**state, "notifications": notifications}
+    return {**state, "notifications": notifications, "dataset_fallback_applied": dataset_fallback_applied}
 
 
 def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> None:

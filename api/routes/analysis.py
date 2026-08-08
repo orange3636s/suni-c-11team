@@ -766,8 +766,8 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     JSON 보고서와 달리 eval을 고정된 REPORT_EVAL_DATASET_ID("test")로 두지
     않고 선택된 데이터셋 자기 자신을 판정 대상으로 삼는다. 이 카드가 답하는
     질문은 "이 데이터셋 자체의 계측을 늘리면 어떻게 되는가"이므로, 인자
-    구성이 아예 다른 다른 데이터셋(예: mentorship_dataset_final의
-    Step20_D1은 test.csv에 없는 컬럼이다)을 판정 기준으로 쓰면 그 데이터셋의
+    구성이 아예 다른 다른 데이터셋(예: 업로드 데이터셋의 특정 인자가
+    test.csv에는 없는 컬럼인 경우)을 판정 기준으로 쓰면 그 데이터셋의
     실제 계측률과 무관하게 전량 "판정불가"로 나와 §B-6 축소 조건이 항상
     빗나간다 -- 원인 분석 탭 자체가 데이터셋 선택기 하나뿐이라는 점과도
     맞는다.
@@ -790,9 +790,8 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     # "판정 가능 여부"(조치 불가/추가 판정)는 알람 목록과 동일한 FDR-유의
     # 인자 전체 집합으로 판단한다 -- get_alarms_predictions가 쓰는 것과
     # 같은 개념(_alarm_factors). 타깃마다 1위 인자 하나만 쓰면(select_primary_factor)
-    # 여러 타깃이 같은 인자를 1위로 뽑는 데이터셋(예:
-    # mentorship_dataset_final은 5개 타깃 모두 Step20_D1이 1위)에서 사실상
-    # 서로 다른 컬럼 1개만 보는 셈이 되어, 그 인자 하나의 계측률만으로
+    # 여러 타깃이 같은 인자를 1위로 뽑는 데이터셋(치우친 스코어링 결과)에서
+    # 사실상 서로 다른 컬럼 1개만 보는 셈이 되어, 그 인자 하나의 계측률만으로
     # "조치 불가"가 결정돼 데이터셋 전체 계측률과 동떨어진 값이 나온다.
     judgment_factors: list[ParetoFactor] = [
         _row_to_factor(train_df, target, row)
@@ -810,8 +809,8 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
 
     # §B-6 축소 조건은 여기서 이미 판정 가능하다 (unmeasured_ids까지만
     # 있으면 됨) -- 카드가 어차피 한 줄로 축소될 데이터셋(계측률이 충분한
-    # mentorship_dataset_final 등)에서 아래 권장구간 계산(SPC/ML 부트스트랩,
-    # 인자 수가 많으면 수십 초)까지 돌리는 건 낭비다.
+    # 경우)에서 아래 권장구간 계산(SPC/ML 부트스트랩, 인자 수가 많으면
+    # 수십 초)까지 돌리는 건 낭비다.
     show_full_card = total_wafers > 0 and (len(unmeasured_ids) / total_wafers) >= MIN_ACTION_BLOCKED_SHARE
 
     if not show_full_card:

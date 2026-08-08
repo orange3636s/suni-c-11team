@@ -37,7 +37,7 @@ function buildActionTriage(
       key: `priority-${priority.target}-${priority.feature}`,
       text: `${priority.feature} → ${priority.target} 계측 확대 (${priority.recommendation})`,
       href: `/root-cause?target=${encodeURIComponent(priority.target)}&feature=${encodeURIComponent(priority.feature)}`,
-      buttonLabel: "실행",
+      buttonLabel: "상세",
     }));
 
   const experiment: ActionItem[] = [];
@@ -63,7 +63,7 @@ function buildActionTriage(
       key,
       text: `Step${f.step} 미지 Config ${f.unknownConfigCount}건`,
       href: `/root-cause?target=${encodeURIComponent(f.target)}&feature=${encodeURIComponent(f.feature)}`,
-      buttonLabel: "보기",
+      buttonLabel: "상세",
     });
   }
 
@@ -261,7 +261,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
               <th>인자</th>
               <th>권장구간 / 기준</th>
               <th className="numCol">이탈 · 계측</th>
-              <th>등급</th>
+              <th>상관성</th>
             </tr>
           </thead>
           <tbody>
@@ -308,11 +308,11 @@ function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
   );
 }
 
-// 지시서 K-4/P-2: 세 레일(실행 과제/실험 확인 대상/확인 필요 대상)의
-// 실행·상세·보기 버튼 크기를 하나로 통일한다 -- 새 버튼 스타일을 만들지
-// 않고 다른 화면과 공유하는 `.button.sm`을 쓴다. 셋 다 흰 배경(secondary)
-// 이다 -- "실행"에도 강조색(.primary)을 쓰지 않는다(지시서 P-2: 세 레일
-// 버튼이 같은 모양이어야 한다).
+// 지시서 K-4/P-2/CC: 세 레일(실행 과제/실험 확인 대상/확인 필요 대상)의
+// 버튼 크기를 하나로 통일한다 -- 새 버튼 스타일을 만들지 않고 다른
+// 화면과 공유하는 `.button.sm`을 쓴다. 셋 다 흰 배경(secondary)이고
+// 라벨도 모두 "상세"로 통일했다 -- 강조색(.primary)은 쓰지 않는다
+// (지시서 P-2: 세 레일 버튼이 같은 모양이어야 한다).
 function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
   if (items.length === 0) return <p className="emptyMessage">{empty}</p>;
   return (

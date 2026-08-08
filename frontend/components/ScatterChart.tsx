@@ -16,6 +16,18 @@ function isAlarmMarkerGrade(grade: AlarmGrade): grade is AlarmMarkerGrade {
 }
 
 export type ScatterColorMode = "default" | "config_model" | "lot";
+// 그룹 스크럽 슬라이더 정렬 기준 (spec CA) -- 기본은 평균순: Lot_ID는 처리
+// 순서가 아니라 임의 부여이므로, 이름순으로 훑으면 점이 무작위로 튀어
+// 아무 패턴도 안 보인다. 평균 y값 오름차순으로 훑어야 분포가 아래->위로
+// 이동하는 것이 보인다.
+type ScrubSort = "mean" | "name" | "count";
+// 비선택 그룹의 투명도 (spec CA: "0.10 ~ 0.15") -- 색은 유지한 채 이만큼만
+// 낮춘다. 회색으로 바꾸지 않는다.
+const SCRUB_DIM_OPACITY = 0.12;
+// 이보다 그룹 수가 많으면(LOT 390개 등) 눈금을 그리지 않는다 -- 스톱이
+// 적은 Config 모드(3~4개)에서만 각 스톱이 어디인지 보이게 한다 (spec CA
+// "그룹 수에 따른 차이").
+const SCRUB_TICK_MAX_STOPS = 12;
 // 인자 카드 "보기" 토글 전체 상태 (Pareto/Scatter/Box) -- Pareto는 이
 // ScatterChart 컴포넌트가 아니라 카드가 직접 분기해 ParetoChart를 그리므로,
 // 이 컴포넌트 자신은 QuickLookView(아래)만 받는다.
@@ -514,6 +526,15 @@ function modelOf(config: string | null): string {
 const MODEL_COLORS = ["#1D4ED8", "#059669", "#B45309"];
 const LOT_PALETTE = ["#1D4ED8", "#059669", "#B45309", "#7C3AED", "#DB2777", "#0891B2", "#65A30D", "#DC2626"];
 
+/** Config별/LOT별 Color By가 점 하나를 어느 그룹으로 보는지 -- colorForPoint
+ * (칠하기)와 그룹 스크럽 슬라이더(spec CA, 강조)가 절대 다른 그룹 경계를
+ * 갖지 않도록 단일 소스로 뺐다. "기본" 모드는 그룹 개념이 없어 null. */
+function scrubGroupKeyOf(point: ScatterPoint, mode: ScatterColorMode): string | null {
+  if (mode === "config_model") return modelOf(point.config);
+  if (mode === "lot") return point.lot_id ?? "미상";
+  return null;
+}
+
 export type PointZone = "in_recommended" | "in_control" | "out_control";
 
 /** Which of the 3 "기본" Color By zones a point falls into (spec §5) --
@@ -550,23 +571,15 @@ function colorForPoint(
   theme: "light" | "dark",
   recommendedRangeValue: [number, number] | null,
 ): { color: string; size: number; opacity: number } {
-  if (mode === "config_model") {
-    const key = modelOf(point.config);
+  if (mode === "config_model" || mode === "lot") {
+    const key = scrubGroupKeyOf(point, mode) ?? "미상";
     let idx = lotIndex.get(key);
     if (idx == null) {
       idx = lotIndex.size;
       lotIndex.set(key, idx);
     }
-    return { color: MODEL_COLORS[idx % MODEL_COLORS.length], size: 5, opacity: 0.85 };
-  }
-  if (mode === "lot") {
-    const key = point.lot_id ?? "미상";
-    let idx = lotIndex.get(key);
-    if (idx == null) {
-      idx = lotIndex.size;
-      lotIndex.set(key, idx);
-    }
-    return { color: LOT_PALETTE[idx % LOT_PALETTE.length], size: 5, opacity: 0.85 };
+    const palette = mode === "config_model" ? MODEL_COLORS : LOT_PALETTE;
+    return { color: palette[idx % palette.length], size: 5, opacity: 0.85 };
   }
   // default -- 3-tier by zone: 권장 구간 안이 가장 진하고 관리한계 밖이
   // 가장 연하다 (재조정 spec §3) -- 대부분의 점이 몰려 있는 권장 구간의
@@ -747,6 +760,18 @@ export default function ScatterChart({
   // (지시서 B) 이 값도 finishDrag 시점에 한 번만 정해지고 고정된다.
   const [statsBoxFlip, setStatsBoxFlip] = useState(false);
 
+  // 그룹 스크럽 슬라이더 (spec CA) -- Config별/LOT별 Color By에서만 의미가
+  // 있다. 위치 0 = 전체(강조 없음), 1..N = scrubGroups[index-1]. 카드별
+  // 독립 상태이며, 서버·즐겨찾기에는 절대 저장하지 않는다(일시 상태).
+  const [scrubSort, setScrubSort] = useState<ScrubSort>("mean");
+  const [scrubIndex, setScrubIndex] = useState(0);
+  const [scrubInputInvalid, setScrubInputInvalid] = useState(false);
+  // 드래그 중 rAF로 스로틀링 (spec CA "성능") -- 네이티브 range input이
+  // 매 스텝마다 onChange를 쏘아도, 실제 setState(리렌더)는 프레임당 최대
+  // 1번만 반영한다.
+  const pendingScrubIndexRef = useRef<number | null>(null);
+  const scrubRafIdRef = useRef<number | null>(null);
+
   useEffect(() => {
     // setTimeout으로 감싼다 -- 이펙트 본문에서 곧장 setState를 부르면
     // cascading render 린트 규칙에 걸린다(이 파일의 다른 모달들과 같은
@@ -754,6 +779,25 @@ export default function ScatterChart({
     const timer = window.setTimeout(() => setSelectedPoints([]), 0);
     return () => window.clearTimeout(timer);
   }, [data, view]);
+
+  // 그룹 스크럽 초기화 (spec CA "상태 범위") -- 색상 모드가 바뀌거나(Config
+  // 인덱스를 LOT 모드로 끌고 가면 안 됨) 새 인자 데이터가 들어오면 0(전체)
+  // 으로 되돌린다. `view`는 의도적으로 빠져 있다 -- 뷰 전환(산점도<->Box
+  // Plot) 시에는 유지해야 한다(같은 데이터를 다른 형태로 보는 것뿐이므로).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setScrubIndex(0);
+      setScrubInputInvalid(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [data, colorMode]);
+
+  useEffect(
+    () => () => {
+      if (scrubRafIdRef.current != null) cancelAnimationFrame(scrubRafIdRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const node = containerRef.current;
@@ -859,6 +903,91 @@ export default function ScatterChart({
   // and colorForPoint mutates it while walking data.points below to
   // assign each distinct config/lot a stable color index for this render.
   const lotIndex = new Map<string, number>();
+
+  // 그룹 스크럽 슬라이더 (spec CA) -- 점 -> 그룹키 매핑을 프레임마다 다시
+  // 계산하지 않도록 미리 만들어 메모이즈한다("성능" 절: "그룹 -> 점 인덱스
+  // 매핑을 미리 계산해 메모이즈한다. 매 프레임 filter를 돌리지 말 것").
+  // colorMode가 "기본"이면 그룹 개념이 없으므로 null.
+  const scrubKeyByPoint = useMemo(() => {
+    if (colorMode === "default") return null;
+    const map = new Map<ScatterPoint, string>();
+    for (const point of data.points) {
+      const key = scrubGroupKeyOf(point, colorMode);
+      if (key != null) map.set(point, key);
+    }
+    return map;
+  }, [data.points, colorMode]);
+
+  // 그룹 목록 + 평균 y/개수 -- 정렬 기준이 바뀔 때만 다시 정렬한다(그룹
+  // 집계 자체는 scrubKeyByPoint/data.points가 바뀔 때만). 표본이 1~2개뿐인
+  // 그룹도 전부 포함한다 (spec CA "하지 말 것": "표본이 적다는 이유로 빼지
+  // 말 것").
+  const scrubGroups = useMemo(() => {
+    if (!scrubKeyByPoint) return [] as { key: string; count: number; meanY: number }[];
+    const stats = new Map<string, { count: number; sumY: number }>();
+    for (const point of data.points) {
+      const key = scrubKeyByPoint.get(point);
+      if (key == null) continue;
+      const entry = stats.get(key) ?? { count: 0, sumY: 0 };
+      entry.count += 1;
+      entry.sumY += point.y;
+      stats.set(key, entry);
+    }
+    const list = Array.from(stats.entries()).map(([key, { count, sumY }]) => ({ key, count, meanY: sumY / count }));
+    if (scrubSort === "mean") list.sort((a, b) => a.meanY - b.meanY);
+    else if (scrubSort === "name") list.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+    else list.sort((a, b) => b.count - a.count);
+    return list;
+  }, [scrubKeyByPoint, data.points, scrubSort]);
+
+  // 슬라이더 위치 0 = 전체(강조 없음) -- scrubIndex가 그룹 수를 넘으면(색상
+  // 모드/데이터가 막 바뀌어 리셋 이펙트가 아직 반영되기 전의 한 프레임)
+  // 안전하게 "전체"로 읽는다.
+  const activeScrubGroup = scrubIndex >= 1 ? (scrubGroups[scrubIndex - 1]?.key ?? null) : null;
+  const scrubGroupLabel = activeScrubGroup ?? "전체";
+
+  /** 비선택 그룹의 점을 낮은 투명도로 흐리게 한다 (spec CA "시각 처리": 색은
+   * 유지, 회색으로 바꾸지 않는다) -- 강조 그룹이 없거나(위치 0) 이 점이
+   * 이미 호버/브러시 선택 중이면 원래 opacity를 그대로 쓴다. */
+  function applyScrubDim(point: ScatterPoint, opacity: number, isHovered: boolean, isSelected: boolean): number {
+    if (!activeScrubGroup || isHovered || isSelected) return opacity;
+    return scrubKeyByPoint?.get(point) === activeScrubGroup ? opacity : SCRUB_DIM_OPACITY;
+  }
+
+  // 드래그 중 rAF 스로틀 (spec CA "성능") -- 슬라이더가 프레임당 여러 번
+  // onChange를 쏘아도 setState(리렌더)는 프레임당 최대 1번만 반영한다.
+  function scheduleScrubIndex(next: number) {
+    pendingScrubIndexRef.current = next;
+    if (scrubRafIdRef.current != null) return;
+    scrubRafIdRef.current = requestAnimationFrame(() => {
+      scrubRafIdRef.current = null;
+      const value = pendingScrubIndexRef.current;
+      pendingScrubIndexRef.current = null;
+      if (value != null) {
+        setScrubIndex(value);
+        setScrubInputInvalid(false);
+      }
+    });
+  }
+
+  // 그룹명 직접 입력 -> 슬라이더 점프 (spec CA) -- 비우고 확정하면 0(전체)
+  // 으로, 존재하지 않는 이름이면 경고 테두리만 표시하고 슬라이더는 그대로
+  // 둔다.
+  function commitScrubInput(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setScrubIndex(0);
+      setScrubInputInvalid(false);
+      return;
+    }
+    const index = scrubGroups.findIndex((group) => group.key.toLowerCase() === trimmed.toLowerCase());
+    if (index === -1) {
+      setScrubInputInvalid(true);
+      return;
+    }
+    setScrubIndex(index + 1);
+    setScrubInputInvalid(false);
+  }
 
   const warningLo = data.reference_lines.find((l) => l.key === "warning_lo");
   const warningHi = data.reference_lines.find((l) => l.key === "warning_hi");
@@ -1085,6 +1214,18 @@ export default function ScatterChart({
   // 선택 표시 (spec B) -- 선택이 있을 때만 비선택 점을 흐리게 한다.
   const hasSelection = selectedPoints.length > 0;
   const selectedSet = new Set(selectedPoints);
+
+  // Esc는 브러시 선택만 해제한다 (spec CA "드래그 브러시 선택과의 관계") --
+  // 슬라이더(그룹 강조)는 건드리지 않는다. 선택이 없을 때는 리스너 자체를
+  // 붙이지 않아 카드가 여러 개 떠 있어도 서로 방해하지 않는다.
+  useEffect(() => {
+    if (!hasSelection) return;
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setSelectedPoints([]);
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [hasSelection]);
 
   // 드래그 브러시 히트테스트용 렌더 좌표 -- Box 모드는 지터된 화면 위치
   // 기준으로 판정한다(지시서 B: "지터된 점 좌표 기준"), Scatter 모드는
@@ -1447,6 +1588,7 @@ export default function ScatterChart({
                   : isOutControlBorder
                     ? (theme === "dark" ? OUT_CONTROL_BORDER.dark : OUT_CONTROL_BORDER.light)
                     : "none";
+                const baseOpacity = isHovered || isSelected ? 1 : hasSelection ? style.opacity / 3 : style.opacity;
                 return (
                   <circle
                     key={point.lot_wafer_id ?? index}
@@ -1454,7 +1596,7 @@ export default function ScatterChart({
                     cy={yScale(point.y)}
                     r={isHovered ? style.size * 1.5 : isSelected ? style.size + 1 : style.size}
                     fill={isSelected && !isHovered ? ACCENT_COLOR : style.color}
-                    opacity={isHovered || isSelected ? 1 : hasSelection ? style.opacity / 3 : style.opacity}
+                    opacity={applyScrubDim(point, baseOpacity, isHovered, isSelected)}
                     stroke={isSelected && !isHovered ? ACCENT_COLOR : stroke}
                     strokeWidth={isHovered ? 1.5 : isSelected ? 1.5 : isOutControlBorder ? 1 : 0}
                     style={{ cursor: "pointer" }}
@@ -1502,6 +1644,12 @@ export default function ScatterChart({
                       if (member.isOutlier) {
                         if (!boxPointsVisible.outlier) return null;
                         const baseOpacity = 0.85;
+                        const opacity = applyScrubDim(
+                          member.point,
+                          isHovered || isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity,
+                          isHovered,
+                          isSelected,
+                        );
                         return (
                           <circle
                             key={member.point.lot_wafer_id ?? `${bin.index}-out-${mi}`}
@@ -1509,7 +1657,7 @@ export default function ScatterChart({
                             fill="none"
                             stroke={isSelected && !isHovered ? ACCENT_COLOR : outlierColor}
                             strokeWidth={isHovered ? 1.8 : isSelected ? 1.6 : 1}
-                            opacity={isHovered || isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity}
+                            opacity={opacity}
                             style={{ cursor: "pointer" }}
                             onClick={() => onSelectWafer(member.point)}
                           />
@@ -1518,12 +1666,18 @@ export default function ScatterChart({
                       if (!boxPointsVisible.inlier) return null;
                       const style = colorForPoint(member.point, colorMode, lotIndex, theme, recommendedRangeValue);
                       const baseOpacity = 0.28;
+                      const opacity = applyScrubDim(
+                        member.point,
+                        isHovered ? 0.85 : isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity,
+                        isHovered,
+                        isSelected,
+                      );
                       return (
                         <circle
                           key={member.point.lot_wafer_id ?? `${bin.index}-in-${mi}`}
                           cx={cx} cy={cy} r={isHovered ? 4 : isSelected ? 3.2 : 2.2}
                           fill={isSelected && !isHovered ? ACCENT_COLOR : style.color}
-                          opacity={isHovered ? 0.85 : isSelected ? 1 : hasSelection ? baseOpacity / 3 : baseOpacity}
+                          opacity={opacity}
                           style={{ cursor: "pointer" }}
                           onClick={() => onSelectWafer(member.point)}
                         />
@@ -1703,6 +1857,11 @@ export default function ScatterChart({
           yLabel={targetAxisLabel(data.axis.y_label)}
           flip={statsBoxFlip}
           onClose={() => setSelectedPoints([])}
+          // 브러시는 강조 그룹과 무관하게 전체에서 선택한다 (spec CA "드래그
+          // 브러시 선택과의 관계") -- 통계 박스에는 교집합만 병기한다.
+          emphasizedCount={
+            activeScrubGroup ? selectedPoints.filter((p) => scrubKeyByPoint?.get(p) === activeScrubGroup).length : null
+          }
         />
       )}
       </div>
@@ -1717,6 +1876,77 @@ export default function ScatterChart({
           동일"). */}
       <div className="scatterRefLegend">
         <div className="scatterRefLegendDivider" />
+
+        {/* 그룹 스크럽 슬라이더 (spec CA) -- Config별/LOT별 Color By에서만
+            렌더한다("기본"이면 그룹 개념이 없다). 위치 0 = 전체, 오른쪽으로
+            움직이면 scrubSort 기준으로 정렬된 그룹을 하나씩 강조한다.
+            참조선·최적중심·권장구간·박스 자체는 이 상태와 무관하게 항상
+            전체 데이터 기준으로 그려진다(§C 재계산 금지 -- 장비별 Trellis
+            모달의 역할과 겹치지 않게 한다). */}
+        {colorMode !== "default" && (
+          <div className="scatterScrubRow">
+            <span className="scatterScrubLabel">그룹 강조</span>
+            <button
+              type="button"
+              className="alertsPresetButton scatterScrubResetButton"
+              onClick={() => {
+                setScrubIndex(0);
+                setScrubInputInvalid(false);
+              }}
+              disabled={scrubIndex === 0}
+              title="강조를 해제하고 전체를 봅니다"
+            >
+              전체로
+            </button>
+            <div className="scatterScrubTrack">
+              <input
+                type="range"
+                className="alertsGaugeSlider scatterScrubSlider"
+                min={0}
+                max={scrubGroups.length}
+                step={1}
+                value={Math.min(scrubIndex, scrubGroups.length)}
+                onChange={(event) => scheduleScrubIndex(Number(event.target.value))}
+                aria-label="그룹 강조 위치 (왼쪽 끝 = 전체)"
+              />
+              {/* 눈금 -- Config처럼 스톱이 적을 때만 그린다 (LOT 390개는
+                  눈금이 뭉개진 띠가 될 뿐이라 그리지 않는다). */}
+              {scrubGroups.length > 0 && scrubGroups.length <= SCRUB_TICK_MAX_STOPS && (
+                <div className="scatterScrubTicks" aria-hidden="true">
+                  {Array.from({ length: scrubGroups.length + 1 }, (_, i) => (
+                    <span key={i} className="scatterScrubTick" style={{ left: `${(i / scrubGroups.length) * 100}%` }} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <input
+              key={scrubIndex}
+              type="text"
+              className={`scatterScrubInput ${scrubInputInvalid ? "invalid" : ""}`}
+              defaultValue={scrubGroupLabel}
+              onFocus={(event) => event.currentTarget.select()}
+              onBlur={(event) => commitScrubInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitScrubInput((event.target as HTMLInputElement).value);
+              }}
+              title="그룹명을 입력하면 그 위치로 이동합니다 (비우면 전체로)"
+              aria-label="강조할 그룹명"
+            />
+            <select
+              className="tableSortSelect scatterScrubSortSelect"
+              value={scrubSort}
+              onChange={(event) => {
+                setScrubSort(event.target.value as ScrubSort);
+                setScrubIndex(0);
+              }}
+              aria-label="그룹 강조 정렬 기준"
+            >
+              <option value="mean">정렬: 평균순</option>
+              <option value="name">정렬: 이름순</option>
+              <option value="count">정렬: 점 개수순</option>
+            </select>
+          </div>
+        )}
 
         {view === "box" && (
           <div className="scatterLegendRow">
@@ -1988,17 +2218,25 @@ function SelectionStatsBox({
   yLabel,
   flip,
   onClose,
+  emphasizedCount,
 }: {
   points: ScatterPoint[];
   xLabel: string;
   yLabel: string;
   flip: boolean;
   onClose: () => void;
+  // 그룹 스크럽 슬라이더가 강조 중일 때만 값이 있다 (spec CA) -- 브러시
+  // 선택은 강조 그룹과 무관하게 전체에서 뽑히므로, 그 교집합만 괄호로
+  // 병기한다. null이면 슬라이더가 "전체" 위치라 병기할 것이 없다.
+  emphasizedCount: number | null;
 }) {
   return (
     <div className={`heatmapTooltip scatterSelectionBox ${flip ? "flip" : ""}`}>
       <div className="scatterSelectionBoxHeader">
-        <strong>선택 {points.length}개 점</strong>
+        <strong>
+          선택 {points.length}개 점
+          {emphasizedCount != null && ` (강조 그룹 내 ${emphasizedCount}개)`}
+        </strong>
         <button type="button" className="scatterSelectionBoxClose" onClick={onClose} aria-label="선택 해제">✕</button>
       </div>
       {points.length === 1 ? (

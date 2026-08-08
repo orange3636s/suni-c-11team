@@ -937,6 +937,11 @@ export type LatestStateResponse = {
   analysis: LatestAnalysisRecord | null;
   alarms: LatestAlarmsRecord | null;
   notifications: NotificationSettingsSummary;
+  // 지시서 CB: 저장된 레코드 중 하나 이상이 더 이상 존재하지 않는
+  // 데이터셋을 가리켜 서버가 통째로 버렸으면 true (dataset을 "train"으로
+  // 바꿔치기하지 않는다 -- 옛 payload가 잘못된 라벨을 달고 뜨는 게 더
+  // 나쁘다). 프론트는 이 신호로만 재실행 안내를 띄운다.
+  dataset_fallback_applied: boolean;
 };
 
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------

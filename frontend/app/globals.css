@@ -7115,11 +7115,13 @@ root-cause{
   font-size: 13px;
 }
 
-/* 지시서 K-4/P-2: 액션 레일(모니터링 홈)의 실행/상세/보기 버튼 전용 --
+/* 지시서 K-4/P-2/CC: 액션 레일(모니터링 홈) 세 레일의 "상세" 버튼 전용 --
    다른 화면에서도 컴팩트한 버튼이 필요하면 이 한 종류를 재사용한다. 두
    클래스(.button.sm)라 위 .button보다 우선한다. inline-flex+center+
    line-height:1로 글자를 정중앙에 둔다(패딩 비대칭이나 상속된
-   line-height로 세로 중앙이 어긋나지 않게). */
+   line-height로 세로 중앙이 어긋나지 않게). min-width가 고정값이라 라벨
+   길이가 바뀌어도(지시서 CC 이전엔 실행/상세/보기로 제각각이었다) 세
+   버튼 폭이 흔들리지 않는다. */
 .button.sm{
   display: inline-flex;
   align-items: center;
@@ -9046,6 +9048,29 @@ html[data-theme="dark"] .scatterInterpretationTipBody{ color: #C7CFD9; }
 .scatterLegendCardText{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .scatterLegendCardText strong{ font-size: 11px; font-weight: 700; color: var(--text-primary); }
 .scatterLegendCardText small{ font-size: 9px; color: var(--text-secondary); }
+
+/* 그룹 스크럽 슬라이더 (지시서 CA) -- 트랙/썸 색은 알림 기록 탭의 민감도
+   슬라이더(.alertsGaugeSlider)를 그대로 재사용한다(새 슬라이더 스타일을
+   만들지 않는다). 정렬 셀렉트도 표 툴바의 .tableSortSelect를 재사용한다. */
+.scatterScrubRow{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
+.scatterScrubLabel{ font-size: 12px; font-weight: 600; color: var(--text-secondary); flex: 0 0 auto; }
+.scatterScrubResetButton{ flex: 0 0 auto; min-height: auto; }
+.scatterScrubResetButton:disabled{ opacity: 0.4; cursor: not-allowed; }
+.scatterScrubTrack{ position: relative; flex: 1 1 160px; min-width: 120px; padding-bottom: 6px; }
+.scatterScrubSlider{ display: block; }
+/* 눈금 -- Config처럼 스톱이 몇 개뿐일 때만 그려진다 (ScatterChart.tsx의
+   SCRUB_TICK_MAX_STOPS 조건부 렌더). */
+.scatterScrubTicks{ position: absolute; left: 0; right: 0; top: 100%; height: 5px; pointer-events: none; }
+.scatterScrubTick{ position: absolute; top: 0; width: 1px; height: 5px; background: var(--border-card, var(--border)); }
+.scatterScrubInput{
+  flex: 0 0 auto; width: 120px; min-width: 90px; height: 28px; padding: 0 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 12px; font-weight: 600; color: var(--text-primary); text-align: center;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.scatterScrubInput.invalid{ border-color: #DC2626; }
+html[data-theme="dark"] .scatterScrubInput.invalid{ border-color: #F87171; }
+.scatterScrubSortSelect{ flex: 0 0 auto; min-height: 28px; font-size: 12px; }
 
 /* Box mode point-hover tooltip "이상치" tag (spec §5). */
 .scatterOutlierTag{ color: #DC2626; }

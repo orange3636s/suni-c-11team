@@ -297,7 +297,9 @@ export default function ParetoChart({
           <div className="heatmapTooltipRow"><span>ε²</span><b>{tooltipItem.eps2.toFixed(3)}</b></div>
           <div className="heatmapTooltipRow"><span>p값</span><b>{formatPValue(tooltipItem.p_value)}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltipItem.n_observed.toLocaleString()}</b></div>
-          <div className="heatmapTooltipRow"><span>등급</span><b>{TIER_LABEL[tooltipItem.confidence_tier]}</b></div>
+          {/* 지시서 CD: 알람 등급(심각/위험/주의)과 겹치지 않게 -- 이 값은
+              인자-타깃 연관의 세기(강함/보통/근거 부족/관계 없음)다. */}
+          <div className="heatmapTooltipRow"><span>상관성</span><b>{TIER_LABEL[tooltipItem.confidence_tier]}</b></div>
         </div>
       )}
     </>

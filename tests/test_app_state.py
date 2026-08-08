@@ -133,7 +133,7 @@ def test_invalidate_state_for_dataset_deletes_only_matching_entries() -> None:
     store, path = _store()
     try:
         save_state(store, "training", dataset={"dataset": "train"}, payload={})
-        save_state(store, "analysis", dataset={"dataset": "mentorship_dataset_final"}, payload={})
+        save_state(store, "analysis", dataset={"dataset": "other_dataset"}, payload={})
         save_state(store, "alarms", dataset={"train_dataset": "train", "eval_dataset": "test"}, payload={})
 
         deleted = invalidate_state_for_dataset(store, "train")

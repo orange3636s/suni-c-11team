@@ -6,14 +6,12 @@
 
 ## 데이터
 
-내장 데이터셋 4종(`data/bundled/`).
+내장 데이터셋 2종(`data/bundled/`).
 
 | 파일 | 행 × 열 | LOT | 비고 |
 |---|---|---|---|
 | train.CSV | 10,000 × 102 | L001~L400 | 기본 학습 데이터. `Lot_ID` 컬럼 있음 |
 | test.CSV | 1,000 × 102 | L401~L440 | 홀드아웃. `Lot_ID` 컬럼 있음 |
-| mentorship_dataset_final.CSV | 10,000 × 112 | L001~L400 | `_Config` 대신 `_EQ` 컬럼명 사용, `Lot_ID` 없음(`Lot_Wafer_ID`에서 파싱) |
-| mentorship_dataset_v7_killing_event.csv | 10,000 × 189 | L001~L400 | `Lot_ID` 없음. 장비 관련 컬럼이 `Step{n}_EQ{m}`(EQ1/EQ2/EQ3…) 형태라 앱의 컬럼 파서가 인식하는 `_Config`/`_EQ` 단일 접미사 패턴과 달라 51개 전부 `unmapped`로 처리됨 — 스키마 인식 기준으로는 "Config 없음"이 맞지만, 원본 파일 자체에 장비 컬럼이 없는 것은 아님 |
 
 - 컬럼 규칙: `Step{n}_R{m}`(센서), `Step{n}_D{m}`(결함수), `Step{n}_Config` 또는 `Step{n}_EQ`(장비 구성), 타깃 `Y1`~`Y5`(+ `Y6`~`Y10`, 최종 `Y`)
 - `_Config`와 `_EQ`는 같은 성격의 컬럼이며 컬럼명 접미사만 다릅니다. `_Config`/`_EQ` 뒤에 숫자가 더 붙는 형태(`_EQ1`, `_EQ2`…)는 인식하지 않습니다

@@ -42,7 +42,13 @@ DEFAULT_NOTIFICATIONS = {
 
 def test_get_latest_empty(isolated_settings: SimpleNamespace) -> None:
     result = state_routes.get_latest()
-    assert result == {"training": None, "analysis": None, "alarms": None, "notifications": DEFAULT_NOTIFICATIONS}
+    assert result == {
+        "training": None,
+        "analysis": None,
+        "alarms": None,
+        "notifications": DEFAULT_NOTIFICATIONS,
+        "dataset_fallback_applied": False,
+    }
 
 
 def test_save_and_restore_training(isolated_settings: SimpleNamespace) -> None:
@@ -59,11 +65,30 @@ def test_save_and_restore_training(isolated_settings: SimpleNamespace) -> None:
 
 def test_save_and_restore_analysis(isolated_settings: SimpleNamespace) -> None:
     payload = {"activeTarget": "Y1", "paretoByTarget": {}, "scatterByKey": {}, "categoricalByKey": {}}
-    state_routes.save_analysis_state(AnalysisStateSaveRequest(dataset="mentorship_dataset_final", payload=payload))
+    state_routes.save_analysis_state(AnalysisStateSaveRequest(dataset="test", payload=payload))
 
     result = state_routes.get_latest()
-    assert result["analysis"]["dataset"] == "mentorship_dataset_final"
+    assert result["analysis"]["dataset"] == "test"
     assert result["analysis"]["payload"] == payload
+    assert result["dataset_fallback_applied"] is False
+
+
+def test_get_latest_drops_record_for_deleted_dataset(isolated_settings: SimpleNamespace) -> None:
+    """지시서 CB: 저장된 결과가 더 이상 존재하지 않는 데이터셋(삭제된
+    구버전 내장 데이터셋 등)을 가리키면 그 결과를 통째로 버리고 안내
+    플래그를 세운다 -- dataset을 "train"으로 바꿔치기해 다른 스키마로
+    계산된 옛 payload를 잘못된 라벨로 보여주지 않는다(부분 복원 금지)."""
+    state_routes.save_analysis_state(
+        AnalysisStateSaveRequest(
+            dataset="a_since_deleted_dataset_id",
+            payload={"activeTarget": "Y1", "paretoByTarget": {}, "scatterByKey": {}, "categoricalByKey": {}},
+        )
+    )
+
+    result = state_routes.get_latest()
+
+    assert result["analysis"] is None
+    assert result["dataset_fallback_applied"] is True
 
 
 def test_save_and_restore_alarms(isolated_settings: SimpleNamespace) -> None:
@@ -89,4 +114,10 @@ def test_get_latest_never_raises_on_store_error(isolated_settings: SimpleNamespa
     """spec §3-3: 결과가 없으면 null, 실패해도 앱이 뜬다 (never a 500)."""
     monkeypatch.setattr(state_routes, "get_latest_state", lambda store: (_ for _ in ()).throw(OSError("db locked")))
     result = state_routes.get_latest()
-    assert result == {"training": None, "analysis": None, "alarms": None, "notifications": DEFAULT_NOTIFICATIONS}
+    assert result == {
+        "training": None,
+        "analysis": None,
+        "alarms": None,
+        "notifications": DEFAULT_NOTIFICATIONS,
+        "dataset_fallback_applied": False,
+    }

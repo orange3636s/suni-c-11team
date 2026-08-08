@@ -35,11 +35,13 @@ LOT_COLUMN = "Lot_ID"
 
 # Display order is explicit and fixed (spec §1) -- never sorted by name or
 # size. train.CSV stays the default selection.
+# 지시서 CB: mentorship_dataset_final/v7_killing_event는 구버전 스키마라
+# 삭제했다 -- final은 Y = 100 - (Y1+...+Y5) 항등식이 깨져 있고(잔차 최대
+# 203), v7_killing_event는 Config 대신 Eq 컬럼을 쓰는 189컬럼 이전
+# 형식이라 현재 파이프라인의 스키마 가정과 맞지 않는다.
 BUNDLED_DATASET_FILES = {
     "train": "train.CSV",
     "test": "test.CSV",
-    "mentorship_dataset_final": "mentorship_dataset_final.CSV",
-    "mentorship_dataset_v7_killing_event": "mentorship_dataset_v7_killing_event.csv",
 }
 
 

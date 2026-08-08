@@ -34,3 +34,9 @@ class LatestStateResponse(BaseModel):
     # 알림 연동 §D-3: 앱 마운트 시 1번의 요청으로 알림 설정도 함께 복원한다
     # -- 설정 패널을 위한 별도 요청을 만들지 않는다.
     notifications: dict[str, Any]
+    # 지시서 CB: 저장된 레코드 중 하나 이상이 더 이상 존재하지 않는
+    # 데이터셋(삭제된 내장 데이터셋 등)을 가리켜 통째로 버려졌으면 true.
+    # 프론트가 "이전에 선택한 데이터셋이 더 이상 없어 train으로
+    # 전환했습니다" 안내를 띄우는 신호로만 쓰고, 화면을 조용히 비우지
+    # 않는다.
+    dataset_fallback_applied: bool = False
