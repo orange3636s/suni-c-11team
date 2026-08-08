@@ -146,7 +146,7 @@ export default function ConfigTreemap({
     <section className="resultCard monitoringTreemapCard">
       <div className="sectionHeading compact">
         <div>
-          <span className="sectionLabel">TREEMAP</span>
+          <span className="sectionLabel">설비 구성 트리맵</span>
           <h2>Model → EQ → Chamber 수율</h2>
         </div>
         <label className="monitoringStepSelect">
@@ -218,7 +218,7 @@ export default function ConfigTreemap({
           </p>
           {!data.significant && (
             <p className="monitoringTreemapCaption">
-              이 스텝의 장비 구성은 최종 수율 차이를 통계적으로 설명하지 못합니다(FDR 미통과) — 색 대신 수치로만 비교하세요.
+              <span className="data">FDR 미통과 (Step{step}) → 전량 중립색.</span> 이 스텝의 장비 구성은 최종 수율 차이를 통계적으로 설명하지 못합니다 — 색 대신 수치로만 비교하세요.
             </p>
           )}
         </>

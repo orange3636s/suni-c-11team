@@ -21,9 +21,9 @@
 .mainContent,.pageContent{min-width:0;max-width:100%;box-sizing:border-box;padding:22px 24px}
 .topHeader{min-width:0;height:60px;padding:0 24px;gap:16px}
 .headerMeta{min-width:0;gap:10px}
-.apiStatus{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:rgba(255,255,255,.72);font-size:12px;white-space:nowrap}
+.apiStatus{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid rgba(15,23,42,.08);border-radius: var(--radius-control);background:rgba(255,255,255,.72);font-size:12px;white-space:nowrap}
 .apiStatus>span{width:7px;height:7px;border-radius:50%;background:#8e8e93}.apiStatus-online>span{background:#34C759}.apiStatus-offline>span{background:#ff3b30}.apiStatus strong{font-size:12px;font-weight:600}.apiStatus small{font-size:11px;color:var(--text-secondary)}
-.resultCard,.uploadCard{border-radius:16px;border:1px solid rgba(15,23,42,.08);padding:16px;box-shadow:0 2px 10px rgba(15,23,42,.035)}
+.resultCard,.uploadCard{border-radius:var(--radius-panel);border:1px solid var(--line);padding:16px;box-shadow:none}
 .rcControlBar,.workspaceTabs,.tableWrap,.rcGrid,.rcGrid>*{min-width:0;max-width:100%}
 .rcControlBar{display:grid;grid-template-columns:minmax(180px,1.4fr) minmax(160px,1.2fr) minmax(110px,.7fr) minmax(110px,.7fr) auto;align-items:end;gap:12px}
 .rcControlBar input,.rcControlBar select{width:100%;min-width:0}
@@ -36,7 +36,7 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
    drift apart. */
 :root{--font-ui:Pretendard,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--page-space:24px;--section-gap:22px;--card-gap:14px;--card-radius:16px;--control-radius:11px;--control-height:38px;--dashboard-title-size:24px;--dashboard-title-weight:600;--dashboard-title-line:1.35;--dashboard-title-tracking:-.018em}
 html,body,button,input,select,textarea{font-family:var(--font-ui)}
-.sidebar .themeTrigger{display:inline-flex;align-items:center;justify-content:flex-start;box-sizing:border-box;width:100%;min-width:118px;height:38px;min-height:38px;padding:0 10px 0 8px;gap:8px;border:1px solid rgba(255,255,255,.22);border-radius:11px;line-height:1;font:500 13px/1 var(--font-ui)}
+.sidebar .themeTrigger{display:inline-flex;align-items:center;justify-content:flex-start;box-sizing:border-box;width:100%;min-width:118px;height:38px;min-height:38px;padding:0 10px 0 8px;gap:8px;border:1px solid rgba(255,255,255,.22);border-radius: var(--radius-control);line-height:1;font:500 13px/1 var(--font-ui)}
 .sidebar .themeTriggerIcon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 26px;width:26px;height:26px}
 .sidebar .themeTrigger .themeIcon{width:18px;height:18px}
 .sidebar .themeTriggerLabel{display:inline-flex;align-items:center;min-width:0;white-space:nowrap;font-size:13px;font-weight:500;line-height:1}
@@ -56,16 +56,16 @@ html,body,button,input,select,textarea{font-family:var(--font-ui)}
 body,.rcPage,.rcPage button,.rcPage input,.rcPage select,.rcPage table{font-family:var(--font-ui)}
 .rcPage{display:grid;gap:var(--space-gap);padding:var(--space-page);color:var(--text-primary)}
 .rcPage .pageHeading:not(.uploadIntro) h1{margin:0;font-size:var(--text-page);font-weight:600;line-height:1.2;letter-spacing:-.02em}.rcPage .pageHeading:not(.uploadIntro) p{margin:7px 0 0;font-size:14px;font-weight:400;line-height:1.5;color:var(--text-secondary)}
-.rcPage .resultCard{padding:var(--space-card);border:1px solid var(--border-card);border-radius:var(--radius-card);background:var(--surface-card);box-shadow:0 1px 3px rgba(15,23,42,.035)}
+.rcPage .resultCard{padding:var(--space-card);border:1px solid var(--border-card);border-radius:var(--radius-card);background:var(--surface-card);box-shadow:none}
 .rcPage .resultCard h2{margin:0;font-size:var(--text-section);font-weight:600;line-height:1.3}.rcPage .sectionLabel,.rcPage .fieldGroup>span{font-size:var(--text-secondary);font-weight:500;line-height:1.45}
 .rcPage .rcControlBar{gap:12px;padding:var(--space-card)}
 .rcPage .rcControlBar input,.rcPage .rcControlBar select,.rcPage .button{min-height:38px;border-radius:var(--radius-control);font-family:inherit;font-size:13px}.rcPage .rcControlBar input,.rcPage .rcControlBar select{padding:0 11px;border:1px solid var(--border-card);background:var(--surface-card);color:var(--text-primary)}
 .rcPage .button{padding:0 13px;font-weight:600;box-shadow:none}.rcPage .button.secondary{font-weight:500}.rcPage .button:focus-visible,.themeToggle:focus-visible{outline:3px solid rgba(10,132,255,.24);outline-offset:2px}
-.rcPage .workspaceTabs{display:flex;gap:4px;min-width:0;max-width:100%;padding:3px;border:1px solid var(--border-card);border-radius:12px;background:var(--surface-muted);overflow-x:auto;scrollbar-width:thin}.rcPage .workspaceTabs button{flex:0 0 auto;min-height:36px;padding:0 13px;border:0;border-radius:var(--radius-tab);background:transparent;color:var(--text-secondary);font:500 13px/1.2 var(--font-ui)}.rcPage .workspaceTabs button.active{background:var(--surface-card);color:var(--text-primary);box-shadow:0 1px 2px rgba(15,23,42,.06)}
-.rcPage .rcGrid{gap:var(--space-gap)}.rcPage .rcMetricStrip>div{padding:12px;border-radius:12px;border:1px solid var(--border-card);background:var(--surface-muted)}.rcPage .rcMetricStrip strong{font-size:22px;font-weight:600;line-height:1.2}.rcPage .rcHeroNumber{font-size:24px;font-weight:600;line-height:1.2}
-.rcPage .tableWrap{border:1px solid var(--border-card);border-radius:13px;background:var(--surface-card)}.rcPage .tableWrap th{font-size:12px;font-weight:600;background:var(--surface-muted)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font-size:13px;line-height:1.45}.rcPage .tableWrap td{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rcPage .rcEmpty{min-height:120px;padding:24px;display:grid;place-content:center;text-align:center}.rcPage .rcEmpty h2{font-size:16px}.rcPage .rcEmpty p,.rcPage .errorMessage,.rcPage .emptyMessage{font-size:13px;line-height:1.5}.rcPage .errorMessage{padding:13px 14px;border:1px solid color-mix(in srgb,var(--danger) 24%,var(--border-card));border-radius:13px;background:color-mix(in srgb,var(--danger) 7%,transparent)}
-.sidebar .themeToggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(255,255,255,.06);color:#fff;font:500 13px/1 var(--font-ui);box-shadow:none}.sidebar .themeToggle:hover{background:rgba(255,255,255,.11)}.sidebar .themeToggle:active{transform:scale(.98)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}.sidebar .themeMenu>strong{font-size:12px}.sidebar .themeOptions button{min-height:36px;border-radius:9px;font:500 13px/1 var(--font-ui)}
+.rcPage .workspaceTabs{display:flex;gap:4px;min-width:0;max-width:100%;padding:3px;border:1px solid var(--border-card);border-radius: var(--radius-panel);background:var(--surface-muted);overflow-x:auto;scrollbar-width:thin}.rcPage .workspaceTabs button{flex:0 0 auto;min-height:36px;padding:0 13px;border:0;border-radius:var(--radius-tab);background:transparent;color:var(--text-secondary);font:500 13px/1.2 var(--font-ui)}.rcPage .workspaceTabs button.active{background:var(--surface-card);color:var(--text-primary);box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.rcPage .rcGrid{gap:var(--space-gap)}.rcPage .rcMetricStrip>div{padding:12px;border-radius: var(--radius-panel);border:1px solid var(--border-card);background:var(--surface-muted)}.rcPage .rcMetricStrip strong{font-size:22px;font-weight:600;line-height:1.2}.rcPage .rcHeroNumber{font-size:24px;font-weight:600;line-height:1.2}
+.rcPage .tableWrap{border:1px solid var(--border-card);border-radius: var(--radius-panel);background:var(--surface-card)}.rcPage .tableWrap th{font-size:12px;font-weight:600;background:var(--surface-muted)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font-size:13px;line-height:1.45}.rcPage .tableWrap td{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rcPage .rcEmpty{min-height:120px;padding:24px;display:grid;place-content:center;text-align:center}.rcPage .rcEmpty h2{font-size:16px}.rcPage .rcEmpty p,.rcPage .errorMessage,.rcPage .emptyMessage{font-size:13px;line-height:1.5}.rcPage .errorMessage{padding:13px 14px;border:1px solid color-mix(in srgb,var(--danger) 24%,var(--border-card));border-radius: var(--radius-panel);background:color-mix(in srgb,var(--danger) 7%,transparent)}
+.sidebar .themeToggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);color:#fff;font:500 13px/1 var(--font-ui);box-shadow:none}.sidebar .themeToggle:hover{background:rgba(255,255,255,.11)}.sidebar .themeToggle:active{transform:scale(.98)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}.sidebar .themeMenu>strong{font-size:12px}.sidebar .themeOptions button{min-height:36px;border-radius:9px;font:500 13px/1 var(--font-ui)}
 html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tableWrap{border-color:rgba(255,255,255,.09)}html[data-theme="dark"] .rcPage .workspaceTabs,html[data-theme="dark"] .rcPage .rcMetricStrip>div{border-color:rgba(255,255,255,.09)}
 @media(max-width:640px){.rcPage{padding:18px 16px;gap:12px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size:23px}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}.rcPage .tableWrap td{max-width:170px}}
 
@@ -84,7 +84,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
 .rcSpan3{ grid-column: span 3; }
 .rcSpan4{ grid-column: span 4; }
 .rcMetricStrip{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
-.rcMetricStrip > div{ min-width: 0; padding: 12px; border-radius: 10px; background: var(--surface-muted); border: 1px solid var(--border); }
+.rcMetricStrip > div{ min-width: 0; padding: 12px; border-radius: var(--radius-control); background: var(--surface-muted); border: 1px solid var(--border); }
 .rcMetricStrip span{ display: block; color: var(--text-secondary); font-size: .75rem; }
 .rcMetricStrip strong{ display: block; margin-top: 5px; font-size: 1.18rem; overflow-wrap: anywhere; }
 .rcRiskCounts{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 18px; }
@@ -96,7 +96,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
 .rcHeroNumber{ display: block; margin-top: 14px; font-size: clamp(2rem, 4vw, 3rem); }
 .rcChipList{ display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-top: 14px; }
 .rcChipList button,
-.rcWaferRows button{ border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); color: var(--text-primary); padding: 10px; text-align: left; cursor: pointer; }
+.rcWaferRows button{ border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text-primary); padding: 10px; text-align: left; cursor: pointer; }
 .rcChipList button:hover,
 .rcWaferRows button:hover{ border-color: var(--brand-navy-text); transform: translateY(-1px); }
 .rcChipList span,
@@ -115,7 +115,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
 .rcSegmented{ display: flex; gap: 3px; padding: 3px; border-radius: 9px; background: var(--surface-muted); }
 .rcSegmented button{ border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); padding: 6px 9px; cursor: pointer; }
 .rcSegmented button.active{ background: var(--surface); color: var(--text-primary); box-shadow: 0 1px 4px rgb(0 0 0 / .08); }
-.rcLowSample{ margin: 12px 0; padding: 10px; border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, transparent); }
+.rcLowSample{ margin: 12px 0; padding: 10px; border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border)); border-radius: var(--radius-control); background: color-mix(in srgb, var(--warning) 7%, transparent); }
 .rcLowSample > span{ margin-left: 8px; color: var(--text-secondary); font-size: .78rem; }
 .rcLowSample div{ display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .rcLowSample .tableWrap{ display: block; margin-top: 8px; }
@@ -126,7 +126,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
 .rcWaferNav{ display: grid; gap: 5px; max-height: 620px; overflow: auto; margin-top: 10px; }
 .rcWaferNav button{ display: flex; justify-content: space-between; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text-primary); padding: 8px; cursor: pointer; }
 .rcWaferNav button.active{ border-color: var(--brand-navy-text); background: var(--surface-muted); }
-.rcCauseCallout{ margin-top: 18px; padding: 18px; border-left: 4px solid var(--danger); border-radius: 10px; background: var(--surface-muted); }
+.rcCauseCallout{ margin-top: 18px; padding: 18px; border-left: 4px solid var(--danger); border-radius: var(--radius-control); background: var(--surface-muted); }
 .rcCauseCallout span,
 .rcCauseCallout strong{ display: block; }
 .rcCauseCallout strong{ margin: 6px 0; font-size: 1.25rem; }
@@ -138,7 +138,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
 .rcPathList{ display: grid; gap: 8px; margin-top: 12px; }
 .rcPathList article{ display: grid; grid-template-columns: 64px minmax(160px, .7fr) minmax(220px, 1.3fr) auto; gap: 9px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 9px; }
 .rcConfigStats{ display: grid; gap: 12px; margin-top: 12px; }
-.rcConfigStats > article{ min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); }
+.rcConfigStats > article{ min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-muted); }
 .rcConfigStats h3{ margin: 0; }
 .rcConfigStats .sectionHeader p{ margin: 3px 0 0; color: var(--text-secondary); font-size: .75rem; }
 .rcPathList article > span,
@@ -238,7 +238,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   cursor: pointer;
   list-style: none;
   border: 1px solid var(--border-strong);
-  border-radius: 15px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: var(--shadow-card);
 }
@@ -307,7 +307,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   height: 40px;
   padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: var(--surface-secondary);
   color: var(--text-primary);
   font: inherit;
@@ -333,7 +333,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   padding: 12px 39px 12px 12px;
   cursor: pointer;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: transparent;
   color: var(--text-primary);
   text-align: left;
@@ -435,7 +435,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   padding: 12px 15px;
   gap: 16px;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
   color: var(--text-secondary);
   font-size: 12px;
@@ -500,7 +500,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   padding: 24px;
   gap: 14px;
   border: 1px dashed var(--border-strong);
-  border-radius: 15px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
   color: var(--text-muted);
   font-size: 12px;
@@ -596,7 +596,7 @@ html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tab
   margin: 0;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   border: 1px solid var(--border);
-  border-radius: 15px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -804,7 +804,7 @@ a{
   align-items: center;
   gap: 12px;
   padding: 0 14px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   color: #aeb9c8;
   font-size: 14px;
   font-weight: 500;
@@ -1000,7 +1000,7 @@ a{
   padding: 22px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -1091,7 +1091,7 @@ a{
 .resultCard{
   padding: 28px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -1113,7 +1113,7 @@ a{
   flex-direction: column;
   gap: 10px;
   border: 2px dashed #b7c2d0;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface-muted);
   color: var(--muted);
   cursor: pointer;
@@ -1159,7 +1159,7 @@ a{
   margin-top: 16px;
   padding: 15px 18px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: #fbfcfd;
   color: var(--muted);
   font-size: 13px;
@@ -1181,7 +1181,7 @@ a{
 .messageBox{
   margin-top: 16px;
   padding: 13px 15px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1249,7 +1249,7 @@ a{
   min-height: 44px;
   padding: 0 18px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   font: inherit;
   font-size: 13px;
   font-weight: 700;
@@ -1321,7 +1321,7 @@ a{
   justify-content: center;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface-muted);
 }
 
@@ -1397,7 +1397,7 @@ a{
   margin-top: 16px;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
 }
 
 .tableWrap table{
@@ -1437,7 +1437,7 @@ a{
   margin-top: 22px;
   padding: 16px 18px;
   border: 1px solid #badfd2;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: #f1faf7;
 }
 
@@ -1523,7 +1523,7 @@ a{
   flex-direction: column;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface-muted);
 }
 
@@ -1551,7 +1551,7 @@ a{
   justify-content: space-between;
   gap: 16px;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--surface-muted);
   color: var(--text);
   font-size: 12px;
@@ -1608,7 +1608,7 @@ a{
   min-height: 46px;
   padding: 0 14px;
   border: 1px solid #cfd6df;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: #ffffff;
   color: var(--navy);
   font: inherit;
@@ -1640,7 +1640,7 @@ a{
   justify-content: center;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface-muted);
 }
 
@@ -1681,7 +1681,7 @@ a{
   margin-top: 20px;
   padding: 16px 18px;
   border: 1px solid #f1dfc5;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: #fffaf2;
   color: #9a5a0a;
   font-size: 12px;
@@ -1700,7 +1700,7 @@ a{
 .emptyModelState{
   padding: 54px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: var(--shadow);
   text-align: center;
@@ -1834,7 +1834,7 @@ a{
 
 .waferDetailSummary{
   background: #f7f9fc;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   margin: 22px 0 0;
   padding: 14px;
 }
@@ -1862,7 +1862,7 @@ a{
 .contributionList li{
   align-items: center;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -1988,7 +1988,7 @@ a{
 
 .automationGuide pre{
   background: #101c2f;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   color: #f3f6fb;
   margin: 18px 0;
   overflow-x: auto;
@@ -2402,7 +2402,7 @@ a{
   row-gap: 5px;
   padding: 18px 20px;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.025);
   counter-increment: preprocessing-rule;
@@ -2602,7 +2602,7 @@ and dataset split controls */
 .csvUploadPanel.compact .csvUploadIcon{
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
 }
 
 .csvUploadCopy{
@@ -2635,7 +2635,7 @@ and dataset split controls */
   align-items: center;
   justify-content: center;
   padding: 0 16px;
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: var(--accent);
   color: #ffffff;
   font-size: 12px;
@@ -2651,7 +2651,7 @@ and dataset split controls */
   margin: 22px 0 0;
   padding: 18px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -2680,7 +2680,7 @@ and dataset split controls */
   grid-template-columns: minmax(0, 1fr) 66px;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
 }
 
@@ -2708,7 +2708,7 @@ and dataset split controls */
   min-height: 38px;
   padding: 0 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--surface-secondary);
   color: var(--text-primary);
 }
@@ -2886,7 +2886,7 @@ html[data-theme="dark"] ::placeholder{
   padding: 4px;
   gap: 4px;
   border: 1px solid var(--border);
-  border-radius: 15px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -2894,7 +2894,7 @@ html[data-theme="dark"] ::placeholder{
   min-height: 40px;
   padding: 0 18px;
   border: 0;
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -3001,7 +3001,7 @@ html[data-theme="dark"] ::placeholder{
   grid-template-columns: 92px minmax(0, 1fr);
   gap: 12px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: var(--surface-secondary);
 }
 
@@ -3042,7 +3042,7 @@ html[data-theme="dark"] ::placeholder{
   min-width: 0;
   padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -3059,7 +3059,7 @@ html[data-theme="dark"] ::placeholder{
   min-height: 42px;
   padding: 0 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-primary);
 }
@@ -3080,7 +3080,7 @@ html[data-theme="dark"] ::placeholder{
   gap: 10px;
   padding: 10px 11px;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   color: var(--text-primary);
   cursor: pointer;
@@ -3146,7 +3146,7 @@ html[data-theme="dark"] ::placeholder{
   justify-content: center;
   gap: 5px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
 }
 
@@ -3183,7 +3183,7 @@ html[data-theme="dark"] ::placeholder{
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
 }
 
@@ -3278,29 +3278,32 @@ html[data-theme="dark"] .savedModelList > button.active{
   }
 }
 
-/* Calm manufacturing intelligence design system */
+/* High-Performance HMI design system (ISA-101 tone). Names kept from the
+   previous "calm manufacturing" system so call sites didn't need mass
+   edits -- only values changed, plus new measured/inferred/signal tokens
+   appended at the end of this block. */
 :root{
-  --background: #f5f5f7;
+  --background: #f4f5f7;
   --surface: #ffffff;
-  --surface-secondary: #fafafc;
-  --surface-tertiary: #f1f3f6;
-  --text-primary: #1d1d1f;
-  --text-secondary: #6e6e73;
-  --text-muted: #86868b;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.12);
+  --surface-secondary: #f8f9fb;
+  --surface-tertiary: #eff1f4;
+  --text-primary: #141a22;
+  --text-secondary: #59636f;
+  --text-muted: #8a929c;
+  --border: #e8ebf0;
+  --border-strong: #d9dee6;
   --accent: #0e306d;
   --accent-hover: #174487;
   --accent-soft: #e9eef7;
   --brand-navy: #0e306d;
   --brand-navy-text: #0e306d;
-  --success: #287a5b;
-  --success-soft: #edf7f2;
-  --warning: #a96208;
-  --warning-soft: #fff6e7;
-  --danger: #b33a46;
-  --danger-soft: #fff0f1;
-  --neutral: #647185;
+  --success: #2d7a55;
+  --success-soft: rgba(45, 122, 85, 0.1);
+  --warning: #b8791a;
+  --warning-soft: rgba(184, 121, 26, 0.1);
+  --danger: #c0392b;
+  --danger-soft: rgba(192, 57, 43, 0.1);
+  --neutral: #59636f;
   --navy: var(--text-primary);
   --navy-soft: #354255;
   --text: var(--text-primary);
@@ -3318,13 +3321,25 @@ html[data-theme="dark"] .savedModelList > button.active{
   --radius-menu: 14px;
   --radius-table: 18px;
   --radius-chart: 18px;
-  --radius-card: var(--radius-xl);
-  --radius-panel: var(--radius-lg);
-  --radius-control: var(--radius-sm);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.02),
-    0 10px 30px rgba(35, 42, 52, 0.045);
-  --shadow-elevated: 0 14px 36px rgba(35, 42, 52, 0.08);
+  --radius-card: 4px;
+  --radius-panel: 4px;
+  --radius-control: 3px;
+  --shadow-card: none;
+  --shadow-elevated: 0 14px 36px rgba(35, 42, 52, 0.16);
   --shadow: var(--shadow-card);
+
+  /* ── HP-HMI additions: surfaces, data-meaning colors, signal colors ── */
+  --ink: #0e1621;
+  --paper: var(--background);
+  --panel: var(--surface);
+  --line: var(--border-strong);
+  --line-soft: var(--border);
+  --measured: var(--accent);
+  --inferred: #7c8aa5;
+  --sig-red: var(--danger);
+  --sig-amber: var(--warning);
+  --sig-green: var(--success);
+  --font-data: 'JetBrains Mono', ui-monospace, Menlo, monospace;
   --chart-grid: rgba(0, 0, 0, 0.08);
   --chart-axis: #6e6e73;
   --chart-tooltip: #ffffff;
@@ -3410,7 +3425,7 @@ select,
   min-height: 52px;
   margin: 0 0 26px;
   padding: 8px 10px;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   cursor: pointer;
   transition: background-color 180ms ease;
 }
@@ -3461,7 +3476,7 @@ select,
   min-height: 43px;
   gap: 11px;
   padding: 0 12px;
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   color: rgba(255, 255, 255, 0.76);
   font-size: 13px;
   font-weight: 520;
@@ -3492,7 +3507,7 @@ select,
   margin: auto 2px 0;
   padding: 14px 12px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
   color: var(--text-secondary);
 }
@@ -3922,7 +3937,7 @@ select,
   padding: 10px;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 17px;
+  border-radius: var(--radius-panel);
   background: rgba(255, 255, 255, 0.7);
 }
 
@@ -3954,7 +3969,7 @@ select,
   padding: 28px;
   gap: 14px;
   border: 1px dashed var(--border-strong);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
   text-align: left;
 }
@@ -3969,7 +3984,7 @@ select,
   height: 42px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: #eceef1;
 }
 
@@ -4027,7 +4042,7 @@ select,
 }
 
 .selectedFile{
-  border-radius: 15px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -4074,7 +4089,7 @@ select,
 .button{
   min-height: 42px;
   padding: 0 17px;
-  border-radius: 13px;
+  border-radius: var(--radius-panel);
   font-size: 13px;
   font-weight: 620;
   transition: background-color 160ms ease, border-color 160ms ease,
@@ -4131,7 +4146,7 @@ select,
 .errorMessage,
 .warningMessage,
 .emptyMessage{
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -4193,7 +4208,7 @@ select,
   min-height: 94px;
   padding: 17px;
   border: 1px solid var(--border);
-  border-radius: 17px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -4212,7 +4227,7 @@ select,
   margin-top: 16px;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 17px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
 }
 
@@ -4290,7 +4305,7 @@ select,
 .analysisOptionGrid{
   padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -4325,13 +4340,13 @@ select,
 .segmentedControl{
   padding: 4px;
   gap: 3px;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: #f2f2f4;
 }
 
 .segmentedControl button{
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   padding: 8px 14px;
   color: #6e6e73;
   background: transparent;
@@ -4369,7 +4384,7 @@ select,
 .paretoSummary > div{
   flex: 1 1 150px;
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: #f7f7f8;
 }
 
@@ -4433,7 +4448,7 @@ select,
   flex: 1 1 0;
   min-width: 0;
   padding: 16px;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: #f8f8fa;
 }
 
@@ -4449,7 +4464,7 @@ select,
 .interpretationPanel{
   margin-top: 16px;
   padding: 18px;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: #e9eef7;
 }
 
@@ -4503,7 +4518,7 @@ select,
   min-height: 38px;
   padding: 0 30px 0 11px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background-color: var(--surface);
   color: var(--text-primary);
   font-size: 13px;
@@ -4542,26 +4557,26 @@ select,
 
 .analysisDisclaimer{
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
   color: var(--text-secondary);
 }
 
 .contributionList li{
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
 .waferDetailSummary{
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
 .findingCard{
   border: 1px solid var(--border);
   border-left: 4px solid var(--neutral);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -4588,7 +4603,7 @@ select,
 
 .automationGuide pre{
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: #f4f5f7;
   color: #30343b;
   font-size: 12px;
@@ -4926,7 +4941,7 @@ select,
   box-shadow: var(--shadow-elevated);
 }
 .modelSelectorPopupTools{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-.modelSelectorPopupTools input{ width: 100%; min-height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); color: var(--text-primary); }
+.modelSelectorPopupTools input{ width: 100%; min-height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-primary); }
 
 .modelSelectorToolbar{
   display: grid;
@@ -4938,7 +4953,7 @@ select,
   width: 100%;
   min-height: 40px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   color: var(--text-primary);
   padding: 0 12px;
@@ -4962,7 +4977,7 @@ select,
   min-height: 52px;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface-subtle);
   color: var(--text-primary);
   text-align: left;
@@ -4988,7 +5003,7 @@ select,
 .modelCompatibility.incompatible{ color: #c03737; }
 .modelCompatibility.unavailable{ color: #c03737; background: color-mix(in srgb, #c03737 10%, var(--surface-subtle)); }
 .modelUnavailableReason{ color: #c03737 !important; overflow-wrap: anywhere; }
-.modelSelectorState{ display: grid; gap: 8px; justify-items: start; padding: 18px; border: 1px dashed var(--border); border-radius: 14px; color: var(--text-secondary); }
+.modelSelectorState{ display: grid; gap: 8px; justify-items: start; padding: 18px; border: 1px dashed var(--border); border-radius: var(--radius-panel); color: var(--text-secondary); }
 .modelSelectorState.error,
 .modelSelectorWarning{ color: #a56a00; }
 .modelSelectorWarning{ margin: 0; font-size: 12px; line-height: 1.5; }
@@ -5000,7 +5015,7 @@ select,
   gap: 11px;
   padding: 13px 15px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
   color: var(--text-primary);
   box-shadow: none;
@@ -5074,7 +5089,7 @@ html[data-theme="dark"] .selectedModelSummary{
 .targetFeatureToolbar{
   padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface-secondary);
 }
 
@@ -5102,7 +5117,7 @@ html[data-theme="dark"] .selectedModelSummary{
   min-height: 40px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-primary);
 }
@@ -5120,7 +5135,7 @@ html[data-theme="dark"] .selectedModelSummary{
   gap: 3px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: var(--surface-secondary);
   color: var(--text-primary);
   text-align: left;
@@ -5164,7 +5179,7 @@ html[data-theme="dark"] .selectedModelSummary{
   gap: 4px;
   padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface-subtle);
 }
 .trainingFileField{ margin-bottom: 18px; }
@@ -5185,14 +5200,14 @@ html[data-theme="dark"] .selectedModelSummary{
 }
 
 .dashboardPage{ display: grid; gap: 20px; }
-.runtimeNotice{ padding: 12px 16px; border: 1px solid #d89a20; border-radius: 14px; background: color-mix(in srgb, #d89a20 10%, var(--surface)); color: var(--text-primary); font-size: 13px; }
+.runtimeNotice{ padding: 12px 16px; border: 1px solid #d89a20; border-radius: var(--radius-panel); background: color-mix(in srgb, #d89a20 10%, var(--surface)); color: var(--text-primary); font-size: 13px; }
 .dashboardKpis{ display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; }
 .dashboardKpis .statusCard{ min-height: 100px; }
 .dashboardKpis .statusCard span{ color: var(--text-secondary); font-size: 12px; }
 .dashboardKpis .statusCard strong{ display: block; margin-top: 8px; overflow-wrap: anywhere; font-size: 20px; }
 .dashboardFilters{ display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: 10px; padding: 14px; }
 .dashboardFilters input,
-.dashboardFilters select{ min-width: 0; min-height: 42px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); color: var(--text-primary); padding: 0 11px; }
+.dashboardFilters select{ min-width: 0; min-height: 42px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); padding: 0 11px; }
 .dashboardSplit{ display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(260px, .8fr); gap: 16px; align-items: start; }
 .dashboardTableWrap{ max-height: 520px; overflow: auto; overscroll-behavior: contain; }
 .dashboardTableWrap table{ width: 100%; min-width: 850px; border-collapse: collapse; font-size: 12px; }
@@ -5209,7 +5224,7 @@ html[data-theme="dark"] .selectedModelSummary{
 .dashboardDetail dd{ margin: 0; overflow-wrap: anywhere; font-size: 13px; }
 .dashboardActions{ display: flex; gap: 8px; margin-top: 16px; }
 .targetMetricGrid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
-.targetMetricGrid > div{ display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-subtle); }
+.targetMetricGrid > div{ display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-subtle); }
 .targetMetricGrid span{ color: var(--text-secondary); font-size: 12px; }
 
 @media (max-width: 980px) {
@@ -5223,7 +5238,7 @@ html[data-theme="dark"] .selectedModelSummary{
   .dashboardActions{ flex-direction: column; }
 }
 
-.preprocessingDisclosure{ margin-top: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-subtle); overflow: hidden; }
+.preprocessingDisclosure{ margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-subtle); overflow: hidden; }
 .preprocessingDisclosure summary{ padding: 12px 14px; cursor: pointer; color: #0e306d; font-weight: 700; font-size: 13px; }
 .preprocessingDisclosure dl{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0; padding: 0 14px 14px; }
 .preprocessingDisclosure dl div{ display: grid; gap: 3px; min-width: 0; }
@@ -5233,7 +5248,7 @@ html[data-theme="dark"] .selectedModelSummary{
 .preprocessingSummaryCard{ margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-subtle); }
 .preprocessingSummaryCard h3{ margin: 4px 0 0; }
 .preprocessingSummaryCard ul{ display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
-.preprocessingSummaryCard li{ display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--surface); }
+.preprocessingSummaryCard li{ display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; padding: 10px 12px; border-radius: var(--radius-panel); background: var(--surface); }
 .preprocessingSummaryCard li > span{ color: var(--success); font-weight: 800; }
 .preprocessingSummaryCard li > small{ grid-column: 2; color: var(--text-secondary); }
 
@@ -5243,7 +5258,7 @@ html[data-theme="dark"] .selectedModelSummary{
   overflow-x: auto;
   padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
 }
 
@@ -5251,7 +5266,7 @@ html[data-theme="dark"] .selectedModelSummary{
   flex: 0 0 auto;
   padding: 10px 16px;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: transparent;
   color: var(--text-secondary);
   font-weight: 700;
@@ -5276,7 +5291,7 @@ html[data-theme="dark"] .selectedModelSummary{
   gap: 10px;
   padding: 18px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--surface-soft);
 }
 
@@ -5361,7 +5376,7 @@ select{
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
   font-size: 13px;
@@ -5412,7 +5427,7 @@ select{
   justify-content: space-between;
   padding: 0 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -5452,7 +5467,7 @@ select{
   margin: 0 14px 0 0;
   padding: 0 16px;
   border: 0;
-  border-radius: 11px;
+  border-radius: var(--radius-control);
   background: var(--accent);
   color: #ffffff;
   font: inherit;
@@ -5578,6 +5593,19 @@ html[data-theme="dark"]{
   --heatmap-fdr-border: #f5f5f7;
   --heatmap-text: #f5f5f7;
   --heatmap-text-inverse: #ffffff;
+
+  /* --ink intentionally NOT overridden here: the sidebar is a fixed
+     ink-navy brand surface in both themes (see the dashboard-shell
+     comment below), so it must not flip light like other tokens. */
+  --paper: var(--background);
+  --panel: var(--surface);
+  --line: var(--border-strong);
+  --line-soft: var(--border);
+  --measured: #7ba3e8;
+  --inferred: #97a3b8;
+  --sig-red: var(--danger);
+  --sig-amber: var(--warning);
+  --sig-green: var(--success);
 }
 
 html[data-theme="dark"] .topHeader{
@@ -6028,7 +6056,7 @@ html[data-theme="dark"] .dataTable th{
   margin: 0 0 18px;
   padding: 9px 10px;
   border: 1px solid transparent;
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: rgba(255, 255, 255, 0.035);
   transition:
     background-color 160ms ease,
@@ -6073,7 +6101,7 @@ html[data-theme="dark"] .dataTable th{
   min-height: 43px;
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: transparent;
   color: rgba(255, 255, 255, 0.76);
   transition:
@@ -6128,7 +6156,7 @@ html[data-theme="dark"] .dataTable th{
   margin: 14px 0 0;
   padding: 10px;
   border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   background: rgba(255, 255, 255, 0.065);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   transition:
@@ -6143,7 +6171,7 @@ html[data-theme="dark"] .dataTable th{
 }
 
 .sidebar .themeTrigger{
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
 }
 
 .sidebar .themeMenu{
@@ -6246,7 +6274,7 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
     min-height: 38px;
     margin: 0 54px 8px 0;
     padding: 3px 8px;
-    border-radius: 14px;
+    border-radius: var(--radius-panel);
   }
 
   .sidebar nav{
@@ -6263,7 +6291,7 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
 
   .sidebar .navigationItem{
     min-height: 36px;
-    border-radius: 14px;
+    border-radius: var(--radius-panel);
   }
 
   .sidebar .navigationItem::before{
@@ -7553,10 +7581,10 @@ root-cause{
 /* Final root-cause design-system reconciliation. Kept last so legacy page
    rules cannot reintroduce mismatched type, spacing, or card geometry. */
 .rcPage{display:grid;gap:var(--space-gap);padding:var(--space-page);font-family:var(--font-ui)}
-.rcPage .resultCard{padding:var(--space-card);border:1px solid var(--border-card);border-radius:var(--radius-card);background:var(--surface-card);box-shadow:0 1px 3px rgba(15,23,42,.035)}
-.rcPage .pageHeading:not(.uploadIntro) h1{font-size:var(--text-page);font-weight:600;line-height:1.2}.rcPage .pageHeading:not(.uploadIntro) p{font-size:14px;font-weight:400;line-height:1.5}.rcPage .resultCard h2{font-size:var(--text-section);font-weight:600;line-height:1.3}.rcPage .workspaceTabs{border-radius:12px}.rcPage .workspaceTabs button{min-height:36px;border-radius:var(--radius-tab);font:500 13px/1.2 var(--font-ui)}
-.rcPage .rcControlBar input,.rcPage .rcControlBar select,.rcPage .button{min-height:38px;border-radius:var(--radius-control);font:500 13px/1 var(--font-ui)}.rcPage .button.primary{font-weight:600}.rcPage .tableWrap{border-radius:13px;border:1px solid var(--border-card)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font:13px/1.45 var(--font-ui)}.rcPage .tableWrap th{font-size:12px;font-weight:600}.rcPage .rcEmpty{min-height:120px;padding:24px}.rcPage .rcGrid,.rcPage .rcGrid>*{min-width:0;max-width:100%}
-.sidebar .themeToggle{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(255,255,255,.06);font:500 13px/1 var(--font-ui)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}
+.rcPage .resultCard{padding:var(--space-card);border:1px solid var(--border-card);border-radius:var(--radius-card);background:var(--surface-card);box-shadow:none}
+.rcPage .pageHeading:not(.uploadIntro) h1{font-size:var(--text-page);font-weight:600;line-height:1.2}.rcPage .pageHeading:not(.uploadIntro) p{font-size:14px;font-weight:400;line-height:1.5}.rcPage .resultCard h2{font-size:var(--text-section);font-weight:600;line-height:1.3}.rcPage .workspaceTabs{border-radius: var(--radius-panel)}.rcPage .workspaceTabs button{min-height:36px;border-radius:var(--radius-tab);font:500 13px/1.2 var(--font-ui)}
+.rcPage .rcControlBar input,.rcPage .rcControlBar select,.rcPage .button{min-height:38px;border-radius:var(--radius-control);font:500 13px/1 var(--font-ui)}.rcPage .button.primary{font-weight:600}.rcPage .tableWrap{border-radius: var(--radius-panel);border:1px solid var(--border-card)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font:13px/1.45 var(--font-ui)}.rcPage .tableWrap th{font-size:12px;font-weight:600}.rcPage .rcEmpty{min-height:120px;padding:24px}.rcPage .rcGrid,.rcPage .rcGrid>*{min-width:0;max-width:100%}
+.sidebar .themeToggle{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);font:500 13px/1 var(--font-ui)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}
 @media(max-width:640px){.rcPage{padding:18px 16px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size:23px}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}}
 
 /* The sidebar used to be fixed while its visual width and main offset diverged
@@ -7569,9 +7597,9 @@ root-cause{
 .mainContent,.pageContent{width:100%;min-width:0;max-width:100%;box-sizing:border-box;padding:22px 24px}
 .topHeader{min-width:0;height:60px;padding:0 24px;gap:16px}
 .headerMeta{min-width:0;gap:10px}
-.apiStatus{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid rgba(15,23,42,.08);border-radius:10px;background:rgba(255,255,255,.72);font-size:12px;white-space:nowrap}
+.apiStatus{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid rgba(15,23,42,.08);border-radius: var(--radius-control);background:rgba(255,255,255,.72);font-size:12px;white-space:nowrap}
 .apiStatus>span{width:7px;height:7px;border-radius:50%;background:#8e8e93}.apiStatus-online>span{background:#34C759}.apiStatus-offline>span{background:#ff3b30}.apiStatus strong{font-size:12px;font-weight:600}.apiStatus small{font-size:11px;color:var(--text-secondary)}
-.resultCard,.uploadCard{border-radius:16px;border:1px solid rgba(15,23,42,.08);padding:16px;box-shadow:0 2px 10px rgba(15,23,42,.035)}
+.resultCard,.uploadCard{border-radius:var(--radius-panel);border:1px solid var(--line);padding:16px;box-shadow:none}
 .rcControlBar,.workspaceTabs,.tableWrap,.rcGrid,.rcGrid>*{min-width:0;max-width:100%}
 .rcControlBar{display:grid;grid-template-columns:minmax(180px,1.4fr) minmax(160px,1.2fr) minmax(110px,.7fr) minmax(110px,.7fr) auto;align-items:end;gap:12px}
 .rcControlBar input,.rcControlBar select{width:100%;min-width:0}.rcGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.tableWrap{overflow-x:auto}.tableWrap table{min-width:640px}
@@ -7804,7 +7832,7 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
 /* Left rail: logo block on top (shrunk to a square), nav icons below. */
 .railNav{ display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .railNavItem{
-  width: 40px; height: 40px; border-radius: 12px;
+  width: 40px; height: 40px; border-radius: var(--radius-panel);
   display: flex; align-items: center; justify-content: center;
   color: rgba(255, 255, 255, 0.7); transition: background-color 140ms ease, color 140ms ease;
 }
@@ -7877,7 +7905,7 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
 .aiPanelBubbleAvatar{ width: 28px; flex: 0 0 28px; }
 .aiPanelBubble{
   max-width: 78%; padding: 10px 13px; font-size: 13px; line-height: 1.5;
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
 }
 .aiPanelBubble-suni{
   background: var(--surface-card, #fff); border: 1px solid var(--border-card, rgba(0,0,0,.08));
@@ -7889,12 +7917,12 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
 .aiPanelInputArea{ padding: 12px 16px 16px; border-top: 1px solid var(--border-card, rgba(0,0,0,.08)); }
 .aiPanelInputRow{ display: flex; gap: 8px; }
 .aiPanelInputRow textarea{
-  flex: 1 1 auto; min-width: 0; min-height: 38px; max-height: 120px; padding: 8px 12px; border-radius: 12px;
+  flex: 1 1 auto; min-width: 0; min-height: 38px; max-height: 120px; padding: 8px 12px; border-radius: var(--radius-panel);
   border: 1px solid var(--border-card, rgba(0,0,0,.12)); background: var(--surface, transparent);
   color: inherit; font: inherit; resize: none; line-height: 1.4;
 }
 .aiPanelSendButton{
-  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; border: none;
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: var(--radius-panel); border: none;
   background: #1D4ED8; color: #fff; display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; align-self: flex-end;
 }
@@ -8085,14 +8113,14 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 /* Severity badges for the pre-alert log -- 텍스트 폭에 맞춘다, 고정 폭을
    주지 않는다 (spec §C-2). 열 쪽의 고정 min-width도 .col-severity에서
    함께 제거한다 -- 배지가 좁아져도 열이 그대로 넓으면 소용없다. */
-.severityBadge{ display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.severityBadge{ display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: var(--radius-control); font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .severityBadge::before{ content: ""; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 
 /* Dataset selector dropdown */
 .datasetSelector{ position: relative; display: inline-block; min-width: 260px; }
 .datasetSelectorButton{
   width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  min-height: 40px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--border-card, rgba(0,0,0,.12));
+  min-height: 40px; padding: 0 12px; border-radius: var(--radius-panel); border: 1px solid var(--border-card, rgba(0,0,0,.12));
   background: var(--surface, #fff); color: inherit; font: inherit; cursor: pointer;
 }
 /* Bundled filenames now include long ones (mentorship_dataset_v7_killing_event.csv,
@@ -8130,7 +8158,7 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 .datasetSelectorItemRow{ display: flex; align-items: center; gap: 8px; }
 .datasetSelectorItemRow:hover .datasetSelectorDelete{ opacity: 1; }
 .datasetWarningBanner{
-  border-radius: 13px; border: 1px solid color-mix(in srgb, #FF9500 30%, var(--border-card, rgba(0,0,0,.1)));
+  border-radius: var(--radius-panel); border: 1px solid color-mix(in srgb, #FF9500 30%, var(--border-card, rgba(0,0,0,.1)));
   background: color-mix(in srgb, #FF9500 8%, transparent); padding: 12px 14px; font-size: 13px; line-height: 1.5;
 }
 .datasetWarningBanner ul{ margin: 4px 0 0; padding-left: 18px; }
@@ -8140,7 +8168,7 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 .lastRunNote{ font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
 .lastRunStale{ color: var(--warning); }
 .datasetMismatchWarning{
-  margin: 8px 0 0; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
+  margin: 8px 0 0; padding: 9px 12px; border-radius: var(--radius-control); font-size: 12.5px; line-height: 1.5;
   border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-card, rgba(0,0,0,.1)));
   background: var(--warning-soft); color: var(--warning);
 }
@@ -8175,7 +8203,7 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
      header instead of flush beneath it. */
   top: calc(var(--header-height, 60px) + 12px);
   z-index: var(--z-sticky-seg);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   border-bottom: 1px solid transparent;
   transition: background-color 160ms ease, border-color 160ms ease;
 }
@@ -8321,7 +8349,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapControls .fieldGroup{ min-width: 140px; }
 .heatmapControls label{ display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
 
-.heatmapScrollArea{ overflow: auto; max-height: 620px; border-radius: 12px; border: 1px solid var(--heatmap-cell-border); }
+.heatmapScrollArea{ overflow: auto; max-height: 620px; border-radius: var(--radius-panel); border: 1px solid var(--heatmap-cell-border); }
 .heatmapScrollArea.collapsed{ max-height: 462px; }
 .heatmapGrid{ display: grid; min-width: 480px; }
 @keyframes heatmapRowSettle{
@@ -8373,7 +8401,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    단색 회색으로 구분한다 (지시서 E). */
 .heatmapCell.gated{ background: var(--surface-tertiary); color: var(--text-muted); font-weight: 500; }
 .heatmapEmptyBanner{
-  margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  margin: 0 0 12px; padding: 10px 14px; border-radius: var(--radius-control); font-size: 12.5px; line-height: 1.6;
   background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
   border: 1px solid var(--border-card, var(--border));
 }
@@ -8393,7 +8421,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapExpandRow{ display: flex; justify-content: center; }
 .heatmapCaption{ font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
 .heatmapSignificanceBanner{
-  border-radius: 13px; border: 1px solid color-mix(in srgb, var(--warning, #a96208) 35%, var(--border-card, rgba(0,0,0,.1)));
+  border-radius: var(--radius-panel); border: 1px solid color-mix(in srgb, var(--warning, #a96208) 35%, var(--border-card, rgba(0,0,0,.1)));
   background: color-mix(in srgb, var(--warning, #a96208) 10%, transparent); padding: 12px 14px; font-size: 13px; line-height: 1.5;
 }
 .waferDetailPopover dd{ margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
@@ -8552,7 +8580,7 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
    their text up on the same left edge. */
 .trainingSummaryBar{
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px;
-  min-height: 48px; padding: 14px var(--card-pad-x, 16px); border-radius: 12px;
+  min-height: 48px; padding: 14px var(--card-pad-x, 16px); border-radius: var(--radius-panel);
   border: 1px solid var(--border-card, rgba(0,0,0,.08)); background: var(--surface-card, #fff);
 }
 .trainingSummaryLabel{ font-size: 13px; font-weight: 600; color: var(--text-secondary); }
@@ -8560,7 +8588,7 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 .trainingSummaryMetrics span:not(:first-child)::before{ content: "·"; margin: 0 10px; opacity: .6; }
 .trainingSummarySkeleton{
   display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  min-height: 48px; padding: 14px var(--card-pad-x, 16px); border-radius: 12px;
+  min-height: 48px; padding: 14px var(--card-pad-x, 16px); border-radius: var(--radius-panel);
   border: 1px solid var(--border-card, rgba(0,0,0,.08)); background: var(--surface-card, #fff);
 }
 .trainingSummarySkeletonBar{
@@ -8574,7 +8602,7 @@ html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #0
 }
 .trainingResultError{
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  padding: 14px var(--card-pad-x, 16px); border-radius: 12px;
+  padding: 14px var(--card-pad-x, 16px); border-radius: var(--radius-panel);
   border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border-card, rgba(0,0,0,.08)));
   background: var(--danger-soft, color-mix(in srgb, var(--danger) 8%, transparent));
   color: var(--danger);
@@ -8657,18 +8685,19 @@ html[data-theme="dark"] .scatterPlotBg{ fill: #242426; }
 .scatterGridLine{ stroke: var(--heatmap-cell-border, var(--border)); stroke-width: 1; opacity: 0.55; }
 .scatterGridLine-x{ opacity: 0.35; }
 html[data-theme="dark"] .scatterGridLine{ stroke: rgba(255, 255, 255, 0.05); opacity: 1; }
-.scatterTickLabel{ font-size: 10.5px; fill: var(--text-secondary); }
-.scatterOutsideShade{ fill: #F59E0B; opacity: 0.08; }
+.scatterTickLabel{ font-family: var(--font-data); font-size: 10.5px; fill: var(--text-secondary); }
+.scatterOutsideShade{ fill: var(--sig-amber); opacity: 0.08; }
 html[data-theme="dark"] .scatterOutsideShade{ opacity: 0.12; }
-/* 권장 구간 band (spec: SPC/ML 방식 전환 §3-4): fill color set inline
-   per-theme in TSX (green for SPC, purple for ML), opacity fixed at 15%
-   here -- never higher, or the points underneath get lost (a 2px solid
-   border compensates for visibility instead, drawn separately in TSX). */
+/* 권장 구간 band (spec: SPC/ML 방식 전환 §3-4, HP-HMI 색 규율 §H-1로
+   무채색 갱신): fill color set inline per-theme in TSX (METHOD_COLOR --
+   SPC/ML 모두 같은 중립 톤), opacity fixed at 15% here -- never higher,
+   or the points underneath get lost (a 2px solid border compensates for
+   visibility instead, drawn separately in TSX). */
 .scatterRecommendedBand{ opacity: 0.15; cursor: help; }
 /* 권장 구간 밴드 양끝 안쪽 경계값 라벨 (spec §C-5) -- 밴드/테두리와 같은
    색, 9px. 이름표("권장 구간 (SPC) 54.7~61.5")는 상단 3단 라벨 체계로
    옮겨졌으므로 밴드 안에는 값만 남는다. */
-.scatterBandBoundaryLabel{ font-size: 9px; font-weight: 600; }
+.scatterBandBoundaryLabel{ font-family: var(--font-data); font-size: 9px; font-weight: 600; }
 .scatterTrendBand{ opacity: 0.08; stroke: none; }
 .scatterTrendLine{ stroke-width: 2; }
 .scatterGuideLine{ stroke: var(--text-secondary, #6e6e73); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
@@ -8678,15 +8707,15 @@ html[data-theme="dark"] .scatterOutsideShade{ opacity: 0.12; }
    "LCL") won't self-center against it on its own. */
 .scatterLineLabelWrap{ display: flex; justify-content: center; }
 .scatterLineLabel{
-  font-size: 10px; font-weight: 700; text-align: center; white-space: nowrap;
+  font-family: var(--font-data); font-size: 10px; font-weight: 700; text-align: center; white-space: nowrap;
   background: var(--surface-card, #fff); border-radius: 4px; padding: 1px 4px;
   display: inline-block;
 }
 html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c2e); }
-.scatterAxisTitle{ margin: 4px 0 0; text-align: center; font-size: 12px; color: var(--text-secondary); }
+.scatterAxisTitle{ margin: 4px 0 0; text-align: center; font-family: var(--font-data); font-size: 12px; color: var(--text-secondary); }
 /* y-axis title (spec §7) -- SVG <text> version of .scatterAxisTitle, same
    grey/secondary color and a matching font-size. */
-.scatterAxisTitleSvg{ font-size: 12px; fill: var(--text-secondary); }
+.scatterAxisTitleSvg{ font-family: var(--font-data); font-size: 12px; fill: var(--text-secondary); }
 
 /* 해석 팁 (spec §2-1) -- 차트 바로 위, 옅은 파란 카드. 라이트/다크 각각
    배경·테두리·본문 색을 명시해 둘 다에서 카드 경계가 읽힌다. */
@@ -8765,7 +8794,7 @@ html[data-theme="dark"] .scatterOutlierTag{ color: #F87171; }
    박스플롯 아래 인자별 카드 안에 하나씩. 채택된 쪽만 옅은 배경 + 보라/
    초록 테두리 + "채택" 배지, 방식을 여기서 선택할 수 있는 UI는 없다. */
 .methodComparisonCard{
-  margin-top: 16px; padding: 14px 16px; border-radius: 13px;
+  margin-top: 16px; padding: 14px 16px; border-radius: var(--radius-panel);
   border: 1px solid var(--border-card, var(--border)); background: var(--surface-card);
 }
 .methodComparisonHeader{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 10px; }
@@ -8776,7 +8805,7 @@ html[data-theme="dark"] .methodComparisonKicker{ color: #C084FC; }
 .methodComparisonGrid{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 560px){ .methodComparisonGrid{ grid-template-columns: 1fr; } }
 .methodComparisonCell{
-  position: relative; padding: 12px; border-radius: 10px;
+  position: relative; padding: 12px; border-radius: var(--radius-control);
   border: 1px solid var(--border-card, var(--border)); background: transparent;
 }
 .methodComparisonCell.adopted-spc{ border-color: #0D9668; background: #F0FAF5; }
@@ -8856,7 +8885,7 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 }
 .compareMiniChart{
   flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px;
-  border: 1px solid var(--border); border-radius: 12px; padding: 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-panel); padding: 8px;
 }
 .compareMiniChart.origin{ border: 2px solid var(--brand-navy-text, #0E306D); }
 .compareMiniChartHeader{ display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 2px; }
@@ -9059,7 +9088,7 @@ html[data-theme="dark"]{
    of amber, plus an icon so it isn't color-only. */
 .analysisErrorBox{
   display: flex; align-items: flex-start; gap: 10px; margin-top: 12px;
-  padding: 13px 14px; border-radius: 13px;
+  padding: 13px 14px; border-radius: var(--radius-panel);
   border: 1px solid #FECACA; background: #FEF2F2; color: #B42318;
 }
 html[data-theme="dark"] .analysisErrorBox{
@@ -9344,7 +9373,7 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .alertsSettingLabel{ font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
 .alertsTargetInputRow{
   display: flex; align-items: center; gap: 6px;
-  height: 38px; padding: 0 12px; border-radius: 10px;
+  height: 38px; padding: 0 12px; border-radius: var(--radius-control);
   border: 1px solid var(--border); background: var(--surface);
   width: fit-content;
 }
@@ -9403,7 +9432,7 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 
 .alertsMismatchWarning{
   display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
-  padding: 12px 14px; border-radius: 12px;
+  padding: 12px 14px; border-radius: var(--radius-panel);
   background: color-mix(in srgb, #F59E0B 12%, transparent);
   border: 1px solid color-mix(in srgb, #F59E0B 35%, transparent);
 }
@@ -9419,7 +9448,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 @media (max-width: 560px){ .alertsClassGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .alertsClassCard{
   display: flex; flex-direction: column; gap: 4px;
-  padding: 14px 14px 12px; border-radius: 14px;
+  padding: 14px 14px 12px; border-radius: var(--radius-panel);
   border: 1.5px solid color-mix(in srgb, var(--class-color) 45%, var(--border));
   background: color-mix(in srgb, var(--class-color) 7%, var(--surface));
 }
@@ -9437,7 +9466,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 }
 .alertsClassGridFoot{ margin-top: 8px; }
 .alertsGateNote{
-  margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.5;
+  margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: 12.5px; line-height: 1.5;
   background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
 }
 
@@ -9521,7 +9550,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   z-index: var(--z-panel);
   margin: 12px 16px;
   padding: 8px;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--brand-navy, #0e306d);
   box-shadow: 0 4px 16px rgba(14, 48, 109, 0.18);
 }
@@ -9548,7 +9577,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
      acceptable tradeoff for matching a reference screenshot exactly). */
   min-height: var(--touch-target-min);
   padding: 0 14px;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
@@ -9617,7 +9646,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   display: inline-flex; align-items: center; justify-content: center;
   width: var(--touch-target-min); height: var(--touch-target-min);
   margin-left: -10px;
-  border-radius: 10px; border: none; background: transparent;
+  border-radius: var(--radius-control); border: none; background: transparent;
   color: var(--text-primary); cursor: pointer;
 }
 .aiPanelBackButton:hover{ background: var(--shell-logo-hover-bg); }
@@ -9693,7 +9722,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 }
 .alarmCard{
   border: 1px solid var(--border-card, var(--border));
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   padding: 12px 14px;
   background: var(--surface-card, var(--surface));
   display: flex; flex-direction: column; gap: 6px;
@@ -9732,7 +9761,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .measurementExpansionCollapsed{ color: var(--text-secondary); font-size: 13px; }
 
 .meMetricRow{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
-.meMetricTile{ display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-secondary); min-width: 0; }
+.meMetricTile{ display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius-panel); border: 1px solid var(--border); background: var(--surface-secondary); min-width: 0; }
 .meMetricTileEmphasis{ border-color: #0891B2; background: color-mix(in srgb, #0891B2 8%, var(--surface)); }
 .meMetricLabel{ font-size: 12px; color: var(--text-secondary); }
 .meMetricValue{ font-size: 24px; font-weight: 650; color: var(--text-primary); line-height: 1.2; }
@@ -9760,7 +9789,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .meRecommendationMaintain{ background: var(--surface-tertiary); color: var(--text-muted); font-weight: 500; }
 
 .meSideEffectRow{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
-.meSideEffectCard{ padding: 14px 16px; border-radius: 12px; border: 1.5px solid; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.meSideEffectCard{ padding: 14px 16px; border-radius: var(--radius-panel); border: 1.5px solid; background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .meSideEffectCard strong{ font-size: 13.5px; }
 .meSideEffectSubtitle{ font-size: 12px; color: var(--text-secondary); }
 .meSideEffectCard p{ font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; margin: 2px 0 0; }
@@ -9805,7 +9834,7 @@ html[data-theme="dark"] .severityBadge-grade-caution{ color: #FACC15; }
 
 .alarmReasonCell{ color: var(--text-secondary); font-size: 12.5px; max-width: 360px; }
 .alarmShareWarning{
-  margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: 12.5px; line-height: 1.6;
   background: var(--warning-soft); color: var(--warning);
 }
 
@@ -9823,7 +9852,7 @@ html[data-theme="dark"] .reliabilityBadge-medium{ color: #FBBF24; border-color: 
 html[data-theme="dark"] .reliabilityBadge-low{ color: #F87171; border-color: #F87171; }
 
 .reliabilityPanel{
-  margin: 10px 0; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border);
+  margin: 10px 0; padding: 14px 16px; border-radius: var(--radius-panel); border: 1px solid var(--border);
   background: var(--surface-secondary); max-width: 520px;
 }
 .reliabilityPanelHeader{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); }
@@ -9839,18 +9868,18 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
 .reliabilityDeductions{ margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
 .reliabilityDisclaimer{ margin: 8px 0 0; font-size: 11px; color: var(--text-muted); line-height: 1.6; }
 .reliabilityLowWarning{
-  margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: 12.5px; line-height: 1.6;
   background: var(--danger-soft); color: var(--danger);
 }
 .analysisFallbackNotice{
-  margin: 10px 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+  margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: 12.5px; line-height: 1.6;
   background: var(--surface-secondary); color: var(--text-secondary);
 }
 
 /* 알람 신뢰도 게이트 안내 (spec 알람 신뢰도 게이트 §A-3) -- 빈 목록만
    보여주면 기능 오류로 오해하므로, 카드 형태로 사유를 설명한다. */
 .alarmGateBanner{
-  margin: 4px 0; padding: 16px 18px; border-radius: 12px;
+  margin: 4px 0; padding: 16px 18px; border-radius: var(--radius-panel);
   border: 1px solid color-mix(in srgb, var(--warning, #D97706) 30%, var(--border-card, rgba(0,0,0,.1)));
   background: var(--warning-soft, color-mix(in srgb, #D97706 8%, transparent));
 }
@@ -9946,7 +9975,7 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 .sidebar.collapsed .railIconButton:hover,
 .sidebar.collapsed .railIconButton:focus-visible{
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
 }
 
 /* 접힘 상태 Theme 패널 포털 (spec §D-2) -- .sidebarSurface가
@@ -10009,7 +10038,7 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   flex-direction: column;
   background: var(--surface, #fff);
   color: var(--text-primary);
-  border-radius: 18px;
+  border-radius: var(--radius-panel);
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.24);
   overflow: hidden;
   animation: settingsPanelIn 160ms ease;
@@ -10049,7 +10078,7 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 /* -- §C-2: 채널 카드 -------------------------------------------------- */
 .notifyChannelList{ display: flex; flex-direction: column; gap: 10px; }
 .notifyChannelCard{
-  border: 1px solid var(--border-card, rgba(0,0,0,.1)); border-radius: 14px; padding: 12px 14px;
+  border: 1px solid var(--border-card, rgba(0,0,0,.1)); border-radius: var(--radius-panel); padding: 12px 14px;
   background: var(--surface-secondary);
 }
 .notifyChannelHeaderRow{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -10135,7 +10164,7 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 .notifyGradeToggle.active{ border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
 .notifyTimingToggle.active{ border-color: var(--accent); color: var(--accent); background: rgba(14, 48, 109, 0.08); }
 .notifyReliabilityGateNote{
-  margin: 4px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+  margin: 4px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: 12px; line-height: 1.6;
   background: var(--success-soft); color: var(--success);
 }
 
@@ -10176,7 +10205,7 @@ html[data-theme="dark"] .notifyTimingToggle.active{ background: rgba(123, 163, 2
 }
 .monitoringTreemap{
   display: flex; gap: 3px; height: 320px;
-  border-radius: 10px; overflow: hidden;
+  border-radius: var(--radius-control); overflow: hidden;
 }
 .monitoringTreemapModel{
   display: flex; flex-direction: column; gap: 3px; min-width: 90px;
@@ -10221,7 +10250,7 @@ html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-
 .monitoringActionList{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .monitoringActionList li{
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 12px; border-radius: 10px; background: var(--surface-secondary, var(--surface-muted));
+  padding: 8px 12px; border-radius: var(--radius-control); background: var(--surface-secondary, var(--surface-muted));
   font-size: 13px;
 }
 
@@ -10231,29 +10260,347 @@ html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-
 .yieldGapHeaderRow{ display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .yieldGapMean{ font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .yieldGapText{ font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.yieldGapBar{ padding: 0 4px; }
-.yieldGapBarTrack{
-  position: relative; height: 22px; border-radius: 6px;
-  background: var(--surface-secondary, var(--surface-muted)); border: 1px solid var(--border);
-}
-.yieldGapBarBand{
-  position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: 0.28; border-radius: 6px;
-}
-.yieldGapBarBoundary{
-  position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid var(--accent);
-}
-.yieldGapBarTarget{
-  position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 2px dashed var(--warning);
-}
-.yieldGapBarTargetLabel{
+/* 근거 밴드 (지시서 §E, 보정 §I-1) -- EvidenceBand.tsx 공유 컴포넌트.
+   SUMMARY(전체 폭, 라벨 포함)와 알람 목록 행(mini, 96px, 라벨 없음)이
+   이 클래스들을 그대로 공유한다. */
+.evidenceBand{ padding: 0 4px; }
+.evidenceBand.mini{ width: 96px; padding: 0; margin-top: 4px; }
+.evidenceBandTrack{ position: relative; height: 3px; background: var(--line); }
+.evidenceBandFill{ position: absolute; top: 0; bottom: 0; background: var(--inferred); }
+.evidenceBandBoundary{ position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--ink); opacity: .35; }
+.evidenceBandTargetTick{ position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 1px solid var(--sig-amber); }
+.evidenceBandTargetLabel{
   position: absolute; top: -18px; transform: translateX(-50%);
-  font-size: 10.5px; font-weight: 700; color: var(--warning); white-space: nowrap;
+  font-family: var(--font-data); font-size: 9.5px; font-weight: 500; color: var(--text-muted); white-space: nowrap;
 }
-.yieldGapBarTicks{ position: relative; height: 28px; margin-top: 4px; }
-.yieldGapBarTick{
+.evidenceBandTicks{ position: relative; height: 28px; margin-top: 4px; }
+.evidenceBandTick{
   position: absolute; top: 0; transform: translateX(-50%);
-  font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap;
+  font-family: var(--font-data); font-size: 9.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 /* F-2: 인접 라벨이 겹칠 만큼 가까우면 둘째 줄로 내려 겹침("90.791.0")을
-   피한다 -- 셋 다 실제 값이므로 생략 대신 두 줄로 나눈다. */
-.yieldGapBarTickRow2{ top: 14px; }
+   피한다 -- 전부 실제 값이므로 생략 대신 두 줄로 나눈다. */
+.evidenceBandTickRow2{ top: 14px; }
+/* 보정 §I-1: 알람 목록 행에 미니 근거 밴드가 붙으며 행 높이가 늘었다 --
+   고정 --scroll-row-h(기본 42px)를 이 표에서만 늘려 ALARM_VISIBLE_ROWS(7)가
+   여전히 잘리지 않고 보이게 한다. .tableHideOnMobile은 이 페이지의 알람
+   표에만 쓰이는 클래스라 다른 hScroll 표(개선 권장 목록)에는 영향이
+   없다. */
+.tableHideOnMobile .tableScroll.hScroll{ --scroll-row-h: 54px; }
+
+/* ===================================================================
+   High-Performance HMI 표현 계층 전환 (ISA-101 톤).
+   기능/데이터/레이아웃 구조는 그대로 두고 팔레트·타이포·위계·색 규율만
+   교체한다. 이 파일 맨 끝에 두는 이유는 위쪽에 흩어진 레거시/중복
+   규칙(.button, .eyebrow, .confidenceBadge 등 4~5곳)보다 이 블록이 항상
+   나중에 평가되게 해서, 그 규칙들을 하나하나 찾아 고치지 않고 여기서
+   한 번에 규율을 통일하기 위해서다(이 파일의 기존 "Final ... 이 파일
+   끝에 위치" 관례와 동일).
+   =================================================================== */
+
+/* ── B. 수치 타이포그래피: 등폭 + tabular-nums ──────────────────────── */
+.data{ font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+.numCol,
+.rcCellMeta,
+.yieldGapMean,
+.yieldGapText,
+.meMetricValue,
+.meTable .numCol,
+.reliabilityTable .numCol,
+.scatterSelectionBoxTable td,
+.heatmapTooltip b,
+.heatmapTooltipRow b,
+.monitoringTreemapTileTitle,
+.monitoringTreemapTiles > button > span,
+.alertsClassCardValue,
+.alertsClassCardPct,
+.alertsClassCardYield,
+.analysisHistoryOptionMetrics,
+.reliabilityGradeText,
+.reliabilityBadge,
+.severityBadge,
+.confidenceBadge,
+.fallbackModeBadge,
+.meRecommendationBadge{
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 표 헤더: 소문자 -> 등폭 소형 대문자 + 자간. Korean 헤더는 대소문자가
+   없어 uppercase가 시각적으로 no-op이지만, 폰트/자간/크기는 그대로
+   적용돼 "계측값 아래 위치한 표 헤더"까지 같은 규율을 따른다. */
+.tableWrap th,
+.meTable th,
+.reliabilityTable th{
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* ── D-1. Eyebrow / 섹션 라벨: 등폭 소형 대문자 + 하드라인 ──────────── */
+.eyebrow,
+.sectionLabel{
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.eyebrow::after,
+.sectionLabel::after{
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+/* ── C-1 / D. 배지: 테두리 + 텍스트만, 정상/분류는 무채색, 이상만 신호색 ── */
+.badge{
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid currentColor;
+  background: transparent;
+  border-radius: var(--radius-control);
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1.5px 7px;
+  line-height: 1.6;
+}
+.badge-neutral{ color: var(--text-secondary); border-color: var(--line); }
+.badge-amber{ color: var(--sig-amber); }
+.badge-red{ color: var(--sig-red); }
+.badge-green{ color: var(--sig-green); }
+
+/* 신뢰도 배지(강함/보통/근거 부족/관계 없음)는 상관성의 "분류"이지
+   이상 상태가 아니다 -- 전 등급 무채색 + 테두리만. */
+.confidenceBadge{
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1.5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 500;
+  vertical-align: middle;
+  line-height: 1.6;
+}
+.confidenceBadge.tier-strong{ border-color: var(--text-secondary); color: var(--text-primary); }
+.confidenceBadge.tier-moderate{ border-color: var(--line); color: var(--text-secondary); }
+.confidenceBadge.tier-weak{ border-color: var(--line-soft); color: var(--text-muted); }
+.confidenceBadge.tier-reference{
+  border: 1px solid var(--line-soft);
+  color: var(--text-muted);
+  background-image: repeating-linear-gradient(45deg, var(--line-soft) 0 4px, transparent 4px 8px);
+}
+.confidenceBadge.adopted{ border-color: var(--sig-green); color: var(--sig-green); background: transparent; }
+
+/* 계측 확대 제안(계측 큐) 권고 배지 -- "+N%p"는 게이트 미달(계측 부족)이라
+   신호색을 유지하고, "유지"는 정상 분류라 무채색. */
+.meRecommendationBadge{
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--sig-amber);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+.meRecommendationMaintain{
+  border-color: var(--line);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* 알람 등급/신뢰도/게이트 배지는 실제 이상·부족 신호이므로 색상은
+   유지하되, 형태만 채워진 pill -> 테두리로 통일한다. */
+.severityBadge{
+  border: 1px solid currentColor;
+  background: transparent;
+  border-radius: var(--radius-control);
+}
+.severityBadge-grade-severe{ background: transparent; color: var(--sig-red); border-width: 1.5px; }
+.severityBadge-grade-severe::before{ background: var(--sig-red); }
+.severityBadge-grade-danger{ background: transparent; color: var(--sig-red); }
+.severityBadge-grade-danger::before{ background: var(--sig-red); }
+.severityBadge-grade-caution{ background: transparent; color: var(--sig-amber); }
+.severityBadge-grade-caution::before{ background: var(--sig-amber); }
+
+.reliabilityBadge{ border-radius: var(--radius-control); background: transparent; }
+.reliabilityBadge-high{ color: var(--sig-green); border-color: var(--sig-green); }
+.reliabilityBadge-medium{ color: var(--sig-amber); border-color: var(--sig-amber); }
+.reliabilityBadge-low{ color: var(--sig-red); border-color: var(--sig-red); }
+html[data-theme="dark"] .reliabilityBadge-high{ color: var(--sig-green); border-color: var(--sig-green); }
+html[data-theme="dark"] .reliabilityBadge-medium{ color: var(--sig-amber); border-color: var(--sig-amber); }
+html[data-theme="dark"] .reliabilityBadge-low{ color: var(--sig-red); border-color: var(--sig-red); }
+.reliabilityGradeText.grade-high{ color: var(--sig-green); }
+.reliabilityGradeText.grade-medium{ color: var(--sig-amber); }
+.reliabilityGradeText.grade-low{ color: var(--sig-red); }
+html[data-theme="dark"] .reliabilityGradeText.grade-high{ color: var(--sig-green); }
+html[data-theme="dark"] .reliabilityGradeText.grade-medium{ color: var(--sig-amber); }
+html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: var(--sig-red); }
+
+.fallbackModeBadge{
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.fallbackModeBadge-sql{ color: var(--sig-green); border-color: var(--sig-green); }
+
+.alertsClassCardGatedBadge{
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+/* ── C-3. 표 행 강조 제거: 행 배경 대신 첫 셀 굵기 + 배지로 표현 ──────── */
+.meRowFlagged{ background: none; }
+.meRowFlagged td:first-child{ font-weight: 700; }
+.meRowFlagged td{ color: var(--text-primary); font-weight: 400; }
+
+/* ── D. 카드 3단계 위계 ──────────────────────────────────────────────── */
+.panel-primary{
+  background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--ink);
+  border-radius: var(--radius-panel); padding: 16px 18px;
+}
+.panel{
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-panel); padding: 14px 16px;
+}
+.panel-quiet{
+  background: transparent; border: 1px solid var(--line-soft);
+  border-radius: var(--radius-panel); padding: 12px 14px;
+}
+/* 기존 .resultCard가 이미 위계 2(분석 패널)의 시각 규율(흰 패널 + 1px
+   선 + 4px radius + 그림자 없음)과 일치하므로, 위계 1/3만 명시적으로
+   변형한다 -- SUMMARY/판정 결과 카드는 상단 굵은 선, 계측 큐 카드는
+   옅은 테두리 + 투명 배경. */
+.resultCard.panel-primary,
+.resultCard.alertsClassSection{
+  border-top: 2px solid var(--ink);
+}
+.resultCard.panel-quiet,
+.resultCard.measurementExpansionCard,
+.resultCard.measurementExpansionCollapsed{
+  background: transparent;
+  border-color: var(--line-soft);
+}
+
+/* ── E. 근거 밴드: 모델 추정치 아래 동일한 구간 트랙 (3곳 공용) ──────── */
+.evidence-band .track{ position: relative; height: 3px; background: var(--line); }
+.evidence-band .band{ position: absolute; top: 0; bottom: 0; background: var(--inferred); }
+.evidence-band .band-measured{ position: absolute; top: 0; bottom: 0; background: var(--measured); }
+.evidence-band .tick{ position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--sig-amber); }
+.evidence-band .lab{
+  display: flex; justify-content: space-between;
+  font-family: var(--font-data); font-size: 9.5px; color: var(--text-muted); margin-top: 3px;
+}
+.evidence-band.mini{ width: 96px; }
+.evidence-band.mini .lab{ display: none; }
+
+/* 보정 §I-1: 계측 우선순위의 "수율 기여" 0-채움 바는 근거 밴드가 아니다
+   -- "어디부터 어디까지 불확실한가"(구간, 양끝이 열림)가 아니라 "얼마나
+   찼는가"(진행률, 0에서 시작)를 말하므로 별도 클래스로 분리했다. tick을
+   쓰지 않고, 트랙 자체가 0-fill 스타일로 다르게 읽히도록 border-radius를
+   남겨 "진행 바"라는 인상을 유지한다. */
+.contribution-bar{ width: 96px; }
+.contribution-bar .track{ position: relative; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.contribution-bar .fill{ position: absolute; top: 0; bottom: 0; left: 0; background: var(--inferred); border-radius: 2px; }
+
+/* 유의 인자 표 이탈률 미니 밴드(위치 3, 보정 §I-2 확인) -- 트랙(기준 =
+   모델이 만든 권장구간 경계)은 이미 위 .evidence-band .track에서
+   var(--line)로 중립, 채움(실측 in_range 카운트)은 .band-measured에서
+   var(--measured) -- 하이브리드 규율이 이미 맞게 분리돼 있어 별도
+   수정 없음. */
+.factorDeviationBand .track{ width: 96px; }
+
+/* ── C-2. 트리맵: FDR 미통과 셀 중립색 + n<30 빗금 ─────────────────── */
+/* FDR 미통과(!data.significant) 타일은 inline background가 아예
+   비워지므로(shouldColor=false), 기본 배경이 없으면 카드 흰 배경에
+   묻혀 "칠해지지 않았다"는 사실 자체가 안 보인다 -- 눈에 보이는
+   중립색을 기본값으로 깐다. */
+.monitoringTreemapTile{ background: var(--surface-tertiary); }
+.monitoringTreemapTile.insufficientN{
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-tertiary) 0 6px,
+    var(--surface-secondary) 6px 12px
+  );
+  color: var(--text-secondary);
+}
+html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-secondary); }
+.monitoringTreemapCaption{ font-family: var(--font-data); font-size: 10.5px; }
+
+/* ── F. 버튼: 테두리 컨트롤 + 눌림 피드백 ───────────────────────────── */
+.button{
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--radius-control);
+  min-height: 26px;
+  padding: 0 11px;
+  font: 500 11.5px/1 var(--font-ui);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  transition: transform 160ms cubic-bezier(.23,1,.32,1), border-color 160ms ease, background-color 160ms ease;
+}
+.button.primary{ background: var(--measured); color: #fff; border-color: var(--measured); }
+.button.secondary{ background: var(--panel); color: var(--text); border-color: var(--line); }
+.button:active:not(:disabled){ transform: scale(.97); }
+@media (hover: hover) and (pointer: fine){
+  .button:hover:not(:disabled){ border-color: var(--text-muted); }
+  .button.primary:hover:not(:disabled){ border-color: var(--measured); background: var(--accent-hover); }
+}
+.button:disabled{ opacity: .48; }
+
+/* ── G. 사이드바: ink 배경 + 좌측 인디케이터 + 하단 상태 표기 ──────── */
+/* The floating glass sidebar card's actual visible material lives on
+   .sidebarSurface (see the dashboard-shell architecture comment above),
+   not on the .sidebar positioning shell itself -- retint that surface,
+   not the shell, or the ink color would bleed into the shell's margin
+   gap around the rounded card instead of filling it. */
+.sidebarSurface{ background: var(--ink); }
+html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
+.shellLogoBlockTitle{ font-family: var(--font-data); letter-spacing: .01em; }
+.sidebar .navigationItem.active{
+  background: transparent;
+  border-color: transparent;
+  box-shadow: inset 2px 0 0 #fff;
+}
+.sidebar .railNavItem.active{ background: transparent; box-shadow: inset 2px 0 0 #fff; }
+.sidebarStatus{
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 2px 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: var(--radius-panel);
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: rgba(255, 255, 255, .56);
+}
+.sidebarStatusRow{ display: flex; align-items: center; gap: 6px; text-transform: uppercase; }
+.sidebarStatusDot{
+  width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--sig-green);
+}
+.sidebarStatusDot.offline{ background: var(--text-muted); }
+.sidebar.collapsed .sidebarStatus{ display: none; }

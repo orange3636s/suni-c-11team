@@ -797,7 +797,7 @@ function RootCauseContent() {
   return (
     <DashboardShell activeItem="원인 분석">
       <section className="uploadIntro pageHeading">
-        <span className="eyebrow">ROOT CAUSE</span>
+        <span className="eyebrow">인자 진단</span>
         <h1>원인 분석</h1>
         {/* 지시서 U-1: 기능 안내 문구(계측 확대 시 기대 효과…)는 삭제했다
             (이전 지시서 G의 삭제 기준 -- 기능 설명이지 수치 정보가 아니다).

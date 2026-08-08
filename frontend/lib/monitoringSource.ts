@@ -47,6 +47,11 @@ export type SignificantFactorDetail = {
   confidenceTier: ConfidenceTier | null;
   rangeText: string | null;
   deviationText: string | null;
+  // HP-HMI 근거 밴드용 원시 이탈률(0-100) -- deviationText가 "이탈 N%"
+  // 문구일 때만 값이 있다("계측 N%" 저표본 대체 문구일 때는 다른
+  // 지표라 null). deviationText와 별도 필드로 둔 것은 표시 문구를
+  // 파싱하지 않고 이미 계산된 값을 그대로 전달하기 위해서다.
+  deviationPct: number | null;
   relationShape: RelationShape | null;
   optimalCenter: number | null;
   unknownConfigCount: number;
@@ -61,6 +66,7 @@ function emptyFactorDetail(target: string, item: ParetoRankingItem | undefined):
     confidenceTier: item?.confidence_tier ?? null,
     rangeText: null,
     deviationText: null,
+    deviationPct: null,
     relationShape: null,
     optimalCenter: null,
     unknownConfigCount: 0,
@@ -82,7 +88,7 @@ async function buildSignificantFactor(
     return {
       target, feature: item.feature, kind: item.kind, step: item.step,
       confidenceTier: item.confidence_tier, rangeText: null, deviationText: null,
-      relationShape: null, optimalCenter: null, unknownConfigCount: 0,
+      deviationPct: null, relationShape: null, optimalCenter: null, unknownConfigCount: 0,
     };
   }
 
@@ -100,11 +106,13 @@ async function buildSignificantFactor(
 
     const measurementRatePct = totalWafers ? (data.n / totalWafers) * 100 : null;
     let deviationText: string | null = null;
+    let deviationPct: number | null = null;
     if (measurementRatePct != null && measurementRatePct < LOW_MEASUREMENT_RATE_PCT) {
       deviationText = `계측 ${measurementRatePct.toFixed(1)}%`;
     } else if (data.points.length > 0) {
       const outCount = data.points.filter((p) => !p.in_range).length;
-      deviationText = `이탈 ${((outCount / data.points.length) * 100).toFixed(0)}%`;
+      deviationPct = (outCount / data.points.length) * 100;
+      deviationText = `이탈 ${deviationPct.toFixed(0)}%`;
     }
 
     // 이 인자가 속한 스텝의 Config만 본다(다른 스텝 Config가 섞이면
@@ -118,7 +126,7 @@ async function buildSignificantFactor(
 
     return {
       target, feature: item.feature, kind: item.kind, step: item.step,
-      confidenceTier: item.confidence_tier, rangeText, deviationText,
+      confidenceTier: item.confidence_tier, rangeText, deviationText, deviationPct,
       relationShape: data.relation_shape, optimalCenter: data.optimal_center,
       unknownConfigCount: unknownConfigs.size,
     };
@@ -127,7 +135,7 @@ async function buildSignificantFactor(
     return {
       target, feature: item.feature, kind: item.kind, step: item.step,
       confidenceTier: item.confidence_tier, rangeText: null, deviationText: null,
-      relationShape: null, optimalCenter: null, unknownConfigCount: 0,
+      deviationPct: null, relationShape: null, optimalCenter: null, unknownConfigCount: 0,
     };
   }
 }

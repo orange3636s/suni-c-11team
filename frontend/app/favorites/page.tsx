@@ -63,7 +63,7 @@ export default function FavoritesPage() {
   return (
     <DashboardShell activeItem="즐겨찾기">
       <section className="uploadIntro pageHeading">
-        <span className="eyebrow">FAVORITES</span>
+        <span className="eyebrow">저장된 그래프</span>
         <h1>즐겨찾기</h1>
         <p>
           원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.

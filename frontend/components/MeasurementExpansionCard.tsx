@@ -58,7 +58,7 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
     <section className="resultCard measurementExpansionCard">
       <div className="sectionHeading compact">
         <div>
-          <span className="sectionLabel">MEASUREMENT</span>
+          <span className="sectionLabel">계측 우선순위</span>
           <h2>계측 확대 제안</h2>
         </div>
       </div>
@@ -105,7 +105,7 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
               const isMaintain = priority.recommendation === "유지";
               return (
                 <tr key={`${priority.feature}-${priority.target}`} className={isMaintain ? "meRowMuted" : "meRowFlagged"}>
-                  <td>{priority.feature} → {priority.target}</td>
+                  <td className="data">{priority.feature} → {priority.target}</td>
                   <td className={`numCol${isLowest ? " meRateLowest" : ""}`}>{formatRate(priority.measurement_rate)}</td>
                   <td>
                     {/* 사유(reason)는 배지 툴팁으로 옮긴다 (spec §B-2) -- 열이
@@ -120,7 +120,26 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
                   </td>
                   <td className="meReasonCell">{expectedEffectText(priority.reason, priority.additional_judged)}</td>
                   <td className="numCol">+{priority.additional_judged.toLocaleString()}장</td>
-                  <td className="numCol">{formatYieldPp(priority.yield_contribution_pp)}</td>
+                  <td className="numCol">
+                    {formatYieldPp(priority.yield_contribution_pp)}
+                    {/* 보정 §I-1: 이건 근거 밴드가 아니라 진행 바다 --
+                        "어디부터 어디까지 불확실한가"(구간)가 아니라
+                        "얼마나 찼는가"(0부터 채움)를 말하므로, 근거
+                        밴드(.evidence-band)와 다른 클래스(.contribution-bar)를
+                        쓴다 -- 두 개념을 같은 클래스로 섞지 않는다. 실제
+                        lo/hi 구간은 API가 점추정만 주므로 만들어내지
+                        않는다. 스케일은 고정(0~3%p)한다. tick은 쓰지 않는다. */}
+                    {priority.yield_contribution_pp != null && (
+                      <div className="contribution-bar">
+                        <div className="track">
+                          <div
+                            className="fill"
+                            style={{ width: `${Math.min(100, Math.max(0, (priority.yield_contribution_pp / 3) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               );
             })}

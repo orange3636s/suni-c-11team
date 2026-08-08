@@ -55,9 +55,11 @@ const BOX_JITTER_STD = 0.1;
 // (~35px, e.g. "-123.4") + 8px tick-gap + the title text + its own 8px
 // gap, with a few px of slack.
 const MARGIN = { top: 36, right: 28, bottom: 46, left: 76 };
-// Matches .scatterTickLabel's font-size (app/globals.css) -- used to
-// measure candidate tick labels for the overlap-backoff pass (spec §8).
-const TICK_FONT = "10.5px system-ui, -apple-system, sans-serif";
+// Matches .scatterTickLabel's font (app/globals.css) -- used to measure
+// candidate tick labels for the overlap-backoff pass (spec §8). HP-HMI
+// 전환으로 .scatterTickLabel이 등폭(var(--font-data))이 됐으므로, 폭
+// 측정도 같은 폰트로 해야 충돌 판정이 실제 렌더 폭과 어긋나지 않는다.
+const TICK_FONT = "10.5px ui-monospace, Menlo, monospace";
 // Y tick labels are horizontal text stacked vertically, so their collision
 // dimension is line height, not width -- a fixed estimate for 10.5px text.
 const Y_TICK_LABEL_HEIGHT_PX = 14;
@@ -85,7 +87,8 @@ const LABEL_ROW_PRIORITY: Record<LabelRowKey, number> = {
 };
 // .scatterLineLabel의 font-weight/font-size와 맞춘 측정용 폰트 문자열
 // (spec §C-4 폭 계산에 실제 렌더 폭을 써야 축약 여부 판단이 정확하다).
-const LABEL_FONT = "700 10px system-ui, -apple-system, sans-serif";
+// HP-HMI 전환으로 .scatterLineLabel이 등폭이 됐으므로 측정 폰트도 맞춘다.
+const LABEL_FONT = "700 10px ui-monospace, Menlo, monospace";
 // 이 폭 미만이면 라벨을 축약형으로 바꾼다 (spec §C-4: "차트 폭 600px
 // 미만이면 축약형을 쓴다").
 const COMPACT_LABEL_CHART_WIDTH = 600;
@@ -332,20 +335,31 @@ function categoryPositionForValue(value: number, bins: BoxBin[]): number {
   return bins.length;
 }
 
+// HP-HMI 색 규율(지시서 §H-1) -- 경고선은 이상 임계값이므로 신호색
+// (--sig-amber)을 쓴다. 참조선 종류·개수·계산·라벨 문구는 그대로다,
+// 색만 바꿨다.
 const LINE_COLOR: Record<string, { light: string; dark: string }> = {
-  warning: { light: "#0E306D", dark: "#7BA3E8" },
+  warning: { light: "#B8791A", dark: "#E4A23E" },
 };
-// SPC/ML 방식 전환 (spec §3-4) -- 권장 구간 밴드/경계선/최적 중심/Box Plot
-// 구간-내 박스 테두리가 전부 이 한 쌍을 공유한다. SPC는 사전 알람 로그의
-// 기존 초록 토큰(#0D9668/#34D399, globals.css --band-inrec-*)과 동일해 두
-// 화면이 시각적으로 일치하고, ML은 산점도의 파란 점(#1D4ED8/#60A5FA)·빨간
-// 트렌드선(#DC2626)과 충분히 구분되도록 고른 보라(#9333EA/#C084FC)다.
+// SPC/ML 방식 전환 (spec §3-4) -- 권장 구간 밴드/경계선/Box Plot 구간-내
+// 박스 테두리가 이 한 쌍을 공유한다. HP-HMI 색 규율(§H-1) 적용 후:
+// 권장 구간은 "정상 상태"(이상 신호가 아님)라 SPC/ML 모두 같은 무채색
+// 하나로 통일했다 -- 이전에는 초록(SPC)/보라(ML)로 방식을 구분했지만,
+// 신호색은 이상 상태에만 쓴다는 규율상 방식 구분에 색상을 쓸 이유가
+// 없다. 방식 구분은 여전히 텍스트 라벨("SPC"/"ML")이 담당한다.
 const METHOD_COLOR: Record<WindowMethod, { light: string; dark: string }> = {
-  spc: { light: "#0D9668", dark: "#34D399" },
-  ml: { light: "#9333EA", dark: "#C084FC" },
+  spc: { light: "#59636F", dark: "#9097A3" },
+  ml: { light: "#59636F", dark: "#9097A3" },
 };
 const METHOD_LABEL: Record<WindowMethod, string> = { spc: "SPC", ml: "ML" };
-const TREND_COLOR = { light: "#DC2626", dark: "#F87171" };
+// 최적 중심(optimal_center)은 이전엔 METHOD_COLOR를 함께 썼지만, 권장
+// 구간(위)과 최적 중심은 이제 서로 다른 무채색 톤이어야 한다(§H-1: 최적
+// 중심 = --text, 권장 구간 = 옅은 중립 배경) -- 그래서 별도 상수로
+// 분리했다.
+const OPTIMAL_CENTER_COLOR = { light: "#141A22", dark: "#F5F5F7" };
+// 구간 평균 불량률 곡선은 모델이 만든 추정치이지 실측값이 아니므로
+// --inferred로 (§H-1, §B-2 계측값/추정값 색 분리 원칙과 동일).
+const TREND_COLOR = { light: "#7C8AA5", dark: "#97A3B8" };
 
 // 점 반지름(style.size)의 diameter 기준 1.6배 (spec §B-1: "점이 4px이면
 // 삼각형 한 변 6.5px" -- 점보다 조금 큰 정도로, 주변 점을 가리지 않는다).
@@ -354,16 +368,22 @@ const ALARM_TRIANGLE_RATIO = 1.6;
 // 겹치면 심각이 가장 위 (spec §B-2).
 const ALARM_GRADE_Z: Record<"심각" | "위험" | "주의", number> = { 심각: 3, 위험: 2, 주의: 1 };
 
-// Box-plot-only palette (spec §3-2/§3-3) -- box border color depends on
-// whether the bin's x-mean sits inside the recommended range (in which
-// case it takes the active method's color, see METHOD_COLOR), everything
-// else is fixed per element.
+// Box-plot 색 규칙 (보정 지시서 §I-3 -- H 섹션 표에 없어 미지정이던 부분을
+// 채운다). 상자 테두리/수염은 이제 "권장구간 안쪽인지"와 무관하게 항상
+// 중립(var(--line))이다 -- 그 조건부 채색(methodColor vs boxOut)은
+// 지웠다. 상자 자체는 옅게 채운다(8% var(--measured), 아래 렌더 지점의
+// fillOpacity). 중앙값은 무채색(var(--text)). 이상치는 통계적
+// 이상치(IQR)와 공정 경고(경고선 밖)가 다른 개념이라 -- 경고선 밖일
+// 때만 outlier(신호색), 그 외엔 outlierNeutral을 쓴다(렌더 지점에서
+// zoneOf로 분기).
+const BOX_LINE_COLOR = { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.14)" }; // var(--line)
+const BOX_FILL_COLOR = { light: "#0E306D", dark: "#7BA3E8" }; // var(--measured), 8% 채움으로만 씀
 const BOX_COLOR = {
-  boxOut: { light: "#0E306D", dark: "#7BA3E8" },
-  median: { light: "#DC2626", dark: "#F87171" },
-  whisker: { light: "#0E306D", dark: "#7BA3E8" },
+  median: { light: "#141A22", dark: "#F5F5F7" }, // var(--text)
+  whisker: { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.14)" }, // var(--line)
   inlier: { light: "#2563EB", dark: "#60A5FA" },
-  outlier: { light: "#DC2626", dark: "#F87171" },
+  outlier: { light: "#C0392B", dark: "#E88A7D" }, // var(--sig-red) -- 경고선 밖 이상치만
+  outlierNeutral: { light: "#59636F", dark: "#9097A3" }, // 경고선 안쪽 통계적 이상치
 };
 
 // Box Plot legend (spec §5) -- small presentational swatches drawn as
@@ -547,15 +567,21 @@ function zoneOf(point: ScatterPoint, recommendedRangeValue: [number, number] | n
 // inside the amber shaded band plus its own border (see OUT_CONTROL_BORDER)
 // rather than by being darkest. Dark-theme opacity is +0.1 over light's
 // (same alpha reads fainter on a dark background).
+// HP-HMI 색 규율(§H-2) -- 정상 구간(권장 구간 안/밖 모두 "정상")은
+// --measured 계열의 농도 차이로만 구분하고 신호색을 쓰지 않는다.
+// 관리한계 밖(out_control)만 실제 이상 신호라 --sig-red로 바꿨다 --
+// 3단계 zone 인코딩 자체(누가 진하고 누가 연한지, 크기 차이)는 그대로,
+// 색상 값만 교체했다.
 const ZONE_STYLE: Record<PointZone, { light: string; dark: string; size: number; opacityLight: number; opacityDark: number }> = {
-  in_recommended: { light: "#1D4ED8", dark: "#93C5FD", size: 4, opacityLight: 0.75, opacityDark: 0.85 },
-  in_control: { light: "#60A5FA", dark: "#5B8DEF", size: 4.5, opacityLight: 0.65, opacityDark: 0.75 },
-  out_control: { light: "#93C5FD", dark: "#3E6FB8", size: 5.5, opacityLight: 0.9, opacityDark: 1 },
+  in_recommended: { light: "#0E306D", dark: "#7BA3E8", size: 4, opacityLight: 0.75, opacityDark: 0.85 },
+  in_control: { light: "#5B7099", dark: "#9FB4D9", size: 4.5, opacityLight: 0.65, opacityDark: 0.75 },
+  out_control: { light: "#C0392B", dark: "#E88A7D", size: 5.5, opacityLight: 0.9, opacityDark: 1 },
 };
 
 // 관리한계 밖 점만 받는 1px 테두리 -- 가장 연한 채움색이라도 테두리로
-// 형태가 드러나게 한다 (spec §3).
-const OUT_CONTROL_BORDER = { light: "#1E3A8A", dark: "#DBEAFE" };
+// 형태가 드러나게 한다 (spec §3). out_control이 이제 --sig-red라
+// 테두리도 같은 계열의 더 진한 톤으로 맞춘다.
+const OUT_CONTROL_BORDER = { light: "#7A1F16", dark: "#FBE1DC" };
 
 function colorForPoint(
   point: ScatterPoint,
@@ -1056,11 +1082,11 @@ export default function ScatterChart({
     if (displayedOptimalCenter != null) {
       lines.push({
         key: "optimal", value: displayedOptimalCenter,
-        color: methodColor, dash: "4 3", strokeWidth: 1.9, greyedOut: false,
+        color: OPTIMAL_CENTER_COLOR, dash: "4 3", strokeWidth: 1.9, greyedOut: false,
       });
     }
     return lines;
-  }, [warningLo, warningHi, displayedOptimalCenter, methodColor]);
+  }, [warningLo, warningHi, displayedOptimalCenter]);
 
   // 차트 폭이 좁으면 라벨을 축약형(값만)으로 바꾼다 (spec §C-4). 이 폭
   // 미만에서는 권장 구간 요약 라벨도 아예 빼고 밴드 안쪽 경계값 라벨에
@@ -1075,12 +1101,17 @@ export default function ScatterChart({
     for (const line of displayLines) {
       if (!visibleGroups.has(lineGroupOf(line))) continue;
       const name = line.key === "optimal" ? "최적 중심" : "경고선";
+      // 보정 §I-5: 최적 중심은 SPC/ML 방식에 따라 값 자체가 달라지므로
+      // (권장 구간 라벨처럼) 방식을 라벨에 표기한다 -- 색으로는 더 이상
+      // 구분하지 않으니(§H-1) 텍스트가 유일한 구분 수단이다. 경고선은
+      // 방식과 무관해 표기하지 않는다.
+      const methodSuffix = line.key === "optimal" ? ` (${METHOD_LABEL[activeMethod]})` : "";
       const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
       items.push({
         key: line.key,
         rowKey: line.key === "optimal" ? "optimal_center" : "warning_line",
         x: plotX(line.value),
-        full: `${name} ${formatNum1(line.value)}`,
+        full: `${name} ${formatNum1(line.value)}${methodSuffix}`,
         short: formatNum1(line.value),
         color,
       });
@@ -1614,17 +1645,12 @@ export default function ScatterChart({
                 );
               })
             : boxBins.map((bin) => {
-                const inRecommended = recommendedRangeValue != null && bin.xMean >= recommendedRangeValue[0] && bin.xMean <= recommendedRangeValue[1];
-                const boxColor = theme === "dark"
-                  ? (inRecommended ? methodColor.dark : BOX_COLOR.boxOut.dark)
-                  : (inRecommended ? methodColor.light : BOX_COLOR.boxOut.light);
+                // 보정 §I-3: 상자 테두리·수염은 이제 권장구간 안/밖과
+                // 무관하게 항상 중립(var(--line)) 하나다.
+                const boxColor = theme === "dark" ? BOX_LINE_COLOR.dark : BOX_LINE_COLOR.light;
+                const boxFill = theme === "dark" ? BOX_FILL_COLOR.dark : BOX_FILL_COLOR.light;
                 const whiskerColor = theme === "dark" ? BOX_COLOR.whisker.dark : BOX_COLOR.whisker.light;
                 const medianColor = theme === "dark" ? BOX_COLOR.median.dark : BOX_COLOR.median.light;
-                // Outliers are always this fixed red, regardless of Color By
-                // (spec §3-3): a hollow ring means "outside the whisker",
-                // a statistical position independent of whichever coloring
-                // scheme is currently selected.
-                const outlierColor = theme === "dark" ? BOX_COLOR.outlier.dark : BOX_COLOR.outlier.light;
                 const centerX = catScale(bin.index + 1);
                 const q1Y = yScale(bin.q1);
                 const q3Y = yScale(bin.q3);
@@ -1659,6 +1685,14 @@ export default function ScatterChart({
                           isHovered,
                           isSelected,
                         );
+                        // 보정 §I-3: 통계적 이상치(IQR 기준, member.isOutlier)와
+                        // 공정 경고(경고선 기준)는 다른 개념이다 -- 경고선 밖일
+                        // 때만(zoneOf가 산점도와 같은 기준으로 판정) 신호색을
+                        // 쓰고, 그 외 통계적 이상치는 무채색으로 남긴다.
+                        const beyondWarning = zoneOf(member.point, recommendedRangeValue) === "out_control";
+                        const outlierColor = beyondWarning
+                          ? (theme === "dark" ? BOX_COLOR.outlier.dark : BOX_COLOR.outlier.light)
+                          : (theme === "dark" ? BOX_COLOR.outlierNeutral.dark : BOX_COLOR.outlierNeutral.light);
                         return (
                           <circle
                             key={member.point.lot_wafer_id ?? `${bin.index}-out-${mi}`}
@@ -1696,20 +1730,23 @@ export default function ScatterChart({
                         stay visible (spec §3-2). Hover is handled by the
                         shared plot overlay rect (see findBoxColumnAt), not
                         by listeners here -- the overlay paints on top of
-                        every plot element and would swallow them anyway. */}
+                        every plot element and would swallow them anyway.
+                        보정 §I-3: 8% var(--measured) 옅은 채움을 추가했다 --
+                        fillOpacity가 낮아 밑에 깔린 jitter 점은 계속 보인다. */}
                     <rect
                       x={centerX - boxWidthPx / 2}
                       y={boxTop}
                       width={boxWidthPx}
                       height={Math.max(boxBottom - boxTop, 0.5)}
-                      fill="none"
+                      fill={boxFill}
+                      fillOpacity={0.08}
                       stroke={boxColor}
                       strokeWidth={1.6}
                     />
                     <line
                       x1={centerX - boxWidthPx / 2} x2={centerX + boxWidthPx / 2}
                       y1={medianY} y2={medianY}
-                      stroke={medianColor} strokeWidth={2.2}
+                      stroke={medianColor} strokeWidth={1.5}
                       style={{ pointerEvents: "none" }}
                     />
                   </g>
@@ -1958,7 +1995,7 @@ export default function ScatterChart({
         {view === "box" && (
           <div className="scatterLegendRow">
             <LegendCard
-              icon={<IconBoxWhisker boxColor={theme === "dark" ? methodColor.dark : methodColor.light} medianColor={theme === "dark" ? BOX_COLOR.median.dark : BOX_COLOR.median.light} />}
+              icon={<IconBoxWhisker boxColor={theme === "dark" ? BOX_LINE_COLOR.dark : BOX_LINE_COLOR.light} medianColor={theme === "dark" ? BOX_COLOR.median.dark : BOX_COLOR.median.light} />}
               label="상자 (Q1~Q3)"
             />
             <LegendCard
@@ -2000,8 +2037,8 @@ export default function ScatterChart({
           />
           {showOptimalLegendCard && (
             <LegendCard
-              icon={<IconDashedLine color={theme === "dark" ? methodColor.dark : methodColor.light} dotted />}
-              label={optimalAvailable ? `최적 중심  ${formatNum1(displayedOptimalCenter as number)}` : "최적 중심"}
+              icon={<IconDashedLine color={theme === "dark" ? OPTIMAL_CENTER_COLOR.dark : OPTIMAL_CENTER_COLOR.light} dotted />}
+              label={optimalAvailable ? `최적 중심  ${formatNum1(displayedOptimalCenter as number)} (${METHOD_LABEL[activeMethod]})` : "최적 중심"}
               desc={optimalAvailable ? "불량률이 가장 낮은 지점" : optimalUnavailableReason}
               onClick={(event) => toggleGroup("optimal", event)}
               active={visibleGroups.has("optimal") && optimalAvailable}

@@ -6,6 +6,7 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
+import EvidenceBand from "@/components/EvidenceBand";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
@@ -92,60 +93,6 @@ function classifyYieldStatus(predLo: number, predHi: number, target: number): { 
 // 맞추지 않는다.
 const YIELD_GAP_SCALE_MIN = 80;
 const YIELD_GAP_SCALE_MAX = 95;
-// F-2: 이 미만으로 두 틱 라벨의 x좌표(%)가 가까우면 텍스트가 겹쳐
-// "90.791.0"처럼 붙어 보인다 -- 실측(스크린샷)한 겹침 사례가 2%p
-// 간격이었으므로, 4~5자 라벨 폭을 감안해 여유 있게 잡는다.
-const TICK_OVERLAP_THRESHOLD_PCT = 7;
-
-function YieldGapBar({ predLo, predHi, target }: { predLo: number; predHi: number; target: number }) {
-  const span = YIELD_GAP_SCALE_MAX - YIELD_GAP_SCALE_MIN;
-  // 스케일(80~95)은 고정 -- 관측값에 맞춰 자동 조정하면 갱신마다 축이
-  // 흔들려 없는 변화를 만든다. 범위 밖 값은 경계에 클램프하되, 아래
-  // 틱 라벨에 화살표(←/→)를 붙여 "표시 위치 ≠ 실제 값"임을 알린다.
-  const pctOf = (value: number) => Math.min(100, Math.max(0, ((value - YIELD_GAP_SCALE_MIN) / span) * 100));
-  const bandLoPct = pctOf(predLo);
-  const bandHiPct = pctOf(predHi);
-  const targetPct = pctOf(target);
-  const rawTicks = Array.from(
-    new Set([YIELD_GAP_SCALE_MIN, predLo, predHi, target, YIELD_GAP_SCALE_MAX].map((v) => Math.round(v * 10) / 10)),
-  ).sort((a, b) => a - b);
-
-  // 인접한 라벨이 임계 미만으로 가까우면 두 줄로 번갈아 배치한다(생략하지
-  // 않는다 -- 셋 다 실제 값이라 하나를 지우면 정보 손실이다).
-  const lastRowPct: [number, number] = [-Infinity, -Infinity];
-  const ticks = rawTicks.map((value) => {
-    const pct = pctOf(value);
-    const row = pct - lastRowPct[0] >= TICK_OVERLAP_THRESHOLD_PCT ? 0 : pct - lastRowPct[1] >= TICK_OVERLAP_THRESHOLD_PCT ? 1 : 0;
-    lastRowPct[row] = pct;
-    const outOfRange = value < YIELD_GAP_SCALE_MIN ? "low" : value > YIELD_GAP_SCALE_MAX ? "high" : null;
-    return { value, pct, row, outOfRange };
-  });
-
-  return (
-    <div className="yieldGapBar">
-      <div className="yieldGapBarTrack">
-        <div className="yieldGapBarBand" style={{ left: `${bandLoPct}%`, width: `${Math.max(bandHiPct - bandLoPct, 0.6)}%` }} />
-        <div className="yieldGapBarBoundary" style={{ left: `${bandLoPct}%` }} />
-        <div className="yieldGapBarBoundary" style={{ left: `${bandHiPct}%` }} />
-        <div className="yieldGapBarTarget" style={{ left: `${targetPct}%` }} />
-        <span className="yieldGapBarTargetLabel" style={{ left: `${targetPct}%` }}>목표</span>
-      </div>
-      <div className="yieldGapBarTicks">
-        {ticks.map((tick) => (
-          <span
-            key={tick.value}
-            className={tick.row === 1 ? "yieldGapBarTick yieldGapBarTickRow2" : "yieldGapBarTick"}
-            style={{ left: `${tick.pct}%` }}
-          >
-            {tick.outOfRange === "low" && "← "}
-            {tick.value.toFixed(1)}
-            {tick.outOfRange === "high" && " →"}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export default function MonitoringPage() {
   // 지시서 K-3: 원인 분석·학습 결과가 그대로면(무효화 조건 ①②가 안
@@ -264,7 +211,7 @@ export default function MonitoringPage() {
             <section className="resultCard">
               <div className="sectionHeading compact">
                 <div>
-                  <span className="sectionLabel">MEASUREMENT</span>
+                  <span className="sectionLabel">계측 권고</span>
                   <h2>추가 계측 권고</h2>
                 </div>
               </div>
@@ -300,10 +247,10 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
     snapshot.dataset != null && snapshot.alarmsRecord != null && snapshot.alarmsRecord.eval_dataset !== snapshot.dataset;
 
   return (
-    <section className="resultCard">
+    <section className="resultCard panel-primary">
       <div className="sectionHeading compact">
         <div>
-          <span className="sectionLabel">SUMMARY</span>
+          <span className="sectionLabel">판단 요약</span>
           <h2>공정 현황 요약</h2>
         </div>
       </div>
@@ -327,7 +274,13 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
               <strong className={`reliabilityGradeText grade-${yieldStatus.status}`}>{yieldStatus.icon} {yieldStatus.label}</strong>
             )}
           </div>
-          <YieldGapBar predLo={queue.yieldSummary.predLo} predHi={queue.yieldSummary.predHi} target={targetYield} />
+          <EvidenceBand
+            lo={queue.yieldSummary.predLo}
+            hi={queue.yieldSummary.predHi}
+            target={targetYield}
+            scaleMin={YIELD_GAP_SCALE_MIN}
+            scaleMax={YIELD_GAP_SCALE_MAX}
+          />
         </div>
       )}
 
@@ -374,14 +327,27 @@ function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
   }
   return (
     <tr>
-      <td>{factor.target}</td>
+      <td className="data">{factor.target}</td>
       <td>
-        <Link href={`/root-cause?target=${encodeURIComponent(factor.target)}&feature=${encodeURIComponent(factor.feature)}`}>
+        <Link className="data" href={`/root-cause?target=${encodeURIComponent(factor.target)}&feature=${encodeURIComponent(factor.feature)}`}>
           {factor.feature}
         </Link>
       </td>
-      <td>{factor.rangeText ?? "-"}</td>
-      <td className="numCol">{factor.deviationText ?? "-"}</td>
+      <td className="data">{factor.rangeText ?? "-"}</td>
+      <td className="numCol">
+        {factor.deviationText ?? "-"}
+        {/* 근거 밴드 위치 3 (spec §E) -- "이탈 N%"일 때만 표시한다.
+            "계측 N%"(저표본 대체 문구)는 이탈률이 아닌 다른 지표라
+            같은 트랙에 얹으면 오독을 만든다. 실측된 이탈 비율이라
+            --inferred가 아니라 --measured 계열로 채운다(§B-2 원칙). */}
+        {factor.deviationPct != null && (
+          <div className="evidence-band mini factorDeviationBand">
+            <div className="track">
+              <div className="band-measured" style={{ left: 0, width: `${Math.min(100, Math.max(0, factor.deviationPct))}%` }} />
+            </div>
+          </div>
+        )}
+      </td>
       <td>{factor.confidenceTier ? <ConfidenceBadge tier={factor.confidenceTier} /> : "-"}</td>
     </tr>
   );

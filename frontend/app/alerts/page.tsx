@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 import { DEFAULT_SENSITIVITY, DEFAULT_TARGET_YIELD, useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
+import EvidenceBand from "@/components/EvidenceBand";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import DatasetSelector from "@/components/DatasetSelector";
 import {
@@ -36,6 +37,12 @@ const RELIABILITY_GRADE_CLASS: Record<string, string> = { 높음: "high", 보통
 // 초기 행 수(HScrollTableBody의 --scroll-rows)일 뿐, 더 이상 렌더링 개수를
 // 제한하지 않는다. CSV 다운로드는 항상 alarmTable.sorted 전체를 쓴다.
 const ALARM_VISIBLE_ROWS = 7;
+
+// 보정 지시서 §I-1: 근거 밴드(EvidenceBand)는 행마다 자동으로 스케일을
+// 맞추면 행 간 비교가 안 되므로 알람 목록 전체에서 같은 축을 쓴다 --
+// 관측값에 맞춰 조정하지 않는다.
+const ALARM_YIELD_SCALE_MIN = 60;
+const ALARM_YIELD_SCALE_MAX = 100;
 
 /** spec §E-3 헤더 배지 -- 클릭하면 상세 패널이 열린다. */
 function ReliabilityBadge({
@@ -356,7 +363,7 @@ function AlertsContent() {
   return (
     <DashboardShell activeItem="알림 기록">
       <section className="uploadIntro pageHeading">
-        <span className="eyebrow">ALERT HISTORY</span>
+        <span className="eyebrow">알람 판정</span>
         <div className="pageHeadingTitleRow">
           <h1>알림 기록</h1>
           {reliability && (
@@ -432,7 +439,7 @@ function AlertsContent() {
       <section className="resultCard">
         <div className="sectionHeading compact">
           <div>
-            <span className="sectionLabel">ALARMS</span>
+            <span className="sectionLabel">알람 목록</span>
             <h2>알림 기록 ({gradeFilteredAlarmItems.length}건)</h2>
           </div>
           <div className="alertsAlarmListActions">
@@ -521,6 +528,7 @@ function AlertsContent() {
                           <AlarmRow
                             key={`${item.lot_wafer_id}-${index}`}
                             item={item}
+                            targetYield={targetYield}
                             onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
                             explainDisabled={!analysisDataset}
                           />
@@ -534,6 +542,7 @@ function AlertsContent() {
                     <AlarmCard
                       key={`card-${item.lot_wafer_id}-${index}`}
                       item={item}
+                      targetYield={targetYield}
                       onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
                       explainDisabled={!analysisDataset}
                     />
@@ -587,17 +596,32 @@ const ALARM_SORT_OPTIONS: SortOption<ClassifiedWafer>[] = [
 
 function AlarmRow({
   item,
+  targetYield,
   onExplain,
   explainDisabled,
 }: {
   item: ClassifiedWafer;
+  targetYield: number;
   onExplain: () => void;
   explainDisabled: boolean;
 }) {
   return (
     <tr>
       <td className="col-wafer colNoTruncate">{item.lot_wafer_id}</td>
-      <td className="numCol">{item.pred_lo.toFixed(1)} ~ {item.pred_hi.toFixed(1)}</td>
+      <td className="numCol">
+        {item.pred_lo.toFixed(1)} ~ {item.pred_hi.toFixed(1)}
+        {/* 보정 §I-1: 근거 밴드 위치 2 -- 진짜 lo/hi가 있는 이 표로
+            옮겼다. SUMMARY와 동일한 컴포넌트(EvidenceBand), 전 행이 같은
+            고정 축을 쓴다(행별 자동 스케일 금지). */}
+        <EvidenceBand
+          lo={item.pred_lo}
+          hi={item.pred_hi}
+          target={targetYield}
+          scaleMin={ALARM_YIELD_SCALE_MIN}
+          scaleMax={ALARM_YIELD_SCALE_MAX}
+          mini
+        />
+      </td>
       <td className="col-severity colNoTruncate">{item.grade && <GradeBadge grade={item.grade} />}</td>
       <td className="alarmReasonCell">{item.reason ?? "-"}</td>
       <td>{item.lot_id ?? "-"}</td>
@@ -608,10 +632,12 @@ function AlarmRow({
 
 function AlarmCard({
   item,
+  targetYield,
   onExplain,
   explainDisabled,
 }: {
   item: ClassifiedWafer;
+  targetYield: number;
   onExplain: () => void;
   explainDisabled: boolean;
 }) {
@@ -624,6 +650,14 @@ function AlarmCard({
       <div className="alarmCardMeta">
         예측 수율 {item.pred_lo.toFixed(1)} ~ {item.pred_hi.toFixed(1)}
         {item.lot_id && ` · ${item.lot_id}`}
+        <EvidenceBand
+          lo={item.pred_lo}
+          hi={item.pred_hi}
+          target={targetYield}
+          scaleMin={ALARM_YIELD_SCALE_MIN}
+          scaleMax={ALARM_YIELD_SCALE_MAX}
+          mini
+        />
       </div>
       <div className="alarmCardStatsRow">
         <span>{item.reason ?? "-"}</span>
@@ -738,12 +772,14 @@ function SensitivityField({
    §B 판정 결과 -- 5분류 카드.
    =================================================================== */
 
+// C-1: 정상·판별불가는 이상 신호가 아니라 분류이므로 무채색 -- 알람
+// 3등급(심각/위험/주의)만 신호색(ALARM_GRADE_COLOR)을 유지한다.
 const CLASS_COLOR: Record<ClassKey, string> = {
   심각: ALARM_GRADE_COLOR.심각,
   위험: ALARM_GRADE_COLOR.위험,
   주의: ALARM_GRADE_COLOR.주의,
-  정상: "#0D9668",
-  판별불가: "#9CA3AF",
+  정상: "var(--text-secondary)",
+  판별불가: "var(--text-secondary)",
 };
 const ALARM_CLASS_KEYS: ClassKey[] = ["심각", "위험", "주의"];
 
