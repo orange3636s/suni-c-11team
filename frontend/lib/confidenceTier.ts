@@ -14,7 +14,7 @@ export const TIER_LABEL: Record<ConfidenceTier, string> = {
 
 // 등급 배지 호버 설명.
 export const TIER_TOOLTIP: Record<ConfidenceTier, string> = {
-  strong: "부도율 변동의 10% 이상을 설명합니다. 조치의 우선 순위입니다.",
+  strong: "불량률 변동의 10% 이상을 설명합니다. 조치의 우선 순위입니다.",
   moderate: "5~10%를 설명합니다. 관계는 있지만 추가 확인이 필요합니다.",
   weak: "통계적 근거가 부족합니다. 조치 판단에 사용하지 마세요.",
   reference: "효과 크기가 기준(0.02)에 미치지 못합니다.",

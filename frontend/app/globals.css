@@ -10241,8 +10241,11 @@ html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-
   position: absolute; top: -18px; transform: translateX(-50%);
   font-size: 10.5px; font-weight: 700; color: var(--warning); white-space: nowrap;
 }
-.yieldGapBarTicks{ position: relative; height: 14px; margin-top: 4px; }
+.yieldGapBarTicks{ position: relative; height: 28px; margin-top: 4px; }
 .yieldGapBarTick{
   position: absolute; top: 0; transform: translateX(-50%);
   font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+/* F-2: 인접 라벨이 겹칠 만큼 가까우면 둘째 줄로 내려 겹침("90.791.0")을
+   피한다 -- 셋 다 실제 값이므로 생략 대신 두 줄로 나눈다. */
+.yieldGapBarTickRow2{ top: 14px; }

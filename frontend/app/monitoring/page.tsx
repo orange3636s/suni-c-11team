@@ -91,16 +91,34 @@ function classifyYieldStatus(predLo: number, predHi: number, target: number): { 
 // 맞추지 않는다.
 const YIELD_GAP_SCALE_MIN = 80;
 const YIELD_GAP_SCALE_MAX = 95;
+// F-2: 이 미만으로 두 틱 라벨의 x좌표(%)가 가까우면 텍스트가 겹쳐
+// "90.791.0"처럼 붙어 보인다 -- 실측(스크린샷)한 겹침 사례가 2%p
+// 간격이었으므로, 4~5자 라벨 폭을 감안해 여유 있게 잡는다.
+const TICK_OVERLAP_THRESHOLD_PCT = 7;
 
 function YieldGapBar({ predLo, predHi, target }: { predLo: number; predHi: number; target: number }) {
   const span = YIELD_GAP_SCALE_MAX - YIELD_GAP_SCALE_MIN;
+  // 스케일(80~95)은 고정 -- 관측값에 맞춰 자동 조정하면 갱신마다 축이
+  // 흔들려 없는 변화를 만든다. 범위 밖 값은 경계에 클램프하되, 아래
+  // 틱 라벨에 화살표(←/→)를 붙여 "표시 위치 ≠ 실제 값"임을 알린다.
   const pctOf = (value: number) => Math.min(100, Math.max(0, ((value - YIELD_GAP_SCALE_MIN) / span) * 100));
   const bandLoPct = pctOf(predLo);
   const bandHiPct = pctOf(predHi);
   const targetPct = pctOf(target);
-  const ticks = Array.from(
+  const rawTicks = Array.from(
     new Set([YIELD_GAP_SCALE_MIN, predLo, predHi, target, YIELD_GAP_SCALE_MAX].map((v) => Math.round(v * 10) / 10)),
   ).sort((a, b) => a - b);
+
+  // 인접한 라벨이 임계 미만으로 가까우면 두 줄로 번갈아 배치한다(생략하지
+  // 않는다 -- 셋 다 실제 값이라 하나를 지우면 정보 손실이다).
+  const lastRowPct: [number, number] = [-Infinity, -Infinity];
+  const ticks = rawTicks.map((value) => {
+    const pct = pctOf(value);
+    const row = pct - lastRowPct[0] >= TICK_OVERLAP_THRESHOLD_PCT ? 0 : pct - lastRowPct[1] >= TICK_OVERLAP_THRESHOLD_PCT ? 1 : 0;
+    lastRowPct[row] = pct;
+    const outOfRange = value < YIELD_GAP_SCALE_MIN ? "low" : value > YIELD_GAP_SCALE_MAX ? "high" : null;
+    return { value, pct, row, outOfRange };
+  });
 
   return (
     <div className="yieldGapBar">
@@ -113,7 +131,15 @@ function YieldGapBar({ predLo, predHi, target }: { predLo: number; predHi: numbe
       </div>
       <div className="yieldGapBarTicks">
         {ticks.map((tick) => (
-          <span key={tick} className="yieldGapBarTick" style={{ left: `${pctOf(tick)}%` }}>{tick.toFixed(1)}</span>
+          <span
+            key={tick.value}
+            className={tick.row === 1 ? "yieldGapBarTick yieldGapBarTickRow2" : "yieldGapBarTick"}
+            style={{ left: `${tick.pct}%` }}
+          >
+            {tick.outOfRange === "low" && "← "}
+            {tick.value.toFixed(1)}
+            {tick.outOfRange === "high" && " →"}
+          </span>
         ))}
       </div>
     </div>

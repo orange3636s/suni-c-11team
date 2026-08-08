@@ -602,7 +602,7 @@ function RootCauseContent() {
   const activeTargetHasNoChart =
     chartCriterion === "significant" && activeParetoItems.length > 0 && significantDisplayFactors.length === 0;
   // 5개 타깃 전부 차트가 0개인지 (spec §A-4) -- killing_event처럼 전 타깃에서
-  // 계측된 인자로 부도율이 설명되지 않는 경우, 타깃별 안내 문구를 5번
+  // 계측된 인자로 불량률이 설명되지 않는 경우, 타깃별 안내 문구를 5번
   // 반복하지 않고 통합 안내 하나만 보여준다.
   const allTargetsHaveNoChart =
     chartCriterion === "significant" &&
@@ -1006,7 +1006,7 @@ function RootCauseContent() {
               <p className="noChartStats">
                 검정 {datasetNoChartStats.totalTested.toLocaleString()}건 · 효과 크기 조건 통과 {datasetNoChartStats.effectSizePass.toLocaleString()}건 · 최대 설명력 {datasetNoChartStats.maxEps2.toFixed(4)}
                 <br />
-                부도율 변동의 대부분이 계측되지 않은 공정 변수로 설명됩니다. 안전율 예측 기반 알람은 계속 동작합니다.
+                불량률 변동의 대부분이 계측되지 않은 공정 변수로 설명됩니다. 안전율 예측 기반 알람은 계속 동작합니다.
               </p>
               <p className="noChartStats">전체 상위 3개로 전환하면 순위대로 확인할 수 있습니다.</p>
               <button type="button" className="button" onClick={() => setChartCriterion("all")}>전체 상위 3개로 전환</button>

@@ -259,7 +259,10 @@ export default function AiPanel({
         { message: text, mode, dataset: analysisDataset ?? "", history },
         {
           onDelta: (chunk) => {
-            queueRef.current.push(...chunk.split(""));
+            // F-3: `chunk.split("")`은 UTF-16 서로게이트 쌍을 반으로
+            // 쪼개 이모지 등이 스트리밍 중 깨져 보인다 -- 코드 포인트
+            // 단위로 순회하는 `Array.from`을 쓴다.
+            queueRef.current.push(...Array.from(chunk));
           },
           onDone: () => {
             doneRef.current = true;
@@ -544,18 +547,26 @@ function MarqueeRow({
   return (
     <div className="aiPanelMarquee">
       <div className={`aiPanelMarqueeTrack ${direction === "right" ? "reverse" : ""}`}>
-        {items.map((chip, index) => (
-          <button
-            key={`${chip.text}-${index}`}
-            type="button"
-            className="aiPanelMarqueeChip"
-            disabled={disabled}
-            onClick={() => onSend(chip.text)}
-          >
-            <ChipIcon kind={chip.icon} />
-            {chip.text}
-          </button>
-        ))}
+        {items.map((chip, index) => {
+          // F-3: 뒤 절반은 이음매를 감추기 위한 시각적 복제본이다 -- Tab
+          // 키로 같은 칩을 두 번 지나가지 않도록 포커스/스크린리더에서
+          // 뺀다.
+          const isDuplicate = !reducedMotion && index >= chips.length;
+          return (
+            <button
+              key={`${chip.text}-${index}`}
+              type="button"
+              className="aiPanelMarqueeChip"
+              disabled={disabled}
+              onClick={() => onSend(chip.text)}
+              aria-hidden={isDuplicate || undefined}
+              tabIndex={isDuplicate ? -1 : undefined}
+            >
+              <ChipIcon kind={chip.icon} />
+              {chip.text}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
