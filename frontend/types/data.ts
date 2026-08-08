@@ -904,6 +904,10 @@ export type LatestStateResponse = {
   // 바꿔치기하지 않는다 -- 옛 payload가 잘못된 라벨을 달고 뜨는 게 더
   // 나쁘다). 프론트는 이 신호로만 재실행 안내를 띄운다.
   dataset_fallback_applied: boolean;
+  // D-2: 복원 자체(GET /api/state/latest)가 실패했다는 신호(DB 손상 등) --
+  // "저장된 결과 없음"과 구분해야 사용자가 결과가 사라진 줄 알고
+  // 재분석을 다시 돌리지 않는다.
+  degraded: boolean;
 };
 
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------
@@ -948,6 +952,11 @@ export type ConfigTreemapResponse = {
   step: number;
   overall_mean: number;
   groups: ConfigTreemapGroup[];
+  // C-3: 이 스텝 Config가 최종 수율과의 ANOVA eps² + BH-FDR을 통과했는지 --
+  // 통과 못 하면 타일 채색을 끈다 (ConfigTreemap.tsx). 이 필드가 빠져
+  // 있었는데도 지금까지 빌드가 통과한 건 우연이 아니라 실제 누락된
+  // 버그였다 -- 여기서 바로잡는다.
+  significant: boolean;
 };
 
 export type ReportFactorEntry = {

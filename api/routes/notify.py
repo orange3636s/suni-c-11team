@@ -52,9 +52,16 @@ def connect_slack(body: SlackConnectRequest) -> dict[str, Any]:
 
 @router.post("/slack/test", response_model=SendTestResponse)
 def test_slack(body: SlackTestRequest) -> dict[str, Any]:
-    if not settings_store.is_valid_slack_webhook_url(body.webhook_url):
+    webhook_url = body.webhook_url
+    if webhook_url is None:
+        # D-3: 이미 연결된 채널의 "테스트 발송" -- 저장된 값을 쓴다.
+        record = settings_store.get_slack(_store())
+        if not record:
+            return {"ok": False, "error": "연결된 Slack 채널이 없습니다."}
+        webhook_url = record["webhook_url"]
+    if not settings_store.is_valid_slack_webhook_url(webhook_url):
         return {"ok": False, "error": f"Slack Webhook URL은 https://{settings_store.SLACK_WEBHOOK_DOMAIN}/... 형식이어야 합니다."}
-    ok, error = senders.send_slack_test(body.webhook_url)
+    ok, error = senders.send_slack_test(webhook_url)
     return {"ok": ok, "error": error}
 
 

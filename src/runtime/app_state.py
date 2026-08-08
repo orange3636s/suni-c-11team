@@ -67,6 +67,18 @@ def get_latest_state(store: RuntimeStore) -> dict[StateKind, dict[str, Any] | No
     return {kind: _valid(raw.get(key)) for kind, key in STATE_KEYS.items()}
 
 
+def is_state_degraded(store: RuntimeStore) -> bool:
+    """D-2: true if one of the 3 latest-state records is corrupted
+    (fails to JSON-decode) -- kept as a separate, additive check rather
+    than changing `get_latest_state`'s return shape, since that function
+    has several other callers (api/main.py, api/routes/notify.py,
+    src/automation/ingest.py) that only want the values, never this
+    signal. Only GET /api/state/latest needs it, to tell the user
+    "이전 결과 복원 실패" instead of silently looking like "결과 없음".
+    """
+    return store.has_corrupted_app_state(list(STATE_KEYS.values()))
+
+
 def _record_dataset_ids(record: dict[str, Any]) -> set[str]:
     return {record[field] for field in _DATASET_FIELDS if isinstance(record.get(field), str)}
 

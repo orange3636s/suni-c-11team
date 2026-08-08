@@ -40,3 +40,7 @@ class LatestStateResponse(BaseModel):
     # 전환했습니다" 안내를 띄우는 신호로만 쓰고, 화면을 조용히 비우지
     # 않는다.
     dataset_fallback_applied: bool = False
+    # D-2: 복원 자체가 실패했으면(DB 손상, 조회 예외 등) true -- "저장된
+    # 결과가 없음"과 구분해야 사용자가 결과가 사라진 줄 알고 (비싼)
+    # 재분석을 다시 돌리지 않는다.
+    degraded: bool = False

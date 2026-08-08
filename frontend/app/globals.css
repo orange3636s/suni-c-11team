@@ -9393,6 +9393,18 @@ html[data-theme="dark"] .analysisErrorBox{
 html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 255, 0.08); }
 .analysisErrorBox > .button{ flex: 0 0 auto; }
 
+/* D-2: 셸 레벨 배너 -- 이전 결과 복원(GET /api/state/latest) 실패를
+   모든 페이지에서 동일하게 알린다. */
+.degradedStateBanner{
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 20px; font-size: 13px; line-height: 1.5;
+  border-bottom: 1px solid #FECACA; background: #FEF2F2; color: #B42318;
+}
+html[data-theme="dark"] .degradedStateBanner{
+  border-color: rgba(248, 113, 113, 0.4); background: rgba(127, 29, 29, 0.28); color: #FCA5A5;
+}
+.degradedStateBanner > .button{ flex: 0 0 auto; }
+
 /* Per-scatter-card Color By dropdown (spec §5-3) -- height/radius/font
    sized to match the confidence badge it sits beside in
    .factorChartTitleRow, gapped via --factor-title-gap. */

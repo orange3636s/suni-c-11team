@@ -86,7 +86,10 @@ function SlackCard({ summary, onUpdate }: ChannelProps) {
   const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
 
   async function handleTest() {
-    if (!webhookUrl.trim()) {
+    // D-3: 이미 연결된 채널이면 폼의 webhookUrl(빈 값)이 아니라 서버에
+    // 저장된 값으로 테스트한다 -- 연결 요약에는 마스킹된 값만 있어
+    // 원본을 다시 보낼 수 없다.
+    if (!slack.connected && !webhookUrl.trim()) {
       setError("Webhook URL을 먼저 입력하세요.");
       return;
     }
@@ -94,7 +97,7 @@ function SlackCard({ summary, onUpdate }: ChannelProps) {
     setBusy("test");
     setTestResult(null);
     try {
-      setTestResult(await testSlack(webhookUrl.trim()));
+      setTestResult(await testSlack(slack.connected ? undefined : webhookUrl.trim()));
     } catch {
       setTestResult({ ok: false, error: "테스트 발송 요청에 실패했습니다." });
     } finally {
@@ -123,7 +126,13 @@ function SlackCard({ summary, onUpdate }: ChannelProps) {
 
   async function handleDisconnect() {
     if (!window.confirm("Slack 연결을 해제할까요? 다시 연결하려면 Webhook URL을 처음부터 다시 입력해야 합니다.")) return;
-    onUpdate(await disconnectNotificationChannel("slack"));
+    try {
+      onUpdate(await disconnectNotificationChannel("slack"));
+    } catch {
+      // D-3: unhandled rejection이 아니라 눈에 보이는 오류로 -- 실패해도
+      // 화면은 "연결됨" 그대로라 사용자가 재시도할 수 있어야 한다.
+      setError("연결 해제에 실패했습니다. 다시 시도해 주세요.");
+    }
   }
 
   return (
@@ -139,15 +148,19 @@ function SlackCard({ summary, onUpdate }: ChannelProps) {
         )}
       </div>
       {slack.connected && (
-        <div className="notifyChannelConnectedRow">
-          <span className="notifyChannelTarget">{slack.target || slack.webhook_masked}</span>
-          <button type="button" className="notifyInlineButton" onClick={handleTest} disabled={busy === "test"}>
-            {busy === "test" ? "발송 중…" : "테스트 발송"}
-          </button>
-          <button type="button" className="notifyInlineButton danger" onClick={handleDisconnect}>
-            해제
-          </button>
-        </div>
+        <>
+          <div className="notifyChannelConnectedRow">
+            <span className="notifyChannelTarget">{slack.target || slack.webhook_masked}</span>
+            <button type="button" className="notifyInlineButton" onClick={handleTest} disabled={busy === "test"}>
+              {busy === "test" ? "발송 중…" : "테스트 발송"}
+            </button>
+            <button type="button" className="notifyInlineButton danger" onClick={handleDisconnect}>
+              해제
+            </button>
+          </div>
+          {error && <p className="notifyFieldError">{error}</p>}
+          <TestResultNote result={testResult} />
+        </>
       )}
       {!slack.connected && expanded && (
         <div className="notifyConnectForm">
@@ -356,7 +369,12 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
 
   async function handleDisconnect() {
     if (!window.confirm("메일 연결을 해제할까요? 다시 연결하려면 인증 메일을 새로 받아야 합니다.")) return;
-    onUpdate(await disconnectNotificationChannel("gmail"));
+    try {
+      onUpdate(await disconnectNotificationChannel("gmail"));
+    } catch {
+      // D-3: unhandled rejection이 아니라 눈에 보이는 오류로.
+      setError("연결 해제에 실패했습니다. 다시 시도해 주세요.");
+    }
   }
 
   return (
@@ -382,15 +400,19 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
         )}
       </div>
       {gmail.connected && (
-        <div className="notifyChannelConnectedRow">
-          <span className="notifyChannelTarget">{gmail.email}</span>
-          <button type="button" className="notifyInlineButton" onClick={handleTest} disabled={busy === "test"}>
-            {busy === "test" ? "발송 중…" : "테스트 발송"}
-          </button>
-          <button type="button" className="notifyInlineButton danger" onClick={handleDisconnect}>
-            해제
-          </button>
-        </div>
+        <>
+          <div className="notifyChannelConnectedRow">
+            <span className="notifyChannelTarget">{gmail.email}</span>
+            <button type="button" className="notifyInlineButton" onClick={handleTest} disabled={busy === "test"}>
+              {busy === "test" ? "발송 중…" : "테스트 발송"}
+            </button>
+            <button type="button" className="notifyInlineButton danger" onClick={handleDisconnect}>
+              해제
+            </button>
+          </div>
+          {error && <p className="notifyFieldError">{error}</p>}
+          <TestResultNote result={testResult} />
+        </>
       )}
       {justSent && !gmail.connected && (
         <p className="notifyChannelPendingNote">{email.trim() || gmail.email}로 인증 메일이 발송되었습니다. 메일의 링크를 눌러야 연결이 완료됩니다.</p>
@@ -427,11 +449,18 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
 function ConditionsForm({ summary, onUpdate }: ChannelProps) {
   const { conditions } = summary;
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   async function persist(grades: NotificationGrade[], timing: NotificationTiming) {
     setSaving(true);
+    setError("");
     try {
       onUpdate(await saveNotificationConditions({ grades, timing }));
+    } catch {
+      // D-3: unhandled rejection이 아니라 눈에 보이는 오류로 -- 실패해도
+      // 토글은 이전 값 그대로라(onUpdate가 불리지 않았으므로) 다시
+      // 누르면 된다는 것을 알려야 한다.
+      setError("저장하지 못했습니다. 다시 시도해 주세요.");
     } finally {
       setSaving(false);
     }
@@ -484,6 +513,7 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
           </button>
         </div>
       </div>
+      {error && <p className="notifyFieldError">{error}</p>}
       <p className="notifyReliabilityGateNote">
         신뢰도 낮은 데이터셋은 발송하지 않습니다
         <br />

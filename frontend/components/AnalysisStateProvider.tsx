@@ -129,6 +129,11 @@ type AnalysisStateValue = {
   // 신호. true면 "이전에 선택한 데이터셋이 더 이상 없어 train으로
   // 전환했습니다" 안내를 보여준다.
   datasetFallbackNotice: boolean;
+  // D-2: 이전 결과 복원(GET /api/state/latest) 자체가 실패했다는 신호
+  // (DB 손상, 네트워크 오류 등) -- "저장된 결과 없음"과 구분해야
+  // 사용자가 결과가 사라진 줄 알고 재분석을 다시 돌리지 않는다.
+  degraded: boolean;
+  retryHydration: () => void;
   alarms: AlarmsState;
   setAlarms: (value: AlarmsState | ((previous: AlarmsState) => AlarmsState)) => void;
   monitoringHome: MonitoringHomeState;
@@ -151,12 +156,15 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [alarms, setAlarms] = useState<AlarmsState>(null);
   const [monitoringHome, setMonitoringHome] = useState<MonitoringHomeState>(null);
   const [notifications, setNotifications] = useState<NotificationSettingsSummary>(DEFAULT_NOTIFICATIONS);
+  // D-2: 복원 실패(서버가 degraded:true를 보고했거나, 이 요청 자체가
+  // 실패했거나)를 "저장된 결과 없음"과 구분해 보여준다 -- 안 그러면
+  // 사용자가 결과가 사라진 줄 알고 (비싼) 재분석을 다시 돌린다.
+  const [degraded, setDegraded] = useState(false);
   const hydrationStarted = useRef(false);
 
-  useEffect(() => {
-    if (hydrationStarted.current) return;
-    hydrationStarted.current = true;
+  function hydrate() {
     let cancelled = false;
+    setDegraded(false);
     getLatestState()
       .then((state) => {
         if (cancelled) return;
@@ -221,9 +229,15 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         if (state.dataset_fallback_applied) {
           setDatasetFallbackNotice(true);
         }
+        if (state.degraded) {
+          setDegraded(true);
+        }
       })
       .catch(() => {
-        // spec: 복원 실패가 앱을 막으면 안 된다 -- start empty, silently.
+        // spec: 복원 실패가 앱을 막으면 안 된다 -- start empty. D-2: 하지만
+        // 조용히 넘어가지는 않는다 -- degraded로 표시해 "결과 없음"과
+        // 구분하고 재시도할 수 있게 한다.
+        if (!cancelled) setDegraded(true);
       })
       .finally(() => {
         if (!cancelled) setHydrated(true);
@@ -231,7 +245,21 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
     return () => {
       cancelled = true;
     };
+  }
+
+  useEffect(() => {
+    if (hydrationStarted.current) return;
+    hydrationStarted.current = true;
+    return hydrate();
   }, []);
+
+  // D-2: 재시도 버튼이 부른다 -- 마운트 가드(hydrationStarted)를 우회해
+  // 다시 조회한다. 반환되는 정리 함수는 이 수동 호출에서는 쓰지 않는다
+  // (프로바이더는 앱 생명주기 내내 마운트돼 있으므로 위 useEffect의
+  // 언마운트 케이스와 달리 실질적 경쟁 조건이 없다).
+  function retryHydration() {
+    hydrate();
+  }
 
   const value = useMemo<AnalysisStateValue>(
     () => ({
@@ -242,6 +270,8 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       setAnalysis,
       analysisSnapshotStale,
       datasetFallbackNotice,
+      degraded,
+      retryHydration,
       alarms,
       setAlarms,
       monitoringHome,
@@ -249,7 +279,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       notifications,
       setNotifications,
     }),
-    [hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, alarms, monitoringHome, notifications],
+    [hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome, notifications],
   );
 
   return <AnalysisStateContext.Provider value={value}>{children}</AnalysisStateContext.Provider>;

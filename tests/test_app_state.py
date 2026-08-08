@@ -14,6 +14,7 @@ from src.runtime.app_state import (
     STATE_SCHEMA_VERSION,
     get_latest_state,
     invalidate_state_for_dataset,
+    is_state_degraded,
     save_state,
 )
 from src.runtime.store import RuntimeStore
@@ -61,6 +62,40 @@ def test_get_all_app_state_returns_null_for_missing_keys() -> None:
         store.set_app_state("latest_training", {"dataset": "train"})
         result = store.get_all_app_state(["latest_training", "latest_analysis", "latest_alarms"])
         assert result == {"latest_training": {"dataset": "train"}, "latest_analysis": None, "latest_alarms": None}
+    finally:
+        _cleanup(path)
+
+
+def test_is_state_degraded_false_when_nothing_saved() -> None:
+    store, path = _store()
+    try:
+        assert is_state_degraded(store) is False
+    finally:
+        _cleanup(path)
+
+
+def test_is_state_degraded_false_for_normal_saved_state() -> None:
+    store, path = _store()
+    try:
+        save_state(store, "training", dataset={"dataset": "train"}, payload={"a": 1})
+        assert is_state_degraded(store) is False
+    finally:
+        _cleanup(path)
+
+
+def test_is_state_degraded_true_when_json_is_corrupted() -> None:
+    """D-2: get_app_state/get_latest_state silently map a corrupted
+    (non-JSON) stored value to None, indistinguishable from "never
+    saved" -- is_state_degraded is the only way to tell them apart."""
+    store, path = _store()
+    try:
+        with store._connect() as connection:
+            connection.execute(
+                "INSERT INTO app_state (state_key, value_json, updated_at) VALUES (?, ?, ?)",
+                ("latest_analysis", "{not valid json", "2026-01-01T00:00:00+00:00"),
+            )
+        assert get_latest_state(store)["analysis"] is None
+        assert is_state_degraded(store) is True
     finally:
         _cleanup(path)
 

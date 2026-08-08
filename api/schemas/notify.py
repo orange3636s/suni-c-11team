@@ -44,7 +44,10 @@ class SlackConnectRequest(BaseModel):
 
 
 class SlackTestRequest(BaseModel):
-    webhook_url: str
+    # D-3: 이미 연결된 채널을 테스트할 때는 생략한다 -- 연결 요약에는
+    # 마스킹된 webhook_masked만 있고 원본 URL이 없으므로, 프런트가 다시
+    # 보낼 방법이 없다. 생략하면 서버가 저장된 값을 쓴다.
+    webhook_url: str | None = None
 
 
 class TelegramVerifyRequest(BaseModel):

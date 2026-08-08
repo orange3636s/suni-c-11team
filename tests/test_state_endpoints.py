@@ -48,6 +48,7 @@ def test_get_latest_empty(isolated_settings: SimpleNamespace) -> None:
         "alarms": None,
         "notifications": DEFAULT_NOTIFICATIONS,
         "dataset_fallback_applied": False,
+        "degraded": False,
     }
 
 
@@ -111,7 +112,10 @@ def test_save_overwrites_previous_training_result(isolated_settings: SimpleNames
 
 
 def test_get_latest_never_raises_on_store_error(isolated_settings: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
-    """spec §3-3: 결과가 없으면 null, 실패해도 앱이 뜬다 (never a 500)."""
+    """spec §3-3: 결과가 없으면 null, 실패해도 앱이 뜬다 (never a 500).
+    D-2: 이 실패는 "저장된 결과 없음"과 구분돼야 한다 -- degraded=True로
+    표시해 사용자가 결과가 사라진 줄 알고 재분석을 다시 돌리지 않게 한다.
+    """
     monkeypatch.setattr(state_routes, "get_latest_state", lambda store: (_ for _ in ()).throw(OSError("db locked")))
     result = state_routes.get_latest()
     assert result == {
@@ -120,4 +124,22 @@ def test_get_latest_never_raises_on_store_error(isolated_settings: SimpleNamespa
         "alarms": None,
         "notifications": DEFAULT_NOTIFICATIONS,
         "dataset_fallback_applied": False,
+        "degraded": True,
     }
+
+
+def test_get_latest_reports_degraded_when_app_state_is_corrupted(isolated_settings: SimpleNamespace) -> None:
+    """D-2: JSON이 깨진 저장 레코드는 get_app_state 레벨에서 조용히
+    None이 되므로, degraded 플래그가 없으면 "저장된 적 없음"과 구분할
+    방법이 없다."""
+    store = state_routes._store()
+    with store._connect() as connection:
+        connection.execute(
+            "INSERT INTO app_state (state_key, value_json, updated_at) VALUES (?, ?, ?)",
+            ("latest_training", "{not valid json", "2026-01-01T00:00:00+00:00"),
+        )
+
+    result = state_routes.get_latest()
+
+    assert result["training"] is None
+    assert result["degraded"] is True

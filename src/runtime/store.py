@@ -22,6 +22,14 @@ _lock = threading.RLock()
 PROMOTION_TOLERANCE = 0.005
 
 
+def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
+    """D-1: 같은 (dataset, target, feature, viewType)는 같은 즐겨찾기로
+    본다 -- viewType을 빼면 Box 뷰로 저장하려는 클릭이 기존 Scatter
+    즐겨찾기와 같은 키로 잡혀 그것을 지워버린다(프런트가 dedupe 판단에
+    쓰는 키와 반드시 같아야 한다, root-cause/page.tsx의 favoriteKeyOf)."""
+    return "::".join(str(snapshot.get(field, "")) for field in ("dataset", "target", "feature", "viewType"))
+
+
 class RuntimeStore:
     def __init__(
         self,
@@ -153,6 +161,14 @@ class RuntimeStore:
                 ON favorites(created_at DESC);
                 """
             )
+            # D-7: notify_sent_log은 원래 채널 구분 없이 (dataset, wafer,
+            # grade)만 기록했다 -- 한 채널만 성공해도 발송 완료로 찍혀서
+            # 실패한 채널은 24시간 동안 재시도되지 않았다. CREATE TABLE IF
+            # NOT EXISTS는 이미 만들어진 테이블에 컬럼을 추가하지 않으므로
+            # 여기서 직접 확인 후 ALTER TABLE한다.
+            existing_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notify_sent_log)")}
+            if "channel" not in existing_columns:
+                connection.execute("ALTER TABLE notify_sent_log ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
 
     def active_model(self) -> dict[str, Any] | None:
         with _lock, self._connect() as connection:
@@ -287,8 +303,24 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def create_favorite(self, favorite_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """D-1: (dataset, target, feature, viewType)가 같은 즐겨찾기가 이미
+        있으면 새로 만들지 않고 그 레코드를 그대로 돌려준다 -- 프런트의
+        더블클릭 가드(ref 기반)는 같은 브라우저 탭 안에서만 막는다. 두 탭
+        에서 거의 동시에 누르거나 요청이 늦게 도착하는 경우까지 막으려면
+        서버도 유니크를 보장해야 한다. `_lock`으로 조회-후-삽입을 원자적
+        으로 만든다.
+        """
+        dedupe_key = _favorite_dedupe_key(snapshot)
         created_at = datetime.now(timezone.utc).isoformat()
         with _lock, self._connect() as connection:
+            rows = connection.execute("SELECT favorite_id,created_at,snapshot_json FROM favorites").fetchall()
+            for row in rows:
+                if _favorite_dedupe_key(json.loads(row["snapshot_json"])) == dedupe_key:
+                    return {
+                        "favorite_id": row["favorite_id"],
+                        "created_at": row["created_at"],
+                        "snapshot": json.loads(row["snapshot_json"]),
+                    }
             connection.execute(
                 "INSERT INTO favorites (favorite_id,created_at,snapshot_json) VALUES (?,?,?)",
                 (favorite_id, created_at, self._json(snapshot)),
@@ -629,6 +661,29 @@ class RuntimeStore:
                 found[row["state_key"]] = None
         return {key: found.get(key) for key in state_keys}
 
+    def has_corrupted_app_state(self, state_keys: list[str]) -> bool:
+        """D-2: true if any of these keys holds a value that failed to
+        JSON-decode -- `get_all_app_state` silently maps that to the same
+        `None` a never-saved key returns, so a caller that needs to
+        distinguish "restore failed" from "nothing to restore" (spec:
+        복원 실패와 DB 손상이 조용히 '결과 없음'과 같아 보이면 안 된다)
+        must check separately here rather than inferring it from `None`.
+        """
+        if not state_keys:
+            return False
+        with _lock, self._connect() as connection:
+            placeholders = ",".join("?" for _ in state_keys)
+            rows = connection.execute(
+                f"SELECT value_json FROM app_state WHERE state_key IN ({placeholders})",
+                state_keys,
+            ).fetchall()
+        for row in rows:
+            try:
+                json.loads(row["value_json"])
+            except json.JSONDecodeError:
+                return True
+        return False
+
     def delete_app_state(self, state_key: str) -> bool:
         with _lock, self._connect() as connection:
             cursor = connection.execute("DELETE FROM app_state WHERE state_key=?", (state_key,))
@@ -637,22 +692,25 @@ class RuntimeStore:
     # -- 알림 발송 이력 (spec 알림 연동 §C-7: 동일 (dataset, wafer, grade) 조합은
     # 24시간 내 재발송하지 않는다) --
 
-    def recent_notifications(self, dataset_id: str, since_iso: str) -> list[dict[str, Any]]:
+    def recent_notifications(self, dataset_id: str, since_iso: str, *, channel: str) -> list[dict[str, Any]]:
+        """D-7: channel별로 조회한다 -- 채널을 구분하지 않으면 한 채널만
+        성공해도 다른(실패한) 채널까지 24시간 동안 "이미 발송됨"으로
+        보여 재시도되지 않는다."""
         with _lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT wafer_id, grade, sent_at FROM notify_sent_log WHERE dataset_id=? AND sent_at>=?",
-                (dataset_id, since_iso),
+                "SELECT wafer_id, grade, sent_at FROM notify_sent_log WHERE dataset_id=? AND channel=? AND sent_at>=?",
+                (dataset_id, channel, since_iso),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def record_notifications_sent(self, dataset_id: str, entries: list[tuple[str, str]]) -> None:
+    def record_notifications_sent(self, dataset_id: str, entries: list[tuple[str, str]], *, channel: str) -> None:
         if not entries:
             return
         now = datetime.now(timezone.utc).isoformat()
         with _lock, self._connect() as connection:
             connection.executemany(
-                "INSERT INTO notify_sent_log (dataset_id, wafer_id, grade, sent_at) VALUES (?,?,?,?)",
-                [(dataset_id, wafer_id, grade, now) for wafer_id, grade in entries],
+                "INSERT INTO notify_sent_log (dataset_id, wafer_id, grade, sent_at, channel) VALUES (?,?,?,?,?)",
+                [(dataset_id, wafer_id, grade, now, channel) for wafer_id, grade in entries],
             )
 
 

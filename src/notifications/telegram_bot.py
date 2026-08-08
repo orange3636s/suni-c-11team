@@ -120,8 +120,18 @@ async def run_polling_loop(bot_token: str, stop_event: asyncio.Event) -> None:
                     await asyncio.sleep(5)
                     continue
                 for update in body.get("result", []):
+                    # D-7: 처리 성공 후에 offset을 전진시킨다 -- 먼저
+                    # 전진시키면 handler가 실패해도(예외) Telegram이 이
+                    # update_id 이하를 다시는 보내주지 않아 그 /start가
+                    # 영영 사라진다. 실패하면 이 배치의 나머지도 처리하지
+                    # 않고 멈춘다 -- offset을 이 update보다 앞에 묶어둬야
+                    # 다음 폴링에서 정확히 여기부터 다시 받는다.
+                    try:
+                        await _handle_update(bot_token, update)
+                    except Exception:
+                        logger.exception("Telegram update 처리 실패 update_id=%s", update.get("update_id"))
+                        break
                     offset = update["update_id"] + 1
-                    await _handle_update(bot_token, update)
             except httpx.HTTPError as exc:
                 logger.warning("Telegram polling 오류: %s", exc)
                 await asyncio.sleep(5)

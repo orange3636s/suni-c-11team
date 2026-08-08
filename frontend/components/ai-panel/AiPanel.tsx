@@ -150,6 +150,23 @@ export default function AiPanel({
     };
   }, []);
 
+  // D-5: 데이터셋이 바뀌면 대화 히스토리를 이어가지 않는다 -- 최근 4턴이
+  // 그대로 다음 요청에 실려 나가므로(HISTORY_MESSAGES), train에서 나눈
+  // 문답이 test 재분석 후 질문의 맥락으로 딸려가 답이 오염된다. 최초
+  // 마운트 값은 건드리지 않는다(그때는 "바뀐" 게 아니다).
+  const previousAnalysisDatasetRef = useRef(analysisDataset);
+  useEffect(() => {
+    if (previousAnalysisDatasetRef.current === analysisDataset) return;
+    previousAnalysisDatasetRef.current = analysisDataset;
+    cancelRef.current?.cancel();
+    stopTypewriter();
+    queueRef.current = [];
+    doneRef.current = false;
+    setStreaming(false);
+    setMessages(INITIAL_MESSAGES);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisDataset]);
+
   useEffect(() => {
     if (!autoScroll) return;
     const el = messagesRef.current;
@@ -170,13 +187,19 @@ export default function AiPanel({
     }
   }
 
-  function finalizeMessage(id: string, status: MessageStatus, errorText?: string, errorKind?: ChatErrorKind) {
+  // D-4: 에러 시 이미 받은 내용을 지우지 않는다 -- `flushText`는 아직
+  // 타자기 효과로 화면에 안 찍힌 채 큐에 남아 있던 문자들(진짜로 받은
+  // 응답의 일부)이고, `errorText`가 있으면 텍스트를 통째로 교체하는
+  // 대신 그 뒤에 덧붙인다. 성공 종료(`finalizeMessage(id, "done")`)는
+  // 둘 다 안 넘기므로 기존 동작 그대로다.
+  function finalizeMessage(id: string, status: MessageStatus, errorText?: string, errorKind?: ChatErrorKind, flushText?: string) {
     setMessages((current) =>
-      current.map((message) =>
-        message.id === id
-          ? { ...message, status, errorKind, ...(errorText !== undefined ? { text: errorText } : {}) }
-          : message,
-      ),
+      current.map((message) => {
+        if (message.id !== id) return message;
+        const withFlush = flushText ? message.text + flushText : message.text;
+        const withError = errorText !== undefined ? `${withFlush}${withFlush ? "\n\n" : ""}⚠ ${errorText}` : withFlush;
+        return { ...message, status, errorKind, text: withError };
+      }),
     );
     setStreaming(false);
   }
@@ -243,9 +266,12 @@ export default function AiPanel({
           },
           onError: (message, errorKind) => {
             doneRef.current = true;
-            queueRef.current = [];
             stopTypewriter();
-            finalizeMessage(suniId, "error", message, errorKind);
+            // D-4: 큐에 남아 있던(아직 타자기로 안 찍힌) 문자도 실제로
+            // 받은 응답이다 -- 버리지 않고 먼저 합친 뒤 에러를 덧붙인다.
+            const remaining = queueRef.current.join("");
+            queueRef.current = [];
+            finalizeMessage(suniId, "error", message, errorKind, remaining);
           },
         },
       );

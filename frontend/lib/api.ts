@@ -508,8 +508,11 @@ export function connectSlack(webhookUrl: string, channel: string | null): Promis
   return postJson("/api/notify/slack", { webhook_url: webhookUrl, channel });
 }
 
-export function testSlack(webhookUrl: string): Promise<SendTestResponse> {
-  return postJson("/api/notify/slack/test", { webhook_url: webhookUrl });
+// D-3: webhookUrl을 생략하면(이미 연결된 채널을 테스트할 때) 서버가
+// 저장된 값을 쓴다 -- 연결 요약에는 마스킹된 값만 있어 프런트가 원본을
+// 다시 보낼 수 없다.
+export function testSlack(webhookUrl?: string): Promise<SendTestResponse> {
+  return postJson("/api/notify/slack/test", { webhook_url: webhookUrl ?? null });
 }
 
 export function verifyTelegramCode(code: string): Promise<NotificationSettingsSummary> {
@@ -605,9 +608,13 @@ export type ChatStreamHandlers = {
   onError: (message: string, kind: ChatErrorKind) => void;
 };
 
-// SUNI 보고서 응답은 20~60초가 걸릴 수 있어 다른 요청보다 넉넉한 상한선을 둔다
-// (spec §3-3: 백엔드 타임아웃도 90초).
-const CHAT_STREAM_TIMEOUT_MS = 90_000;
+// D-4: 총소요 기준이 아니라 idle(무수신) 기준이다 -- SUNI 보고서 응답은
+// 20~60초+ 걸릴 수 있는데(정상 범위), 총소요로 재면 느린 날 이미 잘
+// 받고 있던 스트림이 90초를 넘긴 순간 통째로 끊긴다. 대신 이 시간
+// 동안 새 바이트가 하나도 안 오면(연결이 실제로 멎은 것) 끊는다 --
+// 스트림 자체가 살아 있는 한(계속 델타가 도착하는 한) 아무리 길어도
+// 끊지 않는다.
+const CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
 
 /** Streams /api/chat's SSE body, decoding `data: {...}\n\n` frames as they
  * arrive. Returns a handle to cancel the in-flight request (component
@@ -617,7 +624,14 @@ export function streamChat(
   handlers: ChatStreamHandlers,
 ): { cancel: () => void } {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), CHAT_STREAM_TIMEOUT_MS);
+  // D-4: 매 청크(응답 시작 포함)마다 다시 설정한다 -- 이게 idle 타임아웃의
+  // 전부다. 새 데이터가 도착하는 한 이 setTimeout은 항상 발동 전에
+  // clearTimeout으로 취소되고 다시 걸린다.
+  let timer = window.setTimeout(() => controller.abort(), CHAT_STREAM_IDLE_TIMEOUT_MS);
+  function resetIdleTimer() {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => controller.abort(), CHAT_STREAM_IDLE_TIMEOUT_MS);
+  }
   let settled = false;
 
   function finishError(message: string, kind: ChatErrorKind = "other") {
@@ -675,6 +689,7 @@ export function streamChat(
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        resetIdleTimer(); // D-4: 바이트가 도착했다 -- idle이 아니다.
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split("\n\n");
         buffer = frames.pop() ?? "";
@@ -703,7 +718,7 @@ export function streamChat(
       finishDone();
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        finishError("응답 시간이 초과되었습니다. 다시 시도해 주세요.");
+        finishError("응답 시간이 초과되었습니다. 다시 시도해 주세요.", "timeout");
       } else {
         finishError("답변을 생성하지 못했습니다. 다시 시도해 주세요.");
       }

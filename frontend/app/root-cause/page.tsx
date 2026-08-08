@@ -265,10 +265,16 @@ function RootCauseContent() {
     };
   }, [datasetId]);
 
-  // 즐겨찾기 (지시서 J) -- `${dataset}::${target}::${feature}` -> favorite_id.
-  // 목록은 마운트 시 한 번만 불러온다(브라우저 저장소 금지, 서버가 유일한
-  // 출처). 별 버튼은 이 맵에 키가 있는지로만 채움 여부를 판단한다.
+  // 즐겨찾기 (지시서 J) -- `${dataset}::${target}::${feature}::${viewType}` ->
+  // favorite_id. D-1: viewType을 키에 포함해야 한다 -- 안 그러면 같은
+  // 인자를 Box 뷰로 저장하려는 별 클릭이 기존 Scatter 즐겨찾기와 같은
+  // 키로 잡혀 그것을 지워버린다. 목록은 마운트 시 한 번만 불러온다
+  // (브라우저 저장소 금지, 서버가 유일한 출처). 별 버튼은 이 맵에 키가
+  // 있는지로만 채움 여부를 판단한다.
   const [favoriteIdByKey, setFavoriteIdByKey] = useState<Record<string, string>>({});
+  function favoriteKeyOf(s: { dataset: string; target: string; feature: string; viewType: string }): string {
+    return `${s.dataset}::${s.target}::${s.feature}::${s.viewType}`;
+  }
   useEffect(() => {
     let cancelled = false;
     getFavorites()
@@ -276,8 +282,7 @@ function RootCauseContent() {
         if (cancelled) return;
         const map: Record<string, string> = {};
         for (const item of response.items) {
-          const s = item.snapshot;
-          map[`${s.dataset}::${s.target}::${s.feature}`] = item.favorite_id;
+          map[favoriteKeyOf(item.snapshot)] = item.favorite_id;
         }
         setFavoriteIdByKey(map);
       })
@@ -287,29 +292,46 @@ function RootCauseContent() {
     };
   }, []);
 
+  // D-1: 생성/삭제 요청이 아직 끝나지 않은 키는 다시 받지 않는다 --
+  // 빠른 더블클릭 시 두 호출 모두 같은(아직 갱신 전) favoriteIdByKey를
+  // 보고 둘 다 "생성" 경로로 들어가 중복 레코드가 생기고, 클라이언트는
+  // 마지막 id만 기억해 나머지 하나는 지울 수 없는 좀비로 남았다. 이
+  // 가드는 useState가 아니라 ref다 -- 같은 렌더에서 연달아 호출되면
+  // useState는 아직 반영 전(stale)이라 막지 못한다.
+  const pendingFavoriteKeysRef = useRef<Set<string>>(new Set());
+  const [pendingFavoriteKeys, setPendingFavoriteKeys] = useState<Set<string>>(new Set());
+
   async function toggleFavorite(snapshot: FavoriteSnapshot) {
-    const key = `${snapshot.dataset}::${snapshot.target}::${snapshot.feature}`;
-    const existingId = favoriteIdByKey[key];
-    if (existingId) {
-      setFavoriteIdByKey((previous) => {
-        const next = { ...previous };
-        delete next[key];
-        return next;
-      });
-      try {
-        await deleteFavorite(existingId);
-      } catch {
-        // Best-effort -- a failed unfavorite just leaves the star filled;
-        // the user can retry.
-        setFavoriteIdByKey((previous) => ({ ...previous, [key]: existingId }));
-      }
-      return;
-    }
+    const key = favoriteKeyOf(snapshot);
+    if (pendingFavoriteKeysRef.current.has(key)) return;
+    pendingFavoriteKeysRef.current.add(key);
+    setPendingFavoriteKeys(new Set(pendingFavoriteKeysRef.current));
     try {
-      const created = await createFavorite(snapshot);
-      setFavoriteIdByKey((previous) => ({ ...previous, [key]: created.favorite_id }));
-    } catch {
-      // Best-effort -- 저장 실패 시 별은 그대로 빈 채로 남는다.
+      const existingId = favoriteIdByKey[key];
+      if (existingId) {
+        setFavoriteIdByKey((previous) => {
+          const next = { ...previous };
+          delete next[key];
+          return next;
+        });
+        try {
+          await deleteFavorite(existingId);
+        } catch {
+          // Best-effort -- a failed unfavorite just leaves the star filled;
+          // the user can retry.
+          setFavoriteIdByKey((previous) => ({ ...previous, [key]: existingId }));
+        }
+        return;
+      }
+      try {
+        const created = await createFavorite(snapshot);
+        setFavoriteIdByKey((previous) => ({ ...previous, [key]: created.favorite_id }));
+      } catch {
+        // Best-effort -- 저장 실패 시 별은 그대로 빈 채로 남는다.
+      }
+    } finally {
+      pendingFavoriteKeysRef.current.delete(key);
+      setPendingFavoriteKeys(new Set(pendingFavoriteKeysRef.current));
     }
   }
 
@@ -645,7 +667,11 @@ function RootCauseContent() {
   function renderFactorCard(target: string, item: ParetoRankingItem, index: number) {
     const isConfig = item.kind === "Config";
     const key = `${target}::${item.feature}`;
-    const isFavorited = Boolean(favoriteIdByKey[`${datasetId}::${target}::${item.feature}`]);
+    // D-1: viewType별로 별도 즐겨찾기이므로, 채움 여부도 viewType별로
+    // 따로 물어야 한다 -- NumericFactorCard는 자기 view 상태를 알므로
+    // 함수로 넘겨 카드 내부에서 평가하게 한다.
+    const isFavorited = (viewType: string) => Boolean(favoriteIdByKey[`${datasetId}::${target}::${item.feature}::${viewType}`]);
+    const isFavoritePending = (viewType: string) => pendingFavoriteKeys.has(`${datasetId}::${target}::${item.feature}::${viewType}`);
     if (!isConfig) {
       return (
         <NumericFactorCard
@@ -665,6 +691,7 @@ function RootCauseContent() {
           paretoN80={paretoByTarget[target]?.n80 ?? null}
           onParetoBarClick={handleParetoBarClick}
           isFavorited={isFavorited}
+          isFavoritePending={isFavoritePending}
           onToggleFavorite={toggleFavorite}
         />
       );
@@ -678,7 +705,8 @@ function RootCauseContent() {
         activeTarget={target}
         categoricalData={categoricalByKey[key]}
         chartHeight={chartHeight}
-        isFavorited={isFavorited}
+        isFavorited={isFavorited("box")}
+        isFavoritePending={isFavoritePending("box")}
         onToggleFavorite={toggleFavorite}
       />
     );
@@ -1306,6 +1334,7 @@ function NumericFactorCard({
   paretoN80,
   onParetoBarClick,
   isFavorited,
+  isFavoritePending,
   onToggleFavorite,
 }: {
   item: ParetoRankingItem;
@@ -1325,7 +1354,11 @@ function NumericFactorCard({
   paretoItems: ParetoRankingItem[];
   paretoN80: number | null;
   onParetoBarClick: (item: ParetoRankingItem) => void;
-  isFavorited: boolean;
+  // D-1: viewType(Scatter/Box/Pareto)별로 별도 즐겨찾기다 -- 이 카드가
+  // 지금 어떤 view인지는 카드 자신만 아므로, 부모가 boolean이 아니라
+  // 함수를 내려줘 카드 내부에서 현재 view로 평가한다.
+  isFavorited: (viewType: string) => boolean;
+  isFavoritePending: (viewType: string) => boolean;
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
@@ -1356,7 +1389,8 @@ function NumericFactorCard({
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
             <FavoriteStarButton
-              favorited={isFavorited}
+              favorited={isFavorited(view)}
+              disabled={isFavoritePending(view)}
               onClick={() =>
                 onToggleFavorite({
                   dataset,
@@ -1442,6 +1476,7 @@ function CategoricalFactorCard({
   categoricalData,
   chartHeight,
   isFavorited,
+  isFavoritePending,
   onToggleFavorite,
 }: {
   item: ParetoRankingItem;
@@ -1451,6 +1486,7 @@ function CategoricalFactorCard({
   categoricalData: CategoricalScatterResponse | undefined;
   chartHeight: number;
   isFavorited: boolean;
+  isFavoritePending: boolean;
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
 }) {
   return (
@@ -1463,6 +1499,7 @@ function CategoricalFactorCard({
             <ConfidenceBadge tier={item.confidence_tier} />
             <FavoriteStarButton
               favorited={isFavorited}
+              disabled={isFavoritePending}
               onClick={() =>
                 onToggleFavorite({ dataset, target: activeTarget, feature: item.feature, viewType: "box", isConfig: true })
               }
@@ -1495,12 +1532,23 @@ function CategoricalFactorCard({
 
 /** 즐겨찾기 별 토글 (지시서 J-2) -- 저장 시점 상태 스냅샷만 넘긴다, 점
  * 데이터는 절대 포함하지 않는다. */
-function FavoriteStarButton({ favorited, onClick }: { favorited: boolean; onClick: () => void }) {
+function FavoriteStarButton({
+  favorited,
+  disabled,
+  onClick,
+}: {
+  favorited: boolean;
+  // D-1: 생성/삭제 요청이 진행 중인 동안 버튼을 막는다 -- 빠른 더블클릭이
+  // 중복 즐겨찾기(좀비 레코드)를 만드는 걸 막는 시각적 짝.
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       className={`favoriteStarButton ${favorited ? "active" : ""}`}
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={favorited}
       aria-label={favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}
       title={favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}

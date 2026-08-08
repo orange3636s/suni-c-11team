@@ -17,7 +17,7 @@ from api.schemas.state import (
 from api.settings import settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID
 from src.notifications.settings_store import get_settings_summary
-from src.runtime.app_state import get_latest_state, save_state
+from src.runtime.app_state import get_latest_state, is_state_degraded, save_state
 from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -65,11 +65,18 @@ def get_latest() -> dict[str, Any]:
     which ones to ask for.
     """
     store = _store()
+    # D-2: 복원 실패(DB 손상 등)와 "저장된 결과 없음"을 구분해야 한다 --
+    # 안 그러면 사용자는 결과가 사라진 줄 알고 (비싼) 재분석을 다시
+    # 돌린다. get_latest_state가 예외를 던지는 경우와, 값은 읽혔지만
+    # JSON이 깨져 조용히 None으로 매핑된 경우 둘 다 degraded로 잡는다.
+    degraded = False
     try:
         state = get_latest_state(store)
+        degraded = is_state_degraded(store)
     except Exception:
         logger.warning("최근 결과 조회 실패", exc_info=True)
         state = {"training": None, "analysis": None, "alarms": None}
+        degraded = True
     try:
         dataset_fallback_applied = _drop_records_for_missing_datasets(state)
     except Exception:
@@ -87,7 +94,7 @@ def get_latest() -> dict[str, Any]:
             "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
             "conditions": {"grades": ["심각"], "timing": "on_analysis"},
         }
-    return {**state, "notifications": notifications, "dataset_fallback_applied": dataset_fallback_applied}
+    return {**state, "notifications": notifications, "dataset_fallback_applied": dataset_fallback_applied, "degraded": degraded}
 
 
 def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> None:

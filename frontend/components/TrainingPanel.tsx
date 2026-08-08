@@ -32,6 +32,27 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   const [promotionHistoryError, setPromotionHistoryError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // D-6: 폴링 이펙트(69행)는 deps가 [jobId]뿐이라 학습이 도는 동안 고친
+  // sqlHost/refreshMinutes를 클로저가 시작 시점 값으로 붙잡고 있다 --
+  // 완료 시점에 그 옛 값을 서버에 저장해 사용자가 학습 중 고친 값을
+  // 덮어써 버렸다. ref로 항상 최신값을 읽는다.
+  const sqlHostRef = useRef(sqlHost);
+  const sqlPortRef = useRef(sqlPort);
+  const refreshMinutesRef = useRef(refreshMinutes);
+  const trainingRef = useRef(training);
+  useEffect(() => {
+    sqlHostRef.current = sqlHost;
+  }, [sqlHost]);
+  useEffect(() => {
+    sqlPortRef.current = sqlPort;
+  }, [sqlPort]);
+  useEffect(() => {
+    refreshMinutesRef.current = refreshMinutes;
+  }, [refreshMinutes]);
+  useEffect(() => {
+    trainingRef.current = training;
+  }, [training]);
+
   function refreshPromotionHistory() {
     getPromotionHistory(1)
       .then((response) => {
@@ -80,21 +101,27 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
           const performance = await getModelPerformance().catch(() => null);
           if (performance) {
             const dataset = performance.source_filename || "training";
+            // D-6: 클로저의 sqlHost/sqlPort/refreshMinutes/training이 아니라
+            // ref로 완료 시점의 최신 입력값을 읽는다.
+            const latestSqlHost = sqlHostRef.current;
+            const latestSqlPort = sqlPortRef.current;
+            const latestRefreshMinutes = refreshMinutesRef.current;
+            const latestTraining = trainingRef.current;
             const nextTraining = {
               dataset,
               createdAt: performance.trained_at ?? new Date().toISOString(),
               performance,
-              sqlHost,
-              sqlPort,
-              refreshIntervalMinutes: refreshMinutes.trim() ? Number(refreshMinutes) : null,
+              sqlHost: latestSqlHost,
+              sqlPort: latestSqlPort,
+              refreshIntervalMinutes: latestRefreshMinutes.trim() ? Number(latestRefreshMinutes) : null,
             };
-            setTraining({ ...nextTraining, sqlDb: training?.sqlDb ?? "", sqlUser: training?.sqlUser ?? "" });
+            setTraining({ ...nextTraining, sqlDb: latestTraining?.sqlDb ?? "", sqlUser: latestTraining?.sqlUser ?? "" });
             void saveTrainingState(dataset, {
               performance,
-              sqlHost,
-              sqlPort,
-              sqlDb: training?.sqlDb ?? "",
-              sqlUser: training?.sqlUser ?? "",
+              sqlHost: latestSqlHost,
+              sqlPort: latestSqlPort,
+              sqlDb: latestTraining?.sqlDb ?? "",
+              sqlUser: latestTraining?.sqlUser ?? "",
               refreshIntervalMinutes: nextTraining.refreshIntervalMinutes,
             }).catch(() => {});
           }

@@ -41,11 +41,15 @@ def _send_with_retry(send_fn: Callable[[], tuple[bool, str | None]]) -> tuple[bo
     return False, last_error
 
 
-def _filter_new_alarms(store: RuntimeStore, dataset_id: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """§C-7: 동일 (dataset, wafer, grade) 조합은 24시간 내 재발송하지 않는다.
-    등급이 이전보다 악화된 경우(예: 주의 -> 심각)는 예외로 다시 보낸다."""
+def _filter_new_alarms(store: RuntimeStore, dataset_id: str, channel: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """§C-7 + D-7: 동일 (dataset, wafer, grade, channel) 조합은 24시간 내
+    재발송하지 않는다 -- 채널별로 따로 추적한다. channel을 빼면 한
+    채널만 성공해도 (dataset, wafer, grade)가 "발송 완료"로 찍혀,
+    실패한 다른 채널은 24시간 동안 재시도되지 않는다. 등급이 이전보다
+    악화된 경우(예: 주의 -> 심각)는 예외로 다시 보낸다.
+    """
     since = (datetime.now(timezone.utc) - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
-    recent = store.recent_notifications(dataset_id, since)
+    recent = store.recent_notifications(dataset_id, since, channel=channel)
     recent_by_wafer: dict[str, set[str]] = {}
     for entry in recent:
         recent_by_wafer.setdefault(entry["wafer_id"], set()).add(entry["grade"])
@@ -84,25 +88,60 @@ def _build_payload(dataset_label: str, items: list[dict[str, Any]], reliability_
     )
 
 
-def _send_to_all_channels(store: RuntimeStore, payload: AlarmNotificationPayload) -> dict[str, dict[str, Any]]:
+def _send_to_all_channels(
+    store: RuntimeStore,
+    *,
+    dataset_id: str,
+    dataset_label: str,
+    candidates: list[dict[str, Any]],
+    reliability_grade: str,
+    reliability_score: int,
+    dashboard_url: str | None,
+) -> tuple[dict[str, dict[str, Any]], set[tuple[str, str]], set[tuple[str, str]]]:
+    """D-7: 채널마다 자기 24시간 dedupe 기준으로 자기만의 발송 대상을
+    다시 추린다 -- 채널 하나가 이미 성공한 (wafer, grade)라도 다른
+    채널은 아직 못 보냈을 수 있으므로 채널 전체가 같은 `to_send`를
+    공유하면 안 된다. 반환하는 (attempted_keys, sent_keys) 중
+    attempted_keys는 채널별로 새로 시도한(성공 여부 무관) (wafer, grade)
+    전체이고, sent_keys는 그중 실제로 성공한 것만이다 -- "24시간 내
+    이미 발송됨"과 "이번엔 시도했지만 실패함"을 구분하려면 둘 다
+    필요하다(둘 다 비었을 때만 진짜로 "새로 보낼 게 없었다"이다).
+    """
     results: dict[str, dict[str, Any]] = {}
+    attempted_keys: set[tuple[str, str]] = set()
+    sent_keys: set[tuple[str, str]] = set()
+
+    def _dispatch_one(channel: str, send_fn: Callable[[AlarmNotificationPayload], tuple[bool, str | None]]) -> None:
+        to_send = _filter_new_alarms(store, dataset_id, channel, candidates)
+        if not to_send:
+            results[channel] = {"ok": True, "error": None, "sent_count": 0}
+            return
+        attempted_keys.update((item["lot_wafer_id"], item["grade"]) for item in to_send)
+        payload = _build_payload(dataset_label, to_send, reliability_grade, reliability_score, dashboard_url)
+        ok, error = _send_with_retry(lambda: send_fn(payload))
+        results[channel] = {"ok": ok, "error": error, "sent_count": len(to_send) if ok else 0}
+        if ok:
+            store.record_notifications_sent(
+                dataset_id, [(item["lot_wafer_id"], item["grade"]) for item in to_send], channel=channel
+            )
+            sent_keys.update((item["lot_wafer_id"], item["grade"]) for item in to_send)
 
     slack = settings_store.get_slack(store)
     if slack:
-        ok, error = _send_with_retry(lambda: senders.send_slack_alarm(slack["webhook_url"], payload))
-        results["slack"] = {"ok": ok, "error": error}
+        _dispatch_one("slack", lambda payload: senders.send_slack_alarm(slack["webhook_url"], payload))
 
     telegram = settings_store.get_telegram(store)
     if telegram and settings.telegram_bot_token:
-        ok, error = _send_with_retry(
-            lambda: senders.send_telegram_alarm(settings.telegram_bot_token, telegram["chat_id"], payload)  # type: ignore[arg-type]
+        _dispatch_one(
+            "telegram",
+            lambda payload: senders.send_telegram_alarm(settings.telegram_bot_token, telegram["chat_id"], payload),  # type: ignore[arg-type]
         )
-        results["telegram"] = {"ok": ok, "error": error}
 
     gmail = settings_store.get_gmail(store)
     if gmail and gmail.get("verified") and settings.smtp_host and settings.smtp_user and settings.smtp_password and settings.smtp_from_email:
-        ok, error = _send_with_retry(
-            lambda: senders.send_gmail_alarm(
+        _dispatch_one(
+            "gmail",
+            lambda payload: senders.send_gmail_alarm(
                 smtp_host=settings.smtp_host,  # type: ignore[arg-type]
                 smtp_port=settings.smtp_port,
                 smtp_user=settings.smtp_user,  # type: ignore[arg-type]
@@ -110,11 +149,10 @@ def _send_to_all_channels(store: RuntimeStore, payload: AlarmNotificationPayload
                 from_email=settings.smtp_from_email,  # type: ignore[arg-type]
                 to_email=gmail["email"],
                 payload=payload,
-            )
+            ),
         )
-        results["gmail"] = {"ok": ok, "error": error}
 
-    return results
+    return results, attempted_keys, sent_keys
 
 
 def dispatch_alarm_notifications(
@@ -154,20 +192,30 @@ def dispatch_alarm_notifications(
         if not candidates:
             return {"skipped": True, "reason": "발송 대상 등급의 알람 없음"}
 
-        to_send = _filter_new_alarms(store, dataset_id, candidates)
-        if not to_send:
-            return {"skipped": True, "reason": "24시간 내 이미 발송됨 (등급 변화 없음)"}
-
-        payload = _build_payload(dataset_label, to_send, reliability_grade, reliability_score, dashboard_url)
-        results = _send_to_all_channels(store, payload)
+        # D-7: 채널마다 자기 24시간 dedupe 기준으로 자기 대상을 다시 추리므로
+        # (한 채널의 성공이 다른 채널의 재시도를 막지 않도록), 여기서는 더
+        # 이상 "채널 공통 to_send" 하나로 앞질러 스킵하지 않는다 -- 연결된
+        # 채널이 하나도 없거나(results 비어 있음), 모든 채널이 새로 보낼
+        # 게 없었을 때(attempted_keys 비어 있음 -- 시도 자체가 없었다는
+        # 뜻이라 "이미 발송됨"과 "시도했지만 실패"를 구분할 수 있다)만
+        # 스킵으로 본다.
+        results, attempted_keys, sent_keys = _send_to_all_channels(
+            store,
+            dataset_id=dataset_id,
+            dataset_label=dataset_label,
+            candidates=candidates,
+            reliability_grade=reliability_grade,
+            reliability_score=reliability_score,
+            dashboard_url=dashboard_url,
+        )
 
         if not results:
             return {"skipped": True, "reason": "연결된 채널 없음"}
 
-        if any(result["ok"] for result in results.values()):
-            store.record_notifications_sent(dataset_id, [(item["lot_wafer_id"], item["grade"]) for item in to_send])
+        if not attempted_keys:
+            return {"skipped": True, "reason": "24시간 내 이미 발송됨 (등급 변화 없음)"}
 
-        return {"skipped": False, "sent_count": len(to_send), "results": results}
+        return {"skipped": False, "sent_count": len(sent_keys), "results": results}
     except Exception:
         logger.exception("알림 발송 중 오류: dataset=%s", dataset_id)
         return {"skipped": True, "reason": "발송 중 오류 발생"}

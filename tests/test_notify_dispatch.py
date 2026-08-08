@@ -6,6 +6,7 @@ sent even within that window.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +31,10 @@ def _cleanup(path: Path) -> None:
 
 def _connect_slack(store: RuntimeStore) -> None:
     settings_store.save_slack(store, webhook_url="https://hooks.slack.com/services/FAKE-TEAM/FAKE-BOT/FAKE-TOKEN", channel="#eng-yield")
+
+
+def _connect_telegram(store: RuntimeStore) -> None:
+    settings_store.save_telegram(store, chat_id="12345", username="@tester")
 
 
 def _alarm(wafer="L001W01", grade="심각", pct=0.3) -> dict:
@@ -208,5 +213,43 @@ def test_daily_trigger_is_skipped_when_on_analysis_only_is_selected(monkeypatch)
         )
         assert result["skipped"] is True
         assert result["reason"] == "발송 시점 설정과 일치하지 않음"
+    finally:
+        _cleanup(path)
+
+
+def test_channel_specific_failure_does_not_block_that_channels_retry(monkeypatch):
+    """D-7 회귀: 한 채널만 성공해도 (dataset, wafer, grade)가 발송
+    완료로 찍히면 실패한 다른 채널은 24시간 동안 재시도되지 않는다 --
+    채널별로 dedupe해야 한다."""
+    store, path = _store()
+    try:
+        _connect_slack(store)
+        _connect_telegram(store)
+        monkeypatch.setattr(dispatch, "settings", dataclasses.replace(dispatch.settings, telegram_bot_token="fake-token"))
+        monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: (True, None))
+        monkeypatch.setattr(dispatch.senders, "send_telegram_alarm", lambda *a, **k: (False, "network error"))
+
+        first = dispatch.dispatch_alarm_notifications(
+            store, trigger=settings_store.TIMING_ON_ANALYSIS,
+            dataset_id="train", dataset_label="train.CSV", alarms=[_alarm()],
+            reliability_grade="높음", reliability_score=85,
+        )
+        assert first["skipped"] is False
+        assert first["results"]["slack"]["ok"] is True
+        assert first["results"]["telegram"]["ok"] is False
+
+        # Telegram now works -- it must still treat this wafer as new even
+        # though slack already successfully sent it.
+        monkeypatch.setattr(dispatch.senders, "send_telegram_alarm", lambda *a, **k: (True, None))
+        second = dispatch.dispatch_alarm_notifications(
+            store, trigger=settings_store.TIMING_ON_ANALYSIS,
+            dataset_id="train", dataset_label="train.CSV", alarms=[_alarm()],
+            reliability_grade="높음", reliability_score=85,
+        )
+        assert second["skipped"] is False
+        assert second["results"]["telegram"]["ok"] is True
+        assert second["results"]["telegram"]["sent_count"] == 1
+        # Slack already sent this exact (wafer, grade) -- nothing new for it.
+        assert second["results"]["slack"]["sent_count"] == 0
     finally:
         _cleanup(path)
