@@ -844,6 +844,21 @@ export type ModelPerformanceResponse = {
   feature_count: number | null;
 };
 
+// 자동 수집 파이프라인 §2-2 -- 승격 여부와 무관한 학습 시도 이력.
+export type PromotionEvent = {
+  created_at: string;
+  candidate_model_id: string;
+  promoted: number; // SQLite에서 0/1로 내려온다.
+  reason: string;
+  candidate_metric: number | null;
+  active_metric: number | null;
+  previous_model_id: string | null;
+};
+
+export type PromotionHistoryResponse = {
+  items: PromotionEvent[];
+};
+
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------
 // Server-persisted "latest result" for each of the 3 long-running tabs.
 // `points` is never present on a restored ScreeningScatterResponse --

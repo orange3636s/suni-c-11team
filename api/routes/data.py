@@ -913,6 +913,15 @@ def get_model_detail(model_id: str) -> ModelDetailResponse:
         ) from exc
 
 
+@router.get("/models/promotion-history")
+def get_promotion_history(limit: int = 20) -> dict[str, Any]:
+    """자동 수집 파이프라인 §2-2 -- 승격 여부와 무관하게 모든 학습 시도를
+    기록한 이력. 모델 학습·자동화 팝업의 "최근 학습" 줄이 이걸로 게이트
+    미달 사실("학습은 돌았는데 모델은 그대로")을 보여준다."""
+    events = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).list_promotion_events(limit)
+    return {"items": events}
+
+
 @router.get("/models/{model_id}/references")
 def get_model_references(model_id: str) -> dict[str, Any]:
     try:

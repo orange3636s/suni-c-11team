@@ -3,8 +3,9 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import { createTrainingJob, getModelPerformance, getTrainingJob, saveTrainingState } from "@/lib/api";
+import { createTrainingJob, getModelPerformance, getPromotionHistory, getTrainingJob, saveTrainingState } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
+import type { PromotionEvent } from "@/types/data";
 
 // 지시서 I-2: 학습 탭을 없애고 이 팝업 하나로 축소한다. 넣는 것은 딱
 // 셋 -- 3줄 읽기전용 정보, SQL/Refresh 입력, 파일 첨부·수동 학습 실행
@@ -22,7 +23,16 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // 지시서 §2-2: 승격 여부와 무관한 최근 학습 시도 -- 게이트 미달로
+  // 교체되지 않았을 때 "학습은 돌았는데 모델은 그대로"임을 보여준다.
+  const [latestPromotion, setLatestPromotion] = useState<PromotionEvent | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  function refreshPromotionHistory() {
+    getPromotionHistory(1)
+      .then((response) => setLatestPromotion(response.items[0] ?? null))
+      .catch(() => setLatestPromotion(null));
+  }
 
   // 팝업을 다시 열 때마다 컨텍스트의 최신 저장값으로 되돌린다 -- 다른
   // 탭에서 값이 바뀌었을 수 있으므로 로컬 state를 열 때 한 번 동기화.
@@ -33,6 +43,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
     setRefreshMinutes(training?.refreshIntervalMinutes != null ? String(training.refreshIntervalMinutes) : "");
     setError("");
     setMessage("");
+    refreshPromotionHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -55,6 +66,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
           window.clearInterval(timer);
           setJobId(null);
           setMessage("모델 학습이 완료되었습니다.");
+          refreshPromotionHistory();
           const performance = await getModelPerformance().catch(() => null);
           if (performance) {
             const dataset = performance.source_filename || "training";
@@ -155,9 +167,9 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
-      <div className="settingsPanel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="모델 학습">
+      <div className="settingsPanel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="모델 학습·자동화">
         <div className="settingsPanelHeader">
-          <h2>모델 학습</h2>
+          <h2>모델 학습·자동화</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
             <X size={18} />
           </button>
@@ -183,6 +195,18 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
                 </dd>
               </div>
             </dl>
+            {/* 지시서 §2-2: 승격 여부와 무관하게 최근 학습 시도를 보여준다
+                -- 게이트 미달로 교체되지 않았다면("학습은 돌았는데 모델은
+                그대로") 그 사실이 여기 드러나야 한다. */}
+            {latestPromotion && !latestPromotion.promoted && (
+              <p className="notifyFieldError">
+                게이트 미달: {formatLastRun(latestPromotion.created_at)}에 학습한 모델({latestPromotion.candidate_model_id})이
+                기존 모델보다 나빠 승격되지 않았습니다 -- {latestPromotion.reason}
+              </p>
+            )}
+            {latestPromotion?.promoted === 1 && latestPromotion.candidate_model_id === performance?.model_id && (
+              <p className="notifyTestResult ok">최근 학습이 게이트를 통과해 승격됐습니다 -- {latestPromotion.reason}</p>
+            )}
           </section>
 
           <section className="settingsSection">

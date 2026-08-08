@@ -68,7 +68,7 @@ train.CSV 기준 타깃별 1위 인자:
 
 **R² 값 자체는 성공 기준이 아닙니다.** 결측률이 구조적으로 높아 미계측 wafer는 예측할 정보가 없습니다. 이 수치는 구현이 깨지지 않았는지 확인하는 회귀 테스트 기준값입니다.
 
-전처리 방식별 비교(모델 학습 화면의 `데이터 전처리` 카드, `scripts/benchmark.py`의 `GroupKFold(5)` out-of-fold 평가 기준, Y 최종 R²):
+전처리 방식별 비교(`scripts/benchmark.py`의 `GroupKFold(5)` out-of-fold 평가 기준, Y 최종 R² -- 이 비교 자체는 `GET /api/training/preprocessing-comparison`으로 조회할 수 있지만 현재 UI에는 표시하는 화면이 없습니다):
 
 | 방식 | R² |
 |---|---|
@@ -119,7 +119,7 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 ## 화면 구성
 
-4개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다. 모델 학습은 더 이상 별도 탭이 아니라 사이드바 하단(`모델 학습 / 알림 설정 / 화면 모드` 순) 버튼으로 여는 팝업입니다 — 최근 학습 정보 3줄, SQL 호스트·포트, Refresh 주기, 파일 첨부·수동 학습 실행만 담습니다. 재학습은 기존 모델보다 성능이 나쁘면 승격되지 않는 게이트를 거칩니다.
+4개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다. 모델 학습은 더 이상 별도 탭이 아니라 사이드바 하단(`모델 학습·자동화 / 알림 설정 / 화면 모드` 순) 버튼으로 여는 팝업입니다 — 최근 학습 정보 3줄, SQL 호스트·포트, Refresh 주기, 파일 첨부·수동 학습 실행을 담습니다. 재학습(수동·자동 공통)은 기존 모델보다 홀드아웃 R²가 뚜렷이 나쁘면 승격되지 않는 게이트를 거치며, 게이트 미달로 교체되지 않았을 때는 그 사실이 팝업에 표시됩니다. `AUTO_INGEST_DIR`을 설정하면 그 디렉터리에 놓인 새 CSV를 주기적으로(Refresh 주기) 폴링해 Y 컬럼 유무로 갈라 처리합니다 — Y가 있으면 학습, 없으면 평가 데이터셋으로 등록해 원인 분석·알림 이력·모니터링 스냅샷을 갱신합니다(`src/automation/ingest.py`). SQL 커넥터는 아직 구현되지 않았습니다.
 
 - **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록, 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
 - **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형 ρ/ε² · 범주형 ε², `보기` 토글로 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
@@ -227,6 +227,13 @@ SMTP_FROM_EMAIL=
 
 Gmail 연결은 인증 메일을 보낸 뒤 링크를 눌러야 완료됩니다(대기 상태, `pending`). **이 대기 상태는 5분이 지나면 서버에서 자동으로 만료되어 미연결로 돌아갑니다** — 5분 안에 메일의 링크를 눌러야 합니다. 만료 판정은 조회 시점에 이루어지며(`src/notifications/settings_store.py`의 `PENDING_TTL_SECONDS`), 이미 연결 완료(`verified: true`)된 채널은 만료 대상이 아니라 재시작·재접속 후에도 계속 유지됩니다.
 
+자동 수집(감시 디렉터리 폴링)을 쓰려면 아래 환경변수를 추가합니다 -- 주기는 환경변수가 아니라 모델 학습·자동화 팝업에서 설정한 Refresh 값을 따릅니다.
+
+```env
+AUTO_INGEST_DIR=
+AUTO_INGEST_ENABLED=false
+```
+
 ## 비밀값 취급
 
 - API 키·토큰·Webhook URL을 코드에 직접 쓰지 않습니다
@@ -253,7 +260,7 @@ Gmail 연결은 인증 메일을 보낸 뒤 링크를 눌러야 완료됩니다(
 - 데이터셋: `GET /api/datasets`, `POST /api/datasets`(업로드), `DELETE /api/datasets/{id}`, `GET /api/datasets/{id}/download`, `GET /api/datasets/{id}/schema`
 - CSV 검증·전처리(현재 UI에서는 호출하지 않는 독립 엔드포인트): `POST /api/validate`, `POST /api/preprocess`
 - 학습: `POST /api/train`(동기), `POST /api/train/jobs`(비동기) + `GET /api/train/jobs/{job_id}`
-- 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/model/latest`
+- 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/models/promotion-history`(승격 게이트 통과 여부와 무관한 학습 시도 이력), `GET /api/model/latest`
 - 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical`, `config_level: model|eq|chamber` 파라미터로 수치형/범주형 보기 전환), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
 - SPC/알람: `GET /api/control-ranges`, `GET /api/alarms`, `GET /api/alarms/predictions`
 - 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/measurement-expansion`, `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`

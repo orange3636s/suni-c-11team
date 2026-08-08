@@ -32,6 +32,15 @@ def _duplicates(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if counts[value] > 1))
 
 
+def has_target_column(dataframe: pd.DataFrame, target: str = TARGET_COLUMN) -> bool:
+    """단일 판정 기준(지시서 자동 수집 파이프라인 §1-4) -- 학습
+    (`prepare_dataset`)과 자동 수집(`src/automation/ingest.py`)이 이
+    함수 하나로 "Y 있음"을 판정한다. 최종 수율 컬럼 `Y`의 유무만 본다 --
+    Y1~Y5나 Y6~Y10 같은 부분 라벨은 이 기준에서 "Y 없음"이다(학습
+    파이프라인이 애초에 `Y`만 목표 변수로 받아들이기 때문)."""
+    return target in dataframe.columns
+
+
 @dataclass
 class PreparedDataset:
     features: pd.DataFrame
@@ -110,7 +119,7 @@ def prepare_dataset(
             "학습 데이터에 중복된 컬럼명이 있습니다: "
             + ", ".join(str(column) for column in duplicate_columns)
         )
-    if target not in working.columns:
+    if not has_target_column(working, target):
         raise ValueError(
             "학습 데이터에 최종 수율 컬럼 Y가 없습니다. "
             "Y 컬럼이 포함된 CSV 파일을 선택해주세요."

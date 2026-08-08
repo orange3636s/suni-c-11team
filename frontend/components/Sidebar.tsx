@@ -177,14 +177,14 @@ export default function Sidebar({ activeItem = "모니터링", collapsed = false
           <button
             type="button"
             className={`themeToggle trainingTrigger ${collapsed ? "railIconButton" : ""}`}
-            aria-label="모델 학습"
+            aria-label="모델 학습·자동화"
             aria-haspopup="dialog"
             aria-expanded={trainingPanelOpen}
-            title="모델 학습"
+            title="모델 학습·자동화"
             onClick={() => setTrainingPanelOpen((open) => !open)}
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Database size={18} /></span>
-            <span className="themeTriggerLabel">모델 학습</span>
+            <span className="themeTriggerLabel">모델 학습·자동화</span>
           </button>
           {/* 지시서 Q: 사이드바 하단 순서 -- 모델 학습 / 알림 설정 / 화면
               모드. */}

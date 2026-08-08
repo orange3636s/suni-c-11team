@@ -43,6 +43,13 @@ def _parse_origins(raw_value: str | None) -> tuple[str, ...]:
     return origins or DEFAULT_FRONTEND_ORIGINS
 
 
+def _parse_bool(name: str, default: bool = False) -> bool:
+    raw_value = os.environ.get(name, "").strip().lower()
+    if not raw_value:
+        return default
+    return raw_value in {"1", "true", "yes", "on"}
+
+
 def _parse_positive_int(name: str, default: int) -> int:
     raw_value = os.environ.get(name, str(default))
     try:
@@ -214,6 +221,16 @@ class Settings:
             os.environ.get("NOTIFY_VERIFY_BASE_URL", "").strip()
             or (_parse_origins(os.environ.get("FRONTEND_ORIGINS"))[0])
         )
+    )
+    # 자동 수집 파이프라인 1단계 (지시서 §1-1) -- 감시 디렉터리에 새 CSV가
+    # 떨어지면 Y 유무로 갈라 처리한다. 주기는 여기 두지 않는다 -- 사용자가
+    # 모델 학습·자동화 팝업에서 바꾼 값(`state/training`의
+    # `refreshIntervalMinutes`)을 스케줄러가 그대로 따른다.
+    auto_ingest_dir: str | None = field(
+        default_factory=lambda: os.environ.get("AUTO_INGEST_DIR", "").strip() or None
+    )
+    auto_ingest_enabled: bool = field(
+        default_factory=lambda: _parse_bool("AUTO_INGEST_ENABLED", False)
     )
 
     def __post_init__(self) -> None:

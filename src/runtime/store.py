@@ -17,6 +17,10 @@ from api.settings import settings
 logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 
+# 자동 수집 파이프라인 §2-1: 홀드아웃 R²가 이만큼 이내로 떨어지는 건
+# 노이즈로 보고 승격을 막지 않는다. 이보다 크게 떨어지면 게이트 미달.
+PROMOTION_TOLERANCE = 0.005
+
 
 class RuntimeStore:
     def __init__(
@@ -180,13 +184,18 @@ class RuntimeStore:
         pipeline_version: str,
         dataset_version: int,
         metadata: dict[str, Any],
-        metric_path: tuple[str, ...] = ("metrics", "test", "rmse"),
+        metric_path: tuple[str, ...] = ("metrics", "test", "r2"),
+        higher_is_better: bool = True,
+        tolerance: float = PROMOTION_TOLERANCE,
     ) -> dict[str, Any]:
-        """승격 게이트 (지시서 I-4) -- 후보 모델이 현재 활성 모델의
-        `metric_path` 지표(기본: 최종 수율 테스트 RMSE, 낮을수록 좋음)보다
-        나쁘지 않을 때만 `promote_model`을 호출한다. 활성 모델이 없거나
-        지표를 비교할 수 없으면(둘 중 하나라도 None) 비교 불가로 보고
-        승격시킨다 -- 게이트가 첫 학습 자체를 막아서는 안 된다.
+        """승격 게이트 (지시서 I-4, 자동 수집 파이프라인 §2-1) -- 후보
+        모델이 현재 활성 모델의 `metric_path` 지표(기본: 최종 수율 테스트
+        R², 높을수록 좋음)보다 `tolerance` 이상 나쁘지 않을 때만
+        `promote_model`을 호출한다. 작은 노이즈로 승격이 막히지 않도록
+        완전히 같거나 나은 경우만 요구하지 않고 `tolerance`만큼의 하락은
+        허용한다. 활성 모델이 없거나 지표를 비교할 수 없으면(둘 중
+        하나라도 None) 비교 불가로 보고 승격시킨다 -- 게이트가 첫 학습
+        자체를 막아서는 안 된다.
 
         수동 학습("수동 학습 실행")과 자동 재학습이 이 메서드 하나를
         공유하므로 두 경로 모두 같은 게이트를 통과한다. 매 학습이 자신의
@@ -202,19 +211,29 @@ class RuntimeStore:
                 node = node.get(key)
             return float(node) if isinstance(node, (int, float)) else None
 
+        metric_name = metric_path[-1]
         active = self.active_model()
         candidate_metric = _dig(metadata)
         active_metadata = active.get("metadata") if active else None
         active_metric = _dig(active_metadata)
 
         if active is None:
-            promoted, reason = True, "활성 모델 없음 -- 최초 학습은 게이트 없이 승격"
+            promoted, reason = True, "최초 모델 -- 게이트 없이 승격"
         elif candidate_metric is None or active_metric is None:
-            promoted, reason = True, "지표 비교 불가(RMSE 없음) -- 비교할 수 없어 승격"
-        elif candidate_metric <= active_metric:
-            promoted, reason = True, f"후보 RMSE {candidate_metric:.4f} <= 활성 RMSE {active_metric:.4f}"
+            promoted, reason = True, f"지표 비교 불가({metric_name} 없음) -- 비교할 수 없어 승격"
         else:
-            promoted, reason = False, f"후보 RMSE {candidate_metric:.4f} > 활성 RMSE {active_metric:.4f} -- 승격 거부, 기존 모델 유지"
+            regressed = (
+                candidate_metric < active_metric - tolerance
+                if higher_is_better
+                else candidate_metric > active_metric + tolerance
+            )
+            if not regressed:
+                promoted, reason = True, "게이트 통과"
+            else:
+                promoted, reason = (
+                    False,
+                    f"홀드아웃 {metric_name} 저하 ({active_metric:.4f} → {candidate_metric:.4f})",
+                )
 
         self.record_promotion_event(
             candidate_model_id=model_id,

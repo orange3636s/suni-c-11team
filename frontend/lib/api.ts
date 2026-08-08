@@ -29,6 +29,7 @@ import type {
   NotificationSettingsSummary,
   ParetoRankingResponse,
   PreprocessingComparisonResponse,
+  PromotionHistoryResponse,
   PreprocessResponse,
   ReliabilityResponse,
   ScreeningScatterResponse,
@@ -444,6 +445,12 @@ export function getReliability(dataset: string, evalDataset: string): Promise<Re
 
 export function getModelPerformance(): Promise<ModelPerformanceResponse> {
   return getJson("/api/models/performance");
+}
+
+// 자동 수집 파이프라인 §2-2 -- 승격 여부와 무관한 학습 시도 이력. 모델
+// 학습·자동화 팝업이 "게이트 미달로 교체되지 않음"을 보여주는 데 쓴다.
+export function getPromotionHistory(limit = 5): Promise<PromotionHistoryResponse> {
+  return getJson(`/api/models/promotion-history?${new URLSearchParams({ limit: String(limit) }).toString()}`);
 }
 
 export function getScreeningHeatmap(

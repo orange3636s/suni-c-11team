@@ -15,7 +15,7 @@ from sklearn.dummy import DummyRegressor
 import api.routes.data as data_routes
 import src.ml.dataset as dataset_module
 import src.ml.training as training_module
-from src.ml.dataset import prepare_dataset, split_dataset
+from src.ml.dataset import has_target_column, prepare_dataset, split_dataset
 from src.ml.evaluation import evaluate_regression
 from src.ml.model_io import load_model, save_model_bundle
 from src.ml.training import (
@@ -166,6 +166,30 @@ def test_model_preprocessor_uses_native_only_when_requested(training_dataframe: 
 def test_unknown_target_is_rejected(training_dataframe: pd.DataFrame) -> None:
     with pytest.raises(ValueError, match="지원하지 않는 목표 변수"):
         prepare_dataset(training_dataframe, target="UNKNOWN")
+
+
+def test_has_target_column_true_when_y_present(training_dataframe: pd.DataFrame) -> None:
+    assert has_target_column(training_dataframe) is True
+
+
+def test_has_target_column_false_when_y_missing(training_dataframe: pd.DataFrame) -> None:
+    # 자동 수집 파이프라인 §1-4: 부분 라벨(Y1~Y5 등)만 있고 최종 Y가
+    # 없으면 "Y 없음"으로 판정해야 한다 -- 학습(prepare_dataset)이 애초에
+    # Y만 목표 변수로 받아들이는 것과 같은 기준.
+    without_y = training_dataframe.drop(columns=["Y"]).assign(Y1=1.0, Y5=2.0)
+    assert has_target_column(without_y) is False
+
+
+def test_has_target_column_matches_prepare_dataset_rejection(
+    training_dataframe: pd.DataFrame,
+) -> None:
+    # 지시서: "두 곳에서 다르게 판정하면 모순이 생긴다" -- has_target_column
+    # 이 False라고 하는 데이터프레임은 prepare_dataset도 반드시 거부해야
+    # 한다(같은 기준을 공유하므로).
+    without_y = training_dataframe.drop(columns=["Y"])
+    assert has_target_column(without_y) is False
+    with pytest.raises(ValueError, match="최종 수율 컬럼 Y가 없습니다"):
+        prepare_dataset(without_y)
 
 
 def test_string_target_is_converted_to_numeric(

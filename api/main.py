@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -23,7 +24,9 @@ from api.routes.monitoring import router as monitoring_router
 from api.routes.notify import router as notify_router, run_daily_dispatch_job
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
+from src.automation.ingest import AUTO_INGEST_JOB_ID, DEFAULT_INGEST_MINUTES, run_auto_ingest_job
 from src.notifications.telegram_bot import run_polling_loop
+from src.runtime.app_state import get_latest_state
 from src.runtime.datasets import BUNDLED_DATASET_FILES
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -89,7 +92,7 @@ async def _warmup_datasets_background() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     try:
         recover_interrupted_training_jobs()
     except Exception:
@@ -125,7 +128,39 @@ async def lifespan(_: FastAPI):
     # 증가한다").
     scheduler = AsyncIOScheduler()
     scheduler.add_job(run_daily_dispatch_job, CronTrigger(hour=9, minute=0), id="daily_alarm_notification")
+
+    # 자동 수집 파이프라인 1단계 -- 별도 잡이다(위 발송 잡을 건드리지
+    # 않는다). 주기는 환경변수가 아니라 저장된 사용자 설정
+    # (state/training의 refreshIntervalMinutes)을 따른다 -- 없으면
+    # DEFAULT_INGEST_MINUTES로 일단 등록해 두고 일시정지한다(설정된 적
+    # 없다는 뜻이므로 자동 실행은 하지 않는다). 값이 있으면 그 주기로
+    # 등록한다. max_instances=1 + coalesce=True로 학습 중복 실행을 막는다.
+    initial_minutes: int | None = None
+    try:
+        training_state = get_latest_state(
+            RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+        ).get("training")
+        if training_state:
+            raw_minutes = (training_state.get("payload") or {}).get("refreshIntervalMinutes")
+            if isinstance(raw_minutes, (int, float)) and raw_minutes > 0:
+                initial_minutes = int(raw_minutes)
+    except Exception:
+        logger.exception("자동 수집 주기 설정 조회 실패 -- 일시정지 상태로 시작합니다.")
+
+    scheduler.add_job(
+        run_auto_ingest_job,
+        IntervalTrigger(minutes=initial_minutes or DEFAULT_INGEST_MINUTES),
+        id=AUTO_INGEST_JOB_ID,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
+    if initial_minutes is None:
+        scheduler.pause_job(AUTO_INGEST_JOB_ID)
+    # 저장 API(POST /api/state/training) 핸들러가 주기 변경 시
+    # reschedule/pause할 수 있도록 앱 상태에 둔다 -- 서버 재시작을
+    # 요구하지 않는다.
+    app.state.scheduler = scheduler
 
     try:
         yield

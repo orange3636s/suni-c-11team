@@ -58,7 +58,7 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
           aria-selected={trainingPanelOpen}
           onClick={() => setTrainingPanelOpen((value) => !value)}
         >
-          모델 학습
+          모델 학습·자동화
         </button>
         <button
           type="button"

@@ -25,6 +25,13 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Simple
     return test_settings
 
 
+def _fake_request() -> SimpleNamespace:
+    # save_training_state reschedules the auto-ingest job via
+    # request.app.state.scheduler -- no scheduler in these route-level
+    # tests, so _apply_ingest_schedule's getattr(..., None) no-ops.
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+
+
 DEFAULT_NOTIFICATIONS = {
     "slack": {"connected": False, "target": None, "webhook_masked": None, "verified_at": None},
     "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
@@ -39,7 +46,7 @@ def test_get_latest_empty(isolated_settings: SimpleNamespace) -> None:
 
 
 def test_save_and_restore_training(isolated_settings: SimpleNamespace) -> None:
-    response = state_routes.save_training_state(TrainingStateSaveRequest(dataset="train", payload={"performance": {"model_id": "m1"}}))
+    response = state_routes.save_training_state(TrainingStateSaveRequest(dataset="train", payload={"performance": {"model_id": "m1"}}), _fake_request())
     assert response == {"saved": True}
 
     result = state_routes.get_latest()
@@ -70,8 +77,8 @@ def test_save_and_restore_alarms(isolated_settings: SimpleNamespace) -> None:
 
 
 def test_save_overwrites_previous_training_result(isolated_settings: SimpleNamespace) -> None:
-    state_routes.save_training_state(TrainingStateSaveRequest(dataset="train", payload={"performance": {"model_id": "m1"}}))
-    state_routes.save_training_state(TrainingStateSaveRequest(dataset="test", payload={"performance": {"model_id": "m2"}}))
+    state_routes.save_training_state(TrainingStateSaveRequest(dataset="train", payload={"performance": {"model_id": "m1"}}), _fake_request())
+    state_routes.save_training_state(TrainingStateSaveRequest(dataset="test", payload={"performance": {"model_id": "m2"}}), _fake_request())
 
     result = state_routes.get_latest()
     assert result["training"]["dataset"] == "test"

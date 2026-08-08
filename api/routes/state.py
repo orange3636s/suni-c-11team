@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from apscheduler.triggers.interval import IntervalTrigger
+from fastapi import APIRouter, Request
 
 from api.schemas.state import (
     AlarmsStateSaveRequest,
@@ -13,6 +14,7 @@ from api.schemas.state import (
     TrainingStateSaveRequest,
 )
 from api.settings import settings
+from src.automation.ingest import AUTO_INGEST_JOB_ID
 from src.notifications.settings_store import get_settings_summary
 from src.runtime.app_state import get_latest_state, save_state
 from src.runtime.store import RuntimeStore
@@ -50,9 +52,28 @@ def get_latest() -> dict[str, Any]:
     return {**state, "notifications": notifications}
 
 
+def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> None:
+    """자동 수집 파이프라인 §1-2: 팝업에서 주기를 바꾸면 서버 재시작
+    없이 다음 실행 간격에 반영한다. `null`이면 잡을 일시정지한다.
+    스케줄러가 아직 뜨지 않은 상태(테스트 등)에서도 조용히 넘어간다.
+    """
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None:
+        return
+    try:
+        if isinstance(refresh_interval_minutes, (int, float)) and refresh_interval_minutes > 0:
+            scheduler.reschedule_job(AUTO_INGEST_JOB_ID, trigger=IntervalTrigger(minutes=refresh_interval_minutes))
+            scheduler.resume_job(AUTO_INGEST_JOB_ID)
+        else:
+            scheduler.pause_job(AUTO_INGEST_JOB_ID)
+    except Exception:
+        logger.exception("자동 수집 주기 반영 실패")
+
+
 @router.post("/training", response_model=StateSaveResponse)
-def save_training_state(body: TrainingStateSaveRequest) -> dict[str, bool]:
+def save_training_state(body: TrainingStateSaveRequest, request: Request) -> dict[str, bool]:
     saved = save_state(_store(), "training", dataset={"dataset": body.dataset}, payload=body.payload)
+    _apply_ingest_schedule(request, body.payload.get("refreshIntervalMinutes"))
     return {"saved": saved}
 
 
