@@ -210,7 +210,13 @@ function RootCauseContent() {
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
-  const [datasetId, setDatasetId] = useState("train");
+  // B-5: 즐겨찾기 딥링크(`?dataset=&target=&feature=`)가 저장해 둔
+  // 데이터셋으로 연다 -- 이게 없으면 즐겨찾기가 항상 "현재 선택된
+  // 데이터셋"으로 열려서, train에서 저장한 카드를 test 상태에서 열면
+  // 같은 인자명의 다른 데이터셋 차트가 경고 없이 표시된다. 이미 이
+  // 페이지가 마운트된 채로 다른 즐겨찾기를 또 여는 경우는(같은 라우트라
+  // 리마운트가 안 됨) target/feature 딥링크와 동일한 기존 한계다.
+  const [datasetId, setDatasetId] = useState(searchParams.get("dataset") || "train");
   // hasConfig 판단(Eq. 색상 옵션·팝오버 행 노출 여부)에 쓰는 데이터셋 스키마.
   const [analysisSchema, setAnalysisSchema] = useState<DatasetSchemaResponse | null>(null);
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
@@ -357,7 +363,11 @@ function RootCauseContent() {
     syncedFromRestore.current = true;
     if (!analysis) return;
     const timer = window.setTimeout(() => {
-      setDatasetId(analysis.dataset);
+      // B-5: 즐겨찾기 딥링크가 dataset을 지정했으면 복원된 결과의
+      // dataset으로 덮어쓰지 않는다 -- 안 그러면 URL이 가리키는(favorite이
+      // 저장된) 데이터셋이 이 타이머 한 번으로 조용히 되돌아가, 곧 열릴
+      // quickLook이 엉뚱한 데이터셋의 동명 인자를 보여주게 된다.
+      if (!searchParams.get("dataset")) setDatasetId(analysis.dataset);
       if (!searchParams.get("target")) setActiveTarget(analysis.activeTarget);
       setRunState("done");
       setAnalysisDataset(analysis.dataset);

@@ -131,6 +131,7 @@ def _ingest_training_csv(registry: DatasetRegistry, filename: str, content: byte
     upload_result = registry.upload(filename, content)
     if not upload_result.get("success"):
         raise ValueError(f"데이터셋 등록 실패: {upload_result.get('blocking_errors')}")
+    dataset_id = upload_result["dataset_id"]
 
     manager = get_training_job_manager()
     job_id = new_training_job_id()
@@ -145,6 +146,12 @@ def _ingest_training_csv(registry: DatasetRegistry, filename: str, content: byte
         )
     except ActiveOperationError as exc:
         manager.cleanup_input(job_id)
+        # B-6: upload()는 매번 새 uuid를 발급하므로, 여기서 등록을 되돌리지
+        # 않으면 학습 슬롯이 계속 사용 중인 동안(예: 30분 학습) 같은
+        # 물리 파일이 폴링 주기(예: 5분)마다 새 dataset_id로 재등록된다
+        # -- 파일을 옮기지 않아 다음 주기에 재시도하므로, 등록만이라도
+        # 반드시 롤백해야 중복이 쌓이지 않는다.
+        registry.delete(dataset_id)
         raise _RetryLater from exc
     logger.info("auto_ingest: 학습 Job 등록 job_id=%s file=%s", job_id, filename)
 
@@ -194,6 +201,15 @@ def _refresh_analysis_snapshot(store: RuntimeStore, dataset_id: str) -> None:
             pareto_by_target[target] = _pareto_payload(dataset_id, target, PARETO_TOP_N)
         except Exception:
             logger.exception("auto_ingest: Pareto 계산 실패 dataset=%s target=%s", dataset_id, target)
+
+    if not pareto_by_target:
+        # B-6: 전 타깃이 실패하면(예: 스키마가 맞지 않는 파일) 빈 payload로
+        # 저장하지 않는다 -- 안 그러면 기존에 정상이던 스냅샷(모니터링
+        # 홈·원인 분석 탭이 읽는)을 이 깨진 결과가 그대로 덮어써 버린다.
+        # analysis와 alarms 스냅샷은 서로의 기준(dataset)을 가리키므로
+        # 둘 다 저장을 생략해 일관성을 유지한다.
+        logger.warning("auto_ingest: 전 타깃 Pareto 실패 -- 스냅샷 갱신 생략 dataset=%s", dataset_id)
+        return
 
     measurement_expansion = None
     try:

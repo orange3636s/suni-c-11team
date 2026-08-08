@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime
-from functools import lru_cache
+from functools import lru_cache, wraps
 from typing import Any, Literal
 
 import numpy as np
@@ -28,13 +29,12 @@ from api.schemas.analysis import (
 )
 from api.settings import APP_VERSION, settings
 from src.analysis import alarm_gbdt, preprocessing_compare, reliability, target_fallback, warning_line
-from src.analysis.alarm_bands import classify_measured_bands, compute_factor_band
+from src.analysis.alarm_bands import classify_measured_bands
 from src.analysis.control_range import (
     compute_control_range,
     evaluate_alarms,
     summarize_wafer_status,
 )
-from src.analysis.llm_stats import per_factor_measurement_bias, summarize_measurement_bias
 from src.analysis.measurement_expansion import MIN_ACTION_BLOCKED_SHARE, compute_measurement_expansion
 from src.analysis.recommendations import FactorRecommendation, compute_factor_recommendation
 from src.analysis.report import build_analysis_report, build_chat_context
@@ -46,9 +46,7 @@ from src.analysis.screening.selector import (
     PARETO_TOP_N,
     ParetoFactor,
     confidence_tier,
-    find_factor,
     score_all_factors,
-    select_fdr_significant_factors,
 )
 from src.analysis.screening.selector import _ranked_rows_with_contribution as _ranked_rows
 from src.analysis.screening.selector import _row_to_factor
@@ -74,6 +72,42 @@ def _dataframe_or_404(dataset_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.") from exc
 
 
+def _single_flight(fn):
+    """B-4: `lru_cache`만으로는 같은 키가 아직 캐시되지 않은 상태에서
+    동시에 두 스레드가 들어오면(예: 일일 발송 스케줄러 잡과 사용자의
+    `/alarms` 요청이 겹치는 경우) 둘 다 캐시 미스를 보고 같은 무거운
+    GBDT를 이중으로 적합시킨다. 키별 락으로 감싸 두 번째 호출은 첫 번째가
+    끝날 때까지 기다렸다가 이미 채워진 캐시를 그대로 받아가게 한다 --
+    서로 다른 키는 잠그지 않으므로 별개 데이터셋 요청끼리는 막지 않는다.
+    데코레이터를 적용받는 함수는 반드시 위치 인자만 받아야 한다(캐시
+    키가 그 튜플 그대로다).
+    """
+    locks: dict[tuple, threading.Lock] = {}
+    locks_guard = threading.Lock()
+
+    @wraps(fn)
+    def wrapper(*args):
+        with locks_guard:
+            lock = locks.setdefault(args, threading.Lock())
+        with lock:
+            return fn(*args)
+
+    return wrapper
+
+
+def _find_cached_factor(dataset: str, df: pd.DataFrame, target: str, feature: str) -> ParetoFactor | None:
+    """B-2: `find_factor`가 직접 부르는 `_ranked_rows_with_contribution`
+    (88인자 ANOVA+FDR 전수 스코어링)을 다시 돌리지 않고, Pareto/heatmap이
+    이미 채워 뒀을 `_cached_ranked_rows(dataset, target)`를 재사용한다.
+    같은 (dataset, target) 기본 파라미터(fdr_alpha=0.05, min_n=100/20)로
+    스코어링하므로 결과는 find_factor와 동일하다 -- 다만 분석 실행이
+    5타깃×10인자 산점도를 동시에 요청하면 이 캐시 덕분에 실제 스코어링은
+    타깃당 한 번만 일어난다."""
+    rows = _cached_ranked_rows(dataset, target)
+    row = next((r for r in rows if r["feature"] == feature), None)
+    return _row_to_factor(df, target, row) if row is not None else None
+
+
 @router.get("/screening/scatter", response_model=ScreeningScatterResponse)
 def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, Any]:
     df = _dataframe_or_404(dataset)
@@ -82,7 +116,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃 결과가 없습니다.")
     # Resolves any of the 88 factors regardless of Pareto rank -- a heatmap
     # cell click can open a scatter for a factor outside the top 5.
-    factor = find_factor(df, schema, target, feature)
+    factor = _find_cached_factor(dataset, df, target, feature)
     if factor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}' 인자를 찾을 수 없습니다.")
     if factor.kind == "Config":
@@ -133,7 +167,7 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
     if feature not in schema.config_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}'은(는) Config 인자가 아닙니다.")
 
-    factor = find_factor(df, schema, target, feature)
+    factor = _find_cached_factor(dataset, df, target, feature)
     if factor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}' 인자를 찾을 수 없습니다.")
 
@@ -274,6 +308,7 @@ def _cached_all_warning_lines(dataset_id: str):
 BOOTSTRAP_CACHE_PAIRS = 2
 
 
+@_single_flight
 @lru_cache(maxsize=BOOTSTRAP_CACHE_PAIRS)
 def _cached_bootstrap_prediction(train_dataset_id: str, eval_dataset_id: str):
     """§A-1 부트스트랩 앙상블 -- (train, eval) 쌍마다 한 번만 계산해
@@ -296,6 +331,7 @@ def _cached_bootstrap_prediction(train_dataset_id: str, eval_dataset_id: str):
 AUC_GATE_CACHE_PAIRS = 4
 
 
+@_single_flight
 @lru_cache(maxsize=AUC_GATE_CACHE_PAIRS)
 def _cached_transfer_auc_folds(train_dataset_id: str, eval_dataset_id: str) -> tuple[float, ...] | None:
     """알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-1/§A-2) -- (train, eval)
@@ -393,17 +429,23 @@ def get_screening_pareto(dataset: str = "train", target: str = "Y1", top_n: int 
     return _pareto_payload(dataset, target, top_n)
 
 
-def _alarm_factors(train_df, schema) -> tuple[list[ParetoFactor], list[str]]:
+def _alarm_factors(train_df, schema, train_dataset_id: str) -> tuple[list[ParetoFactor], list[str]]:
     """Per-target alarm-eligible factors: every BH-FDR-significant factor
     (see select_fdr_significant_factors's docstring -- deliberately kept
     unchanged so the golden 19-alarm-wafer count doesn't move). Screen
     display no longer gates on significance, but alarm generation still
     does.
+
+    B-3: reuses `_cached_ranked_rows(train_dataset_id, target)` instead of
+    `select_fdr_significant_factors` (which reruns the full 88-factor
+    ANOVA+FDR scoring every call with identical default parameters) --
+    same rows, same significance flags, just not recomputed from scratch.
     """
     factors: list[ParetoFactor] = []
     no_alarm_factor: list[str] = []
     for target in schema.target_cols:
-        target_factors = select_fdr_significant_factors(train_df, schema, target)
+        rows = _cached_ranked_rows(train_dataset_id, target)
+        target_factors = [_row_to_factor(train_df, target, row) for row in rows if row["significant"]]
         if not target_factors:
             no_alarm_factor.append(target)
             continue
@@ -421,7 +463,7 @@ def _control_range_dict(control_range) -> dict[str, Any]:
 def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
     train_df = _dataframe_or_404(dataset)
     schema = parse_schema(train_df)
-    factors, no_significant = _alarm_factors(train_df, schema)
+    factors, no_significant = _alarm_factors(train_df, schema, dataset)
     items = [_control_range_dict(compute_control_range(train_df, factor)) for factor in factors]
     return {
         "train_dataset_id": dataset,
@@ -430,16 +472,29 @@ def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
     }
 
 
-def _measured_ids_for_alarm_factors(train_df: pd.DataFrame, eval_df: pd.DataFrame, schema) -> set[str]:
+MEASURED_IDS_CACHE_PAIRS = 8
+
+
+@lru_cache(maxsize=MEASURED_IDS_CACHE_PAIRS)
+def _measured_ids_for_alarm_factors(train: str, eval: str) -> frozenset[str]:
     """알람 판정에 쓸 "선정 인자 계측 여부" -- 기존 unmeasured_id_set과
     동일한 기준(FDR-유의 인자 중 하나라도 계측)이다 (spec 사전 알람 로그
     전면 개편 §B-2 "미계측").
+
+    B-3: `/alarms`와 `/alarms/predictions` 둘 다 이 경로를 지나는데, 매
+    호출마다 5타깃 유의 인자 선정(`_alarm_factors`) + 관리한계 계산 +
+    eval 전수 판정을 다시 돌렸다. (train, eval) 쌍마다 한 번만 계산해
+    캐시하고, 내부는 `_cached_ranked_rows`를 재사용하는 `_alarm_factors`를
+    그대로 쓴다.
     """
-    factors, _ = _alarm_factors(train_df, schema)
+    train_df = _dataframe_or_404(train)
+    eval_df = _dataframe_or_404(eval)
+    schema = parse_schema(train_df)
+    factors, _ = _alarm_factors(train_df, schema, train)
     control_ranges = [compute_control_range(train_df, factor) for factor in factors]
     alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
     verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
-    return {v.lot_wafer_id for v in verdicts if v.status != "unmeasured"}
+    return frozenset(v.lot_wafer_id for v in verdicts if v.status != "unmeasured")
 
 
 def _scored_wafers(
@@ -469,8 +524,7 @@ def _scored_wafers(
     if prediction is None:
         return [], auc_lo, gate_passed
 
-    schema = parse_schema(train_df)
-    measured_ids = _measured_ids_for_alarm_factors(train_df, eval_df, schema)
+    measured_ids = _measured_ids_for_alarm_factors(train, eval)
     sigma = float(pd.to_numeric(train_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").std())
     scored = alarm_gbdt.score_wafers(
         eval_df, prediction,
@@ -614,26 +668,6 @@ def compute_alarm_notification_items(
     return items
 
 
-def _factor_band_dict(band) -> dict[str, Any]:
-    return {
-        "feature": band.feature,
-        "target": band.target,
-        "kind": band.kind,
-        "x_min": band.x_min,
-        "x_max": band.x_max,
-        "lcl": band.lcl,
-        "ucl": band.ucl,
-        "recommended_lo": band.recommended_lo,
-        "recommended_hi": band.recommended_hi,
-        "out_of_control": {"count": band.out_of_control.count, "mean_defect_rate": band.out_of_control.mean_defect_rate},
-        "out_of_recommended": {
-            "count": band.out_of_recommended.count,
-            "mean_defect_rate": band.out_of_recommended.mean_defect_rate,
-        },
-        "in_recommended": {"count": band.in_recommended.count, "mean_defect_rate": band.in_recommended.mean_defect_rate},
-    }
-
-
 @router.get("/alarms/predictions", response_model=AlertsDataResponse)
 def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str, Any]:
     """사전 알람 로그 전면 개편 (spec §A-3) -- 등급을 서버가 매겨 내려주지
@@ -645,7 +679,6 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
     """
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
-    schema = parse_schema(train_df)
 
     auc_lo, gate_passed = _auc_gate(train, eval)
     prediction = _cached_bootstrap_prediction(train, eval)
@@ -653,7 +686,7 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
     # "미계측" 정의는 그대로 둔다 (spec §B-2) -- 선정 인자가 하나도
     # 계측되지 않은 wafer는 예측이 있어도 신뢰할 수 없어 등급을 매기지
     # 않는다.
-    measured_id_set = _measured_ids_for_alarm_factors(train_df, eval_df, schema)
+    measured_id_set = _measured_ids_for_alarm_factors(train, eval)
 
     warning_lines = _cached_all_warning_lines(train)
     id_column = "Lot_Wafer_ID"
@@ -687,48 +720,16 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
                 }
             )
 
-    # 정밀도·재현율 실시간 추정용 홀드아웃 (spec §A-4) -- train을 LOT
-    # 기준으로 5-fold 잘라 얻은 out-of-fold 예측치. 표본이 부족하면 None
-    # (frontend가 "추정 불가"로 표시한다).
-    features = alarm_gbdt.feature_columns(schema)
-    holdout_result = alarm_gbdt.compute_holdout_predictions(train_df, features) if features else None
-    holdout = (
-        {
-            "actual_y": holdout_result.actual_y.tolist(),
-            "pred_point": holdout_result.pred_point.tolist(),
-            "residual_std": holdout_result.residual_std,
-        }
-        if holdout_result is not None
-        else None
-    )
-
     y_train = pd.to_numeric(train_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").dropna()
     has_y = len(y_train) > 0
     sigma = float(y_train.std()) if has_y else 0.0
 
-    # Per-factor 인자별 불량률 breakdown (§D-1, 그대로 유지) -- 강함·보통
-    # 등급 인자 전부. `_cached_ranked_rows`는 Pareto 화면이 이미 조회한
-    # 타깃이면 즉시 반환되는 프로세스 전역 캐시라 여기서 다시 스코어링하지
-    # 않는다.
-    factor_bands_with_eps2: list[tuple[float, dict[str, Any]]] = []
-    qualifying_factors: list[ParetoFactor] = []
-    for t in schema.target_cols:
-        for row in _cached_ranked_rows(train, t):
-            tier = confidence_tier(row["eps2"], row["p_value"])
-            if tier not in ("strong", "moderate"):
-                continue
-            factor = _row_to_factor(train_df, t, row)
-            qualifying_factors.append(factor)
-            control_range = compute_control_range(train_df, factor)
-            band = compute_factor_band(train_df, eval_df, factor, control_range)
-            if band is not None:
-                factor_bands_with_eps2.append((row["eps2"], {**_factor_band_dict(band), "confidence_tier": tier}))
-    factor_bands_with_eps2.sort(key=lambda pair: pair[0], reverse=True)
-    factor_bands = [item for _eps2, item in factor_bands_with_eps2]
-
-    # 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- 위 강함·보통 인자
-    # 전체를 대상으로 한다 (드롭다운과 같은 범위).
-    measurement_bias = summarize_measurement_bias(per_factor_measurement_bias(train_df, qualifying_factors))
+    # B-1: holdout/factor_bands/measurement_bias는 여기서 계산해 응답에
+    # 실었었지만 렌더하는 화면이 0곳이었다(프런트 소비자도 죽은 코드--
+    # estimatePrecisionRecall/representativeWafer, 같은 커밋에서 삭제).
+    # 매 요청마다 무캐시로 GroupKFold 5회 GBDT 적합(holdout) + 88인자
+    # 전수 밴드 계산(factor_bands)을 돌려 알림 이력 탭을 열 때마다
+    # 수십 초가 걸렸다. 되살릴 거면 lru_cache((train, eval))가 필수다.
 
     return round_floats(
         {
@@ -742,12 +743,9 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
             "train_y_p1": float(y_train.quantile(0.01)) if has_y else 0.0,
             "train_y_p99": float(y_train.quantile(0.99)) if has_y else 0.0,
             "predictions": predictions,
-            "holdout": holdout,
             "auc_lower_bound": auc_lo,
             "auc_gate_passed": gate_passed,
             "auc_gate_threshold": alarm_gbdt.AUC_GATE,
-            "factor_bands": factor_bands,
-            "measurement_bias": measurement_bias,
         }
     )
 
@@ -914,6 +912,7 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
 RELIABILITY_CACHE_PAIRS = 8
 
 
+@_single_flight
 @lru_cache(maxsize=RELIABILITY_CACHE_PAIRS)
 def _cached_reliability(dataset_id: str, eval_dataset_id: str) -> dict[str, Any]:
     """spec §E: 5개 지표 100점 -- (train, eval) 쌍마다 한 번만 계산해

@@ -1,4 +1,4 @@
-import type { HoldoutData, WaferPrediction } from "@/types/data";
+import type { WaferPrediction } from "@/types/data";
 
 // 사전 알람 로그 전면 개편 (spec §A-3/§B-1) -- src/analysis/alarm_gbdt.py의
 // classify_offset/classify_wafer와 동일한 공식이다. 서버 재호출 없이
@@ -80,63 +80,6 @@ export function summarizeClasses(classified: ClassifiedWafer[], totalWafers: num
     };
   }
   return result;
-}
-
-/** 판정 원리 그림(spec §C-1)에 쓸 분류별 대표 사례 -- 그 분류 안에서
- * pred_mean 중앙값에 가장 가까운 wafer 하나. */
-export function representativeWafer(items: ClassifiedWafer[]): ClassifiedWafer | null {
-  if (items.length === 0) return null;
-  const sorted = [...items].sort((a, b) => a.pred_mean - b.pred_mean);
-  const median = sorted[Math.floor(sorted.length / 2)].pred_mean;
-  return items.reduce((best, w) => (Math.abs(w.pred_mean - median) < Math.abs(best.pred_mean - median) ? w : best));
-}
-
-const Z_90 = 1.645; // 5th/95th percentile 근사 (bootstrap 앙상블의 90% 구간 정의와 동일).
-
-export type PrecisionRecallEstimate = {
-  precisionPct: number | null;
-  recallPct: number | null;
-  alarmCount: number;
-  normalCount: number;
-  unavailableReason: "no_holdout" | null;
-};
-
-/** 정밀도·재현율 실시간 추정 (spec §A-4) -- 학습 데이터 홀드아웃의
- * out-of-fold 점추정치 ± 1.645*residual_std로 90% 구간을 근사해 현재
- * 설정으로 재분류한 뒤, 실제 Y(<target)와 비교한다. 평가 데이터의 정답은
- * 모르므로 이 추정치는 실측이 아니다 -- 호출부가 반드시 그 사실을
- * 밝혀야 한다. */
-export function estimatePrecisionRecall(
-  holdout: HoldoutData | null,
-  opts: { target: number; sensitivity: number },
-): PrecisionRecallEstimate {
-  if (!holdout || holdout.actual_y.length === 0) {
-    return { precisionPct: null, recallPct: null, alarmCount: 0, normalCount: 0, unavailableReason: "no_holdout" };
-  }
-  const sigma = holdout.residual_std;
-  let truePositive = 0;
-  let predictedAlarm = 0;
-  let actualBad = 0;
-  let normalCount = 0;
-  for (let i = 0; i < holdout.actual_y.length; i += 1) {
-    const point = holdout.pred_point[i];
-    const lo = point - Z_90 * sigma;
-    const hi = point + Z_90 * sigma;
-    const grade = classifyWafer(hi, lo, { target: opts.target, sensitivity: opts.sensitivity, sigma, gatePassed: true });
-    const isAlarm = grade === "심각" || grade === "위험" || grade === "주의";
-    const isBad = holdout.actual_y[i] < opts.target;
-    if (isAlarm) predictedAlarm += 1;
-    if (isBad) actualBad += 1;
-    if (isAlarm && isBad) truePositive += 1;
-    if (grade === "정상") normalCount += 1;
-  }
-  return {
-    precisionPct: predictedAlarm > 0 ? (truePositive / predictedAlarm) * 100 : null,
-    recallPct: actualBad > 0 ? (truePositive / actualBad) * 100 : null,
-    alarmCount: predictedAlarm,
-    normalCount,
-    unavailableReason: null,
-  };
 }
 
 /** 목표 수율이 학습 데이터 Y 분포와 맞지 않는지 (spec §A-1) -- 1~99%

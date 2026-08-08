@@ -699,28 +699,6 @@ export type PreprocessingComparisonResponse = {
   winner_note: string | null;
 };
 
-export type FactorBandPoint = {
-  count: number;
-  mean_defect_rate: number | null;
-};
-
-export type FactorBand = {
-  feature: string;
-  target: string;
-  kind: string;
-  // 강함/보통 (spec §E-2: 드롭다운에 강함·보통 등급 인자 전부).
-  confidence_tier: "strong" | "moderate";
-  x_min: number;
-  x_max: number;
-  lcl: number | null;
-  ucl: number | null;
-  recommended_lo: number | null;
-  recommended_hi: number | null;
-  out_of_control: FactorBandPoint;
-  out_of_recommended: FactorBandPoint;
-  in_recommended: FactorBandPoint;
-};
-
 // 사전 알람 로그 전면 개편 (spec §A-3) -- 등급 없는 wafer별 원시 예측치.
 // 목표 수율/민감도를 조절할 때마다 이 배열을 다시 받아올 필요가 없다 --
 // lib/alertsClassify.ts의 classifyWafer가 여기서 즉시 5분류를 계산한다.
@@ -734,14 +712,6 @@ export type WaferPrediction = {
   reason: string | null;
 };
 
-// 정밀도·재현율 실시간 추정용 학습 홀드아웃 (spec §A-4) -- train을 LOT
-// 기준 5-fold로 잘라 얻은 out-of-fold 점추정치 + 잔차 표준편차.
-export type HoldoutData = {
-  actual_y: number[];
-  pred_point: number[];
-  residual_std: number;
-};
-
 export type AlertsDataResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
@@ -753,22 +723,14 @@ export type AlertsDataResponse = {
   train_y_p1: number;
   train_y_p99: number;
   predictions: WaferPrediction[];
-  holdout: HoldoutData | null;
   // 알람 신뢰도 게이트 -- AlarmListResponse와 같은 (train,eval) 쌍이면
   // 항상 일치한다.
   auc_lower_bound: number | null;
   auc_gate_passed: boolean;
   auc_gate_threshold: number;
-  factor_bands: FactorBand[];
-  measurement_bias: MeasurementBiasSummary | null;
-};
-
-// 인자별 계측 편향 재검토 (spec 문구 전수 검토 §A-7) -- 전체 wafer 집계가
-// 아니라 선정 인자별로 "계측군 vs 미계측군" 불량률 차이를 검정한 요약.
-export type MeasurementBiasSummary = {
-  tested_count: number;
-  significant_count: number;
-  direction: "low" | "high" | "mixed" | null;
+  // B-1: holdout/factor_bands/measurement_bias는 삭제했다 -- 렌더하는
+  // 화면이 없었다(estimatePrecisionRecall/representativeWafer도 죽은
+  // 코드였다).
 };
 
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";

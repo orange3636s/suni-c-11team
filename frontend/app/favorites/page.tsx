@@ -62,7 +62,11 @@ export default function FavoritesPage() {
 
   function openInRootCause(item: FavoriteRecord) {
     const { snapshot } = item;
-    const params = new URLSearchParams({ target: snapshot.target, feature: snapshot.feature });
+    // B-5: dataset을 함께 실어야 한다 -- 안 실으면 원인 분석은 현재
+    // 선택된(즐겨찾기와 무관한) 데이터셋으로 조회해, train에서 저장한
+    // 카드를 test가 선택된 상태에서 열면 같은 인자명의 다른 데이터셋
+    // 차트가 경고 없이 표시된다.
+    const params = new URLSearchParams({ dataset: snapshot.dataset, target: snapshot.target, feature: snapshot.feature });
     router.push(`/root-cause?${params.toString()}`);
   }
 

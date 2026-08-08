@@ -221,36 +221,6 @@ class AlarmListResponse(BaseModel):
     auc_gate_threshold: float
 
 
-class FactorBandPointSchema(BaseModel):
-    count: int
-    mean_defect_rate: float | None
-
-
-class FactorBandSchema(BaseModel):
-    feature: str
-    target: str
-    kind: str
-    # 강함/보통 (spec §E-2: 드롭다운에 강함·보통 등급 인자 전부) -- 화면
-    # 배지 표시용.
-    confidence_tier: str
-    x_min: float
-    x_max: float
-    lcl: float | None
-    ucl: float | None
-    recommended_lo: float | None
-    recommended_hi: float | None
-    out_of_control: FactorBandPointSchema
-    out_of_recommended: FactorBandPointSchema
-    in_recommended: FactorBandPointSchema
-
-
-class MeasurementBiasSummary(BaseModel):
-    tested_count: int
-    significant_count: int
-    # "low" | "high" | "mixed" -- only meaningful when significant_count > 0
-    direction: str | None
-
-
 class WaferPredictionSchema(BaseModel):
     """사전 알람 로그 전면 개편 (spec §A-3) -- 등급 없는 원시 예측치 하나.
     frontend가 목표 수율/민감도로 실시간 재분류하는 재료다."""
@@ -263,17 +233,6 @@ class WaferPredictionSchema(BaseModel):
     pred_hi: float
     # measured=False이거나 어떤 인자도 경고선을 넘지 않았으면 None.
     reason: str | None
-
-
-class HoldoutSchema(BaseModel):
-    """정밀도·재현율 실시간 추정용 학습 홀드아웃 (spec §A-4) -- train을 LOT
-    기준 5-fold로 잘라 얻은 out-of-fold 점추정치 + 잔차 표준편차. frontend가
-    `pred_point ± 1.645*residual_std`로 90% 구간을 근사해 현재 설정으로
-    재분류한 뒤 실제 Y(<target)와 비교해 정밀도/재현율을 추정한다."""
-
-    actual_y: list[float]
-    pred_point: list[float]
-    residual_std: float
 
 
 class AlertsDataResponse(BaseModel):
@@ -289,14 +248,17 @@ class AlertsDataResponse(BaseModel):
     train_y_p1: float
     train_y_p99: float
     predictions: list[WaferPredictionSchema] = Field(default_factory=list)
-    holdout: HoldoutSchema | None
     # 알람 신뢰도 게이트 -- AlarmListResponse와 동일한 값(같은 (train,eval)
     # 쌍이면 항상 일치한다). 게이트 미달이면 심각/위험/주의가 전부 0건이다.
     auc_lower_bound: float | None
     auc_gate_passed: bool
     auc_gate_threshold: float
-    factor_bands: list[FactorBandSchema] = Field(default_factory=list)
-    measurement_bias: MeasurementBiasSummary | None
+    # B-1: holdout/factor_bands/measurement_bias는 삭제했다 -- 이 필드들을
+    # 렌더하는 화면이 0곳이면서(estimatePrecisionRecall/representativeWafer
+    # 프런트 소비자도 죽은 코드였다) /alarms/predictions 요청마다 무캐시로
+    # GroupKFold 5회 GBDT 적합 + 88인자 전수 밴드 계산을 돌려 알림 이력
+    # 탭을 열 때마다 수십 초를 태웠다. 되살릴 거면 반드시
+    # lru_cache((train, eval))로 감싸라 -- 안 그러면 같은 문제가 재발한다.
 
 
 class TargetPerformanceSchema(BaseModel):
