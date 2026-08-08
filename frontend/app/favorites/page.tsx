@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
 import ParetoChart from "@/components/ParetoChart";
@@ -86,19 +86,36 @@ export default function FavoritesPage() {
 
 function FavoriteCard({ item, onOpen, onDelete }: { item: FavoriteRecord; onOpen: () => void; onDelete: () => void }) {
   const { snapshot } = item;
+  // G-3: 카드 전체(썸네일+본문)를 하나의 키보드 조작 대상으로 합친다 --
+  // 삭제 버튼과 형제로 두어야 하므로(버튼 중첩 불가) <button>이 아니라
+  // div + role="button"을 쓴다. Enter/Space 둘 다 처리한다.
+  function handleOpenKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpen();
+    }
+  }
   return (
     <article className="resultCard favoriteCard">
       <button type="button" className="favoriteCardDelete" onClick={(event) => { event.stopPropagation(); onDelete(); }} aria-label="삭제">
         ✕
       </button>
-      <div className="favoriteCardThumb" onClick={onOpen} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") onOpen(); }}>
-        <FavoriteThumbnail snapshot={snapshot} />
-      </div>
-      <div className="favoriteCardBody" onClick={onOpen}>
-        <h3>{snapshot.feature} vs {snapshot.target}</h3>
-        <div className="favoriteCardMeta">
-          <span className="favoriteCardBadge">{VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}</span>
-          <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
+      <div
+        className="favoriteCardOpenArea"
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={handleOpenKeyDown}
+      >
+        <div className="favoriteCardThumb">
+          <FavoriteThumbnail snapshot={snapshot} />
+        </div>
+        <div className="favoriteCardBody">
+          <h3>{snapshot.feature} vs {snapshot.target}</h3>
+          <div className="favoriteCardMeta">
+            <span className="favoriteCardBadge">{VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}</span>
+            <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
+          </div>
         </div>
       </div>
     </article>

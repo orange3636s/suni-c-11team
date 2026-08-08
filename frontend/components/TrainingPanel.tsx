@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { createTrainingJob, getModelPerformance, getPromotionHistory, getTrainingJob, saveTrainingState } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import type { PromotionEvent } from "@/types/data";
 
 // 지시서 I-2: 학습 탭을 없애고 이 팝업 하나로 축소한다. 넣는 것은 딱
@@ -13,6 +14,8 @@ import type { PromotionEvent } from "@/types/data";
 // 탭에 히트맵이 이미 있다).
 export default function TrainingPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { training, setTraining } = useAnalysisState();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, open);
   const [sqlHost, setSqlHost] = useState(training?.sqlHost ?? "");
   const [sqlPort, setSqlPort] = useState(training?.sqlPort ?? "");
   const [refreshMinutes, setRefreshMinutes] = useState(
@@ -204,7 +207,15 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
-      <div className="settingsPanel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="모델 학습·자동화">
+      <div
+        ref={panelRef}
+        className="settingsPanel"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="모델 학습·자동화"
+        tabIndex={-1}
+      >
         <div className="settingsPanelHeader">
           <h2>모델 학습·자동화</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">

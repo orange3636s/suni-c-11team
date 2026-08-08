@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ChatErrorKind, type ChatHistoryTurn, type ChatMode, streamChat } from "@/lib/api";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
 
 type MessageStatus = "streaming" | "done" | "error";
@@ -76,6 +77,11 @@ export default function AiPanel({
   const isTabBarLayout = useIsTabBarLayout();
   const isMobileLayout = useIsMobileLayout();
   const layout: "desktop" | "overlay" | "fullscreen" = isMobileLayout ? "fullscreen" : isTabBarLayout ? "overlay" : "desktop";
+  // G-4: 오버레이/전체화면일 때만 진짜 모달이다 -- 데스크톱은 항상 떠 있는
+  // 도킹 패널이라 포커스를 가두면 평소 페이지 탐색이 막힌다.
+  const isDrawer = layout !== "desktop";
+  const panelRef = useRef<HTMLElement | null>(null);
+  useFocusTrap(panelRef, isDrawer && open);
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -94,6 +100,18 @@ export default function AiPanel({
       document.body.style.overflow = previousOverflow;
     };
   }, [layout, open]);
+
+  // G-4: 오버레이/전체화면일 때만 모달로 동작한다(데스크톱은 항상 떠 있는
+  // 도킹 패널이라 Esc로 닫히면 안 된다) -- SettingsPanel/TrainingPanel과
+  // 같은 조건으로 Esc를 처리한다.
+  useEffect(() => {
+    if (layout === "desktop" || !open) return;
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onToggle();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [layout, open, onToggle]);
 
   // `open`'s default comes from a cookie written by (and defaulting true
   // for) the desktop side panel, which used to be easy to ignore -- as a
@@ -334,18 +352,18 @@ export default function AiPanel({
   // closed, unlike the desktop panel which stays visible collapsed.
   if (layout !== "desktop" && !open) return null;
 
-  const isDrawer = layout !== "desktop";
-
   return (
     <>
       {/* Overlay (768~1023px) gets a dismiss-on-tap backdrop; full-screen
           (≤767px) covers everything itself, no backdrop needed. */}
       {layout === "overlay" && <div className="aiPanelBackdrop" onClick={onToggle} aria-hidden="true" />}
       <aside
+        ref={panelRef}
         className={`aiPanel ${layout === "desktop" && !open ? "collapsed" : ""} ${layout === "overlay" ? "aiPanelOverlay" : ""} ${layout === "fullscreen" ? "aiPanelFullscreen" : ""}`}
         aria-label="SUNI AI 어시스턴트"
         role={isDrawer ? "dialog" : undefined}
         aria-modal={isDrawer ? true : undefined}
+        tabIndex={isDrawer ? -1 : undefined}
       >
         <div className="aiPanelSurface">
           {isDrawer ? (

@@ -26,7 +26,7 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
   }, [activeItem]);
 
   return (
-    <nav className="mobileTabBar" aria-label="주요 메뉴" role="tablist">
+    <nav className="mobileTabBar" aria-label="주요 메뉴">
       <div className="mobileTabBarScroll">
         {navigationItems.map((item) => {
           const isActive = item.label === activeItem;
@@ -36,8 +36,6 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
               ref={isActive ? activeRef : undefined}
               href={item.href}
               className="mobileTab"
-              role="tab"
-              aria-selected={isActive}
               aria-current={isActive ? "page" : undefined}
             >
               {item.label}
@@ -54,8 +52,8 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
         <button
           type="button"
           className="mobileTab mobileTabButton"
-          role="tab"
-          aria-selected={trainingPanelOpen}
+          aria-haspopup="dialog"
+          aria-expanded={trainingPanelOpen}
           onClick={() => setTrainingPanelOpen((value) => !value)}
         >
           모델 학습·자동화
@@ -63,8 +61,8 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
         <button
           type="button"
           className="mobileTab mobileTabButton"
-          role="tab"
-          aria-selected={settingsPanelOpen}
+          aria-haspopup="dialog"
+          aria-expanded={settingsPanelOpen}
           onClick={() => setSettingsPanelOpen((value) => !value)}
         >
           알림 설정

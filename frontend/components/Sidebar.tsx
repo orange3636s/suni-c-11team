@@ -158,7 +158,6 @@ export default function Sidebar({ activeItem = "모니터링", collapsed = false
                     >
                       <NavIcon name={item.icon} />
                       <span>{item.label}</span>
-                      <i className="menuStatusDot ready" aria-label="사용 가능" />
                     </Link>
                   </li>
                 );

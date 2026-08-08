@@ -1,8 +1,9 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import {
   connectGmail,
   connectSlack,
@@ -19,6 +20,8 @@ const GRADE_OPTIONS: NotificationGrade[] = ["심각", "위험", "주의"];
 
 export default function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { notifications, setNotifications } = useAnalysisState();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, open);
 
   useEffect(() => {
     if (!open) return;
@@ -33,7 +36,15 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
-      <div className="settingsPanel" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="알림 설정">
+      <div
+        ref={panelRef}
+        className="settingsPanel"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="알림 설정"
+        tabIndex={-1}
+      >
         <div className="settingsPanelHeader">
           <h2>알림 설정</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
