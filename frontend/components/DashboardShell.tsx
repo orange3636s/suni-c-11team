@@ -55,7 +55,7 @@ export default function DashboardShell({
         <Header />
         {degraded && (
           <div className="degradedStateBanner" role="alert">
-            <span>이전 결과 복원 실패 — 학습·원인 분석·알림 이력이 일시적으로 보이지 않을 수 있습니다.</span>
+            <span>이전 결과 복원 실패 — 학습·원인 분석·알림 기록이 일시적으로 보이지 않을 수 있습니다.</span>
             <button type="button" className="button" onClick={retryHydration}>다시 시도</button>
           </div>
         )}

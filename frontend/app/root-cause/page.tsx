@@ -552,7 +552,7 @@ function RootCauseContent() {
       // 가 판단한다: 이 호출은 그저 "지금 막 분석이 끝났다"는 신호일 뿐이고,
       // 실패해도 분석 결과 화면에는 아무 영향이 없어야 한다.
       void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {
-        setDispatchNotifyError("알림 발송에 실패했습니다. 알림 이력 탭에서 채널 연결 상태를 확인해 주세요.");
+        setDispatchNotifyError("알림 발송에 실패했습니다. 알림 기록 탭에서 채널 연결 상태를 확인해 주세요.");
       });
       // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
       // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
