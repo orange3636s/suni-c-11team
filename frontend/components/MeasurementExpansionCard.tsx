@@ -15,10 +15,6 @@ function formatRate(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-const DISCOVERY_CARD_COLOR = "#9333EA";
-const RELIABILITY_CARD_COLOR = "#0891B2";
-const FALSE_POSITIVE_CARD_COLOR = "#0D9668";
-
 // `_recommend()`(src/analysis/measurement_expansion.py)가 내려주는 고정된
 // 4개 reason 문구 중 하나를 그대로 매칭해 "기대 효과"를 미래형으로 다시
 // 쓴다 (spec §B-1/§B-2) -- reason 자체("사유")는 툴팁으로 옮기고, 이
@@ -160,8 +156,8 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
 
       <div className="meSideEffectRow">
         {discoveryCard && (
-          <div className="meSideEffectCard" style={{ borderColor: DISCOVERY_CARD_COLOR }}>
-            <strong style={{ color: DISCOVERY_CARD_COLOR }}>새 원인 인자 발견</strong>
+          <div className="meSideEffectCard discovery">
+            <strong>새 원인 인자 발견</strong>
             <span className="meSideEffectSubtitle">
               {discoveryCard.map((d) => `${d.feature} (${kindLabel(d.kind)})`).join(" · ")}
             </span>
@@ -170,13 +166,13 @@ export default function MeasurementExpansionCard({ data }: { data: MeasurementEx
             </p>
           </div>
         )}
-        <div className="meSideEffectCard" style={{ borderColor: RELIABILITY_CARD_COLOR }}>
-          <strong style={{ color: RELIABILITY_CARD_COLOR }}>분석 신뢰도 향상</strong>
+        <div className="meSideEffectCard reliability">
+          <strong>분석 신뢰도 향상</strong>
           <span className="meSideEffectSubtitle">전 인자 대상</span>
           <p>현재는 계측된 wafer에서만 관계가 확인되어 전체 적용에 한계가 있습니다.</p>
         </div>
-        <div className="meSideEffectCard" style={{ borderColor: FALSE_POSITIVE_CARD_COLOR }}>
-          <strong style={{ color: FALSE_POSITIVE_CARD_COLOR }}>불필요한 조치 감소</strong>
+        <div className="meSideEffectCard falsePositive">
+          <strong>불필요한 조치 감소</strong>
           <span className="meSideEffectSubtitle">오탐 비용 절감</span>
           <p>판정 근거가 늘어 정상 wafer를 조치 대상으로 잘못 분류하는 일이 줍니다.</p>
         </div>

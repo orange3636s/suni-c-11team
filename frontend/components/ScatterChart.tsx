@@ -378,11 +378,15 @@ const ALARM_GRADE_Z: Record<"심각" | "위험" | "주의", number> = { 심각: 
 // 렌더 지점의 fillOpacity). 중앙값은 무채색(var(--text)). 관리한계 개념
 // 제거(GBDT 전환)에 따라 통계적 이상치(IQR 기준)는 항상 outlierNeutral
 // 하나로 통일한다 -- 경고선 기반 채색은 이번 작업 범위가 아니다.
-const BOX_LINE_COLOR = { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.14)" }; // var(--line)
+// Y-5: --line의 다크 값을 rgba(255,255,255,.14)(1.57:1, WCAG UI 요소
+// 3:1 기준 미달)에서 .34(3.05:1)로 올렸다 -- 여기 두 하드코딩 사본도
+// 같이 맞춘다(둘 다 CSS 변수가 아니라 SVG stroke에 직접 넣는 JS 상수라
+// 토큰을 바꿔도 저절로 따라오지 않는다).
+const BOX_LINE_COLOR = { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.34)" }; // var(--line)
 const BOX_FILL_COLOR = { light: "#0E306D", dark: "#7BA3E8" }; // var(--measured), 8% 채움으로만 씀
 const BOX_COLOR = {
   median: { light: "#141A22", dark: "#F5F5F7" }, // var(--text)
-  whisker: { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.14)" }, // var(--line)
+  whisker: { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.34)" }, // var(--line)
   inlier: { light: "#0E306D", dark: "#7BA3E8" }, // var(--measured) -- DEFAULT_POINT_STYLE과 동일 상수
   outlierNeutral: { light: "#59636F", dark: "#9097A3" },
 };

@@ -5011,6 +5011,15 @@ select,
 .modelCompatibility.incompatible{ color: #c03737; }
 .modelCompatibility.unavailable{ color: #c03737; background: color-mix(in srgb, #c03737 10%, var(--surface-subtle)); }
 .modelUnavailableReason{ color: #c03737 !important; overflow-wrap: anywhere; }
+/* Y-2: 다크 오버라이드 누락 -- 어두운 채도색(#138a52/#a56a00/#c03737)이
+   그대로면 다크 배경에서 대비가 부족하다. 이 앱이 이미 쓰는 배지 규약
+   (reliabilityBadge/confidenceBadge 등: 어두운 톤 -> 밝은 톤)을 그대로
+   따른다. */
+html[data-theme="dark"] .modelCompatibility.compatible{ color: #34D399; }
+html[data-theme="dark"] .modelCompatibility.legacy{ color: #FBBF24; }
+html[data-theme="dark"] .modelCompatibility.incompatible,
+html[data-theme="dark"] .modelCompatibility.unavailable{ color: #F87171; }
+html[data-theme="dark"] .modelUnavailableReason{ color: #F87171 !important; }
 .modelSelectorState{ display: grid; gap: 8px; justify-items: start; padding: 18px; border: 1px dashed var(--border); border-radius: var(--radius-panel); color: var(--text-secondary); }
 .modelSelectorState.error,
 .modelSelectorWarning{ color: #a56a00; }
@@ -5201,6 +5210,10 @@ html[data-theme="dark"] .selectedModelSummary{
 .hybridTrainingCard small{ color: var(--text-secondary); font-size: var(--fs-sm); }
 .hybridTrainingCard > strong{ font-size: var(--fs-title); color: #0e306d; }
 .hybridTrainingCard p{ margin: 0; font-size: var(--fs-body); line-height: 1.5; }
+/* Y-2: 다크 오버라이드 누락 -- 브랜드 남색(#0e306d)은 다크 배경에서 대비가
+   부족하다. 다크 토큰의 --measured/--brand-navy-text와 같은 값(#7ba3e8)을
+   쓴다. */
+html[data-theme="dark"] .hybridTrainingCard > strong{ color: #7ba3e8; }
 
 @media (max-width: 767px) {
   .modelSelectorToolbar{ grid-template-columns: 1fr; }
@@ -5248,6 +5261,7 @@ html[data-theme="dark"] .selectedModelSummary{
 
 .preprocessingDisclosure{ margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-subtle); overflow: hidden; }
 .preprocessingDisclosure summary{ padding: 12px 14px; cursor: pointer; color: #0e306d; font-weight: 600; font-size: var(--fs-body); }
+html[data-theme="dark"] .preprocessingDisclosure summary{ color: #7ba3e8; }
 .preprocessingDisclosure dl{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0; padding: 0 14px 14px; }
 .preprocessingDisclosure dl div{ display: grid; gap: 3px; min-width: 0; }
 .preprocessingDisclosure dt{ color: var(--text-secondary); font-size: var(--fs-xs); }
@@ -5558,8 +5572,15 @@ html[data-theme="dark"]{
   --text-primary: #f5f5f7;
   --text-secondary: #b5b7bc;
   --text-muted: #8f9299;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /* Y-5: WCAG 1.4.11(UI 요소 3:1) 대비 계산 결과 이전 값들이 크게
+     미달이었다 -- 흰 8%/14%를 --panel(#252527) 위에 얹으면 각각 1.27:1,
+     1.57:1(둘 다 라이트 회귀 없이 다크만 조정). --border-strong(카드·표
+     외곽선 등 "강한" 구분선)은 0.34로 올려 3.05:1로 기준을 충족시킨다.
+     --border(--line-soft, "약한" 구분선)는 완전히 3:1까지 올리면 강한
+     쪽과 구분이 없어지므로 0.16으로 절반만 올렸다(1.68:1) -- 여전히
+     기준 미달이라 보고서에 "확인 필요"로 남긴다. */
+  --border: rgba(255, 255, 255, 0.16);
+  --border-strong: rgba(255, 255, 255, 0.34);
   --accent: #0e306d;
   --accent-hover: #1c4f9a;
   --accent-soft: rgba(39, 85, 157, 0.22);
@@ -5614,6 +5635,14 @@ html[data-theme="dark"]{
   --sig-red: var(--danger);
   --sig-amber: var(--warning);
   --sig-green: var(--success);
+
+  /* Y-1: 라이트/다크 토큰 대조에서 발견한 진짜 누락 2건 -- 둘 다 다른
+     레거시 :root 블록(파일 상단)에만 정의돼 있고 다크 오버라이드가 아예
+     없었다. 다크에서 그대로 상속되면: border-card는 rgba(15,23,42,.08)
+     (검정 8%)라 어두운 배경 위에서 거의 안 보이고, surface-muted는
+     #f8fafc(거의 흰색)이라 어두운 화면에 밝은 얼룩으로 튄다. */
+  --border-card: rgba(255, 255, 255, 0.16);
+  --surface-muted: var(--surface-secondary);
 }
 
 html[data-theme="dark"] .topHeader{
@@ -8168,6 +8197,7 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 .datasetSelectorItem small{ font-size: var(--fs-xs); color: var(--text-secondary, #6e6e73); }
 .datasetSelectorDivider{ height: 1px; background: var(--border-card, rgba(0,0,0,.08)); margin: 6px 4px; }
 .datasetSelectorAdd{ color: #1D4ED8; font-weight: 600; }
+html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
 .datasetSelectorDelete{
   margin-left: auto; opacity: 0; border: none; background: transparent; color: var(--text-secondary, #6e6e73);
   cursor: pointer; padding: 2px;
@@ -9446,6 +9476,31 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .alertsGaugeSlider{
   width: 100%; margin: 0; accent-color: var(--accent);
 }
+/* Y-4: 민감도 슬라이더와 그룹 강조 슬라이더(scatterScrubSlider)가 이
+   클래스를 공유한다 -- 이미 같은 스타일이므로 여기 한 곳만 고치면 둘 다
+   해결된다. --accent는 다크에서도 남색(#0e306d) 그대로라 어두운 트랙
+   위에서 채움이 거의 안 보였다 -- 다크 토큰과 같은 계열인 밝은 파랑으로
+   오버라이드한다. 트랙 배경도 명시하고(브라우저 기본 트랙은 다크에서
+   잘 안 보인다), 썸에 테두리를 줘 트랙에서 분리되어 보이게 한다. */
+html[data-theme="dark"] .alertsGaugeSlider{ accent-color: #7ba3e8; }
+.alertsGaugeSlider::-webkit-slider-runnable-track{
+  height: 4px; border-radius: 999px; background: var(--line);
+}
+.alertsGaugeSlider::-moz-range-track{
+  height: 4px; border-radius: 999px; background: var(--line);
+}
+.alertsGaugeSlider::-webkit-slider-thumb{
+  margin-top: -6px; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line);
+}
+.alertsGaugeSlider::-moz-range-thumb{
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.alertsGaugeSlider:focus-visible{
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8; }
 .alertsGaugeEnds{
   display: flex; justify-content: space-between;
   font-size: var(--fs-micro); color: var(--text-secondary); margin-top: 1px;
@@ -10075,6 +10130,21 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .meSideEffectCard strong{ font-size: var(--fs-body); }
 .meSideEffectSubtitle{ font-size: var(--fs-sm); color: var(--text-secondary); }
 .meSideEffectCard p{ font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; margin: 2px 0 0; }
+/* Y-3: 인라인 style={{color:...}}로 박혀 있던 리터럴 헥스 3종을 클래스로
+   옮긴다 -- 인라인 스타일은 테마 오버라이드가 닿지 않아 다크에서 그대로
+   고정색이었다. */
+.meSideEffectCard.discovery{ border-color: #9333EA; }
+.meSideEffectCard.discovery strong{ color: #9333EA; }
+html[data-theme="dark"] .meSideEffectCard.discovery{ border-color: #C084FC; }
+html[data-theme="dark"] .meSideEffectCard.discovery strong{ color: #C084FC; }
+.meSideEffectCard.reliability{ border-color: #0891B2; }
+.meSideEffectCard.reliability strong{ color: #0891B2; }
+html[data-theme="dark"] .meSideEffectCard.reliability{ border-color: #22D3EE; }
+html[data-theme="dark"] .meSideEffectCard.reliability strong{ color: #22D3EE; }
+.meSideEffectCard.falsePositive{ border-color: #0D9668; }
+.meSideEffectCard.falsePositive strong{ color: #0D9668; }
+html[data-theme="dark"] .meSideEffectCard.falsePositive{ border-color: #34D399; }
+html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; }
 
 @media (max-width: 767px){
   .meMetricRow{ grid-template-columns: 1fr; }
@@ -10565,6 +10635,13 @@ html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-
 .evidenceBandTrack{ position: relative; height: 3px; background: var(--line); }
 .evidenceBandFill{ position: absolute; top: 0; bottom: 0; background: var(--inferred); }
 .evidenceBandBoundary{ position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--ink); opacity: .35; }
+/* Y-5/Y-6: --ink은 사이드바 전용 고정 남색이라 의도적으로 다크
+   오버라이드가 없다(위 5605행 주석) -- 그런데 이 경계선은 사이드바가
+   아니라 다크 패널 위의 얇은 마커라, 그대로 상속하면 #0e1621 35%가
+   #252527 위에서 1.07:1(사실상 안 보임)이 된다. --ink 토큰 자체는
+   건드리지 않고 이 규칙에서만 다크 전용 색을 준다(text-primary 35% =
+   약 3.0:1). */
+html[data-theme="dark"] .evidenceBandBoundary{ border-left-color: var(--text-primary); }
 .evidenceBandTargetTick{ position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 1px solid var(--sig-amber); }
 .evidenceBandTargetLabel{
   position: absolute; top: -18px; transform: translateX(-50%);
@@ -10777,6 +10854,16 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: var(--sig-red); 
 .panel-primary{
   background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--ink);
   border-radius: var(--radius-panel); padding: 16px 18px;
+}
+/* Y-5/Y-6: --ink은 사이드바 전용이라 다크에서 의도적으로 그대로다(위
+   evidenceBandBoundary와 같은 이유) -- 이 "위계 1" 식별 상단 선도 --panel
+   위에 얹히는 전경 요소라 그대로 상속하면 1.19:1(거의 안 보임)이 된다.
+   라이트에서 ink가 흰 배경 위 ~15:1이었던 것과 같은 무게로,
+   --text-primary(다크 ~14:1)를 쓴다. */
+html[data-theme="dark"] .panel-primary,
+html[data-theme="dark"] .resultCard.panel-primary,
+html[data-theme="dark"] .resultCard.alertsClassSection{
+  border-top-color: var(--text-primary);
 }
 .panel{
   background: var(--panel); border: 1px solid var(--line);
