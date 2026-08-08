@@ -121,12 +121,12 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 - **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록, 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
 - **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형 ρ/ε² · 범주형 ε², `보기` 토글로 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
-- **알림 이력**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 알림 이력 목록(최대 7건, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기
+- **알림 이력**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 알림 이력 목록(세로 스크롤 영역에 전체를 렌더링 — 초기 노출 행 수만 7행이며 더 볼 방법이 없던 문제를 고쳤다, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기. 알람 신뢰도 게이트를 통과하지 못하면 심각/위험/주의 카드는 "0장"이 아니라 "게이트 미달"로 표시됩니다 — 숫자만 보고 "알람 없음"으로 오독하지 않도록 판정 불가 상태를 명시합니다
 - **즐겨찾기**(`/favorites`) — 원인 분석에서 저장한 그래프를 최신순 카드 그리드로 모아 보여줍니다. 점 데이터는 저장하지 않고 저장된 조건(데이터셋·타깃·인자·뷰 종류)으로 다시 조회해 썸네일을 그립니다. 카드 클릭 시 해당 인자의 원인 분석 화면으로 이동합니다
 
 원인 분석·모니터링·알림 이력 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
 
-데이터셋은 각 탭의 선택 UI에서 CSV를 업로드해 추가할 수 있고(`POST /api/datasets`), 내장 4종과 함께 목록에 표시됩니다.
+데이터셋은 각 탭의 선택 UI에서 CSV를 업로드해 추가할 수 있고(`POST /api/datasets`), 내장 2종(train/test)과 함께 목록에 표시됩니다.
 
 산점도는 Spotfire 방식(원형 마커, Color By)의 커스텀 SVG 컴포넌트(`ScatterChart.tsx`)이며, SPC 관리한계선과 12구간 구간 평균 불량률 추세선·권장 구간 밴드를 함께 표시합니다. Pareto 차트(`ParetoChart.tsx`)와 상관관계 히트맵(`CorrelationHeatmap.tsx`)도 정밀한 클릭/호버 제어를 위해 커스텀 SVG로 구현했습니다. Config(범주형) 인자의 박스플롯만 Plotly를 사용합니다.
 
@@ -138,7 +138,7 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 - 두 모드 모두 `/api/analysis/context`가 만드는 동일한 분석 결과 JSON(타깃별 1위 인자, 관리한계, 권장 구간, 챔버 교호작용, 알람·개선 권장 레코드, config 스크리닝, 한계)을 근거로 답하며, 시스템 프롬프트(`prompts/report_system.md`, `prompts/chat_system.md`)가 **숫자 생성 금지, 인과 표현 금지, "값을 조정하라" 같은 설정값 표현 금지**를 명시적으로 규정합니다
 - `confidence`(신뢰도)는 LLM이 아니라 코드가 판정한 값을 그대로 따르게 합니다 — 판정 근거가 부족한 인자에 LLM이 임의로 관리 대역을 만들어내지 못하게 하는 장치입니다
 - 원인 분석이 아직 실행되지 않은 상태의 질문은 LLM을 호출하지 않고 백엔드가 즉시 안내 메시지로 응답합니다
-- 화면에서 걷어낸 해석 유의사항(계측률 한계, 인과 아님, 근거 부족 등급의 의미, 정밀도·재현율이 추정치라는 점 등)은 `LIMITATIONS`(`src/analysis/report.py`)로 옮겨 챗봇 컨텍스트에 실리며, "이 분석의 한계는?" 프리셋 질문으로 확인할 수 있습니다
+- 화면과 챗봇의 역할 분담 원칙(I-1): **서사적 해석·배경 설명은 챗봇, 판정 기준·게이트 상태·표본 한계는 화면.** 예전 원칙("화면 내 해석 설명은 전부 챗봇으로 이관")은 챗봇이 opt-in이라는 점을 놓쳤다 — "이 삼각형은 목표 85.0 기준이고 알림 기록의 91.0과 다르다" 같은 정보를 챗봇을 열어야만 알 수 있게 하면, 챗봇을 클릭하지 않은 사용자가 잘못된 판단을 내린다. 이 원칙에 따라 다음은 화면에 유지한다(삭제 대상 아님): 알람 마커 판정 기준 표기, 신뢰도 게이트 배너, "예측 수율 절대값은 정확도가 낮아 구간으로 표시합니다" 안내, 계측률·표본 수 표기. 그 외 배경 설명·정성적 소견(계측률 한계, 인과 아님, 근거 부족 등급의 의미, 정밀도·재현율이 추정치라는 점 등)은 `LIMITATIONS`(`src/analysis/report.py`)로 옮겨 챗봇 컨텍스트에 실리며, "이 분석의 한계는?" 프리셋 질문으로 확인할 수 있습니다
 - 환경변수: `UPSTAGE_API_KEY`, `UPSTAGE_BASE_URL`(기본 `https://api.upstage.ai/v1`), `UPSTAGE_MODEL`(기본 `solar-pro3`). 키는 백엔드 프로세스에만 두며 프런트 번들에는 절대 노출하지 않습니다(`NEXT_PUBLIC_` 접두사 미사용)
 - API 키가 설정되지 않은 환경에서는 `/api/chat`이 503과 안내 메시지를 반환하며 서버 자체는 정상 동작합니다
 
@@ -146,7 +146,7 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 **"안 만든 것"이 아니라 "검증하고 배제한 것"입니다.**
 
-- **LOT 단위 알람** — 최종 수율의 LOT 간/전체 분산 비(ICC 근사) 약 0.04로, 분산 대부분이 LOT 내부 wafer 간 차이입니다. test.CSV에서 알람 2건 이상 LOT의 평균 수율(89.41)이 알람 0건 LOT(89.06)보다 오히려 높아 LOT 단위 신호가 뚜렷하지 않습니다. wafer 단위로 설계했습니다.
+- **LOT 단위 알람** — 랏 평균 분산비 `var(랏평균)/var(Y)` = 0.045입니다. 다만 랏당 25장이면 랏 효과가 전혀 없는 순수 노이즈에서도 이 값의 기대값이 1/25 = 0.04이므로, 이 수치 자체는 랏 효과의 증거가 아니라 노이즈 기대치입니다 — 진짜 ICC(1,1)은 0.005로 훨씬 작습니다(I-2: 이전 버전에서 0.045를 ICC 근사로 잘못 표기했던 것을 바로잡음). test.CSV에서 알람 2건 이상 LOT의 평균 수율(89.41)이 알람 0건 LOT(89.06)보다 오히려 높아 LOT 단위 신호가 뚜렷하지 않다는 결론은 이 정정으로 바뀌지 않으며 오히려 강화됩니다. wafer 단위로 설계했습니다.
 - **관리한계 롤링 윈도우** — train 400 LOT을 100개씩 4구간으로 나눠 각각 관리한계를 산출해보면, 인자별로 구간 간 변동 폭이 대체로 1~2 수준(Step1_D1은 다소 크게 변동)으로 뚜렷한 시간 드리프트는 보이지 않았습니다.
 - **Y의 Q1~Q3 구간에서 X 범위 역산** — 초기 구현이었으나 조건부 확률의 방향이 반대입니다(`P(X|Y)` 대신 `P(Y|X)`가 필요). X 자신의 분포 기반 SPC 관리한계로 교체 후 알람이 58장→19장으로 줄고 수율차는 −5.25%p→−6.14%p로 개선됐습니다.
 - **알고리즘 교체(앙상블/RandomForest 비교)** — `src/ml/ensemble.py`, `src/ml/hybrid.py`에 구현이 남아 있지만 실제 학습 API 경로에서는 호출되지 않습니다. 피처가 타깃당 1~3개뿐이라 트리 앙상블이 찾을 상호작용이 거의 없고, 이득 대비 유지 비용이 크다고 판단했습니다. LightGBM/XGBoost/CatBoost 등과의 비교는 의존성에 포함돼 있지 않아 이 저장소에서 재현 가능한 형태로 존재하지 않습니다.
@@ -169,6 +169,7 @@ src/analysis/   인자 스크리닝(ε², BH-FDR), 히트맵, SPC 관리한계, 
 src/ml/         학습 파이프라인(HistGradientBoostingRegressor), 추론 메타데이터, 모델 저장
 src/runtime/    데이터셋 레지스트리, 학습 Job, SQLite 이력 저장(즐겨찾기·모델 승격 이력 포함)
 src/notifications/ Slack/Telegram/Gmail 발송, 채널 설정 영속화(대기 상태 TTL 포함)
+src/automation/ 감시 디렉터리 폴링 자동 수집 잡(ingest.py) -- Y 컬럼 유무로 학습/평가 데이터셋을 갈라 등록
 frontend/       Next.js UI (app/monitoring, app/root-cause, app/alerts, app/favorites, components/ai-panel)
 prompts/        SUNI 챗봇 시스템 프롬프트(report_system.md, chat_system.md)
 tests/          Python 테스트(pytest)
@@ -176,7 +177,7 @@ scripts/        오프라인 벤치마크(전처리 방식 비교)
 config/         결측 스키마·알람 severity·전처리 정책 YAML
 ```
 
-`src/automation/`은 `__init__.py`만 있는 빈 자리표시자 패키지입니다. `src/ml/training.py`, `src/ml/ensemble.py`, `src/ml/hybrid.py`의 `train_hybrid_multi_y`는 저장소에 남아 있지만 API 경로에서는 사용되지 않고 테스트에서만 실행됩니다.
+`src/ml/training.py`, `src/ml/ensemble.py`, `src/ml/hybrid.py`의 `train_hybrid_multi_y`는 저장소에 남아 있지만 API 경로에서는 사용되지 않고 테스트에서만 실행됩니다(`src/ml/hybrid.py`의 다른 함수 `save_hybrid_bundle`는 `api/routes/data.py`·`src/ml/pipeline.py`가 실제로 사용합니다).
 
 ## 로컬 실행
 
@@ -221,9 +222,12 @@ SMTP_PORT=587
 SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM_EMAIL=
+NOTIFY_VERIFY_BASE_URL=
 ```
 
 Gmail 연결은 인증 메일을 보낸 뒤 링크를 눌러야 완료됩니다(대기 상태, `pending`). **이 대기 상태는 5분이 지나면 서버에서 자동으로 만료되어 미연결로 돌아갑니다** — 5분 안에 메일의 링크를 눌러야 합니다. 만료 판정은 조회 시점에 이루어지며(`src/notifications/settings_store.py`의 `PENDING_TTL_SECONDS`), 이미 연결 완료(`verified: true`)된 채널은 만료 대상이 아니라 재시작·재접속 후에도 계속 유지됩니다.
+
+인증 메일의 확인 링크는 기본적으로 **그 요청을 받은 API 서버 자신의 주소**(`request.base_url`)를 가리킵니다 — 프런트엔드(Next.js) 오리진을 기본값으로 쓰면 `/api/notify/gmail/verify`에 대응하는 Next 페이지가 없어 링크가 404로 갑니다. API 서버가 리버스 프록시·로드밸런서 뒤에 있어 `request.base_url`이 실제 공개 주소와 다르면 `NOTIFY_VERIFY_BASE_URL`을 명시적으로 설정합니다.
 
 자동 수집(감시 디렉터리 폴링)을 쓰려면 아래 환경변수를 추가합니다 -- 주기는 환경변수가 아니라 모델 학습·자동화 팝업에서 설정한 Refresh 값을 따릅니다.
 
@@ -260,7 +264,7 @@ AUTO_INGEST_ENABLED=false
 - 학습: `POST /api/train`(동기), `POST /api/train/jobs`(비동기) + `GET /api/train/jobs/{job_id}`
 - 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/models/promotion-history`(승격 게이트 통과 여부와 무관한 학습 시도 이력), `GET /api/model/latest`
 - 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical`, `config_level: model|eq|chamber` 파라미터로 수치형/범주형 보기 전환), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
-- SPC/알람: `GET /api/control-ranges`, `GET /api/alarms`, `GET /api/alarms/predictions`
+- SPC/알람: `GET /api/control-ranges`, `GET /api/alarms`(`target`·`sensitivity` 선택 파라미터 -- 원인 분석 탭의 알람 삼각형이 알림 기록 탭에서 저장한 값을 그대로 넘겨 두 화면의 판정 기준을 일치시킨다. 생략하면 기본값 85.0/0.5), `GET /api/alarms/predictions`(응답에서 `holdout`/`factor_bands`/`measurement_bias` 필드는 삭제됨 -- 렌더하는 화면이 없으면서 요청마다 GroupKFold 5회 GBDT 적합을 다시 돌려 알림 이력 탭을 열 때마다 수십 초가 걸렸다)
 - 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/measurement-expansion`, `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`
 - SUNI 챗봇: `POST /api/chat`(SSE 스트리밍, `mode: "report" | "chat"`)
 - 탭 상태 저장(재접속 시 최근 결과 복원): `GET /api/state/latest`, `POST /api/state/training`, `POST /api/state/analysis`, `POST /api/state/alarms`
