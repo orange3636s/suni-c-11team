@@ -26,6 +26,7 @@ from api.routes.notify import router as notify_router, run_daily_dispatch_job, r
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID, DEFAULT_INGEST_MINUTES, run_auto_ingest_job
+from src.automation.refresh import REFRESH_JOB_ID, run_refresh_pipeline
 from src.notifications.telegram_bot import run_polling_loop
 from src.runtime.app_state import get_latest_state
 from src.runtime.datasets import BUNDLED_DATASET_FILES
@@ -186,9 +187,22 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         coalesce=True,
     )
+    # J-2: 리프레시 파이프라인 -- 위 auto_ingest(감시 디렉터리 폴링)와는
+    # 별개 잡이다. 같은 refreshIntervalMinutes를 따르므로 초기 등록도
+    # 같은 initial_minutes를 쓴다. max_instances=1로 이전 사이클이 아직
+    # 도는 중이면(학습이 오래 걸리는 경우 등) 겹쳐 실행하지 않는다.
+    scheduler.add_job(
+        run_refresh_pipeline,
+        IntervalTrigger(minutes=initial_minutes or DEFAULT_INGEST_MINUTES),
+        id=REFRESH_JOB_ID,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=600,
+    )
     scheduler.start()
     if initial_minutes is None:
         scheduler.pause_job(AUTO_INGEST_JOB_ID)
+        scheduler.pause_job(REFRESH_JOB_ID)
     # 저장 API(POST /api/state/training) 핸들러가 주기 변경 시
     # reschedule/pause할 수 있도록 앱 상태에 둔다 -- 서버 재시작을
     # 요구하지 않는다.

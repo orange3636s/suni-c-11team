@@ -17,6 +17,7 @@ from api.schemas.state import (
 )
 from api.settings import settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID
+from src.automation.refresh import REFRESH_JOB_ID
 from src.notifications.settings_store import get_settings_summary
 from src.runtime.app_state import get_latest_state, is_state_degraded, save_state
 from src.runtime.store import RuntimeStore
@@ -111,10 +112,17 @@ def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> b
         return True
     try:
         if isinstance(refresh_interval_minutes, (int, float)) and refresh_interval_minutes > 0:
-            scheduler.reschedule_job(AUTO_INGEST_JOB_ID, trigger=IntervalTrigger(minutes=refresh_interval_minutes))
+            trigger = IntervalTrigger(minutes=refresh_interval_minutes)
+            scheduler.reschedule_job(AUTO_INGEST_JOB_ID, trigger=trigger)
             scheduler.resume_job(AUTO_INGEST_JOB_ID)
+            # J-2: 리프레시 파이프라인도 같은 주기를 따른다 -- 별도 잡
+            # id(REFRESH_JOB_ID)라 auto_ingest와 독립적으로 겹쳐 돌 수
+            # 있지만, 사용자가 설정하는 주기 값은 하나뿐이다.
+            scheduler.reschedule_job(REFRESH_JOB_ID, trigger=trigger)
+            scheduler.resume_job(REFRESH_JOB_ID)
         else:
             scheduler.pause_job(AUTO_INGEST_JOB_ID)
+            scheduler.pause_job(REFRESH_JOB_ID)
         return True
     except Exception:
         logger.exception("자동 수집 주기 반영 실패")
@@ -143,3 +151,26 @@ def save_alarms_state(body: AlarmsStateSaveRequest) -> dict[str, bool]:
         payload=body.payload,
     )
     return {"saved": saved}
+
+
+# -- J-3/J-4: 자동 갱신 파이프라인 스냅샷 -----------------------------
+
+
+@router.get("/snapshot/meta")
+def get_snapshot_meta() -> dict[str, Any]:
+    """J-4: 프런트가 윈도우 포커스 복귀·60초 주기마다 부르는 가벼운
+    엔드포인트 -- `created_at`만 돌려주고 본문 전체는 싣지 않는다.
+    프런트는 이 값이 캐시된 값보다 최신일 때만 `GET /api/state/snapshot`
+    전체를 다시 받는다."""
+    meta = _store().get_refresh_snapshot_meta()
+    return {"created_at": meta.get("created_at") if meta else None}
+
+
+@router.get("/snapshot")
+def get_snapshot() -> dict[str, Any]:
+    """J-3: schema_version이 다르면(백엔드가 바뀐 뒤 남은 옛 스냅샷)
+    복원하지 않고 `stale_version: true`만 알린다 -- 조용히 빈 화면을
+    보여주지 않고, 다음 갱신 주기에 새 스키마로 다시 채워진다는 것을
+    프런트가 안내할 수 있게 한다."""
+    status = _store().get_refresh_snapshot_status()
+    return {"snapshot": status["snapshot"], "stale_version": status["stale_version"]}

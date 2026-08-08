@@ -21,6 +21,12 @@ _lock = threading.RLock()
 # 노이즈로 보고 승격을 막지 않는다. 이보다 크게 떨어지면 게이트 미달.
 PROMOTION_TOLERANCE = 0.005
 
+# J-3: 자동 갱신 스냅샷 스키마 버전 -- 필드 모양이 호환되지 않게 바뀌면
+# 올린다. 복원 시 이 값이 다르면 옛 스냅샷을 쓰지 않는다(그대로 쓰면
+# 백엔드 로직이 바뀐 뒤에도 옛 스냅샷이 새 화면을 덮어쓴다).
+REFRESH_SNAPSHOT_SCHEMA_VERSION = 3
+REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
+
 
 def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
     """D-1: 같은 (dataset, target, feature, viewType)는 같은 즐겨찾기로
@@ -173,6 +179,16 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_favorites_created
                 ON favorites(created_at DESC);
+                CREATE TABLE IF NOT EXISTS refresh_dispatch_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    new_alarm_count INTEGER NOT NULL,
+                    blocked_reason TEXT,
+                    summarized INTEGER NOT NULL DEFAULT 0,
+                    channels_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_refresh_dispatch_log_created
+                ON refresh_dispatch_log(created_at DESC);
                 """
             )
             # D-7: notify_sent_log은 원래 채널 구분 없이 (dataset, wafer,
@@ -737,6 +753,93 @@ class RuntimeStore:
                 "DELETE FROM notify_sent_log WHERE sent_at < ?", (older_than_iso,)
             )
             return cursor.rowcount
+
+    def notifications_sent_since(self, since_iso: str) -> int:
+        """J-5: 시간당 발송 예산 확인용 -- 채널·데이터셋 구분 없이 최근
+        발송 건수를 센다(과도한 발송 자체를 막는 전역 안전판이다)."""
+        with _lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM notify_sent_log WHERE sent_at >= ?", (since_iso,)
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+    # -- 자동 갱신 파이프라인 스냅샷 (J-3) --------------------------------
+
+    def save_refresh_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """model/analysis/alarms/monitoring 네 블록을 하나의 JSON
+        문서로 묶어 단일 UPSERT로 저장한다 -- 네 번 나눠 쓰면 중간에
+        실패했을 때 화면마다 다른 시점의 데이터가 섞인다(예: 알람은 새
+        목표 기준인데 모니터링은 옛 기준인 상태가 실제로 있었다). 하나의
+        SQL 문 = 하나의 트랜잭션이므로 이 방식 자체로 원자성이 보장된다.
+        """
+        record = {**snapshot, "schema_version": REFRESH_SNAPSHOT_SCHEMA_VERSION}
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO app_state (state_key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at""",
+                (REFRESH_SNAPSHOT_STATE_KEY, self._json(record), now),
+            )
+
+    def get_refresh_snapshot_status(self) -> dict[str, Any]:
+        """`schema_version`이 다르면 복원하지 않는다 -- 백엔드 로직이
+        바뀐 뒤 옛 스냅샷이 새 화면을 조용히 덮어쓰는 사고를 막는다.
+        "저장된 적 없음"과 "저장은 됐는데 버전이 옛날 것이라 못 씀"을
+        구분해야 안내 문구가 달라지므로 `stale_version`을 따로 둔다."""
+        raw = self.get_app_state(REFRESH_SNAPSHOT_STATE_KEY)
+        if raw is None:
+            return {"snapshot": None, "stale_version": False}
+        if raw.get("schema_version") != REFRESH_SNAPSHOT_SCHEMA_VERSION:
+            return {"snapshot": None, "stale_version": True}
+        return {"snapshot": raw, "stale_version": False}
+
+    def get_refresh_snapshot_meta(self) -> dict[str, Any] | None:
+        """프런트의 가벼운 폴링 엔드포인트용 -- `created_at`만 반환하고
+        본문 전체는 꺼내지 않는다."""
+        status = self.get_refresh_snapshot_status()
+        if status["snapshot"] is None:
+            return None
+        return {"created_at": status["snapshot"].get("created_at")}
+
+    # -- 자동 갱신 알림 발송 기록 (J-5) -----------------------------------
+
+    def record_refresh_dispatch(
+        self,
+        *,
+        new_alarm_count: int,
+        blocked_reason: str | None,
+        summarized: bool,
+        channels: dict[str, Any],
+    ) -> None:
+        """차단된 경우에도 기록한다 -- "왜 안 보냈는지"가 알림 기록
+        화면에서 보여야 한다."""
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO refresh_dispatch_log
+                (created_at, new_alarm_count, blocked_reason, summarized, channels_json)
+                VALUES (?,?,?,?,?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    new_alarm_count,
+                    blocked_reason,
+                    1 if summarized else 0,
+                    self._json(channels),
+                ),
+            )
+
+    def list_refresh_dispatch_log(self, limit: int = 20) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM refresh_dispatch_log ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["summarized"] = bool(value["summarized"])
+            value["channels"] = json.loads(value.pop("channels_json") or "{}")
+            results.append(value)
+        return results
 
 
 def safe_runtime_call(method: str, **values: Any) -> Any:

@@ -232,6 +232,26 @@ class Settings:
     auto_ingest_enabled: bool = field(
         default_factory=lambda: _parse_bool("AUTO_INGEST_ENABLED", False)
     )
+    # J-1: 자동 갱신 파이프라인의 SQL 데이터 소스 -- 팹마다 DB 엔진이
+    # 달라(PostgreSQL/MySQL/MSSQL/Oracle 등) 특정 드라이버를 코드에
+    # 고정하지 않는다. `db_driver`는 SQLAlchemy dialect+driver 접두사
+    # (예: "postgresql+psycopg2", "mssql+pyodbc")이고, 실제 접속 문자열은
+    # 이 접두사 + state/training에 저장된 host/port/db/user + 아래
+    # db_password로 조립한다(src/automation/sql_source.py). 드라이버
+    # 패키지 자체는 운영팀이 자신의 DB에 맞게 별도 설치한다.
+    db_driver: str | None = field(
+        default_factory=lambda: os.environ.get("AUTO_INGEST_DB_DRIVER", "").strip() or None
+    )
+    # 비밀번호는 UI에 입력칸을 두지 않는다 -- 환경변수로만 받는다.
+    db_password: str | None = field(
+        default_factory=lambda: os.environ.get("DB_PASSWORD", "").strip() or None
+    )
+    auto_ingest_query: str | None = field(
+        default_factory=lambda: os.environ.get("AUTO_INGEST_QUERY", "").strip() or None
+    )
+    auto_ingest_cursor_column: str | None = field(
+        default_factory=lambda: os.environ.get("AUTO_INGEST_CURSOR_COLUMN", "").strip() or None
+    )
 
     def __post_init__(self) -> None:
         if self.log_level not in VALID_LOG_LEVELS:
