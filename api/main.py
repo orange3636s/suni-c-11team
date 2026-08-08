@@ -108,6 +108,77 @@ async def _warmup_datasets_background() -> None:
     logger.info("dataset warmup complete in %.1fms", (time.perf_counter() - t0) * 1000)
 
 
+# W-2: 첫 기동 스냅샷 부트스트랩 -- `run_refresh_pipeline`(기존 자동화
+# 파이프라인)을 그대로 재사용한다. 새 파이프라인을 만들지 않는다.
+BOOTSTRAP_TRAINING_TIMEOUT_SECONDS = 3600
+BOOTSTRAP_TRAINING_POLL_SECONDS = 5
+
+
+def _bootstrap_runtime_store() -> RuntimeStore:
+    return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+
+
+async def _await_first_champion(store: RuntimeStore) -> None:
+    """`run_refresh_pipeline`이 학습 대상이 없어(챔피언 없음) 백그라운드
+    학습 Job을 제출하면, 그 파이프라인 호출 자체는 제출만 하고 곧바로
+    반환한다(J-2 설계: 주기 갱신에서는 다음 사이클에 결과가 따라온다).
+    부트스트랩은 "접속하면 이미 다 채워져 있다"가 목표이므로, 여기서는
+    그 학습 Job이 끝날 때까지 기다린다 -- 서버 기동 자체는 이미
+    끝났으므로(lifespan을 블록하지 않음) 이 대기는 헬스체크에 영향을
+    주지 않는다."""
+    deadline = time.monotonic() + BOOTSTRAP_TRAINING_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if store.active_model() is not None:
+            return
+        job = store.latest_training_job()
+        if job is not None and job.get("status") == "failed":
+            raise RuntimeError(job.get("error_message") or "자동 학습이 실패했습니다.")
+        if job is not None and job.get("status") == "running" and job.get("stage"):
+            store.set_bootstrap_status("running", job["stage"])
+        await asyncio.sleep(BOOTSTRAP_TRAINING_POLL_SECONDS)
+    raise RuntimeError("학습이 제한 시간 내에 끝나지 않았습니다.")
+
+
+async def _run_bootstrap(store: RuntimeStore) -> None:
+    store.set_bootstrap_status("running", "데이터 확인 중")
+    try:
+        # W-3: 챔피언 모델이 이미 있으면(볼륨은 살아있는데 스냅샷만
+        # 없는 경우 등) 재학습하지 않는다 -- `run_refresh_pipeline` 내부의
+        # 데이터 해시 비교(조건부 재학습)와 같은 원칙이다.
+        if store.active_model() is None:
+            store.set_bootstrap_status("running", "학습 중")
+            await asyncio.to_thread(run_refresh_pipeline)
+            await _await_first_champion(store)
+        store.set_bootstrap_status("running", "평가 · 원인분석 중")
+        await asyncio.to_thread(run_refresh_pipeline)
+        if not store.has_valid_snapshot():
+            raise RuntimeError("첫 스냅샷 생성에 실패했습니다 (원인분석/알람 판정 단계를 확인하세요).")
+        store.set_bootstrap_status("done", None)
+        logger.info("bootstrap: 첫 스냅샷 생성 완료")
+    except Exception as exc:
+        logger.exception("bootstrap: 첫 스냅샷 생성 실패")
+        store.set_bootstrap_status("failed", None, error=str(exc))
+
+
+async def _bootstrap_snapshot_background() -> None:
+    """유효 스냅샷이 없을 때만, 단 한 번 실행한다. 기동을 블록하지 않도록
+    `_spawn_background_task`로 fire-and-forget한다(89행 주석과 동일한
+    이유 -- 헬스체크가 실패하면 배포가 롤백된다)."""
+    store = _bootstrap_runtime_store()
+    try:
+        if store.has_valid_snapshot():
+            return
+        if not store.acquire_bootstrap_lock():
+            logger.info("bootstrap: 다른 인스턴스가 이미 진행 중이라 건너뜁니다.")
+            return
+        try:
+            await _run_bootstrap(store)
+        finally:
+            store.release_bootstrap_lock()
+    except Exception:
+        logger.exception("bootstrap: 예기치 않은 오류")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -129,6 +200,11 @@ async def lifespan(app: FastAPI):
             # Migration failures are recorded and logged, but readiness and
             # health endpoints must remain available for investigation.
             logger.exception("Startup Migration 실행 실패")
+
+    # W-2: 첫 기동 스냅샷 부트스트랩 -- 유효 스냅샷이 있으면 내부에서
+    # 즉시 반환한다(재학습 없음). 마이그레이션 다음에 두는 이유는 모델
+    # 디렉터리·DB 스키마가 이미 정리된 상태에서 판단하기 위해서다.
+    _spawn_background_task(_bootstrap_snapshot_background())
 
     # 알람 알림 연동 §C-3 Telegram -- 봇 토큰이 설정된 경우에만 long-polling
     # 루프를 띄운다. 설정되지 않은 개발/테스트 환경에서는 조용히 건너뛴다.

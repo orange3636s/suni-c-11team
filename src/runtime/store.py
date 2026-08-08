@@ -6,7 +6,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
@@ -26,6 +26,14 @@ PROMOTION_TOLERANCE = 0.005
 # 백엔드 로직이 바뀐 뒤에도 옛 스냅샷이 새 화면을 덮어쓴다).
 REFRESH_SNAPSHOT_SCHEMA_VERSION = 3
 REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
+
+# W-2/W-6: 첫 기동 스냅샷 부트스트랩 -- 단일 실행 잠금과 진행 상태를
+# app_state 테이블에 얹는다(전용 테이블을 새로 만들지 않는다). 잠금은
+# 프로세스가 죽어 release가 호출되지 못한 경우를 대비해 일정 시간이
+# 지나면 다른 프로세스가 가져갈 수 있게 한다(영구 데드락 방지).
+BOOTSTRAP_LOCK_STATE_KEY = "automation:bootstrap_lock"
+BOOTSTRAP_STATUS_STATE_KEY = "automation:bootstrap_status"
+BOOTSTRAP_LOCK_STALE_SECONDS = 3600
 
 
 def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
@@ -800,6 +808,69 @@ class RuntimeStore:
         if status["snapshot"] is None:
             return None
         return {"created_at": status["snapshot"].get("created_at")}
+
+    def has_valid_snapshot(self) -> bool:
+        """W-2: 스키마 버전이 맞는 스냅샷이 이미 있으면 부트스트랩을
+        건너뛴다는 판단에 쓰는 헬퍼."""
+        status = self.get_refresh_snapshot_status()
+        return status["snapshot"] is not None and not status["stale_version"]
+
+    # -- 첫 기동 스냅샷 부트스트랩 단일 실행 잠금 (W-2) -------------------
+
+    def acquire_bootstrap_lock(self) -> bool:
+        """app_state를 잠금으로 재사용한다(전용 잠금 테이블을 새로 만들지
+        않는다) -- 행이 없으면 INSERT로 잡고, 있어도 `updated_at`이
+        `BOOTSTRAP_LOCK_STALE_SECONDS`보다 오래됐으면(부트스트랩 도중
+        프로세스가 죽어 release가 호출되지 못한 경우) 훔쳐올 수 있다.
+        SQLite UPSERT의 `DO UPDATE ... WHERE` 절이 이 비교와 쓰기를
+        하나의 원자적 문장으로 묶어준다."""
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        stale_before_iso = (now - timedelta(seconds=BOOTSTRAP_LOCK_STALE_SECONDS)).isoformat()
+        payload = self._json({"acquired_at": now_iso})
+        with _lock, self._connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO app_state (state_key, value_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+                WHERE app_state.updated_at < ?""",
+                (BOOTSTRAP_LOCK_STATE_KEY, payload, now_iso, stale_before_iso),
+            )
+            return cursor.rowcount > 0
+
+    def release_bootstrap_lock(self) -> None:
+        self.delete_app_state(BOOTSTRAP_LOCK_STATE_KEY)
+
+    def set_bootstrap_status(
+        self, status: str, stage: str | None, *, error: str | None = None
+    ) -> None:
+        """W-4: 프런트가 `/api/state/snapshot/meta`로 읽어 진행 배너에
+        쓴다. 실제 학습 진행률(0~99%)은 이미 `training_jobs.progress`가
+        갖고 있으므로 여기서는 다시 만들지 않고, 큰 단계 이름(stage)만
+        남긴다 -- 없으면 프런트는 '첫 분석 진행 중'만 보여주고 가짜
+        진행률을 만들지 않는다."""
+        self.set_app_state(
+            BOOTSTRAP_STATUS_STATE_KEY,
+            {
+                "status": status,
+                "stage": stage,
+                "error": error,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    def get_bootstrap_status(self) -> dict[str, Any] | None:
+        return self.get_app_state(BOOTSTRAP_STATUS_STATE_KEY)
+
+    def latest_training_job(self) -> dict[str, Any] | None:
+        """부트스트랩이 자신이 유발한 학습 Job의 진행 상태(stage)를
+        읽어오는 용도 -- job_id를 따로 들고 다니지 않아도 되도록 가장
+        최근 Job 하나만 본다(단일 워커 배포라 동시에 여러 Job이 쌓이지
+        않는다, operation_coordinator가 그 자체를 이미 보장)."""
+        with _lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM training_jobs ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     # -- 자동 갱신 알림 발송 기록 (J-5) -----------------------------------
 

@@ -185,7 +185,10 @@ function RootCauseContent() {
   // with zero network calls (checklist §탭 이동 #1/#4), and a page
   // reload/reconnect restores a lean (points-less) version of it via
   // GET /api/state/latest.
-  const { analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice, alarms } = useAnalysisState();
+  const {
+    analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice, alarms,
+    snapshot: automationSnapshot,
+  } = useAnalysisState();
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
@@ -842,8 +845,19 @@ function RootCauseContent() {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center" }}>
-            <button type="button" className="button" disabled={runState === "running"} onClick={() => void runAnalysis()}>
-              {runState === "running" ? "원인 분석 중..." : runState === "done" ? "다시 실행" : runState === "error" ? "다시 시도" : "원인 분석 실행"}
+            {/* W-5: 스냅샷(자동 갱신 파이프라인 산출물)이 이미 있으면 "안
+                누르면 아무것도 없다"는 인상을 주지 않도록 보조 액션(테두리
+                버튼)으로 낮춘다 -- 화면당 채워진 버튼은 1개만 유지한다.
+                반대로 스냅샷도 결과도 없으면(부트스트랩 실패 등) 이
+                버튼이 유일한 복구 경로이므로 채워진 스타일로 눈에 띄게
+                둔다. */}
+            <button
+              type="button"
+              className={automationSnapshot || runState === "done" ? "button secondary" : "button"}
+              disabled={runState === "running"}
+              onClick={() => void runAnalysis()}
+            >
+              {runState === "running" ? "분석 중..." : runState === "error" ? "다시 시도" : "다시 분석"}
             </button>
           </div>
         </div>

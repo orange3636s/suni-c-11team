@@ -1,5 +1,5 @@
 // 모니터링 홈의 유일한 데이터 조회 경로 -- 페이지 컴포넌트는 이 3개
-// 함수(getLatestSnapshot / getTreemapData / getMeasurementQueue)만
+// 함수(buildMonitoringSnapshot / getTreemapData / getMeasurementQueue)만
 // 호출하고 fetch를 직접 부르지 않는다. 지금은 세 함수 모두 기존 REST
 // API를 감쌀 뿐이지만, 나중에 팹 DB(SQL)가 붙으면 이 파일 안쪽만
 // 교체하면 되도록 인터페이스를 분리해 둔다 (SQL 관련 코드는 아직
@@ -9,11 +9,17 @@
 import {
   getAlertsData,
   getConfigTreemap,
-  getLatestState,
   getScreeningScatter,
 } from "@/lib/api";
-import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import { CONFIG_FORMAT_RE, TARGETS } from "@/lib/constants";
+// W-1: analysis/alarms는 항상 호출부(모니터링 페이지)가 공용
+// AnalysisStateProvider에서 이미 읽은 값을 그대로 넘긴다 -- 이 파일이
+// 따로 GET /api/state/latest를 다시 부르지 않는다(지시서: "화면별로
+// 개별 fetch하지 마라"). 복원된 값이 쓸 만한지(isAnalysisSnapshotUsable)
+// 는 그 값을 만든 쪽(AnalysisStateProvider의 hydrate/스냅샷 대체 채움)이
+// 이미 판단했으므로 여기서 다시 검사하지 않는다. 타입만 참조하므로(값은
+// 쓰지 않는다) 순환 임포트가 되지 않는다.
+import type { AlarmsState, AnalysisState } from "@/components/AnalysisStateProvider";
 import type {
   ConfidenceTier,
   ConfigTreemapResponse,
@@ -152,43 +158,56 @@ export type MonitoringSnapshot = {
   alarmsRecord: LatestAlarmsRecord | null;
 };
 
-/** GET /api/state/latest를 감싸고, 타깃 5개의 1위 인자만 개별 조회해
- * (최대 5회) 권장구간·이탈률을 채운 "모니터링에 바로 쓸 수 있는" 스냅샷을
- * 반환한다. 인자별 산점도 상세는 상태 스냅샷에 실려 있지 않으므로
- * (types/data.ts LatestAnalysisPayload 주석 참고) 여기서 보강한다 --
- * 전체 인자를 다시 부르지 않는다. */
-export async function getLatestSnapshot(): Promise<MonitoringSnapshot> {
-  const state = await getLatestState();
-  const analysis = state.analysis;
-  // 지시서 AJ-4: 원인 분석 화면(AnalysisStateProvider)과 같은 판정 함수를
-  // 써서 낡은 스냅샷(구버전 또는 재학습 이후)을 "분석 없음"으로 취급한다
-  // -- 이 판정을 따로 하면 원인 분석은 재실행을 안내하는데 모니터링
-  // 홈만 옛 결과를 계속 보여주는 어긋남이 생긴다.
-  if (!analysis || !isAnalysisSnapshotUsable(analysis, state.training?.created_at ?? null)) {
+/** AnalysisStateProvider가 이미 들고 있는 analysis/alarms(저장된 결과를
+ * 복원했든, 아직 아무도 실행한 적 없어 자동 갱신 스냅샷으로 대체
+ * 채웠든 -- W-1)를 받아, 타깃 5개의 1위 인자만 개별 조회해(최대 5회)
+ * 권장구간·이탈률을 채운 "모니터링에 바로 쓸 수 있는" 스냅샷을 반환한다.
+ * 인자별 산점도 상세는 analysis에 실려 있지 않으므로(types/data.ts
+ * LatestAnalysisPayload 주석 참고) 여기서 보강한다 -- 전체 인자를 다시
+ * 부르지 않는다. */
+export async function buildMonitoringSnapshot(
+  analysis: AnalysisState,
+  alarms: AlarmsState,
+): Promise<MonitoringSnapshot> {
+  // 이 화면은 alarms를 자기 필드명이 아니라 LatestAlarmsRecord 모양으로
+  // 계속 다룬다(SummaryBlock 등 기존 렌더 코드를 건드리지 않기 위해) --
+  // AnalysisStateProvider의 AlarmsState(camelCase)를 그 모양으로 얇게
+  // 감싼다.
+  const alarmsRecord: LatestAlarmsRecord | null = alarms
+    ? {
+        schema_version: 1,
+        created_at: alarms.createdAt,
+        train_dataset: alarms.trainDataset,
+        eval_dataset: alarms.evalDataset,
+        payload: { targetYield: alarms.targetYield, sensitivity: alarms.sensitivity },
+      }
+    : null;
+
+  if (!analysis) {
     return {
       hasAnalysis: false,
       createdAt: null,
       dataset: null,
       significantFactors: [],
       measurementExpansion: null,
-      alarmsRecord: state.alarms,
+      alarmsRecord,
     };
   }
 
-  const totalWafers = analysis.payload.measurementExpansion?.total_wafers ?? null;
+  const totalWafers = analysis.measurementExpansion?.total_wafers ?? null;
   const significantFactors = await Promise.all(
     TARGETS.map((target) =>
-      buildSignificantFactor(analysis.dataset, target, analysis.payload.paretoByTarget[target]?.items[0], totalWafers),
+      buildSignificantFactor(analysis.dataset, target, analysis.paretoByTarget[target]?.items[0], totalWafers),
     ),
   );
 
   return {
     hasAnalysis: true,
-    createdAt: analysis.created_at,
+    createdAt: analysis.createdAt,
     dataset: analysis.dataset,
     significantFactors,
-    measurementExpansion: analysis.payload.measurementExpansion ?? null,
-    alarmsRecord: state.alarms,
+    measurementExpansion: analysis.measurementExpansion ?? null,
+    alarmsRecord,
   };
 }
 

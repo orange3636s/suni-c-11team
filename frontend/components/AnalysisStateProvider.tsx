@@ -7,6 +7,7 @@ import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
   AlarmGrade,
   AlertsDataResponse,
+  BootstrapStatus,
   CategoricalScatterResponse,
   ConfigTreemapResponse,
   MeasurementExpansionResponse,
@@ -21,6 +22,9 @@ import type {
 // 발생하지 않는다"는 meta 조회에는 예외이지만(가벼운 엔드포인트), 굳이
 // 더 짧게 잡을 이유는 없다(자동 갱신 주기 자체가 보통 분 단위다).
 const SNAPSHOT_META_POLL_MS = 60_000;
+// W-4: 첫 기동 부트스트랩이 진행 중인 동안에는 체감 대기를 줄이기 위해
+// 더 짧게 돈다 -- 완료(done/failed)되면 다시 60초로 돌아간다.
+const SNAPSHOT_META_POLL_BOOTSTRAP_MS = 10_000;
 // "방금 갱신됨" 배지를 몇 초간 보여줄지.
 const SNAPSHOT_JUST_UPDATED_MS = 5_000;
 
@@ -172,7 +176,50 @@ type AnalysisStateValue = {
   // 방금(수 초 이내) 새 스냅샷으로 갱신됐다는 신호 -- 상단에 "방금
   // 갱신됨 · HH:MM"을 잠깐 보여주는 데 쓴다.
   snapshotJustUpdated: boolean;
+  // W-4: 첫 기동 부트스트랩 진행 상태. null이면 부트스트랩이 아직 한
+  // 번도 보고되지 않은 것(구버전 배포, 또는 메타를 아직 못 받아옴)이고
+  // 화면은 이를 "부트스트랩 없음"과 동일하게 취급한다.
+  bootstrapStatus: BootstrapStatus | null;
+  // 실패 배너의 "다시 시도"용 -- 폴링 타이머를 기다리지 않고 즉시
+  // meta/snapshot을 다시 확인한다.
+  refreshSnapshotNow: () => void;
 };
+
+// W-1: 부트스트랩/주기 자동 갱신이 채운 스냅샷을, 한 번도 저장된 적
+// 없는(=클릭한 적 없는) analysis/alarms의 대체 데이터로 쓴다. 화면들이
+// 이미 알고 있는 "복원됐지만 아직 좌표/원시 예측치는 없는" 모양
+// (pointsComplete:false, data:null)으로 채우므로, 각 화면의 기존
+// 배경-채움 이펙트(fetchAllScatterData 등)가 그대로 나머지를 채운다 --
+// 화면 쪽 렌더링 코드는 손대지 않는다. `paretoByTarget`/
+// `measurementExpansion`은 스냅샷과 저장된 결과 둘 다 같은 백엔드 함수
+// (`_pareto_payload`/`get_measurement_expansion`)로 만들어지므로 모양이
+// 같다.
+function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
+  const targets = Object.keys(snap.analysis.paretoByTarget ?? {});
+  return {
+    dataset: snap.source.eval_dataset,
+    createdAt: snap.created_at,
+    activeTarget: targets[0] ?? "Y1",
+    paretoByTarget: snap.analysis.paretoByTarget as Record<string, ParetoRankingResponse>,
+    scatterByKey: {},
+    categoricalByKey: {},
+    pointsComplete: false,
+    measurementExpansion: (snap.analysis.measurementExpansion as MeasurementExpansionResponse | null) ?? null,
+    alarmGradeByWaferId: null,
+    alarmCriteria: null,
+  };
+}
+
+function synthesizeAlarmsFromSnapshot(snap: RefreshSnapshot): AlarmsState {
+  return {
+    trainDataset: snap.source.train_dataset,
+    evalDataset: snap.source.eval_dataset,
+    createdAt: snap.created_at,
+    targetYield: snap.alarms.target_yield,
+    sensitivity: snap.alarms.sensitivity,
+    data: null,
+  };
+}
 
 const AnalysisStateContext = createContext<AnalysisStateValue | null>(null);
 
@@ -193,12 +240,19 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [snapshot, setSnapshot] = useState<RefreshSnapshot | null>(null);
   const [snapshotStaleVersion, setSnapshotStaleVersion] = useState(false);
   const [snapshotJustUpdated, setSnapshotJustUpdated] = useState(false);
+  const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null);
   // 폴링 콜백이 매번 최신 snapshot을 읽어야 하는데, setInterval에 넘긴
   // 클로저는 등록 시점 값을 붙잡는다 -- ref로 최신 값을 따라간다.
   const snapshotRef = useRef<RefreshSnapshot | null>(null);
   useEffect(() => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
+  // W-4: 다음 폴링 간격을 고르는 재귀 setTimeout이 매 실행 시점의 최신
+  // 부트스트랩 상태를 읽어야 한다 -- 위 snapshotRef와 같은 이유.
+  const bootstrapStatusRef = useRef<BootstrapStatus | null>(null);
+  useEffect(() => {
+    bootstrapStatusRef.current = bootstrapStatus;
+  }, [bootstrapStatus]);
 
   function hydrate() {
     let cancelled = false;
@@ -309,10 +363,30 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       setSnapshotJustUpdated(true);
       window.setTimeout(() => setSnapshotJustUpdated(false), SNAPSHOT_JUST_UPDATED_MS);
     }
+    // W-1: analysis/alarms가 아직 아무것도 없으면(저장된 결과도, 이전에
+    // 채운 대체값도 없으면) 스냅샷으로 채운다 -- 함수형 업데이터의 이전
+    // 값 검사로 채우므로, 이 콜백이 GET /api/state/latest 복원보다 먼저
+    // 끝나든 나중에 끝나든(둘은 별도 요청이라 순서가 보장되지 않는다)
+    // 실제 저장된 결과가 있으면 그쪽이 항상 이긴다(hydrate가 무조건
+    // setAnalysis/setAlarms로 덮어쓴다).
+    if (full.snapshot) {
+      const snap = full.snapshot;
+      setAnalysis((prev) => prev ?? synthesizeAnalysisFromSnapshot(snap));
+      setAlarms((prev) => prev ?? synthesizeAlarmsFromSnapshot(snap));
+    }
+  }, []);
+
+  // W-4: 실패 배너의 "다시 시도"가 부른다 -- 폴링 타이머를 기다리지 않고
+  // 즉시 한 번 meta/snapshot을 다시 확인한다(서버 쪽 자동 갱신이 그 사이
+  // 이미 성공했을 수 있다). 아래 effect가 실제 구현을 채워 넣는다.
+  const checkForUpdateRef = useRef<() => Promise<void>>(async () => {});
+  const refreshSnapshotNow = useCallback(() => {
+    void checkForUpdateRef.current();
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: number | undefined;
     getSnapshot()
       .then((full) => {
         if (!cancelled) applySnapshot(full, false);
@@ -322,12 +396,14 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         // 다시 채운다.
       });
 
-    // 갱신 감지: 윈도우 포커스 복귀 시 + 60초 주기. `created_at`만 보는
+    // 갱신 감지: 윈도우 포커스 복귀 시 + 주기 폴링. `created_at`만 보는
     // 가벼운 엔드포인트라 실제로 더 최신인 경우에만 전체를 다시 받는다
     // (지시서: "같으면 아무것도 하지 않는다 -- 무조건 재조회 금지").
+    // 같은 응답의 `bootstrap` 필드로 첫 기동 진행 상태도 함께 갱신한다.
     async function checkForUpdate() {
       try {
         const meta = await getSnapshotMeta();
+        setBootstrapStatus(meta.bootstrap ?? null);
         const cachedCreatedAt = snapshotRef.current?.created_at ?? null;
         if (meta.created_at && meta.created_at !== cachedCreatedAt) {
           const full = await getSnapshot();
@@ -337,8 +413,27 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         // best-effort -- 다음 폴링에서 다시 시도한다.
       }
     }
+    checkForUpdateRef.current = checkForUpdate;
 
-    const interval = window.setInterval(() => void checkForUpdate(), SNAPSHOT_META_POLL_MS);
+    // W-4: 고정 setInterval 대신 재귀 setTimeout을 쓴다 -- 매 회차가
+    // 끝난 뒤 그 시점의 최신 부트스트랩 상태(bootstrapStatusRef)를 보고
+    // 다음 간격(부트스트랩 중 10초 / 평소 60초)을 새로 고른다.
+    function scheduleNext() {
+      const delay =
+        bootstrapStatusRef.current?.status === "running"
+          ? SNAPSHOT_META_POLL_BOOTSTRAP_MS
+          : SNAPSHOT_META_POLL_MS;
+      timeoutId = window.setTimeout(() => {
+        void checkForUpdate().then(() => {
+          if (!cancelled) scheduleNext();
+        });
+      }, delay);
+    }
+    // 첫 기동 부트스트랩 배너를 새로고침 없이 바로 보여주려면 진행 상태를
+    // 마운트 즉시 한 번 확인해야 한다(그 전까지는 60초를 기다려야 했다).
+    void checkForUpdate();
+    scheduleNext();
+
     function handleFocus() {
       void checkForUpdate();
     }
@@ -349,7 +444,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
@@ -376,10 +471,12 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       snapshot,
       snapshotStaleVersion,
       snapshotJustUpdated,
+      bootstrapStatus,
+      refreshSnapshotNow,
     }),
     [
       hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome,
-      notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated,
+      notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated, bootstrapStatus, refreshSnapshotNow,
     ],
   );
 

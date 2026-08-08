@@ -590,8 +590,21 @@ export type SnapshotResponse = {
   stale_version: boolean;
 };
 
+// W-4: 첫 기동 부트스트랩(스냅샷이 아직 없을 때 1회 학습+분석) 진행
+// 상태. 한 번도 부트스트랩이 시작되지 않았으면(구버전 배포 등) null.
+export type BootstrapStatus = {
+  status: "running" | "done" | "failed";
+  // 큰 단계 이름만 온다(예: "학습 중") -- 세부 진행률(0~99%)까지는
+  // 만들지 않는다(지시서: "가짜 진행률을 표시하지 마라"). 알 수 없으면
+  // null이고, 화면은 "첫 분석 진행 중"만 보여준다.
+  stage: string | null;
+  error: string | null;
+  updated_at: string;
+};
+
 export type SnapshotMetaResponse = {
   created_at: string | null;
+  bootstrap: BootstrapStatus | null;
 };
 
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------

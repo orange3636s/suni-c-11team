@@ -9163,6 +9163,22 @@ html[data-theme="dark"] .degradedStateBanner{
 }
 .degradedStateBanner > .button{ flex: 0 0 auto; }
 
+/* W-4: 첫 기동 부트스트랩 진행 배너 -- 같은 레이아웃을 쓰되(스켈레톤·
+   무한 로딩이 아니라 한 줄 상태 표시) 톤은 중립(진행 중)/실패(경고)로
+   나뉜다. 실패 상태는 위 .degradedStateBanner와 같은 팔레트를 재사용한다. */
+.bootstrapStateBanner{
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 20px; font-size: var(--fs-body); line-height: 1.5;
+  border-bottom: 1px solid var(--border); background: var(--surface-secondary); color: var(--text-secondary);
+}
+.bootstrapStateBanner.error{
+  border-color: #FECACA; background: #FEF2F2; color: #B42318;
+}
+html[data-theme="dark"] .bootstrapStateBanner.error{
+  border-color: rgba(248, 113, 113, 0.4); background: rgba(127, 29, 29, 0.28); color: #FCA5A5;
+}
+.bootstrapStateBanner > .button{ flex: 0 0 auto; }
+
 /* Per-scatter-card Color By dropdown (spec §5-3) -- height/radius/font
    sized to match the confidence badge it sits beside in
    .factorChartTitleRow, gapped via --factor-title-gap. */

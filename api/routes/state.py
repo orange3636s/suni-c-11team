@@ -161,9 +161,19 @@ def get_snapshot_meta() -> dict[str, Any]:
     """J-4: 프런트가 윈도우 포커스 복귀·60초 주기마다 부르는 가벼운
     엔드포인트 -- `created_at`만 돌려주고 본문 전체는 싣지 않는다.
     프런트는 이 값이 캐시된 값보다 최신일 때만 `GET /api/state/snapshot`
-    전체를 다시 받는다."""
-    meta = _store().get_refresh_snapshot_meta()
-    return {"created_at": meta.get("created_at") if meta else None}
+    전체를 다시 받는다.
+
+    W-4: `bootstrap`은 첫 기동 부트스트랩(스냅샷이 아직 없을 때 1회
+    학습+분석)의 진행 상태다 -- 스냅샷이 이미 있었던 적이 없으면(부트
+    스트랩이 아직 시작 전이거나, 이미 끝나 상태를 지운 뒤 그대로 두는
+    구버전 배포 등) null이다. 프런트는 이 값이 없거나 status가
+    "done"이면 배너를 감춘다."""
+    store = _store()
+    meta = store.get_refresh_snapshot_meta()
+    return {
+        "created_at": meta.get("created_at") if meta else None,
+        "bootstrap": store.get_bootstrap_status(),
+    }
 
 
 @router.get("/snapshot")

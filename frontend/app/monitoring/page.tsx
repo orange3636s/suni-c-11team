@@ -11,7 +11,7 @@ import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import {
-  getLatestSnapshot,
+  buildMonitoringSnapshot,
   getMeasurementQueue,
   type MeasurementQueueData,
   type MonitoringSnapshot,
@@ -130,7 +130,7 @@ export default function MonitoringPage() {
     const timer = window.setTimeout(() => {
       setLoading(true);
       setLoadError(false);
-      void getLatestSnapshot()
+      void buildMonitoringSnapshot(analysis, alarms)
         .then(async (snap) => {
           if (cancelled) return;
           setSnapshot(snap);
@@ -159,7 +159,7 @@ export default function MonitoringPage() {
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, cacheKey, retryToken]);
+  }, [hydrated, cacheKey, retryToken, analysis, alarms]);
 
   // E-4: ConfigTreemap이 탭 이동으로 언마운트/리마운트돼도 마지막으로 조회한
   // 스텝 결과를 다시 조회하지 않도록, monitoringHome 캐시에 함께 들고 있는다.

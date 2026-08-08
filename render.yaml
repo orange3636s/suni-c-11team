@@ -5,19 +5,30 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /health
+    # W-6: 이전에는 MODEL_DIR/RUNTIME_DB_PATH 등이 리포지토리 상대 경로였다
+    # -- Render 웹 서비스는 디스크를 붙이지 않으면 파일시스템이 배포마다
+    # 초기화되므로, 챔피언 모델·runtime DB(자동 갱신 스냅샷 포함)가 매
+    # 배포마다 사라져 부트스트랩이 매번 전체 재학습을 돌게 된다. 아래
+    # disk를 붙이고 경로를 그 마운트 아래로 옮겨 영속시킨다.
+    disk:
+      name: manufacturing-ai-data
+      mountPath: /var/data
+      sizeGB: 5
     envVars:
       - key: APP_ENV
         value: production
       - key: FRONTEND_ORIGINS
         sync: false
       - key: MODEL_DIR
-        value: models
+        value: /var/data/models
       - key: RUNTIME_DB_PATH
-        value: data/runtime/dashboard.db
+        value: /var/data/runtime/dashboard.db
       - key: RUNTIME_ARTIFACT_DIR
-        value: data/runtime
+        value: /var/data/runtime
       - key: TRAINING_JOB_ARTIFACT_DIR
-        value: data/runtime/training_jobs
+        value: /var/data/runtime/training_jobs
+      - key: DATASET_UPLOAD_DIR
+        value: /var/data/datasets
       - key: MAX_UPLOAD_SIZE_MB
         value: "20"
       - key: LOG_LEVEL
