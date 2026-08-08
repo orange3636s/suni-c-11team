@@ -7,6 +7,7 @@ import ParetoChart from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart from "@/components/ScatterChart";
 import { deleteFavorite, getFavorites, getScreeningPareto, getScreeningScatter, getScreeningScatterCategorical } from "@/lib/api";
+import { buildCategoricalSpec } from "@/lib/constants";
 import { formatLastRun } from "@/lib/timeFormat";
 import type {
   CategoricalScatterResponse,
@@ -19,18 +20,6 @@ const VIEW_LABEL: Record<string, string> = { scatter: "Scatter Plot", box: "Box 
 const THUMBNAIL_HEIGHT = 160;
 
 function noop() {}
-
-// 카테고리별 Box Plot 스펙 -- root-cause/page.tsx의 buildCategoricalSpec과
-// 같은 모양이지만, 페이지 간 import를 만들지 않도록 여기서 다시 만든다
-// (지시서 J-3: 썸네일도 실제 차트를 작게 렌더한다).
-function buildCategoricalSpec(data: CategoricalScatterResponse) {
-  const x = data.groups.flatMap((group) => group.values.map(() => group.category));
-  const y = data.groups.flatMap((group) => group.values);
-  return {
-    data: [{ type: "box", x, y, boxpoints: "outliers", marker: { color: "#1D4ED8" }, line: { color: "#1D4ED8" } }],
-    layout: { xaxis: { tickangle: 0 }, yaxis: {}, margin: { t: 10, b: 40, l: 40, r: 10 } },
-  };
-}
 
 export default function FavoritesPage() {
   const router = useRouter();
@@ -145,7 +134,7 @@ function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] 
   }, [snapshot.dataset, snapshot.target, snapshot.feature, snapshot.isConfig, snapshot.viewType]);
 
   if (failed) return <p className="emptyMessage">미리보기를 불러오지 못했습니다.</p>;
-  if (categoricalData) return <PlotlyChart spec={buildCategoricalSpec(categoricalData)} height={THUMBNAIL_HEIGHT} />;
+  if (categoricalData) return <PlotlyChart spec={buildCategoricalSpec(categoricalData, { compact: true })} height={THUMBNAIL_HEIGHT} />;
   if (paretoData) {
     return (
       <ParetoChart

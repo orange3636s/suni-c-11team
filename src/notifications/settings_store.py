@@ -47,7 +47,6 @@ DEFAULT_CONDITIONS = {"grades": list(DEFAULT_GRADES), "timing": TIMING_ON_ANALYS
 _LEGACY_TIMING_MIGRATIONS = {"daily_8am": TIMING_DAILY_9AM}
 
 SLACK_WEBHOOK_DOMAIN = "hooks.slack.com"
-GMAIL_TOKEN_TTL_MINUTES = 60  # 인증 메일 링크 유효 시간
 
 # 지시서 W: 인증 대기(pending) 레코드가 무기한 남아 있으면 사용자가 메일을
 # 못 받거나 주소를 잘못 입력했을 때 영영 복구할 수 없다. 조회 시점에

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { ALARM_GRADE_COLOR, parseConfig } from "@/lib/constants";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -346,14 +347,6 @@ const METHOD_COLOR: Record<WindowMethod, { light: string; dark: string }> = {
 const METHOD_LABEL: Record<WindowMethod, string> = { spc: "SPC", ml: "ML" };
 const TREND_COLOR = { light: "#DC2626", dark: "#F87171" };
 
-// 알람 판정 GBDT 전환 (spec §B-1) -- "주의"는 #EAB308 대신 #CA8A04를 쓴다:
-// 빈 삼각형이라 테두리만 보이므로 밝은 노랑은 흰 배경에서 식별이 어렵다.
-// 회색 4번째 등급은 만들지 않는다 (3단계만).
-const ALARM_GRADE_COLOR: Record<"심각" | "위험" | "주의", { light: string; dark: string }> = {
-  심각: { light: "#DC2626", dark: "#F87171" },
-  위험: { light: "#EA580C", dark: "#FB923C" },
-  주의: { light: "#CA8A04", dark: "#FACC15" },
-};
 // 점 반지름(style.size)의 diameter 기준 1.6배 (spec §B-1: "점이 4px이면
 // 삼각형 한 변 6.5px" -- 점보다 조금 큰 정도로, 주변 점을 가리지 않는다).
 const ALARM_TRIANGLE_RATIO = 1.6;
@@ -436,7 +429,7 @@ function trianglePoints(cx: number, cy: number, r: number): string {
 function IconTriangle({ color }: { color: string }) {
   return (
     <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
-      <polygon points={trianglePoints(11, 9, 6)} fill="none" stroke={color} strokeWidth="1.4" />
+      <polygon points={trianglePoints(11, 9, 6)} fill="none" strokeWidth="1.4" style={{ stroke: color }} />
     </svg>
   );
 }
@@ -1769,15 +1762,14 @@ export default function ScatterChart({
               .sort((a, b) => ALARM_GRADE_Z[a.grade] - ALARM_GRADE_Z[b.grade]);
             return markers.map(({ point, grade }, i) => {
               const style = colorForPoint(point, colorMode, lotIndex, theme, recommendedRangeValue);
-              const color = theme === "dark" ? ALARM_GRADE_COLOR[grade].dark : ALARM_GRADE_COLOR[grade].light;
+              const color = ALARM_GRADE_COLOR[grade];
               return (
                 <polygon
                   key={`alarm-${point.lot_wafer_id ?? i}`}
                   points={trianglePoints(xScale(point.x), yScale(point.y), style.size * ALARM_TRIANGLE_RATIO)}
                   fill="none"
-                  stroke={color}
                   strokeWidth={1.4}
-                  style={{ pointerEvents: "none" }}
+                  style={{ pointerEvents: "none", stroke: color }}
                 />
               );
             });
@@ -1804,9 +1796,8 @@ export default function ScatterChart({
                 key={`alarm-box-${m.id}`}
                 points={trianglePoints(m.cx, m.cy, 4.5 * ALARM_TRIANGLE_RATIO)}
                 fill="none"
-                stroke={theme === "dark" ? ALARM_GRADE_COLOR[m.grade].dark : ALARM_GRADE_COLOR[m.grade].light}
                 strokeWidth={1.4}
-                style={{ pointerEvents: "none" }}
+                style={{ pointerEvents: "none", stroke: ALARM_GRADE_COLOR[m.grade] }}
               />
             ));
           })()}
@@ -2063,7 +2054,7 @@ export default function ScatterChart({
           ) : hasAnyAlarmMarker ? (
             <>
               <LegendCard
-                icon={<IconTriangle color={theme === "dark" ? ALARM_GRADE_COLOR.심각.dark : ALARM_GRADE_COLOR.심각.light} />}
+                icon={<IconTriangle color={ALARM_GRADE_COLOR.심각} />}
                 label={`심각도 마커 ${alarmMarkersVisible ? "표시" : "숨김"} · ${alarmGradeCounts.심각 + alarmGradeCounts.위험 + alarmGradeCounts.주의}건`}
                 onClick={() => setAlarmMarkersVisible((v) => !v)}
                 active={alarmMarkersVisible}
@@ -2073,7 +2064,7 @@ export default function ScatterChart({
                 (["심각", "위험", "주의"] as const).map((grade) => (
                   <LegendCard
                     key={grade}
-                    icon={<IconTriangle color={theme === "dark" ? ALARM_GRADE_COLOR[grade].dark : ALARM_GRADE_COLOR[grade].light} />}
+                    icon={<IconTriangle color={ALARM_GRADE_COLOR[grade]} />}
                     label={`${grade} ${alarmGradeCounts[grade]}`}
                     onClick={() =>
                       setVisibleAlarmGrades((current) => {
@@ -2175,12 +2166,12 @@ export default function ScatterChart({
           {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다
               (spec §5-3). 항상 최신 colorMode를 읽으므로 전환 시 즉시 반영된다. */}
           {colorMode === "config_model" && pointHover.point.config && (() => {
-            const parts = parseConfigParts(pointHover.point.config);
+            const parts = parseConfig(pointHover.point.config);
             return (
               <div className="scatterColorByRow">
                 <div className="heatmapTooltipRow"><span>설비</span><b>{pointHover.point.config}</b></div>
                 {parts && (
-                  <div className="heatmapTooltipRow"><span /><b>모델 {parts.model} · 장비 {parts.equipment} · 챔버 {parts.chamber}</b></div>
+                  <div className="heatmapTooltipRow"><span /><b>모델 {parts.model} · 장비 {parts.eq} · 챔버 {parts.chamber}</b></div>
                 )}
               </div>
             );
@@ -2294,14 +2285,3 @@ function SelectionStatsBox({
   );
 }
 
-/** `Step16_Model2_EQB_CH3` -> model/equipment/chamber (display-only split,
- * mirrors what colorForPoint's modelOf() already does for the "Config
- * 모델별" coloring itself -- src/config_parser.py deliberately never
- * decomposes Config server-side, so this stays purely a tooltip label). */
-function parseConfigParts(config: string): { model: string; equipment: string; chamber: string } | null {
-  const withoutStepPrefix = config.replace(/^Step\d+_/, "");
-  const parts = withoutStepPrefix.split("_");
-  if (parts.length !== 3) return null;
-  const [model, equipment, chamber] = parts;
-  return { model, equipment, chamber };
-}

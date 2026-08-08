@@ -6,7 +6,7 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
-import { LastRunNote } from "@/components/LastRunNote";
+import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import {
   getLatestSnapshot,
@@ -15,6 +15,7 @@ import {
   type MonitoringSnapshot,
   type SignificantFactorDetail,
 } from "@/lib/monitoringSource";
+import type { ConfigTreemapResponse } from "@/types/data";
 
 type ActionItem = { key: string; text: string; href: string; buttonLabel: string; note?: string };
 
@@ -161,14 +162,14 @@ export default function MonitoringPage() {
           setSnapshot(snap);
           if (!snap.hasAnalysis) {
             setLoading(false);
-            setMonitoringHome({ cacheKey, snapshot: snap, queue: { yieldSummary: null } });
+            setMonitoringHome({ cacheKey, snapshot: snap, queue: { yieldSummary: null }, treemap: null });
             return;
           }
           const queueData = await getMeasurementQueue(snap.alarmsRecord);
           if (cancelled) return;
           setQueue(queueData);
           setLoading(false);
-          setMonitoringHome({ cacheKey, snapshot: snap, queue: queueData });
+          setMonitoringHome({ cacheKey, snapshot: snap, queue: queueData, treemap: null });
         })
         .catch(() => {
           // A-9: 서버가 잠깐 죽으면 loading이 영구 true로 남아 무한
@@ -185,6 +186,13 @@ export default function MonitoringPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, cacheKey, retryToken]);
+
+  // E-4: ConfigTreemap이 탭 이동으로 언마운트/리마운트돼도 마지막으로 조회한
+  // 스텝 결과를 다시 조회하지 않도록, monitoringHome 캐시에 함께 들고 있는다.
+  function handleTreemapDataChange(step: number, data: ConfigTreemapResponse | null) {
+    if (!monitoringHome) return;
+    setMonitoringHome({ ...monitoringHome, treemap: { step, data } });
+  }
 
   return (
     <DashboardShell activeItem="모니터링">
@@ -234,7 +242,12 @@ export default function MonitoringPage() {
               </div>
               <MeasurementExpansionCard data={snapshot.measurementExpansion} />
             </section>
-            <ConfigTreemap datasetId={snapshot.dataset ?? "train"} />
+            <ConfigTreemap
+              datasetId={snapshot.dataset ?? "train"}
+              initialStep={cached?.treemap?.step}
+              initialData={cached?.treemap ?? null}
+              onDataChange={handleTreemapDataChange}
+            />
           </>
         )}
       </div>
@@ -252,6 +265,11 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
   const gapHi = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predLo : null;
 
   const triage = buildActionTriage(snapshot);
+  // E-4: SUMMARY가 쓰는 alarmsRecord(알림 기록에서 저장한 판정 결과)와
+  // 현재 조회 중인 snapshot.dataset이 다르면, 서로 다른 데이터셋의
+  // 숫자를 섞어 보여주는 것이다 -- 다른 화면들처럼 경고를 띄운다.
+  const datasetMismatch =
+    snapshot.dataset != null && snapshot.alarmsRecord != null && snapshot.alarmsRecord.eval_dataset !== snapshot.dataset;
 
   return (
     <section className="resultCard">
@@ -261,6 +279,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
           <h2>공정 현황 요약</h2>
         </div>
       </div>
+      <DatasetMismatchWarning mismatch={datasetMismatch} />
 
       {!queue.yieldSummary || targetYield == null ? (
         <p className="sectionCaption">예측 없음 — 알림 기록 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>

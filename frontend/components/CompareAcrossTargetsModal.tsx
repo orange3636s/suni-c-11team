@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
+import { DIVERGING_GREEN, DIVERGING_RED } from "@/lib/constants";
 import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -23,8 +24,8 @@ const MINI_X_TICK_COUNT: [max: number, min: number] = [5, 4];
 const MINI_Y_TICK_COUNT = 4;
 
 const NAVY = { light: "#0E306D", dark: "#7BA3E8" };
-const GREEN = { light: "#059669", dark: "#34D399" };
-const RED = { light: "#DC2626", dark: "#F87171" };
+const GREEN = DIVERGING_GREEN;
+const RED = DIVERGING_RED;
 
 function formatNum(v: number): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);

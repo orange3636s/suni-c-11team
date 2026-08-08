@@ -1140,20 +1140,6 @@ a{
   font-size: 12px;
 }
 
-.dropIcon{
-  display: grid;
-  width: 58px;
-  height: 58px;
-  margin-bottom: 8px;
-  place-items: center;
-  border-radius: 15px;
-  background: #e6ebf1;
-  color: #40546d;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-}
-
 .visuallyHidden{
   position: absolute;
   width: 1px;
@@ -1736,23 +1722,7 @@ a{
   justify-content: center;
 }
 
-.predictionControls{
-  display: grid;
-  margin-bottom: 18px;
-  grid-template-columns: minmax(280px, 1fr) 150px 150px;
-  gap: 14px;
-}
-
-.predictionInputStack{
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-
 @media (max-width: 680px) {
-  .predictionInputStack{
-    gap: 18px;
-  }
 }
 
 .fieldGroup input,
@@ -1776,51 +1746,6 @@ a{
 
 .compactDrop{
   min-height: 150px;
-}
-
-.predictionKpiGrid{
-  display: grid;
-  margin-top: 22px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.predictionKpiGrid > div{
-  display: flex;
-  min-height: 104px;
-  padding: 16px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-muted);
-}
-
-.predictionKpiGrid span{
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.predictionKpiGrid strong{
-  color: var(--navy);
-  font-size: 21px;
-}
-
-.predictionKpiGrid .normalKpi strong{
-  color: var(--green);
-}
-
-.predictionKpiGrid .warningKpi strong{
-  color: var(--orange);
-}
-
-.predictionKpiGrid .dangerKpi strong{
-  color: var(--red);
-}
-
-.predictionTableHeader{
-  align-items: flex-end;
 }
 
 .tableTools{
@@ -2028,33 +1953,6 @@ a{
 .methodologyList{
   list-style: disc;
   padding-left: 20px;
-}
-
-.rankList li,
-.rankList span{
-  align-items: center;
-  display: flex;
-}
-
-.rankList li{
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.rankList span{
-  gap: 9px;
-  min-width: 0;
-}
-
-.rankList b{
-  align-items: center;
-  background: #eef2f8;
-  border-radius: 50%;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 24px;
-  justify-content: center;
-  width: 24px;
 }
 
 .automationStatusGrid{
@@ -2681,26 +2579,6 @@ and dataset split controls */
   background: rgba(255, 255, 255, 0.18);
 }
 
-.csvUploadPanel{
-  display: grid;
-  width: 100%;
-  min-height: 126px;
-  align-items: center;
-  padding: 22px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 16px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 18px;
-  background: var(--surface-secondary);
-  color: var(--text-primary);
-  cursor: pointer;
-  transition:
-    background-color 180ms ease,
-    border-color 180ms ease,
-    box-shadow 180ms ease,
-    transform 180ms ease;
-}
-
 .csvUploadPanel.compact{
   min-height: 78px;
   padding: 15px 17px;
@@ -2719,18 +2597,6 @@ and dataset split controls */
 .csvUploadPanel.disabled{
   cursor: not-allowed;
   opacity: 0.55;
-}
-
-.csvUploadIcon{
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border-radius: 14px;
-  background: var(--surface-tertiary);
-  color: var(--brand-navy-text);
-  font-size: 11px;
-  font-weight: 750;
 }
 
 .csvUploadPanel.compact .csvUploadIcon{
@@ -2879,13 +2745,6 @@ html[data-theme="dark"] .splitControl{
   color: var(--text-primary);
 }
 
-html[data-theme="dark"] .riskSummaryIcon,
-html[data-theme="dark"] .dropIcon,
-html[data-theme="dark"] .csvUploadIcon,
-html[data-theme="dark"] .rankList b{
-  background: var(--surface-tertiary);
-}
-
 html[data-theme="dark"] .phaseBadge,
 html[data-theme="dark"] .riskBadge.warning,
 html[data-theme="dark"] .confidenceBadge.caution,
@@ -2961,27 +2820,6 @@ html[data-theme="dark"] ::placeholder{
   .splitControlGrid{
     grid-template-columns: 1fr;
   }
-}
-
-/* Prediction exploration and saved model history */
-.predictionResultScroll{
-  max-height: 264px;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: auto;
-}
-
-.predictionResultScroll th{
-  top: 0;
-}
-
-.predictionResultScroll tbody tr{
-  height: 44px;
-}
-
-.predictionResultScroll td,
-.predictionResultScroll th{
-  height: 44px;
 }
 
 .emptyTableCell{
@@ -3499,6 +3337,9 @@ html[data-theme="dark"] .savedModelList > button.active{
   --chart-moving-average: #b46d2d;
   --chart-warning: #a96208;
   --chart-critical: #b33a46;
+  --chart-alarm-severe: #DC2626;
+  --chart-alarm-danger: #EA580C;
+  --chart-alarm-caution: #CA8A04;
   --yield-improvement: #009a93;
   --yield-degradation: #ea002c;
   --pareto-bar: #0072c6;
@@ -3940,23 +3781,6 @@ select,
   gap: 16px;
 }
 
-.riskSummaryIcon{
-  display: grid;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 15px;
-  background: #dfeef9;
-}
-
-.riskSummaryIcon > span{
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-}
-
 .riskSummaryMessage h2{
   margin: 10px 0 4px;
   color: var(--text-primary);
@@ -4200,15 +4024,6 @@ select,
 .dropZone strong{
   color: var(--text-primary);
   font-weight: 620;
-}
-
-.dropIcon{
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
-  background: var(--accent-soft);
-  color: var(--brand-navy-text);
-  font-weight: 680;
 }
 
 .selectedFile{
@@ -4545,11 +4360,6 @@ select,
   height: 340px;
 }
 
-.rankingTable{
-  max-height: 340px;
-  overflow: auto;
-}
-
 .paretoSummary{
   gap: 10px;
   margin: 18px 0;
@@ -4676,15 +4486,6 @@ select,
   height: 340px;
 }
 
-.predictionTrendCanvas{
-  height: 360px;
-  margin-top: 10px;
-}
-
-.predictionTrendHeading{
-  align-items: end;
-}
-
 .movingAverageControl{
   display: flex;
   align-items: center;
@@ -4715,13 +4516,6 @@ select,
   outline-offset: 1px;
 }
 
-.predictionWarnings ul{
-  max-height: 126px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
 .identifierCell{
   max-width: 180px;
   overflow: hidden;
@@ -4734,24 +4528,7 @@ select,
   stroke: var(--border-strong);
 }
 
-.predictionTrendCard{
-  overflow: hidden;
-}
-
-.predictionDiagnosticsGrid{
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-}
-
-.predictionDiagnosticCanvas{
-  height: 300px;
-}
-
 @media (max-width: 760px) {
-  .predictionDiagnosticsGrid{
-    grid-template-columns: 1fr;
-  }
 }
 
 .chartTooltip{
@@ -4794,11 +4571,6 @@ select,
 
 .findingCard.danger{
   border-left-color: var(--danger);
-}
-
-.rankList b{
-  background: var(--surface-tertiary);
-  color: var(--neutral);
 }
 
 .automationStatusGrid{
@@ -5085,10 +4857,6 @@ select,
     height: 290px;
   }
 
-  .predictionTrendCanvas{
-    height: 290px;
-  }
-
   .tableWrap,
 .tableWrapper{
     margin-right: -4px;
@@ -5315,13 +5083,6 @@ html[data-theme="dark"] .selectedModelSummary{
   gap: 3px;
 }
 
-.lotWorkspace{
-  display: grid;
-  grid-template-columns: minmax(230px, .7fr) minmax(0, 2.3fr);
-  gap: 18px;
-  align-items: start;
-}
-
 .lotSelectorPanel,
 .lotSelectorList{
   display: grid;
@@ -5386,7 +5147,6 @@ html[data-theme="dark"] .selectedModelSummary{
   .selectedModelSummary{ align-items: flex-start; }
   .selectedModelTitleRow{ flex-wrap: wrap; }
   .selectedModelTitleRow .modelCompatibility{ margin-right: auto; }
-  .lotWorkspace{ grid-template-columns: 1fr; }
   .lotSummaryGrid{ grid-template-columns: 1fr; }
   .lotSelectorTools{ grid-template-columns: 1fr; }
 }
@@ -5805,6 +5565,9 @@ html[data-theme="dark"]{
   --chart-moving-average: #d09658;
   --chart-warning: #d39a43;
   --chart-critical: #df727c;
+  --chart-alarm-severe: #F87171;
+  --chart-alarm-danger: #FB923C;
+  --chart-alarm-caution: #FACC15;
   --yield-improvement: #009a93;
   --yield-degradation: #ea002c;
   --pareto-bar: #0072c6;
@@ -5931,16 +5694,9 @@ html[data-theme="dark"] .button.secondary:hover:not(:disabled){
 }
 
 @media (max-width: 680px) {
-  .predictionTrendHeading{
-    align-items: stretch;
-  }
 
   .movingAverageControl{
     justify-content: space-between;
-  }
-
-  .predictionTrendCanvas{
-    height: 390px;
   }
 }
 
@@ -6960,11 +6716,6 @@ root-cause{
   gap: 12px;
 }
 
-.riskSummaryIcon{
-  width: 38px;
-  height: 38px;
-}
-
 .riskSummaryMessage h2{
   margin-top: 6px;
   font-size: 17px;
@@ -7053,12 +6804,6 @@ root-cause{
 
 .compactDrop{
   min-height: 126px;
-}
-
-.dropIcon{
-  width: 44px;
-  height: 44px;
-  margin-bottom: 4px;
 }
 
 .selectedFile{
@@ -7191,14 +6936,6 @@ root-cause{
   font-size: 18px;
 }
 
-.predictionKpiGrid span{
-  font-size: 12px;
-}
-
-.predictionKpiGrid strong{
-  font-size: 22px;
-}
-
 .trainingControls{
   gap: 12px;
 }
@@ -7294,15 +7031,6 @@ root-cause{
   font-size: 12px;
 }
 
-.predictionControls{
-  margin-bottom: 14px;
-  gap: 10px;
-}
-
-.predictionInputStack{
-  gap: 16px;
-}
-
 .analysisChartGrid{
   margin: 18px 0;
   gap: var(--compact-section-gap);
@@ -7329,15 +7057,6 @@ root-cause{
   height: var(--compact-chart-height);
 }
 
-.predictionTrendCanvas{
-  height: 300px;
-  margin-top: 8px;
-}
-
-.predictionDiagnosticCanvas{
-  height: 260px;
-}
-
 .localChart{
   height: 200px;
   margin-bottom: 12px;
@@ -7345,10 +7064,6 @@ root-cause{
 
 .relationshipChart{
   height: 300px;
-}
-
-.rankingTable{
-  max-height: 300px;
 }
 
 .paretoChart{
@@ -7453,23 +7168,6 @@ root-cause{
 .tableWrapper th,
 .dataTable th{
   font-size: 12px;
-}
-
-.predictionResultScroll tbody tr,
-.predictionResultScroll td,
-.predictionResultScroll th{
-  height: 38px;
-}
-
-.predictionPreviewNotice{
-  margin: 10px 0 0;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-secondary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.45;
 }
 
 .tablePagination{
@@ -7697,10 +7395,6 @@ root-cause{
     height: 270px;
   }
 
-  .predictionTrendCanvas{
-    height: 280px;
-  }
-
   .predictionDiagnosticCanvas,
 .detailChart{
     height: 230px;
@@ -7773,10 +7467,6 @@ root-cause{
     font-size: 22px;
   }
 
-  .predictionKpiGrid strong{
-    font-size: 20px;
-  }
-
   .dropZone{
     min-height: 148px;
     padding: 18px 14px;
@@ -7802,10 +7492,6 @@ root-cause{
 .relationshipChart,
 .paretoChart{
     height: 250px;
-  }
-
-  .predictionTrendCanvas{
-    height: 260px;
   }
 
   .predictionDiagnosticCanvas,
@@ -8401,15 +8087,6 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
    함께 제거한다 -- 배지가 좁아져도 열이 그대로 넓으면 소용없다. */
 .severityBadge{ display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .severityBadge::before{ content: ""; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-.severityBadge-low{ background: rgba(255,159,10,.12); color: #b8720a; }
-.severityBadge-low::before{ background: #FF9F0A; }
-.severityBadge-medium{ background: rgba(255,149,0,.16); color: #a35800; }
-.severityBadge-medium::before{ background: #FF9500; }
-.severityBadge-high{ background: rgba(255,69,58,.16); color: #c22f27; }
-.severityBadge-high::before{ background: #FF453A; }
-html[data-theme="dark"] .severityBadge-low{ color: #FFB340; }
-html[data-theme="dark"] .severityBadge-medium{ color: #FFB340; }
-html[data-theme="dark"] .severityBadge-high{ color: #FF6961; }
 
 /* Dataset selector dropdown */
 .datasetSelector{ position: relative; display: inline-block; min-width: 260px; }

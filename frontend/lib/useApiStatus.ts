@@ -1,12 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getApiBaseUrl } from "@/lib/api";
 
 export type ApiStatus = "checking" | "online" | "offline";
-
-function apiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
-}
 
 // 모듈 전역 싱글턴 -- Header와 Sidebar가 각자 폴링하면 /health를 이중으로
 // 두들기게 되므로, 폴링은 첫 구독자가 한 번만 시작하고 이후 구독자는 같은
@@ -31,7 +28,7 @@ function startPolling() {
     const timeout = window.setTimeout(() => controller?.abort(), 5000);
     broadcast("checking");
     try {
-      const response = await fetch(`${apiBaseUrl()}/health`, { signal: controller.signal, cache: "no-store" });
+      const response = await fetch(`${getApiBaseUrl()}/health`, { signal: controller.signal, cache: "no-store" });
       const body = (await response.json()) as { status?: string };
       broadcast(response.ok && body.status === "ok" ? "online" : "offline");
     } catch {

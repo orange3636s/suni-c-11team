@@ -31,6 +31,15 @@ def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
 
 
 class RuntimeStore:
+    # E-1: 매 요청마다 새 RuntimeStore(...)를 만드는 라우트가 30여 곳이다
+    # (Depends 기반 싱글턴으로 전부 바꾸는 건 이 배치 범위를 넘는 리팩터라
+    # 하지 않는다) -- 진짜 비용은 인스턴스 생성 자체가 아니라
+    # `_initialize()`가 매번 CREATE TABLE 9개 + ALTER TABLE 점검을 전역
+    # `_lock` 아래 다시 실행해, 모든 설정 조회가 학습 잡의 쓰기와 경합하는
+    # 것이다. DB 파일 경로별로 프로세스당 한 번만 실행되도록 막는다 --
+    # 인스턴스는 여전히 가볍게 매번 새로 만들어지지만 DDL은 반복되지 않는다.
+    _initialized_paths: set[str] = set()
+
     def __init__(
         self,
         path: str | Path | None = None,
@@ -46,7 +55,12 @@ class RuntimeStore:
             )
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        resolved = str(self.path.resolve())
+        if resolved not in RuntimeStore._initialized_paths:
+            with _lock:
+                if resolved not in RuntimeStore._initialized_paths:
+                    self._initialize()
+                    RuntimeStore._initialized_paths.add(resolved)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

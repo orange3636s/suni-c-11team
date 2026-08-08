@@ -1,15 +1,12 @@
 import type {
   AlarmListResponse,
   AlertsDataResponse,
-  AnalysisReportResponse,
   CategoricalScatterResponse,
   ConfigHeatmapLevel,
   ConfigTreemapResponse,
-  ControlRangeListResponse,
   DatasetListResponse,
   DatasetSchemaResponse,
   DatasetUploadResponse,
-  DeleteModelResponse,
   DispatchResponse,
   FavoriteListResponse,
   FavoriteRecord,
@@ -22,22 +19,16 @@ import type {
   LatestStateResponse,
   LatestTrainingPayload,
   MeasurementExpansionResponse,
-  ModelDetail,
-  ModelListResponse,
   ModelPerformanceResponse,
   NotificationConditions,
   NotificationSettingsSummary,
   ParetoRankingResponse,
-  PreprocessingComparisonResponse,
   PromotionHistoryResponse,
-  PreprocessResponse,
   ReliabilityResponse,
   ScreeningScatterResponse,
   SendTestResponse,
-  TrainResponse,
   TrainingJobCreateResponse,
   TrainingJobStatusResponse,
-  ValidationResponse,
 } from "@/types/data";
 
 export class ApiResponseError extends Error {
@@ -69,39 +60,32 @@ export class ApiNetworkError extends Error {
 // 무한정 돌았다. 90초는 그 요청들이 정상적으로 끝나는 시간보다 넉넉히
 // 길게 잡은 상한선이다.
 const DEFAULT_TIMEOUT_MS = 90_000;
+// E-3: 파일 업로드(CSV)는 대개 더 오래 걸릴 수 있어 여유를 더 둔다 --
+// 여전히 상한선이 있는 것과 없는 것의 차이가 핵심이지, 정확한 값은
+// 중요하지 않다(연결이 끊기면 결국 이 시간 안에 끝난다는 게 중요하다).
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
-export type LatestModelMetadata = {
-  model_id: string;
-  model_name?: string | null;
-  target: "Y";
-  version?: string | null;
-  trained_at?: string | null;
-  source_filename?: string | null;
-  row_count?: number | null;
-  feature_columns?: string[];
-  categorical_columns?: string[];
-  metrics?: Record<string, { r2?: number | null; rmse?: number | null; mae?: number | null }>;
-};
-
-async function championRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${getApiBaseUrl()}${path}`, { cache: "no-store", ...init });
-  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
-  return response.json() as Promise<T>;
+// E-3: getJson/postJson에만 있던 AbortController+타임아웃을 업로드·삭제·
+// 즐겨찾기 등 나머지 raw fetch 호출에도 공통으로 적용한다 -- 이게 없으면
+// 연결이 멎었을 때(서버 다운, 네트워크 끊김) "업로드 중…"/"삭제 중…"이
+// 무한정 떠 있는다. 에러 메시지 문구는 호출부마다 다르므로 그건 그대로
+// 두고, fetch 자체에 타임아웃을 거는 부분만 공유한다.
+async function timedFetch(url: string, init: RequestInit = {}, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
-export function getLatestModel() {
-  return championRequest<{ latest_model: LatestModelMetadata | null }>("/api/model/latest");
-}
-
-export type ApiHealth = {
-  status: string;
-  service?: string;
-  environment?: string;
-  version?: string;
-  model_directory_ready?: boolean;
-};
-
-function getApiBaseUrl(): string {
+// E-2: useApiStatus.ts가 이 함수 대신 자기만의 apiBaseUrl()을 따로
+// 두고 있었다 -- 그쪽은 프로덕션에서 미설정이어도 조용히 127.0.0.1로
+// 폴백해, 실제 사고(NEXT_PUBLIC_API_BASE_URL 미설정) 때 상태 배지는
+// "연결 끊김"만 보여주고 원인(요청은 여기서 곧장 에러를 던진다)을
+// 감춘다. 하나만 남기고 공유한다.
+export function getApiBaseUrl(): string {
   const configuredUrl =
     process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/$/, "");
   if (configuredUrl) {
@@ -146,72 +130,6 @@ async function getErrorMessage(response: Response): Promise<string> {
   return fallback;
 }
 
-async function postCsv<T>(path: string, file: File): Promise<T> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    throw new ApiResponseError(response.status, await getErrorMessage(response));
-  }
-
-  return response.json() as Promise<T>;
-}
-
-export async function getApiHealth(): Promise<ApiHealth> {
-  const response = await fetch(`${getApiBaseUrl()}/health`, {
-    method: "GET",
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`API 상태 확인 실패: ${response.status}`);
-  }
-
-  return response.json() as Promise<ApiHealth>;
-}
-
-export function validateCsv(file: File): Promise<ValidationResponse> {
-  return postCsv<ValidationResponse>("/api/validate", file);
-}
-
-export function preprocessCsv(file: File): Promise<PreprocessResponse> {
-  return postCsv<PreprocessResponse>("/api/preprocess", file);
-}
-
-export async function trainModel(
-  file: File,
-): Promise<TrainResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  let response: Response;
-  try {
-    response = await fetch(`${getApiBaseUrl()}/api/train`, {
-      method: "POST",
-      body: formData,
-    });
-  } catch (error) {
-    rethrowApiConfigurationError(error);
-    throw new Error(
-      "FastAPI 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
-    );
-  }
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return response.json() as Promise<TrainResponse>;
-}
-
 export async function createTrainingJob(
   file: File,
 ): Promise<TrainingJobCreateResponse> {
@@ -220,10 +138,7 @@ export async function createTrainingJob(
 
   let response: Response;
   try {
-    response = await fetch(`${getApiBaseUrl()}/api/train/jobs`, {
-      method: "POST",
-      body: formData,
-    });
+    response = await timedFetch(`${getApiBaseUrl()}/api/train/jobs`, { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
   } catch (error) {
     rethrowApiConfigurationError(error);
     throw new Error(
@@ -265,85 +180,6 @@ export async function getTrainingJob(
     throw new ApiResponseError(response.status, await getErrorMessage(response));
   }
   return response.json() as Promise<TrainingJobStatusResponse>;
-}
-
-export async function getModels(): Promise<ModelListResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`${getApiBaseUrl()}/api/models`, {
-      method: "GET",
-      cache: "no-store",
-    });
-  } catch (error) {
-    rethrowApiConfigurationError(error);
-    throw new Error(
-      "FastAPI 서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해 주세요.",
-    );
-  }
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-  return response.json() as Promise<ModelListResponse>;
-}
-
-export async function getModelDetail(modelId: string, signal?: AbortSignal): Promise<ModelDetail> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `${getApiBaseUrl()}/api/models/${encodeURIComponent(modelId)}`,
-      {
-        method: "GET",
-        cache: "no-store",
-        signal,
-      },
-    );
-  } catch (error) {
-    rethrowApiConfigurationError(error);
-    throw new Error(
-      "모델 상세 정보를 불러올 수 없습니다. 백엔드 상태를 확인해 주세요.",
-    );
-  }
-
-  if (!response.ok) {
-    throw new ApiResponseError(response.status, await getErrorMessage(response));
-  }
-  return response.json() as Promise<ModelDetail>;
-}
-
-export async function deleteModel(modelId: string): Promise<DeleteModelResponse> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `${getApiBaseUrl()}/api/models/${encodeURIComponent(modelId)}`,
-      {
-        method: "DELETE",
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      },
-    );
-  } catch (error) {
-    rethrowApiConfigurationError(error);
-    throw new Error(
-      "모델 삭제 서버에 연결할 수 없습니다. 백엔드 실행 상태를 확인해 주세요.",
-    );
-  }
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  const result = await response.json() as DeleteModelResponse;
-  if (
-    !result.deleted ||
-    result.model_id !== modelId ||
-    result.prediction_history_kept !== true ||
-    result.analysis_history_kept !== true
-  ) {
-    throw new Error(
-      "모델 삭제 응답의 model_id 또는 History 보존 상태가 API 계약과 일치하지 않습니다.",
-    );
-  }
-  return result;
 }
 
 async function getJson<T>(path: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
@@ -395,13 +231,27 @@ export function getDatasets(): Promise<DatasetListResponse> {
 export async function uploadDataset(file: File): Promise<DatasetUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch(`${getApiBaseUrl()}/api/datasets`, { method: "POST", body: formData });
+  let response: Response;
+  try {
+    response = await timedFetch(`${getApiBaseUrl()}/api/datasets`, { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new ApiTimeoutError();
+    rethrowApiConfigurationError(error);
+    throw new ApiNetworkError();
+  }
   if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
   return response.json() as Promise<DatasetUploadResponse>;
 }
 
 export async function deleteDataset(datasetId: string): Promise<{ success: boolean; dataset_id: string }> {
-  const response = await fetch(`${getApiBaseUrl()}/api/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" });
+  let response: Response;
+  try {
+    response = await timedFetch(`${getApiBaseUrl()}/api/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new ApiTimeoutError();
+    rethrowApiConfigurationError(error);
+    throw new ApiNetworkError();
+  }
   if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
   return response.json();
 }
@@ -410,23 +260,12 @@ export function getDatasetSchema(datasetId: string): Promise<DatasetSchemaRespon
   return getJson(`/api/datasets/${encodeURIComponent(datasetId)}/schema`);
 }
 
-export async function downloadDatasetFile(datasetId: string, filename: string): Promise<File> {
-  const response = await fetch(`${getApiBaseUrl()}/api/datasets/${encodeURIComponent(datasetId)}/download`);
-  if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
-  const blob = await response.blob();
-  return new File([blob], filename, { type: "text/csv" });
-}
-
 export function getScreeningScatter(dataset: string, target: string, feature: string): Promise<ScreeningScatterResponse> {
   return getJson(`/api/screening/scatter?${new URLSearchParams({ dataset, target, feature }).toString()}`);
 }
 
 export function getScreeningScatterCategorical(dataset: string, target: string, feature: string): Promise<CategoricalScatterResponse> {
   return getJson(`/api/screening/scatter/categorical?${new URLSearchParams({ dataset, target, feature }).toString()}`);
-}
-
-export function getControlRanges(dataset: string): Promise<ControlRangeListResponse> {
-  return getJson(`/api/control-ranges?${new URLSearchParams({ dataset }).toString()}`);
 }
 
 export function getAlarms(
@@ -484,20 +323,12 @@ export function getScreeningPareto(dataset: string, target: string, topN?: numbe
   return getJson(`/api/screening/pareto?${params.toString()}`);
 }
 
-export function getAnalysisReport(dataset: string): Promise<AnalysisReportResponse> {
-  return getJson(`/api/analysis/report?${new URLSearchParams({ dataset }).toString()}`);
-}
-
 export function getMeasurementExpansion(dataset: string): Promise<MeasurementExpansionResponse> {
   return getJson(`/api/analysis/measurement-expansion?${new URLSearchParams({ dataset }).toString()}`);
 }
 
 export function getConfigTreemap(dataset: string, step: number): Promise<ConfigTreemapResponse> {
   return getJson(`/api/monitoring/config-treemap?${new URLSearchParams({ dataset, step: String(step) }).toString()}`);
-}
-
-export function getPreprocessingComparison(dataset: string): Promise<PreprocessingComparisonResponse> {
-  return getJson(`/api/training/preprocessing-comparison?${new URLSearchParams({ dataset }).toString()}`);
 }
 
 // -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
@@ -536,7 +367,14 @@ export function saveNotificationConditions(conditions: NotificationConditions): 
 }
 
 export async function disconnectNotificationChannel(channel: "slack" | "telegram" | "gmail"): Promise<NotificationSettingsSummary> {
-  const response = await fetch(`${getApiBaseUrl()}/api/notify/${channel}`, { method: "DELETE" });
+  let response: Response;
+  try {
+    response = await timedFetch(`${getApiBaseUrl()}/api/notify/${channel}`, { method: "DELETE" });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new ApiTimeoutError();
+    rethrowApiConfigurationError(error);
+    throw new ApiNetworkError();
+  }
   if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
   return response.json() as Promise<NotificationSettingsSummary>;
 }
@@ -590,7 +428,14 @@ export function createFavorite(snapshot: FavoriteSnapshot): Promise<FavoriteReco
 }
 
 export async function deleteFavorite(favoriteId: string): Promise<{ deleted: boolean }> {
-  const response = await fetch(`${getApiBaseUrl()}/api/favorites/${encodeURIComponent(favoriteId)}`, { method: "DELETE" });
+  let response: Response;
+  try {
+    response = await timedFetch(`${getApiBaseUrl()}/api/favorites/${encodeURIComponent(favoriteId)}`, { method: "DELETE" });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new ApiTimeoutError();
+    rethrowApiConfigurationError(error);
+    throw new ApiNetworkError();
+  }
   if (!response.ok) throw new ApiResponseError(response.status, await getErrorMessage(response));
   return response.json();
 }

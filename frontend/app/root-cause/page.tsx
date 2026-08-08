@@ -15,9 +15,9 @@ import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
-import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
+import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
 import { formatPValue } from "@/lib/numberFormat";
 import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
@@ -85,7 +85,6 @@ function formatAlarmCriteria(criteria: { target: number; sensitivity: number } |
   return `목표 ${criteria.target.toFixed(1)}% · 민감도 ${criteria.sensitivity.toFixed(2)} · eval=자기 자신`;
 }
 
-const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 // Stable empty-object fallbacks (spec: avoid a fresh `{}` literal every
 // render feeding a useMemo/useEffect dependency array, which would defeat
 // memoization and refire effects needlessly).
@@ -135,27 +134,6 @@ function ModerateTierCaption({ tier, eps2 }: { tier: ConfidenceTier; eps2: numbe
   );
 }
 
-function buildCategoricalSpec(data: CategoricalScatterResponse) {
-  const x = data.groups.flatMap((group) => group.values.map(() => group.category));
-  const y = data.groups.flatMap((group) => group.values);
-  return {
-    data: [
-      {
-        type: "box",
-        x,
-        y,
-        boxpoints: "outliers",
-        marker: { color: "#1D4ED8" },
-        line: { color: "#1D4ED8" },
-      },
-    ],
-    layout: {
-      xaxis: { title: { text: factorAxisLabel(data.axis.x_label) }, tickangle: 0 },
-      yaxis: { title: { text: targetAxisLabel(data.axis.y_label) } },
-      margin: { t: 20, b: 90 },
-    },
-  };
-}
 
 /** Step 2 of a run (or a restore's background point-fill, spec §3-1/§4-2):
  * fetch every displayed factor's full scatter/categorical data for all 5

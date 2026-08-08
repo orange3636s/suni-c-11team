@@ -13,6 +13,7 @@ import {
   getScreeningScatter,
 } from "@/lib/api";
 import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
+import { CONFIG_FORMAT_RE, TARGETS } from "@/lib/constants";
 import type {
   ConfidenceTier,
   ConfigTreemapResponse,
@@ -22,11 +23,9 @@ import type {
   RelationShape,
 } from "@/types/data";
 
-const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 // 이 미만이면 이탈률 대신 "계측 N%"를 보여준다 (지시서 §4①) -- 표본이
 // 적을 때 이탈률을 크게 보여주면 근거 없는 신호를 만든다.
 const LOW_MEASUREMENT_RATE_PCT = 10;
-const CONFIG_FORMAT_RE = /^Step\d+_Model\d+_EQ[A-Z]_CH\d+$/;
 
 function average(values: number[]): number {
   return values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;

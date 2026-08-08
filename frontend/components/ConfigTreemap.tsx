@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DIVERGING_GREEN, DIVERGING_RED, parseConfig as parseConfigParts } from "@/lib/constants";
 import { getTreemapData } from "@/lib/monitoringSource";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfigTreemapGroup, ConfigTreemapResponse } from "@/types/data";
@@ -14,14 +15,12 @@ const MIN_TILE_N = 30;
 // 새빨갛게 렌더되어 없는 신호를 만든다 (지시서 §4③ "색 스케일 규칙").
 const COLOR_SPAN_PP = 3;
 
-const CONFIG_RE = /^Step\d+_(Model\d+)_(EQ[A-Z])_(CH\d+)$/;
-
 type ParsedGroup = ConfigTreemapGroup & { model: string; eq: string; chamber: string };
 
 function parseConfig(group: ConfigTreemapGroup): ParsedGroup | null {
-  const m = CONFIG_RE.exec(group.config);
-  if (!m) return null;
-  return { ...group, model: m[1], eq: m[2], chamber: m[3] };
+  const parts = parseConfigParts(group.config);
+  if (!parts) return null;
+  return { ...group, model: parts.model, eq: parts.eq, chamber: parts.chamber };
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -43,8 +42,8 @@ function lerpColor(a: string, b: string, t: number): string {
 // 8.6), 다크 모드는 CVD ΔE 6.5로 "6–8 완충 구간, 보조 인코딩이 있으면
 // 허용" 등급이라 타일에 평균값을 항상 텍스트로 같이 표시한다(색만으로
 // 판단하지 않도록).
-const RED = { light: "#DC2626", dark: "#F87171" };
-const GREEN = { light: "#059669", dark: "#34D399" };
+const RED = DIVERGING_RED;
+const GREEN = DIVERGING_GREEN;
 const CENTER = { light: "#FFFFFF", dark: "#2C2C2E" };
 
 function colorForMean(mean: number, overallMean: number, theme: "light" | "dark"): string {
@@ -60,15 +59,36 @@ function colorForMean(mean: number, overallMean: number, theme: "light" | "dark"
 
 type HoverState = { group: ParsedGroup; x: number; y: number } | null;
 
-export default function ConfigTreemap({ datasetId }: { datasetId: string }) {
+export default function ConfigTreemap({
+  datasetId,
+  initialStep,
+  initialData = null,
+  onDataChange,
+}: {
+  datasetId: string;
+  initialStep?: number;
+  // E-4: 부모(모니터링 홈)의 monitoringHome 캐시에서 넘어온, 마지막으로
+  // 조회했던 스텝의 결과 -- 탭을 나갔다 돌아왔을 때(이 컴포넌트가
+  // 통째로 언마운트/리마운트될 때) 이 값이 있으면 재조회하지 않는다.
+  initialData?: { step: number; data: ConfigTreemapResponse | null } | null;
+  onDataChange?: (step: number, data: ConfigTreemapResponse | null) => void;
+}) {
   const theme = useResolvedTheme();
   const router = useRouter();
-  const [step, setStep] = useState(1);
-  const [data, setData] = useState<ConfigTreemapResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [step, setStep] = useState(initialStep ?? initialData?.step ?? 1);
+  const hasCachedInitial = initialData != null && initialData.step === step;
+  const [data, setData] = useState<ConfigTreemapResponse | null>(hasCachedInitial ? initialData!.data : null);
+  const [loading, setLoading] = useState(!hasCachedInitial);
   const [hover, setHover] = useState<HoverState>(null);
+  // 캐시는 최초 마운트 시 한 번만 소비한다 -- 이후 사용자가 직접 스텝을
+  // 바꾸면(활발히 보고 있는 중이므로) 항상 새로 조회해야 한다.
+  const consumedInitialRef = useRef(hasCachedInitial);
 
   useEffect(() => {
+    if (consumedInitialRef.current) {
+      consumedInitialRef.current = false;
+      return;
+    }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLoading(true);
@@ -76,12 +96,14 @@ export default function ConfigTreemap({ datasetId }: { datasetId: string }) {
         if (cancelled) return;
         setData(result);
         setLoading(false);
+        onDataChange?.(step, result);
       });
     }, 0);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId, step]);
 
   const { models, unknownCount } = useMemo(() => {

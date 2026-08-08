@@ -97,7 +97,6 @@ router = APIRouter(prefix="/api", tags=["data"])
 MAX_FILE_SIZE = settings.max_upload_size_bytes
 SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "cp949")
 MODEL_DIR = settings.model_dir
-_TRAINING_LOCK = threading.Lock()
 _TRAINING_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar(
     "training_progress",
     default=None,

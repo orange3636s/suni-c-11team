@@ -25,6 +25,7 @@ import {
   targetYieldMismatch,
 } from "@/lib/alertsClassify";
 import { getAlertsData, getDatasets, getReliability, saveAlarmsState } from "@/lib/api";
+import { ALARM_GRADE_COLOR } from "@/lib/constants";
 import type { DatasetSummary, ReliabilityResponse } from "@/types/data";
 
 const RELIABILITY_GRADE_CLASS: Record<string, string> = { 높음: "high", 보통: "medium", 낮음: "low" };
@@ -736,9 +737,9 @@ function SensitivityField({
    =================================================================== */
 
 const CLASS_COLOR: Record<ClassKey, string> = {
-  심각: "#DC2626",
-  위험: "#EA580C",
-  주의: "#CA8A04",
+  심각: ALARM_GRADE_COLOR.심각,
+  위험: ALARM_GRADE_COLOR.위험,
+  주의: ALARM_GRADE_COLOR.주의,
   정상: "#0D9668",
   판별불가: "#9CA3AF",
 };
@@ -747,14 +748,14 @@ const ALARM_CLASS_KEYS: ClassKey[] = ["심각", "위험", "주의"];
 function TriangleIcon({ color }: { color: string }) {
   return (
     <svg width="18" height="15" viewBox="0 0 18 15" aria-hidden="true">
-      <polygon points="9,1 1,14 17,14" fill="none" stroke={color} strokeWidth="1.7" />
+      <polygon points="9,1 1,14 17,14" fill="none" strokeWidth="1.7" style={{ stroke: color }} />
     </svg>
   );
 }
 function CircleIcon({ color }: { color: string }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <ellipse cx="8" cy="8" rx="7" ry="4.5" fill={color} opacity="0.85" />
+      <ellipse cx="8" cy="8" rx="7" ry="4.5" opacity="0.85" style={{ fill: color }} />
     </svg>
   );
 }

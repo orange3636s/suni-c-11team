@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
 import { effectSizeTierFromRho, TIER_TOOLTIP } from "@/lib/confidenceTier";
+import { DIVERGING_GREEN, DIVERGING_RED, parseConfig, type ConfigParts } from "@/lib/constants";
 import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -30,8 +31,8 @@ const BIN_COUNT = 12;
 // 최적 중심이 x 범위의 이 비율을 넘게 흩어지면 "따로 분리" 문구를 얹는다.
 const CENTER_SPREAD_RATIO = 0.15;
 
-const GREEN = { light: "#059669", dark: "#34D399" };
-const RED = { light: "#DC2626", dark: "#F87171" };
+const GREEN = DIVERGING_GREEN;
+const RED = DIVERGING_RED;
 const ORANGE = "#F59E0B";
 const GRAY = { light: "#9CA3AF", dark: "#6B7280" };
 const POINT_COLOR = { light: "#1D4ED8", dark: "#7BA3E8" };
@@ -45,15 +46,6 @@ function formatNum(v: number): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
 }
 
-type ConfigParts = { step: number; model: string; eq: string; chamber: string };
-// `Step16_Model2_EQC_CH3` -> 3계층 분해. 매치 실패(형식이 다른 미지
-// Config)는 호출부에서 "미상" 그룹으로 모은다 -- 조용히 버리지 않는다.
-const CONFIG_RE = /^Step(\d+)_(Model\d+)_(EQ[A-Z])_(CH\d+)$/;
-function parseConfig(config: string): ConfigParts | null {
-  const m = CONFIG_RE.exec(config);
-  if (!m) return null;
-  return { step: Number(m[1]), model: m[2], eq: m[3], chamber: m[4] };
-}
 function groupKeyFor(parts: ConfigParts, mode: SplitMode): string {
   if (mode === "eq") return parts.eq;
   if (mode === "model") return parts.model;

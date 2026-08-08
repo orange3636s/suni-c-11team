@@ -8,6 +8,7 @@ import type {
   AlarmGrade,
   AlertsDataResponse,
   CategoricalScatterResponse,
+  ConfigTreemapResponse,
   MeasurementExpansionResponse,
   ModelPerformanceResponse,
   NotificationSettingsSummary,
@@ -106,6 +107,13 @@ export type MonitoringHomeState = {
   cacheKey: string;
   snapshot: MonitoringSnapshot;
   queue: MeasurementQueueData;
+  // E-4: 트리맵도 스냅샷 캐싱 원칙을 따른다 -- 이게 없으면 ConfigTreemap이
+  // 자기 내부 상태로만 결과를 들고 있어서, 탭을 나갔다 돌아올 때마다(이
+  // 컴포넌트가 통째로 언마운트/리마운트되므로) 캐시 적중 여부와 무관하게
+  // 항상 다시 조회한다. 마지막으로 본 스텝 하나만 보관한다(스텝 선택기를
+  // 계속 들고 다닐 필요는 없다 -- 사용자가 실제로 스텝을 바꾸면 그 때는
+  // 항상 새로 조회한다).
+  treemap: { step: number; data: ConfigTreemapResponse | null } | null;
 } | null;
 
 type AnalysisStateValue = {
