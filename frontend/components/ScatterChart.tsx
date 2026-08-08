@@ -368,22 +368,18 @@ const ALARM_TRIANGLE_RATIO = 1.6;
 // 겹치면 심각이 가장 위 (spec §B-2).
 const ALARM_GRADE_Z: Record<"심각" | "위험" | "주의", number> = { 심각: 3, 위험: 2, 주의: 1 };
 
-// Box-plot 색 규칙 (보정 지시서 §I-3 -- H 섹션 표에 없어 미지정이던 부분을
-// 채운다). 상자 테두리/수염은 이제 "권장구간 안쪽인지"와 무관하게 항상
-// 중립(var(--line))이다 -- 그 조건부 채색(methodColor vs boxOut)은
-// 지웠다. 상자 자체는 옅게 채운다(8% var(--measured), 아래 렌더 지점의
-// fillOpacity). 중앙값은 무채색(var(--text)). 이상치는 통계적
-// 이상치(IQR)와 공정 경고(경고선 밖)가 다른 개념이라 -- 경고선 밖일
-// 때만 outlier(신호색), 그 외엔 outlierNeutral을 쓴다(렌더 지점에서
-// zoneOf로 분기).
+// Box-plot 색 규칙. 상자 테두리/수염은 "권장구간 안쪽인지"와 무관하게 항상
+// 중립(var(--line))이다. 상자 자체는 옅게 채운다(8% var(--measured), 아래
+// 렌더 지점의 fillOpacity). 중앙값은 무채색(var(--text)). 관리한계 개념
+// 제거(GBDT 전환)에 따라 통계적 이상치(IQR 기준)는 항상 outlierNeutral
+// 하나로 통일한다 -- 경고선 기반 채색은 이번 작업 범위가 아니다.
 const BOX_LINE_COLOR = { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.14)" }; // var(--line)
 const BOX_FILL_COLOR = { light: "#0E306D", dark: "#7BA3E8" }; // var(--measured), 8% 채움으로만 씀
 const BOX_COLOR = {
   median: { light: "#141A22", dark: "#F5F5F7" }, // var(--text)
   whisker: { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.14)" }, // var(--line)
-  inlier: { light: "#2563EB", dark: "#60A5FA" },
-  outlier: { light: "#C0392B", dark: "#E88A7D" }, // var(--sig-red) -- 경고선 밖 이상치만
-  outlierNeutral: { light: "#59636F", dark: "#9097A3" }, // 경고선 안쪽 통계적 이상치
+  inlier: { light: "#0E306D", dark: "#7BA3E8" }, // var(--measured) -- DEFAULT_POINT_STYLE과 동일 상수
+  outlierNeutral: { light: "#59636F", dark: "#9097A3" },
 };
 
 // Box Plot legend (spec §5) -- small presentational swatches drawn as
@@ -453,10 +449,13 @@ function IconTriangle({ color }: { color: string }) {
     </svg>
   );
 }
-function IconDashedLine({ color, dotted }: { color: string; dotted?: boolean }) {
+// dash 패턴은 실제 렌더 상수(LINE_META.warning_lo.dash="10 5", 최적 중심
+// 라인의 "4 3")를 그대로 받는다 -- 범례에서도 실선/점선 구분이 실제
+// 차트와 같은 비율로 보이게 한다 (지시서 N-1).
+function IconDashedLine({ color, dash }: { color: string; dash: string }) {
   return (
     <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
-      <line x1="2" y1="8" x2="20" y2="8" stroke={color} strokeWidth="1.8" strokeDasharray={dotted ? "2 3" : "5 3"} />
+      <line x1="2" y1="8" x2="20" y2="8" stroke={color} strokeWidth="1.8" strokeDasharray={dash} />
     </svg>
   );
 }
@@ -548,47 +547,18 @@ function scrubGroupKeyOf(point: ScatterPoint, mode: ScatterColorMode): string | 
   return null;
 }
 
-export type PointZone = "in_recommended" | "in_control" | "out_control";
-
-/** Which of the 3 "기본" Color By zones a point falls into (spec §5) --
- * shared by colorForPoint (paint) and the point tooltip (label) so they
- * can never disagree about a given point's zone. Only meaningful for the
- * "default" mode; other modes don't use zones at all. */
-function zoneOf(point: ScatterPoint, recommendedRangeValue: [number, number] | null): PointZone {
-  if (!point.in_range) return "out_control";
-  if (recommendedRangeValue && point.x >= recommendedRangeValue[0] && point.x <= recommendedRangeValue[1]) return "in_recommended";
-  return "in_control";
-}
-
-// Re-tuned per spec (재조정): darkest-first ordering flipped from the
-// original "얼마나 벗어났는지" intuition -- 권장 구간 안 (where most points
-// cluster) is now the *darkest* tier so the density/shape of that cluster
-// actually reads, while 관리한계 밖 stays identifiable by its position
-// inside the amber shaded band plus its own border (see OUT_CONTROL_BORDER)
-// rather than by being darkest. Dark-theme opacity is +0.1 over light's
-// (same alpha reads fainter on a dark background).
-// HP-HMI 색 규율(§H-2) -- 정상 구간(권장 구간 안/밖 모두 "정상")은
-// --measured 계열의 농도 차이로만 구분하고 신호색을 쓰지 않는다.
-// 관리한계 밖(out_control)만 실제 이상 신호라 --sig-red로 바꿨다 --
-// 3단계 zone 인코딩 자체(누가 진하고 누가 연한지, 크기 차이)는 그대로,
-// 색상 값만 교체했다.
-const ZONE_STYLE: Record<PointZone, { light: string; dark: string; size: number; opacityLight: number; opacityDark: number }> = {
-  in_recommended: { light: "#0E306D", dark: "#7BA3E8", size: 4, opacityLight: 0.75, opacityDark: 0.85 },
-  in_control: { light: "#5B7099", dark: "#9FB4D9", size: 4.5, opacityLight: 0.65, opacityDark: 0.75 },
-  out_control: { light: "#C0392B", dark: "#E88A7D", size: 5.5, opacityLight: 0.9, opacityDark: 1 },
-};
-
-// 관리한계 밖 점만 받는 1px 테두리 -- 가장 연한 채움색이라도 테두리로
-// 형태가 드러나게 한다 (spec §3). out_control이 이제 --sig-red라
-// 테두리도 같은 계열의 더 진한 톤으로 맞춘다.
-const OUT_CONTROL_BORDER = { light: "#7A1F16", dark: "#FBE1DC" };
+// "기본" Color By 점 스타일 -- 관리한계(IQR/LCL/UCL) 개념 제거(GBDT 전환)에
+// 이어, "기본"은 "구분하지 않음"이라는 뜻으로 통일했다(spec P-1): 권장
+// 구간 안/밖을 포함한 어떤 zone 구분도 점 색·크기로 표현하지 않는다.
+// 권장 구간·경고선은 참조선/밴드로 이미 표시되므로 점에서 중복 인코딩할
+// 필요가 없다. --measured 토큰과 동일한 값.
+const DEFAULT_POINT_STYLE = { light: "#0E306D", dark: "#7BA3E8", size: 4, opacityLight: 0.7, opacityDark: 0.8 };
 
 function colorForPoint(
   point: ScatterPoint,
   mode: ScatterColorMode,
   lotIndex: Map<string, number>,
   theme: "light" | "dark",
-  recommendedRangeValue: [number, number] | null,
 ): { color: string; size: number; opacity: number } {
   if (mode === "config_model" || mode === "lot") {
     const key = scrubGroupKeyOf(point, mode) ?? "미상";
@@ -600,15 +570,10 @@ function colorForPoint(
     const palette = mode === "config_model" ? MODEL_COLORS : LOT_PALETTE;
     return { color: palette[idx % palette.length], size: 5, opacity: 0.85 };
   }
-  // default -- 3-tier by zone: 권장 구간 안이 가장 진하고 관리한계 밖이
-  // 가장 연하다 (재조정 spec §3) -- 대부분의 점이 몰려 있는 권장 구간의
-  // 밀집도/형태를 진한 색으로 드러내는 게 의도이고, 관리한계 밖 점은 이미
-  // 앰버 음영 안에 있어 색이 연해도 위치+테두리로 식별된다.
-  const style = ZONE_STYLE[zoneOf(point, recommendedRangeValue)];
   return {
-    color: theme === "dark" ? style.dark : style.light,
-    size: style.size,
-    opacity: theme === "dark" ? style.opacityDark : style.opacityLight,
+    color: theme === "dark" ? DEFAULT_POINT_STYLE.dark : DEFAULT_POINT_STYLE.light,
+    size: DEFAULT_POINT_STYLE.size,
+    opacity: theme === "dark" ? DEFAULT_POINT_STYLE.opacityDark : DEFAULT_POINT_STYLE.opacityLight,
   };
 }
 
@@ -706,6 +671,13 @@ const STATS_BOX_HEIGHT = 130;
 // 다른 색처럼 테마별 쌍을 따로 두지 않는다.
 const ACCENT_COLOR = "#0E306D";
 
+// 즐겨찾기 썸네일 전용 점 반지름 (지시서 P-2) -- 본 차트의 DEFAULT_POINT_STYLE/
+// MODEL_COLORS/LOT_PALETTE 크기와 절대 공유하지 않는 별도 상수다: 본 차트
+// 값을 나중에 바꿔도 썸네일이 따라 커지지 않아야 한다. 썸네일은 식별용이지
+// 값을 읽는 화면이 아니므로 3px대의 본 차트 점보다 한참 작게 잡는다.
+const THUMBNAIL_POINT_RADIUS = 1.1;
+const THUMBNAIL_POINT_OPACITY = 0.5;
+
 export default function ScatterChart({
   data,
   colorMode,
@@ -715,6 +687,7 @@ export default function ScatterChart({
   height = HEIGHT,
   alarmGradeByWaferId,
   alarmCriteriaLabel,
+  thumbnail = false,
 }: {
   data: ScreeningScatterResponse;
   colorMode: ScatterColorMode;
@@ -745,6 +718,10 @@ export default function ScatterChart({
   // 포맷해 넘긴다. 이 컴포넌트는 AnalysisState를 모르므로 여기서 직접
   // 계산하지 않는다.
   alarmCriteriaLabel?: string | null;
+  // 즐겨찾기 썸네일 모드 (지시서 P-2) -- 점을 훨씬 작게, 참조선은 최적
+  // 중심 하나만, 축은 눈금/라벨 없이 선만 남긴다. 식별용이라 값을 읽을
+  // 필요가 없다.
+  thumbnail?: boolean;
 }) {
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
@@ -1059,9 +1036,7 @@ export default function ScatterChart({
   // Recommended range/최적중심 come straight from the backend's SPC/ML
   // comparison (spec §2-1/§3-3) -- already clamped into the control
   // range there, so no client-side re-derivation or re-clamping needed.
-  // `recommendedClamped` drives the "관리한계에 맞춰 조정됨" tooltip note.
   const recommendedRangeValue: [number, number] | null = activeMethodWindow ? activeMethodWindow.window : null;
-  const recommendedClamped = activeMethodWindow?.clamped ?? false;
 
   const displayLines = useMemo<DisplayLine[]>(() => {
     const lines: DisplayLine[] = [];
@@ -1406,11 +1381,6 @@ export default function ScatterChart({
     setTrendHover({ screenX: xScale(dataX), screenY: yScale(dataY), dataX, dataY, ciLo, ciHi, n });
   }
 
-  const withinControl = trendHover
-    ? (data.normal_range.lo == null || trendHover.dataX >= data.normal_range.lo) &&
-      (data.normal_range.hi == null || trendHover.dataX <= data.normal_range.hi)
-    : null;
-
   // C-5: data.optimal_center는 SPC 고정값이다 -- ML로 전환하면 라인·범례는
   // displayedOptimalCenter(ML 중심)를 따르는데 해석 문장만 SPC 값에
   // 머물러 있었다.
@@ -1520,48 +1490,58 @@ export default function ScatterChart({
           {/* dark-mode-only plot background (spec §4 재지시) -- painted
               first so every other layer sits on top of it. */}
           <rect x={0} y={0} width={plotWidth} height={plotHeight} className="scatterPlotBg" />
-          {/* axis ticks */}
-          {yTicks.map((tick) => (
-            <g key={`y-${tick}`}>
-              <line x1={0} x2={plotWidth} y1={yScale(tick)} y2={yScale(tick)} className="scatterGridLine" />
-              <text x={-8} y={yScale(tick)} textAnchor="end" dominantBaseline="middle" className="scatterTickLabel">{formatTick(tick)}</text>
-            </g>
-          ))}
-          {view === "scatter"
-            ? xTicks.map((tick) => (
-                <g key={`x-${tick}`}>
-                  <line x1={xScale(tick)} x2={xScale(tick)} y1={0} y2={plotHeight} className="scatterGridLine scatterGridLine-x" />
-                  <text x={xScale(tick)} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{formatTick(tick)}</text>
-                </g>
-              ))
-            : boxXTicks.map((tick) => (
-                <g key={`xbox-${tick.pixel}`}>
-                  <line x1={tick.pixel} x2={tick.pixel} y1={0} y2={plotHeight} className="scatterGridLine scatterGridLine-x" />
-                  <text x={tick.pixel} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{tick.label}</text>
+          {/* axis ticks -- 썸네일은 눈금/라벨 없이 축 선만 (지시서 P-2).
+              식별용이라 값을 읽을 필요가 없다. */}
+          {thumbnail ? (
+            <>
+              <line x1={0} x2={0} y1={0} y2={plotHeight} className="scatterGridLine" />
+              <line x1={0} x2={plotWidth} y1={plotHeight} y2={plotHeight} className="scatterGridLine" />
+            </>
+          ) : (
+            <>
+              {yTicks.map((tick) => (
+                <g key={`y-${tick}`}>
+                  <line x1={0} x2={plotWidth} y1={yScale(tick)} y2={yScale(tick)} className="scatterGridLine" />
+                  <text x={-8} y={yScale(tick)} textAnchor="end" dominantBaseline="middle" className="scatterTickLabel">{formatTick(tick)}</text>
                 </g>
               ))}
+              {view === "scatter"
+                ? xTicks.map((tick) => (
+                    <g key={`x-${tick}`}>
+                      <line x1={xScale(tick)} x2={xScale(tick)} y1={0} y2={plotHeight} className="scatterGridLine scatterGridLine-x" />
+                      <text x={xScale(tick)} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{formatTick(tick)}</text>
+                    </g>
+                  ))
+                : boxXTicks.map((tick) => (
+                    <g key={`xbox-${tick.pixel}`}>
+                      <line x1={tick.pixel} x2={tick.pixel} y1={0} y2={plotHeight} className="scatterGridLine scatterGridLine-x" />
+                      <text x={tick.pixel} y={plotHeight + 20} textAnchor="middle" className="scatterTickLabel">{tick.label}</text>
+                    </g>
+                  ))}
 
-          {/* y-axis title -- target name only (e.g. "Y5"), same grey/
-              secondary style as the x-axis title below the plot. Spec §1
-              재지시: horizontal (not rotated), vertically centered on the
-              plot height, positioned left of the tick numbers with an
-              8px gap measured against the actual widest tick label so it
-              never overlaps regardless of the domain's value range. */}
-          <text
-            x={-8 - maxYTickLabelWidth - 8}
-            y={plotHeight / 2}
-            textAnchor="end"
-            dominantBaseline="middle"
-            className="scatterAxisTitleSvg"
-          >
-            {targetAxisLabel(data.axis.y_label)}
-          </text>
+              {/* y-axis title -- target name only (e.g. "Y5"), same grey/
+                  secondary style as the x-axis title below the plot. Spec §1
+                  재지시: horizontal (not rotated), vertically centered on the
+                  plot height, positioned left of the tick numbers with an
+                  8px gap measured against the actual widest tick label so it
+                  never overlaps regardless of the domain's value range. */}
+              <text
+                x={-8 - maxYTickLabelWidth - 8}
+                y={plotHeight / 2}
+                textAnchor="end"
+                dominantBaseline="middle"
+                className="scatterAxisTitleSvg"
+              >
+                {targetAxisLabel(data.axis.y_label)}
+              </text>
+            </>
+          )}
 
           {/* shading: amber outside the 경고선 (알람 판정 GBDT 전환 §C-3,
               IQR 관리한계 대신 PDP 기반 경고선), green 13% band across
               the recommended range (spec §4-2). Both sit below the points,
               same as before -- a background region shouldn't obscure data. */}
-          {(() => {
+          {!thumbnail && (() => {
             const loX = warningLo?.drawable ? plotX(warningLo.value) : 0;
             const hiX = warningHi?.drawable ? plotX(warningHi.value) : plotWidth;
             return visibleGroups.has("warning") ? (
@@ -1571,7 +1551,9 @@ export default function ScatterChart({
               </>
             ) : null;
           })()}
-          {visibleGroups.has("recommended") && recommendedRangeValue && (() => {
+          {/* 썸네일에서는 최적 중심 참조선 하나만 남긴다 (지시서 P-2) --
+              권장 구간 밴드는 4종 참조선 중 하나라 여기서 함께 생략한다. */}
+          {!thumbnail && visibleGroups.has("recommended") && recommendedRangeValue && (() => {
             const [lo, hi] = recommendedRangeValue;
             const x1 = Math.min(plotX(lo), plotX(hi));
             const x2 = Math.max(plotX(lo), plotX(hi));
@@ -1616,29 +1598,23 @@ export default function ScatterChart({
               never hidden behind them). */}
           {view === "scatter"
             ? data.points.map((point, index) => {
-                const style = colorForPoint(point, colorMode, lotIndex, theme, recommendedRangeValue);
+                const style = colorForPoint(point, colorMode, lotIndex, theme);
                 const isHovered = pointHover?.point === point;
                 const isSelected = selectedSet.has(point);
-                // 관리한계 밖 점은 가장 연한 채움이라 테두리로도 구분되게 한다
-                // (spec §3) -- 기본 모드에서만, 호버 중엔 기존 호버 테두리가
-                // 우선한다.
-                const isOutControlBorder = colorMode === "default" && !isHovered && zoneOf(point, recommendedRangeValue) === "out_control";
-                const stroke = isHovered
-                  ? (theme === "dark" ? "#FFFFFF" : "#0E306D")
-                  : isOutControlBorder
-                    ? (theme === "dark" ? OUT_CONTROL_BORDER.dark : OUT_CONTROL_BORDER.light)
-                    : "none";
-                const baseOpacity = isHovered || isSelected ? 1 : hasSelection ? style.opacity / 3 : style.opacity;
+                const stroke = isHovered ? (theme === "dark" ? "#FFFFFF" : "#0E306D") : "none";
+                const size = thumbnail ? THUMBNAIL_POINT_RADIUS : style.size;
+                const opacity = thumbnail ? THUMBNAIL_POINT_OPACITY : style.opacity;
+                const baseOpacity = isHovered || isSelected ? 1 : hasSelection ? opacity / 3 : opacity;
                 return (
                   <circle
                     key={point.lot_wafer_id ?? index}
                     cx={xScale(point.x)}
                     cy={yScale(point.y)}
-                    r={isHovered ? style.size * 1.5 : isSelected ? style.size + 1 : style.size}
+                    r={isHovered ? size * 1.5 : isSelected ? size + 1 : size}
                     fill={isSelected && !isHovered ? ACCENT_COLOR : style.color}
                     opacity={applyScrubDim(point, baseOpacity, isHovered, isSelected)}
                     stroke={isSelected && !isHovered ? ACCENT_COLOR : stroke}
-                    strokeWidth={isHovered ? 1.5 : isSelected ? 1.5 : isOutControlBorder ? 1 : 0}
+                    strokeWidth={isHovered ? 1.5 : isSelected ? 1.5 : 0}
                     style={{ cursor: "pointer" }}
                     onClick={() => onSelectWafer(point)}
                   />
@@ -1685,18 +1661,14 @@ export default function ScatterChart({
                           isHovered,
                           isSelected,
                         );
-                        // 보정 §I-3: 통계적 이상치(IQR 기준, member.isOutlier)와
-                        // 공정 경고(경고선 기준)는 다른 개념이다 -- 경고선 밖일
-                        // 때만(zoneOf가 산점도와 같은 기준으로 판정) 신호색을
-                        // 쓰고, 그 외 통계적 이상치는 무채색으로 남긴다.
-                        const beyondWarning = zoneOf(member.point, recommendedRangeValue) === "out_control";
-                        const outlierColor = beyondWarning
-                          ? (theme === "dark" ? BOX_COLOR.outlier.dark : BOX_COLOR.outlier.light)
-                          : (theme === "dark" ? BOX_COLOR.outlierNeutral.dark : BOX_COLOR.outlierNeutral.light);
+                        // 관리한계 개념 제거(GBDT 전환) -- 통계적 이상치(IQR
+                        // 기준)는 경고선과 무관한 무채색 하나로 통일한다.
+                        // 경고선 기반 채색은 이번 작업 범위가 아니다.
+                        const outlierColor = theme === "dark" ? BOX_COLOR.outlierNeutral.dark : BOX_COLOR.outlierNeutral.light;
                         return (
                           <circle
                             key={member.point.lot_wafer_id ?? `${bin.index}-out-${mi}`}
-                            cx={cx} cy={cy} r={isHovered ? 6 : isSelected ? 5.5 : 4.5}
+                            cx={cx} cy={cy} r={thumbnail ? THUMBNAIL_POINT_RADIUS : isHovered ? 6 : isSelected ? 5.5 : 4.5}
                             fill="none"
                             stroke={isSelected && !isHovered ? ACCENT_COLOR : outlierColor}
                             strokeWidth={isHovered ? 1.8 : isSelected ? 1.6 : 1}
@@ -1707,7 +1679,7 @@ export default function ScatterChart({
                         );
                       }
                       if (!boxPointsVisible.inlier) return null;
-                      const style = colorForPoint(member.point, colorMode, lotIndex, theme, recommendedRangeValue);
+                      const style = colorForPoint(member.point, colorMode, lotIndex, theme);
                       const baseOpacity = 0.28;
                       const opacity = applyScrubDim(
                         member.point,
@@ -1718,7 +1690,7 @@ export default function ScatterChart({
                       return (
                         <circle
                           key={member.point.lot_wafer_id ?? `${bin.index}-in-${mi}`}
-                          cx={cx} cy={cy} r={isHovered ? 4 : isSelected ? 3.2 : 2.2}
+                          cx={cx} cy={cy} r={thumbnail ? THUMBNAIL_POINT_RADIUS : isHovered ? 4 : isSelected ? 3.2 : 2.2}
                           fill={isSelected && !isHovered ? ACCENT_COLOR : style.color}
                           opacity={opacity}
                           style={{ cursor: "pointer" }}
@@ -1759,7 +1731,7 @@ export default function ScatterChart({
               always-topmost pass below so they never sit under a
               later-drawn line. */}
           {displayLines.filter((line) => line.key === "optimal").map((line) => renderLineBody(line))}
-          {displayLines.filter((line) => line.key === "warning_lo" || line.key === "warning_hi").map((line) => renderLineBody(line))}
+          {!thumbnail && displayLines.filter((line) => line.key === "warning_lo" || line.key === "warning_hi").map((line) => renderLineBody(line))}
 
           {/* confidence band + trend curve -- above every reference line.
               Segments touching a sparse (outlier-widened) bin render
@@ -1805,7 +1777,7 @@ export default function ScatterChart({
               .filter((m): m is { point: ScatterPoint; grade: AlarmMarkerGrade } => m.grade != null && visibleAlarmGrades.has(m.grade))
               .sort((a, b) => ALARM_GRADE_Z[a.grade] - ALARM_GRADE_Z[b.grade]);
             return markers.map(({ point, grade }, i) => {
-              const style = colorForPoint(point, colorMode, lotIndex, theme, recommendedRangeValue);
+              const style = colorForPoint(point, colorMode, lotIndex, theme);
               const color = ALARM_GRADE_COLOR[grade];
               return (
                 <polygon
@@ -1846,8 +1818,9 @@ export default function ScatterChart({
             ));
           })()}
 
-          {/* line name labels -- topmost of all */}
-          {labelLayout.map((layout) => renderFloatingLabel(layout.key))}
+          {/* line name labels -- topmost of all. 썸네일은 라벨을 전부 생략한다
+              (지시서 P-2). */}
+          {!thumbnail && labelLayout.map((layout) => renderFloatingLabel(layout.key))}
 
           {/* 드래그 브러시 사각형 (spec B) -- 오버레이보다 먼저 그려서
               오버레이가 계속 포인터 이벤트를 받게 둔다(사각형 자체는
@@ -1910,7 +1883,7 @@ export default function ScatterChart({
       )}
       </div>
 
-      <p className="scatterAxisTitle">{factorAxisLabel(data.axis.x_label)}</p>
+      {!thumbnail && <p className="scatterAxisTitle">{factorAxisLabel(data.axis.x_label)}</p>}
 
       {/* 범례 (spec §5) -- 점의 색 구분(Color By)은 더 이상 범례에 나타나지
           않는다: 어떤 Color By를 고르든 이 아래 내용은 완전히 동일하다.
@@ -2014,7 +1987,7 @@ export default function ScatterChart({
               active={boxPointsVisible.inlier}
             />
             <LegendCard
-              icon={<IconOutlierDots color={theme === "dark" ? BOX_COLOR.outlier.dark : BOX_COLOR.outlier.light} />}
+              icon={<IconOutlierDots color={theme === "dark" ? BOX_COLOR.outlierNeutral.dark : BOX_COLOR.outlierNeutral.light} />}
               label="이상치 wafer"
               onClick={() => setBoxPointsVisible((cur) => ({ ...cur, outlier: !cur.outlier }))}
               active={boxPointsVisible.outlier}
@@ -2022,12 +1995,13 @@ export default function ScatterChart({
           </div>
         )}
 
-        {/* 기준선 4종 + 구간 평균 불량률 -- Color By와 무관하게 항상 동일.
-            ±3σ/±6σ/평균/Q1/Q3는 여전히 어느 화면에도 노출하지 않는다
-            (src/analysis/control_range.py에는 그대로 남아 있다). */}
+        {/* 경고선 · 최적 중심 · 권장 구간 · 구간 평균 불량률 4종 -- Color By와
+            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)는 GBDT 전환으로 제거된
+            개념이라 범례에 없다 (src/analysis/control_range.py에는 그대로
+            남아 있지만 화면에 더는 노출하지 않는다). */}
         <div className="scatterLegendRow">
           <LegendCard
-            icon={<IconDashedLine color={theme === "dark" ? LINE_COLOR.warning.dark : LINE_COLOR.warning.light} />}
+            icon={<IconDashedLine color={theme === "dark" ? LINE_COLOR.warning.dark : LINE_COLOR.warning.light} dash={LINE_META.warning_lo.dash} />}
             label={warningLegendLabel()}
             desc={warningLegendDesc()}
             onClick={(event) => toggleGroup("warning", event)}
@@ -2037,7 +2011,7 @@ export default function ScatterChart({
           />
           {showOptimalLegendCard && (
             <LegendCard
-              icon={<IconDashedLine color={theme === "dark" ? OPTIMAL_CENTER_COLOR.dark : OPTIMAL_CENTER_COLOR.light} dotted />}
+              icon={<IconDashedLine color={theme === "dark" ? OPTIMAL_CENTER_COLOR.dark : OPTIMAL_CENTER_COLOR.light} dash="4 3" />}
               label={optimalAvailable ? `최적 중심  ${formatNum1(displayedOptimalCenter as number)} (${METHOD_LABEL[activeMethod]})` : "최적 중심"}
               desc={optimalAvailable ? "불량률이 가장 낮은 지점" : optimalUnavailableReason}
               onClick={(event) => toggleGroup("optimal", event)}
@@ -2053,21 +2027,12 @@ export default function ScatterChart({
                 ? `권장 구간 (${METHOD_LABEL[activeMethod]})  ${formatNum1(recommendedRangeValue[0])}~${formatNum1(recommendedRangeValue[1])}`
                 : "권장 구간"
             }
-            desc={
-              recommendedRangeValue
-                ? `이 범위로 관리 권장${recommendedClamped ? " (관리한계에 맞춰 조정됨)" : ""}`
-                : "데이터 범위 밖"
-            }
+            desc={recommendedRangeValue ? "이 범위로 관리 권장" : "데이터 범위 밖"}
             onClick={(event) => toggleGroup("recommended", event)}
             active={visibleGroups.has("recommended") && !!recommendedRangeValue}
             disabled={!recommendedRangeValue}
-            title={
-              recommendedRangeValue
-                ? `구간 평균 불량률이 전체 평균 이하인 구간${recommendedClamped ? " (관리한계에 맞춰 조정됨)" : ""}`
-                : "데이터 범위 밖"
-            }
+            title={recommendedRangeValue ? "구간 평균 불량률이 전체 평균 이하인 구간" : "데이터 범위 밖"}
           />
-          <LegendCard icon={<IconBand color="#F59E0B" />} label="경고선 밖" desc="예측 수율이 낮게 관측되는 범위" />
           <LegendCard
             icon={<IconTrendLine color={theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light} />}
             label="구간 평균 불량률"
@@ -2167,9 +2132,6 @@ export default function ScatterChart({
               <strong>권장 구간</strong>
               <div className="heatmapTooltipRow"><span>범위</span><b>{formatNum1(recommendedRangeValue[0])} ~ {formatNum1(recommendedRangeValue[1])}</b></div>
               <div className="heatmapTooltipRow"><span>의미</span><b>구간 평균 불량률이 전체 평균 이하</b></div>
-              {recommendedClamped && (
-                <div className="heatmapTooltipRow"><span /><b>관리한계에 맞춰 조정됨</b></div>
-              )}
             </div>
           );
         }
@@ -2194,7 +2156,6 @@ export default function ScatterChart({
           <div className="heatmapTooltipRow"><span>구간 평균 불량률</span><b>{trendHover.dataY.toFixed(2)}%</b></div>
           <div className="heatmapTooltipRow"><span>95% 신뢰구간</span><b>{trendHover.ciLo.toFixed(2)} ~ {trendHover.ciHi.toFixed(2)}</b></div>
           <div className="heatmapTooltipRow"><span>이 구간 wafer 수</span><b>{trendHover.n.toLocaleString()}</b></div>
-          <div className="heatmapTooltipRow"><span>관리한계 내</span><b>{withinControl ? "예" : "아니오"}</b></div>
         </div>
       )}
 
@@ -2203,7 +2164,6 @@ export default function ScatterChart({
           {pointHover.point.lot_wafer_id && <strong>{pointHover.point.lot_wafer_id}</strong>}
           <div className="heatmapTooltipRow"><span>{factorAxisLabel(data.axis.x_label)}</span><b>{pointHover.point.x.toFixed(1)}</b></div>
           <div className="heatmapTooltipRow"><span>{targetAxisLabel(data.axis.y_label)}</span><b>{pointHover.point.y.toFixed(1)}%</b></div>
-          <div className="heatmapTooltipRow"><span>관리한계</span><b>{pointHover.point.in_range ? "내" : "밖"}</b></div>
           {pointHover.isOutlier && (
             <div className="heatmapTooltipRow"><span /><b className="scatterOutlierTag">이상치</b></div>
           )}

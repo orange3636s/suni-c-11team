@@ -3,6 +3,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import { ALARM_GRADE_COLOR } from "@/lib/constants";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import {
   connectGmail,
@@ -488,27 +489,31 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
       <div className="notifyConditionsRow">
         <span className="notifyConditionsLabel">발송 대상 등급</span>
         <div className="notifyGradeToggles">
-          {GRADE_OPTIONS.map((grade) => (
-            <button
-              key={grade}
-              type="button"
-              className={`notifyGradeToggle ${conditions.grades.includes(grade) ? "active" : ""}`}
-              onClick={() => toggleGrade(grade)}
-              disabled={saving}
-              aria-pressed={conditions.grades.includes(grade)}
-            >
-              {conditions.grades.includes(grade) ? "✓ " : ""}
-              {grade}
-            </button>
-          ))}
+          {GRADE_OPTIONS.map((grade) => {
+            const active = conditions.grades.includes(grade);
+            return (
+              <button
+                key={grade}
+                type="button"
+                className="notifyGradeToggle"
+                style={active ? { borderColor: ALARM_GRADE_COLOR[grade], color: ALARM_GRADE_COLOR[grade] } : undefined}
+                onClick={() => toggleGrade(grade)}
+                disabled={saving}
+                aria-pressed={active}
+              >
+                {active ? "✓ " : ""}
+                {grade}
+              </button>
+            );
+          })}
         </div>
       </div>
       <div className="notifyConditionsRow">
         <span className="notifyConditionsLabel">발송 시점</span>
-        <div className="notifyTimingToggles">
+        <div className="scatterViewToggle" role="group" aria-label="발송 시점">
           <button
             type="button"
-            className={`notifyTimingToggle ${conditions.timing === "on_analysis" ? "active" : ""}`}
+            className={`scatterViewToggleBtn ${conditions.timing === "on_analysis" ? "active" : ""}`}
             onClick={() => void persist(conditions.grades, "on_analysis")}
             disabled={saving}
           >
@@ -516,7 +521,7 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
           </button>
           <button
             type="button"
-            className={`notifyTimingToggle ${conditions.timing === "daily_9am" ? "active" : ""}`}
+            className={`scatterViewToggleBtn ${conditions.timing === "daily_9am" ? "active" : ""}`}
             onClick={() => void persist(conditions.grades, "daily_9am")}
             disabled={saving}
           >

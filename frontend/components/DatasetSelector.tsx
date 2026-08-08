@@ -236,7 +236,7 @@ function DatasetOption({
     <button type="button" className={`datasetSelectorItem ${active ? "active" : ""}`} onClick={onSelect} role="option" aria-selected={active} style={{ flex: 1 }}>
       <strong className="datasetSelectorFilename" title={item.original_filename}>{item.original_filename}</strong>
       <small>{item.kind === "bundled" ? "내장" : "업로드"} · {item.row_count.toLocaleString()}행 · {lotRange} · {uploadedNote}</small>
-      {item.warnings.length > 0 && <small style={{ color: "#b8720a" }}>⚠ {item.warnings[0]}</small>}
+      {item.warnings.length > 0 && <small style={{ color: "var(--sig-amber)" }}>⚠ {item.warnings[0]}</small>}
     </button>
   );
 }

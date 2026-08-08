@@ -114,8 +114,11 @@ export default function ParetoChart({
     return widths.some((w) => w + LABEL_MIN_GAP > layout.slot);
   }, [items, layout.slot, n]);
 
-  const lineColor = theme === "dark" ? "#F87171" : "#DC2626";
-  const thresholdColor = theme === "dark" ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.35)";
+  // 누적 곡선/마커는 실측이 아니라 계산된 값이라 --inferred, 80% 임계선은
+  // 신호가 아니므로 중립 --line 을 쓴다 (지시서 N-2). ScatterChart의
+  // TREND_COLOR와 동일한 상수쌍.
+  const lineColor = theme === "dark" ? "#97A3B8" : "#7C8AA5";
+  const thresholdColor = theme === "dark" ? "rgba(255, 255, 255, 0.14)" : "#D9DEE6";
   const markerFill = theme === "dark" ? "#2C2C2E" : "#FFFFFF";
   const rightAxisColor = lineColor;
 
@@ -193,8 +196,8 @@ export default function ParetoChart({
                       y={yTop}
                       width={layout.barWidth}
                       height={barHeight}
-                      rx={4}
-                      ry={4}
+                      rx={2}
+                      ry={2}
                       onClick={() => onBarClick(item)}
                       style={{ cursor: "pointer" }}
                     >

@@ -177,6 +177,7 @@ function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] 
         view={snapshot.viewType === "box" ? "box" : "scatter"}
         onSelectWafer={noop}
         height={THUMBNAIL_HEIGHT}
+        thumbnail
       />
     );
   }

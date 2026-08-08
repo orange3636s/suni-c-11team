@@ -110,7 +110,10 @@ async function buildSignificantFactor(
     if (measurementRatePct != null && measurementRatePct < LOW_MEASUREMENT_RATE_PCT) {
       deviationText = `계측 ${measurementRatePct.toFixed(1)}%`;
     } else if (data.points.length > 0) {
-      const outCount = data.points.filter((p) => !p.in_range).length;
+      // 관리한계(in_range) 대신 위에서 이미 구한 권장구간(normal_range
+      // lo/hi)을 기준으로 이탈 여부를 판정한다 -- in_range는 GBDT 전환으로
+      // 제거된 개념이라 화면에서 더는 읽지 않는다.
+      const outCount = data.points.filter((p) => (lo != null && p.x < lo) || (hi != null && p.x > hi)).length;
       deviationPct = (outCount / data.points.length) * 100;
       deviationText = `이탈 ${deviationPct.toFixed(0)}%`;
     }

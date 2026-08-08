@@ -4,9 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
 import { effectSizeTierFromRho, TIER_TOOLTIP } from "@/lib/confidenceTier";
-import { DIVERGING_GREEN, DIVERGING_RED, parseConfig, type ConfigParts } from "@/lib/constants";
-import { niceTicks, niceTicksFitted } from "@/lib/niceTicks";
-import { measureTextWidth } from "@/lib/textMeasure";
+import { parseConfig, type ConfigParts } from "@/lib/constants";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
@@ -22,20 +20,21 @@ const MIN_GROUP_N = 30;
 const CHART_W = 320;
 const CHART_H = 260;
 const MARGIN = { top: 26, right: 10, bottom: 26, left: 36 };
-const MINI_TICK_FONT = "9px system-ui, -apple-system, sans-serif";
-const MINI_X_TICK_COUNT: [max: number, min: number] = [5, 4];
-const MINI_Y_TICK_COUNT = 4;
 // 구간 평균 불량률 계산은 산점도/Box Plot과 동일한 12분위를 쓴다
 // (ScatterChart.tsx의 BOX_BIN_COUNT와 맞춤).
 const BIN_COUNT = 12;
 // 최적 중심이 x 범위의 이 비율을 넘게 흩어지면 "따로 분리" 문구를 얹는다.
 const CENTER_SPREAD_RATIO = 0.15;
 
-const GREEN = DIVERGING_GREEN;
-const RED = DIVERGING_RED;
-const ORANGE = "#F59E0B";
+// 발산(초록/빨강) 팔레트 제거 (지시서 N-3) -- 그룹별 최적 중심은 --text,
+// 구간 평균 곡선은 --inferred, 경고선은 --sig-amber. ScatterChart.tsx의
+// OPTIMAL_CENTER_COLOR/TREND_COLOR/LINE_COLOR.warning과 동일한 상수쌍이다.
+const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
+const INFERRED_COLOR = { light: "#7C8AA5", dark: "#97A3B8" };
+const WARNING_COLOR = { light: "#B8791A", dark: "#E4A23E" };
 const GRAY = { light: "#9CA3AF", dark: "#6B7280" };
-const POINT_COLOR = { light: "#1D4ED8", dark: "#7BA3E8" };
+// 산점도 "기본" 모드의 단일 점 색과 동일한 상수(--measured, 지시서 P-1).
+const POINT_COLOR = { light: "#0E306D", dark: "#7BA3E8" };
 
 type SplitMode = "model" | "eq" | "chamber";
 // 계층 순서(Model이 상위)와 일치시킨다 (지시서 C-1) -- Object.keys 순회
@@ -430,9 +429,9 @@ export default function CompareAcrossConfigsModal({
         <div className="compareModalFooter">
           <div className="compareModalLegend">
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GRAY.dark : GRAY.light }} /> 전체 최적 중심 (층화 전)</span>
-            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GREEN.dark : GREEN.light }} /> 그룹별 최적 중심</span>
-            <span><i className="compareLegendSwatch" style={{ background: ORANGE }} /> 그룹별 경고선</span>
-            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? RED.dark : RED.light }} /> 구간 평균 불량률</span>
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light }} /> 그룹별 최적 중심</span>
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? WARNING_COLOR.dark : WARNING_COLOR.light }} /> 그룹별 경고선</span>
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 구간 평균 불량률</span>
           </div>
         </div>
       </div>
@@ -464,14 +463,14 @@ function TrellisPanel({
   const xScale = (v: number) => ((v - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * plotWidth;
   const yScale = (v: number) => plotHeight - ((v - yDomain[0]) / (yDomain[1] - yDomain[0] || 1)) * plotHeight;
 
-  const xTicks = useMemo(
-    () => niceTicksFitted(xDomain, MINI_X_TICK_COUNT[0], MINI_X_TICK_COUNT[1], plotWidth, formatNum, (label) => measureTextWidth(label, MINI_TICK_FONT)),
-    [xDomain, plotWidth],
-  );
-  const yTicks = useMemo(() => niceTicks(yDomain, MINI_Y_TICK_COUNT), [yDomain]);
+  // 미니 패널은 작으므로 눈금을 양끝 2개로 덜어낸다 (지시서 N-3) -- 값을
+  // 읽는 화면이 아니라 형태를 보는 화면이다.
+  const xTicks = useMemo(() => [xDomain[0], xDomain[1]], [xDomain]);
+  const yTicks = useMemo(() => [yDomain[0], yDomain[1]], [yDomain]);
 
-  const greenColor = theme === "dark" ? GREEN.dark : GREEN.light;
-  const redColor = theme === "dark" ? RED.dark : RED.light;
+  const textColor = theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light;
+  const inferredColor = theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light;
+  const warningColor = theme === "dark" ? WARNING_COLOR.dark : WARNING_COLOR.light;
   const grayColor = theme === "dark" ? GRAY.dark : GRAY.light;
   const pointColor = theme === "dark" ? POINT_COLOR.dark : POINT_COLOR.light;
 
@@ -527,37 +526,41 @@ function TrellisPanel({
             </text>
           )}
 
+          {/* 권장 구간 밴드: 옅은 중립 배경만, 테두리 없음 -- 작은 패널에서는
+              덜어낼수록 핵심 3선(최적 중심/구간 평균 곡선/경고선)이 산다
+              (지시서 N-3). */}
           {!group.insufficientN && group.rangeLo != null && group.rangeHi != null && (
             <rect
               x={xScale(group.rangeLo)}
               y={0}
               width={Math.max(xScale(group.rangeHi) - xScale(group.rangeLo), 0)}
               height={plotHeight}
-              fill={greenColor}
-              opacity={0.12}
+              fill={grayColor}
+              opacity={0.1}
             />
           )}
 
-          {/* points painted before reference lines/curves so lines stay visible on top */}
+          {/* points painted before reference lines/curves so lines stay visible on top --
+              산점도와 같은 --measured 단일색, 패널이 작으므로 반지름은 더 줄인다. */}
           {group.points.map((p, i) => (
-            <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={2.2} fill={pointColor} opacity={0.5} />
+            <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={1.7} fill={pointColor} opacity={0.5} />
           ))}
 
           {globalOptimalCenter != null && (
             <line x1={xScale(globalOptimalCenter)} x2={xScale(globalOptimalCenter)} y1={0} y2={plotHeight} stroke={grayColor} strokeWidth={1.2} strokeDasharray="2 3" opacity={0.85} />
           )}
           {!group.insufficientN && group.optimalCenter != null && (
-            <line x1={xScale(group.optimalCenter)} x2={xScale(group.optimalCenter)} y1={0} y2={plotHeight} stroke={greenColor} strokeWidth={1.4} strokeDasharray="4 3" />
+            <line x1={xScale(group.optimalCenter)} x2={xScale(group.optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.4} strokeDasharray="4 3" />
           )}
           {!group.insufficientN && group.warningX != null && (
-            <line x1={xScale(group.warningX)} x2={xScale(group.warningX)} y1={0} y2={plotHeight} stroke={ORANGE} strokeWidth={1.4} strokeDasharray="6 3" />
+            <line x1={xScale(group.warningX)} x2={xScale(group.warningX)} y1={0} y2={plotHeight} stroke={warningColor} strokeWidth={1.4} strokeDasharray="10 5" />
           )}
 
           {!group.insufficientN && group.bins.length > 0 && (
             <path
               d={group.bins.map((b, i) => `${i === 0 ? "M" : "L"}${xScale(b.x_mean)},${yScale(b.y_mean)}`).join(" ")}
               fill="none"
-              stroke={redColor}
+              stroke={inferredColor}
               strokeWidth={1.8}
               opacity={0.9}
             />

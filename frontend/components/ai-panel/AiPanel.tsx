@@ -372,6 +372,8 @@ export default function AiPanel({
                 <BackIcon />
               </button>
               <span className="aiPanelMobileTitle">SUNI AI 어시스턴트</span>
+              {/* 지시서 N-7: 어느 데이터셋 기준으로 답하는지 헤더에 항상 보인다. */}
+              <span className="aiPanelCtx">CTX {analysisDataset ?? "미실행"}</span>
             </div>
           ) : (
             <button
@@ -382,7 +384,12 @@ export default function AiPanel({
               aria-expanded={open}
             >
               <SuniAvatar size={open ? 28 : 32} />
-              {open && <span className="shellLogoBlockTitle">SUNI AI 어시스턴트</span>}
+              {open && (
+                <span className="shellLogoBlockTitleGroup">
+                  <span className="shellLogoBlockTitle">SUNI AI 어시스턴트</span>
+                  <span className="aiPanelCtx">CTX {analysisDataset ?? "미실행"}</span>
+                </span>
+              )}
               <span className="shellLogoBlockChevron" aria-hidden="true">
                 <ChevronIcon direction={open ? "right" : "left"} />
               </span>

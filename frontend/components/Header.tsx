@@ -3,16 +3,30 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { useApiStatus } from "@/lib/useApiStatus";
 import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
 
+// 헤더를 "지금 어느 데이터를 보고 있나"를 보여주는 상태 바로 전환 (지시서
+// M-2) -- 신규 API 조회를 만들지 않고 사이드바 하단 상태 블록이 이미 쓰는
+// 스냅샷 컨텍스트(AnalysisStateProvider의 snapshot, J그룹 자동 갱신
+// 파이프라인 산출물)를 그대로 재사용한다.
+function formatHeaderClock(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 export default function Header() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   // Sidebar의 연결 상태 점과 같은 훅을 구독한다 -- 폴링은 앱 전체에서
-  // 한 번만 돈다 (frontend/lib/useApiStatus.ts).
+  // 한 번만 돈다 (frontend/lib/useApiStatus.ts). SOURCE 항목의 title
+  // 툴팁으로 흡수되어 더 이상 별도 배지를 그리지 않는다.
   const apiStatus = useApiStatus();
+  const { snapshot } = useAnalysisState();
   const headerRef = useRef<HTMLElement>(null);
   const { aiPanelOpen, setAiPanelOpen } = usePanelState();
   // ≤1023px: AiPanel no longer renders its own always-visible floating
@@ -89,8 +103,47 @@ export default function Header() {
       <div className="headerMeta" aria-label="현재 시각">
         {!isMobileLayout && (
           <>
-            <div className={`apiStatus apiStatus-${apiStatus}`} title={apiStatus === "online" ? "API 서버가 정상적으로 연결되어 있습니다." : apiStatus === "offline" ? "API 서버에 연결할 수 없습니다." : "API 연결 상태를 확인하고 있습니다."}>
-              <span aria-hidden="true" /><strong>API Status</strong><small>{apiStatus === "online" ? "정상" : apiStatus === "offline" ? "연결 끊김" : "확인 중"}</small>
+            <div className="headerContextStrip" aria-label="현재 데이터 컨텍스트">
+              {snapshot && (
+                <>
+                  <div className="headerContextItem">
+                    <span className="headerContextKey">EVAL</span>
+                    <span className="headerContextValue">{snapshot.source.eval_dataset}</span>
+                  </div>
+                  <div className="headerContextItem">
+                    <span className="headerContextKey">WAFERS</span>
+                    <span className="headerContextValue">{snapshot.source.row_count.toLocaleString()}</span>
+                  </div>
+                  <div className="headerContextItem">
+                    <span className="headerContextKey">LAST RUN</span>
+                    <span className="headerContextValue">{formatHeaderClock(snapshot.created_at) ?? "-"}</span>
+                  </div>
+                </>
+              )}
+              <div
+                className="headerContextItem"
+                title={
+                  snapshot
+                    ? snapshot.source.mode === "sql"
+                      ? "SQL 데이터소스에 연결되어 있습니다."
+                      : "SQL 미연결 -- 데모(폴백) 데이터를 보고 있습니다."
+                    : apiStatus === "online"
+                      ? "API 서버가 정상적으로 연결되어 있습니다."
+                      : apiStatus === "offline"
+                        ? "API 서버에 연결할 수 없습니다."
+                        : "API 연결 상태를 확인하고 있습니다."
+                }
+              >
+                <span className="headerContextKey">SOURCE</span>
+                <span
+                  className={`headerContextValue headerContextSource-${
+                    snapshot ? (snapshot.source.mode === "sql" ? "online" : "fallback") : apiStatus === "offline" ? "offline" : "checking"
+                  }`}
+                >
+                  <span className="headerContextDot" aria-hidden="true" />
+                  {snapshot ? (snapshot.source.mode === "sql" ? "SQL" : "데모") : apiStatus === "offline" ? "연결 끊김" : "확인 중"}
+                </span>
+              </div>
             </div>
             <div className="headerStatusGroup currentTimeGroup">
               <span className="headerStatusLabel">Current Time</span>

@@ -286,7 +286,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
               </label>
             </div>
             <label className="notifyFieldLabel">
-              Refresh (분마다 최신 데이터를 받아 자동 학습)
+              Refresh Time (분마다 최신 데이터를 받아 자동 학습)
               <input
                 type="number"
                 min={0}

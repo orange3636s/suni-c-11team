@@ -827,7 +827,7 @@ function RootCauseContent() {
         <div className="paretoRunBar">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h2 style={{ margin: 0, fontSize: "var(--text-section, 17px)" }}>원인 분석 실행</h2>
+              <h2 style={{ margin: 0, fontSize: "var(--fs-title)" }}>원인 분석 실행</h2>
               <LastRunNote createdAt={analysis?.createdAt} />
             </div>
             {/* 기능 설명("타깃 5개 각각의…")은 삭제했다(이전 지시서 G의
@@ -836,7 +836,7 @@ function RootCauseContent() {
                 안내라 유지한다. 삼항이 아니라 조건부 렌더인 이유: 실행
                 전에는 <p> 자체가 없어야 빈 여백이 남지 않는다. */}
             {runState === "done" && (
-              <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
+              <p style={{ margin: "4px 0 0", fontSize: "var(--fs-body)", color: "var(--text-secondary)" }}>
                 완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다.
               </p>
             )}
@@ -1565,7 +1565,6 @@ function WaferDetailPopover({
         <dt>LOT</dt><dd>{point.lot_id ?? "-"}</dd>
         <dt>{target}</dt><dd>{point.y.toFixed(2)}</dd>
         <dt>인자값</dt><dd>{point.x.toFixed(2)}</dd>
-        <dt>정상범위 내</dt><dd>{point.in_range ? "예" : "아니오 (알람)"}</dd>
         {hasConfig && (
           <>
             <dt>Eq.</dt><dd>{point.config ?? "미계측"}</dd>
