@@ -27,6 +27,8 @@ import type {
   ReliabilityResponse,
   ScreeningScatterResponse,
   SendTestResponse,
+  SnapshotMetaResponse,
+  SnapshotResponse,
   TrainingJobCreateResponse,
   TrainingJobStatusResponse,
 } from "@/types/data";
@@ -394,6 +396,18 @@ export function dispatchAlarmNotifications(trainDataset: string, evalDataset: st
 // saved result yet" (spec: "복원 실패가 앱을 막으면 안 된다").
 export function getLatestState(): Promise<LatestStateResponse> {
   return getJson("/api/state/latest", 15_000);
+}
+
+// J-4: 자동 갱신 스냅샷. `getSnapshotMeta`는 60초 폴링·포커스 복귀 때
+// 가볍게 부르는 용도(created_at만 온다) -- 그 값이 캐시보다 최신일
+// 때만 `getSnapshot`으로 전체를 다시 받는다. 매 폴링마다 전체를 다시
+// 받지 않는다(지시서: "같으면 아무것도 하지 않는다").
+export function getSnapshotMeta(): Promise<SnapshotMetaResponse> {
+  return getJson("/api/state/snapshot/meta", 10_000);
+}
+
+export function getSnapshot(): Promise<SnapshotResponse> {
+  return getJson("/api/state/snapshot", 15_000);
 }
 
 // Fire-and-forget from the caller's point of view (spec §3-2: a save

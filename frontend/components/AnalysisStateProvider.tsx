@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getLatestState } from "@/lib/api";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getLatestState, getSnapshot, getSnapshotMeta } from "@/lib/api";
 import type { MeasurementQueueData, MonitoringSnapshot } from "@/lib/monitoringSource";
 import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
@@ -13,8 +13,16 @@ import type {
   ModelPerformanceResponse,
   NotificationSettingsSummary,
   ParetoRankingResponse,
+  RefreshSnapshot,
   ScreeningScatterResponse,
 } from "@/types/data";
+
+// J-4: 60초 폴링 간격 -- "탭을 오가는 동안 갱신이 없으면 네트워크 요청이
+// 발생하지 않는다"는 meta 조회에는 예외이지만(가벼운 엔드포인트), 굳이
+// 더 짧게 잡을 이유는 없다(자동 갱신 주기 자체가 보통 분 단위다).
+const SNAPSHOT_META_POLL_MS = 60_000;
+// "방금 갱신됨" 배지를 몇 초간 보여줄지.
+const SNAPSHOT_JUST_UPDATED_MS = 5_000;
 
 // 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 설정한 적 없거나
 // 첫 접속이면 이 값이 기본이다.
@@ -151,6 +159,19 @@ type AnalysisStateValue = {
   // 갱신할 뿐, 별도 GET을 새로 만들지 않는다.
   notifications: NotificationSettingsSummary;
   setNotifications: (value: NotificationSettingsSummary) => void;
+  // J-3/J-4: 자동 갱신 파이프라인이 저장한 단일 스냅샷 -- 모니터링 홈은
+  // 이 값만 읽고 자기 스스로 API를 부르지 않는다(지시서: "탭이 개별로
+  // fetch하지 않는다"). null은 "아직 한 번도 갱신되지 않음"(최초 기동)과
+  // "복원 실패"를 구분하지 않는다 -- 둘 다 화면은 "첫 갱신 대기 중"으로
+  // 같게 취급한다.
+  snapshot: RefreshSnapshot | null;
+  // schema_version이 바뀐 뒤 남은 옛 스냅샷이 있었다는 신호 -- true면
+  // "저장된 결과가 이전 버전이라 불러오지 않았습니다. 다음 갱신
+  // 주기에 자동으로 채워집니다." 안내를 보여준다.
+  snapshotStaleVersion: boolean;
+  // 방금(수 초 이내) 새 스냅샷으로 갱신됐다는 신호 -- 상단에 "방금
+  // 갱신됨 · HH:MM"을 잠깐 보여주는 데 쓴다.
+  snapshotJustUpdated: boolean;
 };
 
 const AnalysisStateContext = createContext<AnalysisStateValue | null>(null);
@@ -169,6 +190,15 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   // 사용자가 결과가 사라진 줄 알고 (비싼) 재분석을 다시 돌린다.
   const [degraded, setDegraded] = useState(false);
   const hydrationStarted = useRef(false);
+  const [snapshot, setSnapshot] = useState<RefreshSnapshot | null>(null);
+  const [snapshotStaleVersion, setSnapshotStaleVersion] = useState(false);
+  const [snapshotJustUpdated, setSnapshotJustUpdated] = useState(false);
+  // 폴링 콜백이 매번 최신 snapshot을 읽어야 하는데, setInterval에 넘긴
+  // 클로저는 등록 시점 값을 붙잡는다 -- ref로 최신 값을 따라간다.
+  const snapshotRef = useRef<RefreshSnapshot | null>(null);
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
 
   function hydrate() {
     let cancelled = false;
@@ -269,6 +299,63 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
     hydrate();
   }
 
+  // J-4: 스냅샷 전체를 받아 상태를 갱신한다. `announce`가 true면(폴링이
+  // 감지한 새 스냅샷) "방금 갱신됨" 배지를 잠깐 띄운다 -- 최초 로드
+  // 시점에는 "갱신"이 아니라 "복원"이므로 배지를 띄우지 않는다.
+  const applySnapshot = useCallback((full: Awaited<ReturnType<typeof getSnapshot>>, announce: boolean) => {
+    setSnapshot(full.snapshot);
+    setSnapshotStaleVersion(full.stale_version);
+    if (announce && full.snapshot) {
+      setSnapshotJustUpdated(true);
+      window.setTimeout(() => setSnapshotJustUpdated(false), SNAPSHOT_JUST_UPDATED_MS);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSnapshot()
+      .then((full) => {
+        if (!cancelled) applySnapshot(full, false);
+      })
+      .catch(() => {
+        // spec: 복원 실패가 앱을 막으면 안 된다 -- 다음 폴링/갱신 주기가
+        // 다시 채운다.
+      });
+
+    // 갱신 감지: 윈도우 포커스 복귀 시 + 60초 주기. `created_at`만 보는
+    // 가벼운 엔드포인트라 실제로 더 최신인 경우에만 전체를 다시 받는다
+    // (지시서: "같으면 아무것도 하지 않는다 -- 무조건 재조회 금지").
+    async function checkForUpdate() {
+      try {
+        const meta = await getSnapshotMeta();
+        const cachedCreatedAt = snapshotRef.current?.created_at ?? null;
+        if (meta.created_at && meta.created_at !== cachedCreatedAt) {
+          const full = await getSnapshot();
+          if (!cancelled) applySnapshot(full, true);
+        }
+      } catch {
+        // best-effort -- 다음 폴링에서 다시 시도한다.
+      }
+    }
+
+    const interval = window.setInterval(() => void checkForUpdate(), SNAPSHOT_META_POLL_MS);
+    function handleFocus() {
+      void checkForUpdate();
+    }
+    function handleVisibility() {
+      if (document.visibilityState === "visible") void checkForUpdate();
+    }
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const value = useMemo<AnalysisStateValue>(
     () => ({
       hydrated,
@@ -286,8 +373,14 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       setMonitoringHome,
       notifications,
       setNotifications,
+      snapshot,
+      snapshotStaleVersion,
+      snapshotJustUpdated,
     }),
-    [hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome, notifications],
+    [
+      hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome,
+      notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated,
+    ],
   );
 
   return <AnalysisStateContext.Provider value={value}>{children}</AnalysisStateContext.Provider>;

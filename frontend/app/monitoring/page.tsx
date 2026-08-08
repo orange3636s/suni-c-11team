@@ -6,6 +6,7 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
+import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import {
@@ -232,6 +233,7 @@ export default function MonitoringPage() {
           {snapshot?.createdAt && (
             <p className="sectionCaption">
               <LastRunNote createdAt={snapshot.createdAt} /> · {snapshot.dataset}
+              <FallbackModeBadge />
             </p>
           )}
         </div>

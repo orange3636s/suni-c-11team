@@ -530,6 +530,70 @@ export type LatestStateResponse = {
   degraded: boolean;
 };
 
+// -- J-3/J-4: 자동 갱신 파이프라인 스냅샷 --------------------------------
+
+export type RefreshSnapshotSource = {
+  mode: "sql" | "fallback";
+  train_dataset: string;
+  eval_dataset: string;
+  row_count: number;
+};
+
+export type RefreshSnapshotModel = {
+  champion_version: string | null;
+  trained_at: string | null;
+  promoted: boolean | null;
+  gate_reason: string | null;
+  skipped_reason: string | null;
+  training_job_submitted?: string;
+};
+
+export type RefreshSnapshotAlarmItem = {
+  lot_wafer_id: string;
+  lot_id: string | null;
+  grade: string;
+  risk_percentile: number;
+};
+
+export type RefreshSnapshotAlarms = {
+  gate_passed: boolean;
+  target_yield: number;
+  sensitivity: number;
+  counts: Record<"심각" | "위험" | "주의" | "정상" | "판별불가", number>;
+  items_top: RefreshSnapshotAlarmItem[];
+  total: number;
+};
+
+export type RefreshSnapshotMonitoring = {
+  predicted_yield: { point: number; lo: number; hi: number } | null;
+  gap: { lo: number; hi: number } | null;
+  gap_pareto: Array<Record<string, unknown>>;
+  treemap: { step: number; cells: unknown[] } | null;
+};
+
+export type RefreshSnapshot = {
+  schema_version: number;
+  created_at: string;
+  source: RefreshSnapshotSource;
+  model: RefreshSnapshotModel;
+  analysis: {
+    paretoByTarget: Record<string, unknown>;
+    measurementExpansion: Record<string, unknown> | null;
+  };
+  alarms: RefreshSnapshotAlarms;
+  monitoring: RefreshSnapshotMonitoring;
+  errors: string[];
+};
+
+export type SnapshotResponse = {
+  snapshot: RefreshSnapshot | null;
+  stale_version: boolean;
+};
+
+export type SnapshotMetaResponse = {
+  created_at: string | null;
+};
+
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------
 // 점 데이터는 절대 담지 않는다 (J-2) -- 열 때 이 파라미터로 API를 다시
 // 불러 렌더한다.

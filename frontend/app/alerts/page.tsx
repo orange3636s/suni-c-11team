@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useSearchParams } from "next/navigation";
 import { DEFAULT_SENSITIVITY, DEFAULT_TARGET_YIELD, useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
+import FallbackModeBadge from "@/components/FallbackModeBadge";
 import DatasetSelector from "@/components/DatasetSelector";
 import {
   HScrollTableBody,
@@ -379,6 +380,7 @@ function AlertsContent() {
           <p className="analysisFallbackNotice">{reliability.target_fallback_message}</p>
         )}
         <LastRunNote createdAt={alarmsState?.createdAt} />
+        <FallbackModeBadge />
       </section>
 
       <section className="uploadCard">

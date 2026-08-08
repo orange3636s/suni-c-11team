@@ -9,6 +9,7 @@ import ConfidenceBadge from "@/components/ConfidenceBadge";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import DatasetSelector from "@/components/DatasetSelector";
+import FallbackModeBadge from "@/components/FallbackModeBadge";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import ParetoChart from "@/components/ParetoChart";
@@ -812,6 +813,7 @@ function RootCauseContent() {
             없으면(analysis가 null) LastRunNote가 스스로 아무것도 렌더하지
             않는다. */}
         <LastRunNote createdAt={analysis?.createdAt} />
+        <FallbackModeBadge />
       </section>
 
       <section className="uploadCard">

@@ -3,6 +3,7 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import DashboardShell from "@/components/DashboardShell";
+import FallbackModeBadge from "@/components/FallbackModeBadge";
 import ParetoChart from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart from "@/components/ScatterChart";
@@ -64,7 +65,10 @@ export default function FavoritesPage() {
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">FAVORITES</span>
         <h1>즐겨찾기</h1>
-        <p>원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.</p>
+        <p>
+          원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.
+          <FallbackModeBadge />
+        </p>
       </section>
 
       {error && <p className="errorMessage">{error}</p>}
