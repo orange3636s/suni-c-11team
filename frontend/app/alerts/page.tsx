@@ -364,7 +364,7 @@ function AlertsContent() {
         <p>
           목표 수율과 민감도를 조절해 wafer를 5분류로 판정합니다.
           <br />
-          알람(심각·위험·주의)은 예측 수율 구간의 상한이 목표보다 확실히 낮은 wafer이며, 전체 인자를 종합해 판정합니다.
+          알람(심각·위험·주의)은 예측 수율 구간 상한이 목표보다 낮은 wafer입니다.
         </p>
         {reliability && reliabilityPanelOpen && <ReliabilityPanel reliability={reliability} />}
         {reliability && reliability.grade === "낮음" && (
@@ -381,20 +381,24 @@ function AlertsContent() {
       </section>
 
       <section className="uploadCard">
-        {/* 지시서 AH: 넉넉히 안 들어가면(좁은 화면) 판정 대상이 첫 줄,
-            목표 수율·민감도·조회가 둘째 줄로 떨어진다 -- 안쪽 그룹을 별도
-            flex 아이템으로 묶어 억지로 한 줄에 밀어넣지 않는다. */}
-        <div className="alertsQueryRow">
-          <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
-          <div className="alertsQueryRowGroup">
+        {/* 지시서 B: 1줄(판정 대상·목표 수율·조회, 바닥선 정렬) / 2줄
+            (민감도 하나만, 중앙선 정렬)로 나눈다 -- 민감도 블록이 다른
+            컨트롤보다 훨씬 높아 한 줄에 몰아넣으면 카드가 비대칭이었다. */}
+        <div className="alertsQueryGrid">
+          <div className="alertsQueryRow1">
+            <div className="alertsDatasetBlock">
+              <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
+              <p className="sectionCaption alertsDatasetCaption">정상범위 기준: {trainDatasetLabel}</p>
+            </div>
             <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
-            <SensitivityField value={sensitivity} activePreset={activePreset} onApplyPreset={applyPreset} onChange={handleSensitivityChange} />
             <button type="button" className="button primary alertsQueryButton" disabled={loading} onClick={() => void load()}>
               {loading ? "조회 중…" : data ? "다시 조회" : "조회"}
             </button>
           </div>
+          <div className="alertsQueryRow2">
+            <SensitivityField value={sensitivity} activePreset={activePreset} onApplyPreset={applyPreset} onChange={handleSensitivityChange} />
+          </div>
         </div>
-        <p className="sectionCaption">정상범위 기준: {trainDatasetLabel}</p>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
         {error && <p className="errorMessage">{error}</p>}
         {data && mismatchWarning && (
@@ -683,7 +687,7 @@ function SensitivityField({
   onChange: (value: number) => void;
 }) {
   return (
-    <div className="alertsSettingField alertsSensitivityField">
+    <div className="alertsSensitivityField">
       <span className="alertsSettingLabel">민감도</span>
       <div className="alertsPresetRow">
         {SENSITIVITY_PRESETS.map((preset) => (
@@ -697,7 +701,9 @@ function SensitivityField({
           </button>
         ))}
       </div>
-      <div className="alertsGaugeRow">
+      {/* 슬라이더+값 칸을 한 그룹으로 묶는다 (지시서 B-4) -- 좁은 화면에서
+          줄바꿈되더라도 이 둘은 쪼개지지 않는다. */}
+      <div className="alertsGaugeGroup">
         <div className="alertsGaugeWrap">
           <div className="alertsGaugeHints"><span>오경보 ↓</span><span>미탐 ↓</span></div>
           <input

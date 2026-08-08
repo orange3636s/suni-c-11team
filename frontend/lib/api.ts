@@ -429,9 +429,18 @@ export function getControlRanges(dataset: string): Promise<ControlRangeListRespo
   return getJson(`/api/control-ranges?${new URLSearchParams({ dataset }).toString()}`);
 }
 
-export function getAlarms(trainDataset: string, evalDataset: string, grade?: string): Promise<AlarmListResponse> {
+export function getAlarms(
+  trainDataset: string,
+  evalDataset: string,
+  options?: { grade?: string; target?: number; sensitivity?: number },
+): Promise<AlarmListResponse> {
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
-  if (grade) params.set("grade", grade);
+  if (options?.grade) params.set("grade", options.grade);
+  // 지시서: 원인 분석 탭의 알람 삼각형이 알림 기록에서 저장한 목표
+  // 수율·민감도를 그대로 넘겨 두 화면의 판정 기준을 일치시킨다.
+  // 생략하면(최초 실행 등 저장된 값이 없을 때) 백엔드 기본값을 쓴다.
+  if (options?.target != null) params.set("target", String(options.target));
+  if (options?.sensitivity != null) params.set("sensitivity", String(options.sensitivity));
   return getJson(`/api/alarms?${params.toString()}`);
 }
 

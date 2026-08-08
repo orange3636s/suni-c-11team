@@ -73,6 +73,13 @@ export type AnalysisState = {
   // 가져와 모든 산점도/Box Plot 카드가 공유한다 (§B-2: 카드마다 재요청하지
   // 않는다).
   alarmGradeByWaferId: Record<string, AlarmGrade> | null;
+  // 지시서: 알림 기록의 목표 수율·민감도와 이 삼각형의 판정 기준을
+  // 일치시킨다 -- 지금 alarmGradeByWaferId를 계산할 때 실제로 쓴
+  // (목표·민감도·그 시점의 alarms.createdAt) 스냅샷. null은 아직 한 번도
+  // 계산되지 않았다는 뜻. `appliedAt`이 현재 alarms?.createdAt과
+  // 달라지면(알림 기록에서 값을 바꿔 새로 저장했다는 뜻) 다시 계산해야
+  // 한다는 신호로 쓴다 -- 매번 무조건 재조회하지 않기 위한 것이다.
+  alarmCriteria: { appliedAt: string | null; target: number; sensitivity: number } | null;
 } | null;
 
 export type AlarmsState = {
@@ -192,6 +199,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
               // 않는다 -- scatterByKey와 같은 방식으로 복원 직후 배경에서
               // 다시 채운다 (root-cause/page.tsx의 fetchAllScatterData 이펙트).
               alarmGradeByWaferId: null,
+              alarmCriteria: null,
             });
           } else {
             setAnalysisSnapshotStale(true);

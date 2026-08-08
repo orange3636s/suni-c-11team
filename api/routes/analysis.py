@@ -493,14 +493,24 @@ def _reason_for(score, eval_by_id, warning_lines) -> str:
 
 
 @router.get("/alarms", response_model=AlarmListResponse)
-def get_alarms(train: str = "train", eval: str = "test", grade: str | None = None) -> dict[str, Any]:
+def get_alarms(
+    train: str = "train",
+    eval: str = "test",
+    grade: str | None = None,
+    target: float | None = None,
+    sensitivity: float | None = None,
+) -> dict[str, Any]:
     """알람 판정 GBDT 전환 (spec §A) + 사전 알람 로그 전면 개편 (spec §B-1) --
     부트스트랩 앙상블로 예측한 최종 수율(Y) 신뢰구간 상한(pred_hi)이 목표
-    수율 - 민감도 오프셋*σ 아래인 wafer만 알람으로 낸다. 이 라우트는 목표
-    수율/민감도를 직접 조절하는 UI가 없는 호출자(원인 분석 탭의 알람
-    삼각형 마커)가 쓰므로 기본값(85.0/0.5)을 쓴다 -- 사전 알람 로그
-    화면 자체는 `/alarms/predictions`에서 원시 예측치를 받아 클라이언트가
-    실시간으로 재분류한다.
+    수율 - 민감도 오프셋*σ 아래인 wafer만 알람으로 낸다.
+
+    `target`/`sensitivity`는 선택 파라미터다 -- 지시서: 원인 분석 탭의
+    알람 삼각형 마커가 알림 기록 탭에서 저장한 값을 그대로 넘겨 두
+    화면의 판정 기준을 일치시킨다. 생략하면(둘 다 또는 하나만) 그
+    파라미터는 기본값(85.0/0.5)을 쓴다 -- 파라미터 없이 부르던 기존
+    호출부(알림 발송 등)는 동작이 그대로다. 사전 알람 로그 화면 자체는
+    `/alarms/predictions`에서 원시 예측치를 받아 클라이언트가 실시간으로
+    재분류하므로 이 라우트를 거치지 않는다.
 
     알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
     AUC 하한이 0.65 미만이면 알람을 아예 내지 않는다.
@@ -508,7 +518,16 @@ def get_alarms(train: str = "train", eval: str = "test", grade: str | None = Non
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
 
-    scored, auc_lo, gate_passed = _scored_wafers(train, eval, train_df, eval_df)
+    resolved_target = target if target is not None else alarm_gbdt.DEFAULT_TARGET_YIELD
+    resolved_sensitivity = sensitivity if sensitivity is not None else alarm_gbdt.DEFAULT_SENSITIVITY
+    # _scored_wafers/score_wafers는 캐시되지 않는다 -- 매 호출마다 새로
+    # 계산하므로 target/sensitivity를 캐시 키에 빠뜨릴 위험 자체가 없다
+    # (부트스트랩 예측 자체를 캐시하는 _cached_bootstrap_prediction은
+    # target/sensitivity와 무관한 원시 예측치라 그대로 재사용해도 안전
+    # 하다 -- 분류 임계값은 이후 score_wafers에서 매번 새로 적용된다).
+    scored, auc_lo, gate_passed = _scored_wafers(
+        train, eval, train_df, eval_df, target=resolved_target, sensitivity=resolved_sensitivity
+    )
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
     warning_lines = _cached_all_warning_lines(train)

@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import { DEFAULT_SENSITIVITY, DEFAULT_TARGET_YIELD, useAnalysisState } from "@/components/AnalysisStateProvider";
 import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
@@ -59,13 +59,28 @@ import type {
 // 데이터셋의 분포가 다를 때 알람이 사실상 0건으로 사라질 수 있다(스키마가
 // 크게 다른 데이터셋 조합에서 실측: 다른 데이터셋을 test.csv로 판정하면
 // 0건, 자기 자신으로 판정하면 수백 건).
-async function fetchAlarmGradeByWaferId(datasetId: string): Promise<Record<string, AlarmGrade>> {
-  const response = await getAlarms(datasetId, datasetId);
+async function fetchAlarmGradeByWaferId(
+  datasetId: string,
+  target?: number,
+  sensitivity?: number,
+): Promise<Record<string, AlarmGrade>> {
+  // 지시서: 알림 기록에서 저장한 목표 수율·민감도를 그대로 넘겨 두 화면의
+  // 알람 판정 기준을 일치시킨다. 저장된 값이 없으면(최초 실행 등)
+  // undefined로 넘어가 백엔드 기본값(85.0/0.5)을 쓴다.
+  const response = await getAlarms(datasetId, datasetId, { target, sensitivity });
   const map: Record<string, AlarmGrade> = {};
   for (const item of response.items) {
     map[item.lot_wafer_id] = item.grade;
   }
   return map;
+}
+
+/** "알람 마커 기준: 목표 91.0% · 민감도 0.50" -- 원인 분석과 알림 기록의
+ * 판정 기준이 일치하는지 화면에서 바로 확인할 수 있게 한다. 아직 한 번도
+ * 계산되지 않았으면(카드 로딩 중 등) null. */
+function formatAlarmCriteria(criteria: { target: number; sensitivity: number } | null | undefined): string | null {
+  if (!criteria) return null;
+  return `목표 ${criteria.target.toFixed(1)}% · 민감도 ${criteria.sensitivity.toFixed(2)}`;
 }
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -189,7 +204,7 @@ function RootCauseContent() {
   // with zero network calls (checklist §탭 이동 #1/#4), and a page
   // reload/reconnect restores a lean (points-less) version of it via
   // GET /api/state/latest.
-  const { analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice } = useAnalysisState();
+  const { analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice, alarms } = useAnalysisState();
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
@@ -368,17 +383,82 @@ function RootCauseContent() {
     // 알람 삼각형(spec §B)은 부트스트랩 앙상블이라 수십 초가 걸릴 수 있다
     // (§A-1) -- 산점도 좌표 복원과 묶어 기다리게 하면 그 시간만큼 차트
     // 전체가 "불러오는 중"에 갇힌다. 별도 요청으로 분리해 늦게 도착해도
-    // 삼각형만 나중에 얹히게 한다.
-    void fetchAlarmGradeByWaferId(dataset)
+    // 삼각형만 나중에 얹히게 한다. 알림 기록에 저장된 목표·민감도를 이
+    // 순간의 값으로 한 번 읽어 넘긴다 -- alarms가 나중에 바뀌면 별도의
+    // "기준 변경 감지" 이펙트(아래)가 다시 불러온다.
+    const targetAtRestore = alarms?.targetYield ?? DEFAULT_TARGET_YIELD;
+    const sensitivityAtRestore = alarms?.sensitivity ?? DEFAULT_SENSITIVITY;
+    const criteriaAtRestore = alarms?.createdAt ?? null;
+    void fetchAlarmGradeByWaferId(dataset, alarms?.targetYield, alarms?.sensitivity)
       .then((alarmGradeByWaferId) => {
         if (cancelled) return;
-        setAnalysis((previous) => (previous && previous.dataset === dataset ? { ...previous, alarmGradeByWaferId } : previous));
+        setAnalysis((previous) =>
+          previous && previous.dataset === dataset
+            ? {
+                ...previous,
+                alarmGradeByWaferId,
+                alarmCriteria: { appliedAt: criteriaAtRestore, target: targetAtRestore, sensitivity: sensitivityAtRestore },
+              }
+            : previous,
+        );
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis, setAnalysis]);
+
+  // 알림 기록에서 목표 수율·민감도를 바꿔 새로 저장하면(alarms.createdAt이
+  // 갱신됨) 이미 그려진 삼각형이 낡은 기준을 쓰고 있는 셈이다 -- 원인
+  // 분석에 들어와 있는 동안이든, 다른 탭에 있다가 돌아왔든, createdAt이
+  // 마지막으로 적용한 값과 달라진 순간 다시 불러온다. 매번 무조건
+  // 재조회하지 않는다: 기준이 바뀌지 않았으면(가장 흔한 경우) 이 조건이
+  // 곧장 거짓이 되어 네트워크 요청이 없다. 부트스트랩 앙상블이라 수십
+  // 초 걸릴 수 있으므로(§A-1) 로딩 중(alarmGradeByWaferId===null)에는
+  // 한 번 더 발사하지 않는다.
+  useEffect(() => {
+    if (!analysis || !analysis.pointsComplete) return;
+    if (analysis.alarmGradeByWaferId === null) return;
+    const currentCriteriaAt = alarms?.createdAt ?? null;
+    if (analysis.alarmCriteria?.appliedAt === currentCriteriaAt) return;
+    let cancelled = false;
+    const dataset = analysis.dataset;
+    const targetNow = alarms?.targetYield ?? DEFAULT_TARGET_YIELD;
+    const sensitivityNow = alarms?.sensitivity ?? DEFAULT_SENSITIVITY;
+    setAnalysis((previous) => (previous && previous.dataset === dataset ? { ...previous, alarmGradeByWaferId: null } : previous));
+    void fetchAlarmGradeByWaferId(dataset, alarms?.targetYield, alarms?.sensitivity)
+      .then((alarmGradeByWaferId) => {
+        if (cancelled) return;
+        setAnalysis((previous) =>
+          previous && previous.dataset === dataset
+            ? {
+                ...previous,
+                alarmGradeByWaferId,
+                alarmCriteria: { appliedAt: currentCriteriaAt, target: targetNow, sensitivity: sensitivityNow },
+              }
+            : previous,
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // 개별 필드만 의존성으로 둔다 -- analysis 객체 전체를 넣으면
+    // scatterByKey 등 이 이펙트와 무관한 필드가 바뀔 때마다(배경 채우기
+    // 등) 다시 실행된다. 아래 가드들이 불필요한 재실행을 이미 안전하게
+    // no-op으로 걸러낸다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    analysis?.dataset,
+    analysis?.pointsComplete,
+    analysis?.alarmGradeByWaferId,
+    analysis?.alarmCriteria,
+    alarms?.createdAt,
+    alarms?.targetYield,
+    alarms?.sensitivity,
+    setAnalysis,
+  ]);
 
   async function runAnalysis() {
     setRunState("running");
@@ -423,16 +503,29 @@ function RootCauseContent() {
         pointsComplete: true,
         measurementExpansion,
         alarmGradeByWaferId: null,
+        alarmCriteria: null,
       });
       setRunState("done");
       setAnalysisDataset(datasetId);
       // 알람 심각도 삼각형 (spec §B) -- 부트스트랩 앙상블이라 수십 초가
       // 걸릴 수 있다(§A-1). 위 setAnalysis를 붙잡아 두면 이미 준비된
       // 산점도/Pareto까지 그만큼 늦게 보이므로, 별도 요청으로 분리해
-      // 나중에 도착하는 대로 삼각형만 얹는다.
-      void fetchAlarmGradeByWaferId(datasetId)
+      // 나중에 도착하는 대로 삼각형만 얹는다. 알림 기록에 저장된 목표·
+      // 민감도를 그대로 써서 두 화면의 판정 기준을 일치시킨다.
+      const targetAtRun = alarms?.targetYield ?? DEFAULT_TARGET_YIELD;
+      const sensitivityAtRun = alarms?.sensitivity ?? DEFAULT_SENSITIVITY;
+      const criteriaAtRun = alarms?.createdAt ?? null;
+      void fetchAlarmGradeByWaferId(datasetId, alarms?.targetYield, alarms?.sensitivity)
         .then((alarmGradeByWaferId) => {
-          setAnalysis((previous) => (previous && previous.dataset === datasetId ? { ...previous, alarmGradeByWaferId } : previous));
+          setAnalysis((previous) =>
+            previous && previous.dataset === datasetId
+              ? {
+                  ...previous,
+                  alarmGradeByWaferId,
+                  alarmCriteria: { appliedAt: criteriaAtRun, target: targetAtRun, sensitivity: sensitivityAtRun },
+                }
+              : previous,
+          );
         })
         .catch(() => {});
       // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 신뢰도 게이트·
@@ -466,6 +559,10 @@ function RootCauseContent() {
       window.clearInterval(elapsedTimer);
     }
   }
+
+  // "알람 마커 기준: 목표 91.0% · 민감도 0.50" -- 모든 ScatterChart 인스턴스가
+  // 같은 문자열을 공유한다(카드마다 다시 계산하지 않는다).
+  const alarmCriteriaLabel = formatAlarmCriteria(analysis?.alarmCriteria);
 
   const activeParetoResponse = paretoByTarget[activeTarget];
   const activeParetoItems: ParetoRankingItem[] = useMemo(
@@ -543,6 +640,7 @@ function RootCauseContent() {
           onTrellis={openTrellis}
           hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
           alarmGradeByWaferId={analysis?.alarmGradeByWaferId}
+          alarmCriteriaLabel={alarmCriteriaLabel}
           paretoItems={paretoByTarget[target]?.items ?? []}
           paretoN80={paretoByTarget[target]?.n80 ?? null}
           onParetoBarClick={handleParetoBarClick}
@@ -704,11 +802,16 @@ function RootCauseContent() {
               <h2 style={{ margin: 0, fontSize: "var(--text-section, 17px)" }}>원인 분석 실행</h2>
               <LastRunNote createdAt={analysis?.createdAt} />
             </div>
-            <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
-              {runState === "done"
-                ? "완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다."
-                : "타깃 5개 각각의 전체 인자 풀(R+D+Eq.) 기준 Pareto 상위 10개를 계산합니다."}
-            </p>
+            {/* 기능 설명("타깃 5개 각각의…")은 삭제했다(이전 지시서 G의
+                삭제 기준 -- 지워도 화면의 숫자를 못 읽게 되지 않는다).
+                "완료된 결과입니다…"는 실행 전/후를 구분해주는 상태
+                안내라 유지한다. 삼항이 아니라 조건부 렌더인 이유: 실행
+                전에는 <p> 자체가 없어야 빈 여백이 남지 않는다. */}
+            {runState === "done" && (
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
+                완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다.
+              </p>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center" }}>
             <button type="button" className="button" disabled={runState === "running"} onClick={() => void runAnalysis()}>
@@ -850,6 +953,7 @@ function RootCauseContent() {
                   onSelectWafer={setSelectedWafer}
                   height={chartHeight}
                   alarmGradeByWaferId={analysis?.alarmGradeByWaferId}
+                  alarmCriteriaLabel={alarmCriteriaLabel}
                 />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={chartHeight} />
@@ -1168,6 +1272,7 @@ function NumericFactorCard({
   onTrellis,
   hasConfig,
   alarmGradeByWaferId,
+  alarmCriteriaLabel,
   paretoItems,
   paretoN80,
   onParetoBarClick,
@@ -1184,6 +1289,7 @@ function NumericFactorCard({
   onTrellis: (feature: string, step: number) => void;
   hasConfig: boolean;
   alarmGradeByWaferId?: Record<string, AlarmGrade> | null;
+  alarmCriteriaLabel: string | null;
   // Pareto 보기(spec "Pareto를 산점도 카드로 병합")용 데이터 -- 카드마다
   // 다시 fetch하지 않고 부모(RootCauseContent)가 이미 갖고 있는
   // paretoByTarget에서 한 번만 내려준다.
@@ -1286,6 +1392,7 @@ function NumericFactorCard({
             onSelectWafer={onSelectWafer}
             height={chartHeight}
             alarmGradeByWaferId={alarmGradeByWaferId}
+            alarmCriteriaLabel={alarmCriteriaLabel}
           />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>

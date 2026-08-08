@@ -695,6 +695,7 @@ export default function ScatterChart({
   onSelectWafer,
   height = HEIGHT,
   alarmGradeByWaferId,
+  alarmCriteriaLabel,
 }: {
   data: ScreeningScatterResponse;
   colorMode: ScatterColorMode;
@@ -720,6 +721,11 @@ export default function ScatterChart({
   // 앙상블이라 수십 초 걸릴 수 있다), 객체는 로딩이 끝났음(비어 있으면
   // 대상 없음)을 뜻한다.
   alarmGradeByWaferId?: Record<string, AlarmGrade> | null;
+  // 지시서: "알람 마커 기준: 목표 91.0% · 민감도 0.50" -- caller(원인
+  // 분석 페이지)가 alarms 상태에서 실제로 적용된 값을 문자열로 미리
+  // 포맷해 넘긴다. 이 컴포넌트는 AnalysisState를 모르므로 여기서 직접
+  // 계산하지 않는다.
+  alarmCriteriaLabel?: string | null;
 }) {
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
@@ -2094,6 +2100,14 @@ export default function ScatterChart({
           <p className="scatterAlarmLegendNote">
             삼각형은 전체 인자를 종합한 판정이므로 권장 구간 안에도 나타날 수 있습니다.
           </p>
+        )}
+        {/* 지시서: 알림 기록에서 저장한 목표 수율·민감도로 삼각형을
+            그렸다는 것을 밝힌다 -- 이게 없으면 두 화면의 등급이 달라
+            보일 때(알림 기록에서 값을 바꾼 직후 등) 원인을 알 수 없다.
+            토글이 꺼져 있어도(alarmMarkersVisible=false) 계산 자체의
+            기준은 여전히 유효하므로 계속 보여준다. */}
+        {hasAnyAlarmMarker && alarmCriteriaLabel && (
+          <p className="scatterAlarmLegendNote">알람 마커 기준: {alarmCriteriaLabel}</p>
         )}
       </div>
 
