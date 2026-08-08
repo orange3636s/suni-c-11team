@@ -23,6 +23,14 @@ STATE_KEYS = {
     "gmail": "notify:gmail",
     "conditions": "notify:conditions",
 }
+# A-8: 인증 대기 중인 재연결 시도는 이 별도 키에 저장한다 -- 예전에는
+# `STATE_KEYS["gmail"]`(연결 완료 레코드와 같은 키) 하나를 pending으로
+# 덮어썼기 때문에, 5분 안에 인증을 끝내지 못하면 `get_gmail`이 만료된
+# pending 레코드를 지우면서 "덮어써지기 전까지 멀쩡했던 기존 연결"까지
+# 함께 사라졌다. pending 전용 키를 두면 5분 TTL은 이 키에만 적용되고,
+# 연결 완료(verified) 레코드는 verify 성공 시에만 이 키의 내용으로
+# 교체되므로 만료 대상이 될 수 없다.
+GMAIL_PENDING_STATE_KEY = "notify:gmail:pending"
 
 ChannelName = Literal["slack", "telegram", "gmail"]
 AlarmGrade = Literal["심각", "위험", "주의"]
@@ -128,40 +136,52 @@ def is_valid_email(email: str) -> bool:
 
 
 def get_gmail(store: RuntimeStore) -> dict[str, Any] | None:
+    """연결 완료(verified) 레코드만 반환한다 -- A-8: 이 키는 verify_gmail이
+    성공했을 때만 쓰여지므로 만료 판정 자체가 필요 없다(영구 보관)."""
+    return store.get_app_state(STATE_KEYS["gmail"])
+
+
+def get_gmail_pending(store: RuntimeStore) -> dict[str, Any] | None:
     """지시서 W: 만료된 인증 대기 레코드는 읽는 즉시 지우고 `None`을
-    반환한다 -- 연결 완료(`verified: true`)분은 절대 만료되지 않는다."""
-    record = store.get_app_state(STATE_KEYS["gmail"])
+    반환한다. A-8: 이 pending 레코드는 연결 완료 레코드(`STATE_KEYS["gmail"]`)와
+    별도 키에 저장되므로, 5분 안에 인증을 끝내지 못해 여기서 지워져도
+    기존에 연결 완료돼 있던 이메일에는 영향이 없다."""
+    record = store.get_app_state(GMAIL_PENDING_STATE_KEY)
     if record and _is_pending_expired(record):
-        store.delete_app_state(STATE_KEYS["gmail"])
+        store.delete_app_state(GMAIL_PENDING_STATE_KEY)
         return None
     return record
 
 
 def start_gmail_verification(store: RuntimeStore, *, email: str) -> str:
-    """인증 메일 발송 전 '대기 중' 레코드를 저장하고 토큰을 반환한다
-    (spec §C-3 Gmail: "확인 전에는 대기 중 상태"). 인증 전 상태는 절대
-    `verified: true`로 남지 않는다 -- 확인 없이 저장하면 타인의 주소로
-    알림을 보낼 수 있다."""
+    """인증 메일 발송 전 '대기 중' 레코드를 별도 키(`GMAIL_PENDING_STATE_KEY`)에
+    저장하고 토큰을 반환한다 (spec §C-3 Gmail: "확인 전에는 대기 중 상태").
+    A-8: 기존 연결 완료 레코드(`STATE_KEYS["gmail"]`)는 절대 건드리지
+    않는다 -- 재인증 시도가 5분 내에 끝나지 않아도 이미 연결된 이메일은
+    그대로 살아 있어야 한다."""
     token = secrets.token_urlsafe(24)
     record = {
         "email": email,
-        "verified": False,
         "token": token,
         "requested_at": _now_iso(),
-        "verified_at": None,
     }
-    store.set_app_state(STATE_KEYS["gmail"], record)
+    store.set_app_state(GMAIL_PENDING_STATE_KEY, record)
     return token
 
 
 def verify_gmail(store: RuntimeStore, *, token: str) -> bool:
-    record = get_gmail(store)
-    if not record or record.get("verified") or record.get("token") != token:
+    """pending 레코드가 유효하면 연결 완료 레코드로 승격시켜
+    `STATE_KEYS["gmail"]`에 쓰고, pending 키는 지운다."""
+    pending = get_gmail_pending(store)
+    if not pending or pending.get("token") != token:
         return False
-    record["verified"] = True
-    record["verified_at"] = _now_iso()
-    record.pop("token", None)
+    record = {
+        "email": pending["email"],
+        "verified": True,
+        "verified_at": _now_iso(),
+    }
     store.set_app_state(STATE_KEYS["gmail"], record)
+    store.delete_app_state(GMAIL_PENDING_STATE_KEY)
     return True
 
 
@@ -196,6 +216,11 @@ def save_conditions(store: RuntimeStore, *, grades: list[str], timing: str) -> d
 
 
 def disconnect(store: RuntimeStore, channel: ChannelName) -> bool:
+    if channel == "gmail":
+        # A-8: pending을 별도 키로 분리했으므로, 연결 해제 시 진행 중이던
+        # 재인증 시도도 함께 지워야 한다 -- 안 지우면 이미 "연결 해제"한
+        # 뒤에 예전 인증 링크를 클릭해 유령 연결이 되살아날 수 있다.
+        store.delete_app_state(GMAIL_PENDING_STATE_KEY)
     return store.delete_app_state(STATE_KEYS[channel])
 
 
@@ -206,6 +231,7 @@ def get_settings_summary(store: RuntimeStore) -> dict[str, Any]:
     slack = get_slack(store)
     telegram = get_telegram(store)
     gmail = get_gmail(store)
+    gmail_pending = None if gmail else get_gmail_pending(store)
     conditions = get_conditions(store)
 
     return {
@@ -231,13 +257,17 @@ def get_settings_summary(store: RuntimeStore) -> dict[str, Any]:
         ),
         "gmail": (
             {
-                "connected": bool(gmail.get("verified")),
-                "pending": not gmail.get("verified", False),
+                "connected": True,
+                "pending": False,
                 "email": gmail.get("email"),
                 "verified_at": gmail.get("verified_at"),
             }
             if gmail
-            else {"connected": False, "pending": False, "email": None, "verified_at": None}
+            else (
+                {"connected": False, "pending": True, "email": gmail_pending.get("email"), "verified_at": None}
+                if gmail_pending
+                else {"connected": False, "pending": False, "email": None, "verified_at": None}
+            )
         ),
         "conditions": conditions,
     }

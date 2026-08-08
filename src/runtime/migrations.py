@@ -33,6 +33,19 @@ def _metadata_candidates(root: Path) -> list[tuple[str, Path]]:
 
 
 def _legacy_metadata(metadata: dict[str, Any]) -> bool:
+    # A-2: a bundle stamped with the pipeline version this build produces is
+    # never legacy, full stop -- this must be checked before any target/
+    # model_type heuristic below. Those heuristics treat "multi"/"hybrid" in
+    # model_type as proof of a *former* multi-target bundle, but the
+    # *current* champion format (target="Y", model_type="hybrid_multi_y",
+    # see src/ml/hybrid.py) also matches that substring check and would
+    # otherwise be deleted on every startup where the migration hasn't
+    # already run (e.g. an empty/reset migration_registry, or a fresh
+    # volume) -- destroying the champion bundle and leaving model_slots
+    # pointing at nothing.
+    pipeline = str(metadata.get("pipeline_version") or "").strip()
+    if pipeline == PIPELINE_VERSION:
+        return False
     # Only former multi-target bundles are incompatible.  Direct Y pipelines
     # produced by the current app must survive startup untouched.
     target = str(metadata.get("target") or "")
@@ -44,9 +57,6 @@ def _legacy_metadata(metadata: dict[str, Any]) -> bool:
         return False
     if "multi" in model_type or "hybrid" in model_type or target.startswith("Y"):
         return True
-    pipeline = str(metadata.get("pipeline_version") or "").strip()
-    if pipeline == PIPELINE_VERSION:
-        return False
     algorithm = " ".join(
         str(metadata.get(key) or "")
         for key in ("algorithm", "model_name", "model_type", "bundle_type")

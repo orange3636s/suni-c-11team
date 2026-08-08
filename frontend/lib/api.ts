@@ -539,8 +539,9 @@ export async function disconnectNotificationChannel(channel: "slack" | "telegram
 }
 
 // 원인 분석 실행 직후 fire-and-forget으로 호출된다 (spec §C-4 "분석 실행
-// 직후") -- 실패해도 분석 결과 표시를 막으면 안 되므로 호출부에서 항상
-// `.catch(() => {})`로 무시한다.
+// 직후") -- 실패해도 분석 결과 표시를 막으면 안 되지만, 발송 실패
+// 자체는 사용자에게 보여야 한다(A-1). 호출부는 실패 시 오류 배너를
+// 띄우고, 이미 렌더된 분석 결과는 그대로 둔다.
 export function dispatchAlarmNotifications(trainDataset: string, evalDataset: string): Promise<DispatchResponse> {
   return postJson("/api/notify/dispatch", { train_dataset: trainDataset, eval_dataset: evalDataset, dashboard_url: null });
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
 from api.routes.analysis import _cached_reliability, compute_alarm_notification_items
@@ -20,7 +20,9 @@ from api.schemas.notify import (
     TelegramVerifyRequest,
 )
 from api.settings import settings
+from src.analysis import alarm_gbdt
 from src.notifications import dispatch, senders, settings_store, telegram_bot
+from src.runtime.app_state import get_latest_state
 from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -81,13 +83,18 @@ def test_telegram() -> dict[str, Any]:
 
 
 @router.post("/gmail", response_model=NotificationSettingsSummary)
-def connect_gmail(body: GmailConnectRequest) -> dict[str, Any]:
+def connect_gmail(body: GmailConnectRequest, request: Request) -> dict[str, Any]:
     if not settings_store.is_valid_email(body.email):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="올바른 이메일 주소를 입력하세요.")
     store = _store()
     token = settings_store.start_gmail_verification(store, email=body.email)
     if settings.smtp_host and settings.smtp_user and settings.smtp_password and settings.smtp_from_email:
-        verify_url = f"{settings.notify_verify_base_url.rstrip('/')}/api/notify/gmail/verify?token={token}"
+        # A-7: 명시적으로 설정된 게 없으면 이 요청을 받은 API 서버 자신의
+        # 오리진을 쓴다 -- verify 라우트는 FastAPI에만 있고 Next.js에는
+        # 대응하는 rewrite가 없으므로, 프런트엔드 오리진을 기본값으로
+        # 쓰면 메일 링크가 항상 Next 404로 간다.
+        verify_base = settings.notify_verify_base_url or str(request.base_url).rstrip("/")
+        verify_url = f"{verify_base.rstrip('/')}/api/notify/gmail/verify?token={token}"
         ok, error = senders.send_gmail(
             smtp_host=settings.smtp_host,
             smtp_port=settings.smtp_port,
@@ -158,22 +165,38 @@ def disconnect_channel(channel: str) -> dict[str, Any]:
     return settings_store.get_settings_summary(store)
 
 
+def _target_sensitivity_from_payload(payload: dict[str, Any] | None) -> tuple[float, float]:
+    """A-3: 알림 기록 탭(알람 삼각형과 같은 화면)에 저장된 목표 수율·
+    민감도를 읽어온다 -- 발송이 이 값을 무시하고 항상 기본값(85.0/0.5)을
+    쓰면 알림 이력·원인 분석·발송 세 곳의 판정 기준이 어긋난다. 저장된
+    적이 없으면(키 없음) 기존 기본값을 그대로 쓴다.
+    """
+    payload = payload or {}
+    target = payload.get("targetYield", alarm_gbdt.DEFAULT_TARGET_YIELD)
+    sensitivity = payload.get("sensitivity", alarm_gbdt.DEFAULT_SENSITIVITY)
+    return target, sensitivity
+
+
 @router.post("/dispatch", response_model=DispatchResponse)
 def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
     """§C-4 "분석 실행 직후" 발송 트리거 -- 원인 분석 실행이 끝난 직후
     프런트엔드가 fire-and-forget으로 호출한다. 알람/신뢰도는 이미
     lru_cache된 계산을 재사용하므로 대개 즉시 끝난다."""
-    items = compute_alarm_notification_items(body.train_dataset, body.eval_dataset)
+    store = _store()
+    alarms_state = get_latest_state(store).get("alarms")
+    target, sensitivity = _target_sensitivity_from_payload((alarms_state or {}).get("payload"))
+    items = compute_alarm_notification_items(body.train_dataset, body.eval_dataset, target=target, sensitivity=sensitivity)
     if items is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.")
 
-    reliability = _cached_reliability(body.train_dataset)
+    reliability = _cached_reliability(body.train_dataset, body.eval_dataset)
     registry = get_dataset_registry()
     summary = registry.get_summary(body.train_dataset)
     dataset_label = summary["original_filename"] if summary else body.train_dataset
 
     result = dispatch.dispatch_alarm_notifications(
-        _store(),
+        store,
+        trigger=settings_store.TIMING_ON_ANALYSIS,
         dataset_id=body.train_dataset,
         dataset_label=dataset_label,
         alarms=items,
@@ -191,8 +214,6 @@ def run_daily_dispatch_job() -> None:
     train/eval 데이터셋 쌍)를 기준으로 재계산해 발송한다 -- 저장된 조회가
     없으면(한 번도 조회한 적이 없으면) 조용히 건너뛴다.
     """
-    from src.runtime.app_state import get_latest_state
-
     store = _store()
     try:
         latest = get_latest_state(store)
@@ -204,17 +225,22 @@ def run_daily_dispatch_job() -> None:
         eval_dataset = alarms_state.get("eval_dataset")
         if not train_dataset or not eval_dataset:
             return
+        # A-3: 데이터셋만 읽고 target/sensitivity는 버리던 버그 -- 같은
+        # alarms_state.payload에서 함께 읽어야 원인 분석 삼각형과 같은
+        # 기준으로 판정한다.
+        target, sensitivity = _target_sensitivity_from_payload(alarms_state.get("payload"))
 
-        items = compute_alarm_notification_items(train_dataset, eval_dataset)
+        items = compute_alarm_notification_items(train_dataset, eval_dataset, target=target, sensitivity=sensitivity)
         if items is None:
             return
-        reliability = _cached_reliability(train_dataset)
+        reliability = _cached_reliability(train_dataset, eval_dataset)
         registry = get_dataset_registry()
         summary = registry.get_summary(train_dataset)
         dataset_label = summary["original_filename"] if summary else train_dataset
 
         dispatch.dispatch_alarm_notifications(
             store,
+            trigger=settings_store.TIMING_DAILY_9AM,
             dataset_id=train_dataset,
             dataset_label=dataset_label,
             alarms=items,

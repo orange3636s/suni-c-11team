@@ -75,12 +75,14 @@ async function fetchAlarmGradeByWaferId(
   return map;
 }
 
-/** "알람 마커 기준: 목표 91.0% · 민감도 0.50" -- 원인 분석과 알림 기록의
- * 판정 기준이 일치하는지 화면에서 바로 확인할 수 있게 한다. 아직 한 번도
- * 계산되지 않았으면(카드 로딩 중 등) null. */
+/** "알람 마커 기준: 목표 91.0% · 민감도 0.50 · eval=자기 자신" -- 원인
+ * 분석과 알림 기록의 판정 기준이 일치하는지, 그리고 이 화면의 알람이
+ * (알림 발송/알림 기록과 달리) 항상 자기 자신을 eval로 판정한다는 것을
+ * 화면에서 바로 확인할 수 있게 한다(A-3). 아직 한 번도 계산되지
+ * 않았으면(카드 로딩 중 등) null. */
 function formatAlarmCriteria(criteria: { target: number; sensitivity: number } | null | undefined): string | null {
   if (!criteria) return null;
-  return `목표 ${criteria.target.toFixed(1)}% · 민감도 ${criteria.sensitivity.toFixed(2)}`;
+  return `목표 ${criteria.target.toFixed(1)}% · 민감도 ${criteria.sensitivity.toFixed(2)} · eval=자기 자신`;
 }
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -231,6 +233,11 @@ function RootCauseContent() {
   const [runError, setRunError] = useState("");
   const [runErrorDetail, setRunErrorDetail] = useState("");
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
+  // A-1: 분석 실행 직후 알림 발송(fire-and-forget)이 실패했을 때 조용히
+  // 삼키지 않고 사용자에게 알린다 -- 이전에는 .catch(() => {})로 무시돼
+  // 발송 경로가 죽어 있어도 아무도 몰랐다. 분석 결과 자체는 이미 표시된
+  // 뒤라 이 실패로 화면을 막지는 않는다.
+  const [dispatchNotifyError, setDispatchNotifyError] = useState("");
 
   const paretoByTarget = analysis?.paretoByTarget ?? EMPTY_PARETO_BY_TARGET;
   const scatterByKey = analysis?.scatterByKey ?? EMPTY_SCATTER_BY_KEY;
@@ -464,6 +471,7 @@ function RootCauseContent() {
     setRunState("running");
     setRunError("");
     setRunErrorDetail("");
+    setDispatchNotifyError("");
     setRunStageIndex(0);
     setRunElapsedSeconds(0);
     setRunGeneration((generation) => generation + 1);
@@ -532,7 +540,9 @@ function RootCauseContent() {
       // 중복 발송 방지·연결된 채널 유무는 전부 서버(dispatch_alarm_notifications)
       // 가 판단한다: 이 호출은 그저 "지금 막 분석이 끝났다"는 신호일 뿐이고,
       // 실패해도 분석 결과 화면에는 아무 영향이 없어야 한다.
-      void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {});
+      void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {
+        setDispatchNotifyError("알림 발송에 실패했습니다. 알림 이력 탭에서 채널 연결 상태를 확인해 주세요.");
+      });
       // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
       // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
       // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을
@@ -819,6 +829,15 @@ function RootCauseContent() {
             </button>
           </div>
         </div>
+        {dispatchNotifyError && (
+          <div className="analysisErrorBox" role="alert">
+            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
+            <div className="analysisErrorBody">
+              <p className="analysisErrorMessage">{dispatchNotifyError}</p>
+            </div>
+            <button type="button" className="button" onClick={() => setDispatchNotifyError("")}>닫기</button>
+          </div>
+        )}
         {runState === "running" && (
           <div className="paretoRunProgress" style={{ marginTop: 12 }}>
             <div className="paretoRunProgressTrack">

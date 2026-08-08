@@ -26,12 +26,22 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   // 지시서 §2-2: 승격 여부와 무관한 최근 학습 시도 -- 게이트 미달로
   // 교체되지 않았을 때 "학습은 돌았는데 모델은 그대로"임을 보여준다.
   const [latestPromotion, setLatestPromotion] = useState<PromotionEvent | null>(null);
+  // A-4: promotion-history 라우트가 죽어 있어도(예: /models/{model_id}에
+  // 가려짐) 조용히 "승격 이력 없음"으로 보이면 게이트 미달 사실이 통째로
+  // 숨는다 -- 조회 실패와 "이력 없음"을 구분해서 보여준다.
+  const [promotionHistoryError, setPromotionHistoryError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function refreshPromotionHistory() {
     getPromotionHistory(1)
-      .then((response) => setLatestPromotion(response.items[0] ?? null))
-      .catch(() => setLatestPromotion(null));
+      .then((response) => {
+        setPromotionHistoryError(false);
+        setLatestPromotion(response.items[0] ?? null);
+      })
+      .catch(() => {
+        setLatestPromotion(null);
+        setPromotionHistoryError(true);
+      });
   }
 
   // 팝업을 다시 열 때마다 컨텍스트의 최신 저장값으로 되돌린다 -- 다른
@@ -206,6 +216,14 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
             )}
             {latestPromotion?.promoted === 1 && latestPromotion.candidate_model_id === performance?.model_id && (
               <p className="notifyTestResult ok">최근 학습이 게이트를 통과해 승격됐습니다 -- {latestPromotion.reason}</p>
+            )}
+            {promotionHistoryError && (
+              <p className="notifyFieldError">
+                승격 이력을 불러오지 못했습니다.{" "}
+                <button type="button" className="linkButton" onClick={refreshPromotionHistory}>
+                  다시 시도
+                </button>
+              </p>
             )}
           </section>
 

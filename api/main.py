@@ -127,7 +127,15 @@ async def lifespan(app: FastAPI):
     # 대신 APScheduler로 처리한다 (spec: "서비스가 늘면 메모리와 요금이
     # 증가한다").
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_daily_dispatch_job, CronTrigger(hour=9, minute=0), id="daily_alarm_notification")
+    # A-5: 배포 컨테이너(Railway/Render)는 TZ가 UTC라 timezone 없이 hour=9를
+    # 주면 KST 18시에 발송된다. misfire_grace_time도 기본값(1초)이라 09:00
+    # 정각에 재시작이 겹치면 그날 발송이 통째로 스킵된다.
+    scheduler.add_job(
+        run_daily_dispatch_job,
+        CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),
+        id="daily_alarm_notification",
+        misfire_grace_time=3600,
+    )
 
     # 자동 수집 파이프라인 1단계 -- 별도 잡이다(위 발송 잡을 건드리지
     # 않는다). 주기는 환경변수가 아니라 저장된 사용자 설정

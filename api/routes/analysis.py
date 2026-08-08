@@ -571,11 +571,19 @@ def get_alarms(
     )
 
 
-def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, Any]] | None:
+def compute_alarm_notification_items(
+    train: str,
+    eval: str,
+    *,
+    target: float = alarm_gbdt.DEFAULT_TARGET_YIELD,
+    sensitivity: float = alarm_gbdt.DEFAULT_SENSITIVITY,
+) -> list[dict[str, Any]] | None:
     """알림 발송(src.notifications.dispatch)이 쓰는 알람 목록 -- `get_alarms`와
-    같은 파이프라인(게이트 + 기본 목표/민감도)을 그대로 재사용한다.
-    데이터셋을 찾을 수 없으면 예외 대신 None을 반환한다 -- 알림 발송은
-    best-effort라 404로 스케줄러 잡 전체를 죽이면 안 된다.
+    같은 파이프라인(게이트)을 그대로 재사용한다. `target`/`sensitivity`는
+    호출부(notify.py)가 알림 기록 탭에 저장된 alarms_state.payload에서
+    읽어 넘긴다 -- 생략하면(저장된 조회가 없을 때) 기본값(85.0/0.5)을
+    쓴다. 데이터셋을 찾을 수 없으면 예외 대신 None을 반환한다 -- 알림
+    발송은 best-effort라 404로 스케줄러 잡 전체를 죽이면 안 된다.
     """
     try:
         train_df = _dataframe_or_404(train)
@@ -583,7 +591,9 @@ def compute_alarm_notification_items(train: str, eval: str) -> list[dict[str, An
     except HTTPException:
         return None
 
-    scored, _auc_lo, _gate_passed = _scored_wafers(train, eval, train_df, eval_df)
+    scored, _auc_lo, _gate_passed = _scored_wafers(
+        train, eval, train_df, eval_df, target=target, sensitivity=sensitivity
+    )
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
     warning_lines = _cached_all_warning_lines(train)

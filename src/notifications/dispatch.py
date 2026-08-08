@@ -120,6 +120,7 @@ def _send_to_all_channels(store: RuntimeStore, payload: AlarmNotificationPayload
 def dispatch_alarm_notifications(
     store: RuntimeStore,
     *,
+    trigger: str,
     dataset_id: str,
     dataset_label: str,
     alarms: list[dict[str, Any]],
@@ -130,6 +131,12 @@ def dispatch_alarm_notifications(
     """`alarms`의 각 원소는 {lot_wafer_id, risk_percentile, grade, reason}
     형태다 (알람 판정 GBDT 전환 §A-3의 알람 목록 항목과 동일한 필드).
 
+    `trigger`는 호출부가 어느 경로로 불렀는지(`settings_store.TIMING_ON_ANALYSIS`
+    "분석 실행 직후" 또는 `TIMING_DAILY_9AM` 매일 09:00)를 밝힌다 -- A-6:
+    저장된 발송 시점 설정(`conditions["timing"]`)과 다르면 스킵한다. 이전에는
+    이 값이 저장만 되고 어느 발송 경로도 읽지 않아 "매일 9시만" 선택해도
+    분석 직후 발송이 나갔다.
+
     반환값은 항상 dict -- 발송 성공/실패와 무관하게 예외를 올리지 않는다.
     """
     try:
@@ -139,6 +146,9 @@ def dispatch_alarm_notifications(
             return {"skipped": True, "reason": "분석 신뢰도 낮음"}
 
         conditions = settings_store.get_conditions(store)
+        if conditions.get("timing") != trigger:
+            return {"skipped": True, "reason": "발송 시점 설정과 일치하지 않음"}
+
         target_grades = set(conditions.get("grades") or [])
         candidates = [a for a in alarms if a.get("grade") in target_grades]
         if not candidates:

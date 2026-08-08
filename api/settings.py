@@ -214,13 +214,13 @@ class Settings:
     smtp_from_email: str | None = field(
         default_factory=lambda: os.environ.get("SMTP_FROM_EMAIL", "").strip() or None
     )
-    # 인증 메일의 확인 링크가 가리킬 프런트엔드 주소 -- 이메일 클라이언트에서
-    # 클릭하는 것이므로 API 서버가 아니라 프런트엔드 오리진이어야 한다.
-    notify_verify_base_url: str = field(
-        default_factory=lambda: (
-            os.environ.get("NOTIFY_VERIFY_BASE_URL", "").strip()
-            or (_parse_origins(os.environ.get("FRONTEND_ORIGINS"))[0])
-        )
+    # 인증 메일의 확인 링크가 가리킬 주소 -- A-7: `/api/notify/gmail/verify`는
+    # FastAPI 라우트일 뿐 Next.js에 대응하는 페이지/rewrite가 없으므로,
+    # 프런트엔드 오리진을 기본값으로 쓰면 메일 링크가 Next 404로 간다.
+    # 명시적으로 설정되지 않았으면 None으로 두고, 호출부(api/routes/notify.py)가
+    # 그 요청을 받은 API 서버 자신의 오리진(request.base_url)으로 채운다.
+    notify_verify_base_url: str | None = field(
+        default_factory=lambda: os.environ.get("NOTIFY_VERIFY_BASE_URL", "").strip() or None
     )
     # 자동 수집 파이프라인 1단계 (지시서 §1-1) -- 감시 디렉터리에 새 CSV가
     # 떨어지면 Y 유무로 갈라 처리한다. 주기는 여기 두지 않는다 -- 사용자가

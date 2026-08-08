@@ -884,6 +884,21 @@ def get_models() -> ModelListResponse:
         ) from exc
 
 
+@router.get("/models/promotion-history")
+def get_promotion_history(limit: int = 20) -> dict[str, Any]:
+    """자동 수집 파이프라인 §2-2 -- 승격 여부와 무관하게 모든 학습 시도를
+    기록한 이력. 모델 학습·자동화 팝업의 "최근 학습" 줄이 이걸로 게이트
+    미달 사실("학습은 돌았는데 모델은 그대로")을 보여준다.
+
+    A-4: `/models/{model_id}` 라우트보다 반드시 먼저 등록돼야 한다 --
+    FastAPI는 등록 순서대로 매칭하므로, 뒤에 오면 "promotion-history"가
+    model_id로 잡혀 InvalidModelIdError 404가 나며 이 엔드포인트가 영구히
+    죽는다.
+    """
+    events = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).list_promotion_events(limit)
+    return {"items": events}
+
+
 @router.get("/models/{model_id}", response_model=ModelDetailResponse)
 def get_model_detail(model_id: str) -> ModelDetailResponse:
     try:
@@ -911,15 +926,6 @@ def get_model_detail(model_id: str) -> ModelDetailResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
-
-
-@router.get("/models/promotion-history")
-def get_promotion_history(limit: int = 20) -> dict[str, Any]:
-    """자동 수집 파이프라인 §2-2 -- 승격 여부와 무관하게 모든 학습 시도를
-    기록한 이력. 모델 학습·자동화 팝업의 "최근 학습" 줄이 이걸로 게이트
-    미달 사실("학습은 돌았는데 모델은 그대로")을 보여준다."""
-    events = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).list_promotion_events(limit)
-    return {"items": events}
 
 
 @router.get("/models/{model_id}/references")
