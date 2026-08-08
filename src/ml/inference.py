@@ -497,7 +497,16 @@ def _delete_prediction_model_locked(
             "심볼릭 링크 또는 Junction인 모델 Bundle은 삭제할 수 없습니다.",
             failed_files=[f"{model_id}/"],
         )
-    model_path, metadata_path = _model_paths(model_id, root)
+    # H-1: model_id는 위에서 이미 `_validate_model_id`를 통과했으므로, 여기서
+    # `_model_paths`가 여전히 `InvalidModelIdError`를 던질 수 있는 유일한
+    # 경로는 "flat 파일이 심볼릭 링크를 통해 root 밖으로 resolve된다"는
+    # 삭제 안전성 문제뿐이다(§147-148) -- 잘못된 ID 형식과는 다른 오류이므로
+    # 삭제 경로에서는 `ModelDeletionError`로 다시 던져 호출자가 구분하게
+    # 한다.
+    try:
+        model_path, metadata_path = _model_paths(model_id, root)
+    except InvalidModelIdError as exc:
+        raise ModelDeletionError(str(exc)) from exc
     staging_root_path = root / MODEL_DELETE_STAGING_DIR
     staged_model_path = staging_root_path / model_id
 

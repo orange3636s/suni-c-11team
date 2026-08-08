@@ -14,7 +14,9 @@ from sklearn.linear_model import Ridge
 
 from api.main import app
 from api.routes import data as data_routes
+from src.ml import inference as inference_module
 from src.ml.inference import (
+    InvalidModelIdError,
     ModelDeletionError,
     ModelNotFoundError,
     delete_prediction_model,
@@ -408,6 +410,27 @@ def test_delete_rejects_flat_symlink_without_touching_target(
 
     assert linked_model.is_symlink()
     assert outside_target.read_bytes() == b"must remain"
+
+
+def test_delete_maps_resolved_path_escape_to_deletion_error(
+    deletion_root: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-1: 심볼릭 링크 생성 권한이 없는 환경(예: 관리자 권한 없는
+    Windows)에서도, `_model_paths`가 (평소 심볼릭 링크가 root 밖으로
+    resolve될 때 던지는) `InvalidModelIdError`를 삭제 경로가
+    `ModelDeletionError`로 다시 던지는지 심볼릭 링크 없이 확인한다 --
+    `test_delete_rejects_flat_symlink_without_touching_target`은 이
+    환경에서 skip되므로 별도로 검증이 필요하다."""
+    model_root = deletion_root / "models"
+    model_root.mkdir()
+
+    def _raise_invalid(model_id: str, model_dir: object) -> tuple[Path, Path]:
+        raise InvalidModelIdError("유효하지 않은 모델 ID입니다.")
+
+    monkeypatch.setattr(inference_module, "_model_paths", _raise_invalid)
+
+    with pytest.raises(ModelDeletionError):
+        delete_prediction_model("some_model", model_root)
 
 
 def test_delete_rejects_bundle_junction_without_touching_target(

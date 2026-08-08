@@ -8,6 +8,7 @@ from __future__ import annotations
 from src.notifications.senders import (
     AlarmNotificationItem,
     AlarmNotificationPayload,
+    build_email_html,
     build_slack_blocks,
     build_telegram_text,
     escape_markdown_v2,
@@ -69,3 +70,13 @@ def test_markdown_v2_escaping_covers_special_chars():
 def test_telegram_text_is_escaped_and_contains_grade_counts():
     text = build_telegram_text(_payload(1))
     assert "심각 1건" in text.replace("\\", "")
+
+
+def test_email_html_escapes_user_supplied_dataset_label():
+    """H-3④: dataset_label은 사용자가 올린 CSV 원본 파일명이다 -- 악의적인
+    파일명(예: <script> 태그)이 메일 HTML에 그대로 렌더되면 안 된다."""
+    payload = _payload(1)
+    payload.dataset_label = "<script>alert(1)</script>.csv"
+    html_body = build_email_html(payload)
+    assert "<script>alert(1)</script>" not in html_body
+    assert "&lt;script&gt;" in html_body

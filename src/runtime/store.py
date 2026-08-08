@@ -727,6 +727,17 @@ class RuntimeStore:
                 [(dataset_id, wafer_id, grade, now, channel) for wafer_id, grade in entries],
             )
 
+    def purge_old_notification_log(self, *, older_than_iso: str) -> int:
+        """H-3②: notify_sent_log는 24시간 재발송 방지 조회(recent_notifications)
+        용도라 그보다 훨씬 오래된 행은 볼 일이 없다 -- 지우지 않으면 이
+        테이블이 무한히 커진다. 발송 잡과는 별도 스케줄 id로 도는 주기
+        정리 잡이 호출한다."""
+        with _lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM notify_sent_log WHERE sent_at < ?", (older_than_iso,)
+            )
+            return cursor.rowcount
+
 
 def safe_runtime_call(method: str, **values: Any) -> Any:
     if os.environ.get("PYTEST_CURRENT_TEST"):

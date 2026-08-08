@@ -49,6 +49,7 @@ def classify_measured_bands(
     alarm_factors: list[ParetoFactor],
     control_ranges: list[ControlRange],
     *,
+    dataset_id: str,
     id_column: str = ID_COLUMN,
     yield_column: str = FINAL_YIELD_COLUMN,
 ) -> WholeWaferBands:
@@ -66,7 +67,7 @@ def classify_measured_bands(
     for factor, control_range in zip(alarm_factors, control_ranges):
         if factor.feature not in eval_df.columns:
             continue
-        recommendation = compute_factor_recommendation(train_df, factor, control_range)
+        recommendation = compute_factor_recommendation(train_df, factor, control_range, dataset_id=dataset_id)
         if recommendation is None:
             continue
         x = pd.to_numeric(eval_df[factor.feature], errors="coerce")
@@ -123,6 +124,8 @@ def compute_factor_band(
     eval_df: pd.DataFrame,
     factor: ParetoFactor,
     control_range: ControlRange,
+    *,
+    dataset_id: str,
 ) -> FactorBand | None:
     """Per-factor 3-band defect-rate breakdown on the factor's own real
     value axis -- the data behind 카드② (인자별 불량률). Unlike
@@ -145,7 +148,7 @@ def compute_factor_band(
     out_of_control_mask = (x < lower_bound) | (x > upper_bound)
     in_control_mask = ~out_of_control_mask
 
-    recommendation = compute_factor_recommendation(train_df, factor, control_range)
+    recommendation = compute_factor_recommendation(train_df, factor, control_range, dataset_id=dataset_id)
     if recommendation is not None:
         in_recommended_mask = in_control_mask & x.between(recommendation.recommended_lo, recommendation.recommended_hi)
         out_of_recommended_mask = in_control_mask & ~in_recommended_mask

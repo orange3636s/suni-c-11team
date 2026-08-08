@@ -118,7 +118,7 @@ def _warning_reference_lines(
 
 
 def _resolve_optimal_center(
-    train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange
+    train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange, *, dataset_id: str
 ) -> tuple[float | None, str | None]:
     """Validates the already-classified optimal_center (shape.py, itself
     now bin-mean-based -- see quantile_profile.py) against the train-side
@@ -131,7 +131,7 @@ def _resolve_optimal_center(
     """
     if factor.optimal_center is None:
         return None, None
-    window = compute_factor_recommendation(train_df, factor, control_range)
+    window = compute_factor_recommendation(train_df, factor, control_range, dataset_id=dataset_id)
     if window is None:
         return factor.optimal_center, None
     lo, hi = window.recommended_lo, window.recommended_hi
@@ -145,7 +145,7 @@ def _resolve_optimal_center(
 
 
 def _compute_methods(
-    train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange
+    train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange, *, dataset_id: str
 ) -> dict[str, Any] | None:
     """SPC/ML comparison for the 방식 토글 (spec §3) -- train-derived, same
     x/y pair `compute_control_range`/`compute_factor_recommendation` use.
@@ -160,7 +160,7 @@ def _compute_methods(
         return None
     comparison = compare_methods(
         x[valid], y[valid], control_range.lower, control_range.upper,
-        cache_key=(id(train_df), factor.feature, factor.target),
+        cache_key=(dataset_id, factor.feature, factor.target),
     )
     return {
         "spc": comparison.spc.as_dict() if comparison.spc is not None else None,
@@ -195,6 +195,7 @@ def build_scatter_data(
     eval_df: pd.DataFrame,
     factor: ParetoFactor,
     *,
+    dataset_id: str,
     reference_model: "HistGradientBoostingRegressor | None" = None,
     gbdt_features: list[str] | None = None,
 ) -> ScatterData:
@@ -206,8 +207,10 @@ def build_scatter_data(
     "outside count" (pass the same frame for both to inspect train itself).
     """
     control_range = compute_control_range(train_df, factor)
-    optimal_center, optimal_center_dropped_reason = _resolve_optimal_center(train_df, factor, control_range)
-    methods = _compute_methods(train_df, factor, control_range)
+    optimal_center, optimal_center_dropped_reason = _resolve_optimal_center(
+        train_df, factor, control_range, dataset_id=dataset_id
+    )
+    methods = _compute_methods(train_df, factor, control_range, dataset_id=dataset_id)
 
     config_column = _config_column_for(factor.feature, eval_df)
     frame = pd.DataFrame(

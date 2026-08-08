@@ -54,7 +54,7 @@ def test_get_latest_empty(isolated_settings: SimpleNamespace) -> None:
 
 def test_save_and_restore_training(isolated_settings: SimpleNamespace) -> None:
     response = state_routes.save_training_state(TrainingStateSaveRequest(dataset="train", payload={"performance": {"model_id": "m1"}}), _fake_request())
-    assert response == {"saved": True}
+    assert response == {"saved": True, "schedule_applied": True}
 
     result = state_routes.get_latest()
     assert result["training"] is not None
@@ -62,6 +62,29 @@ def test_save_and_restore_training(isolated_settings: SimpleNamespace) -> None:
     assert result["training"]["payload"] == {"performance": {"model_id": "m1"}}
     assert result["analysis"] is None
     assert result["alarms"] is None
+
+
+def test_save_training_reports_schedule_apply_failure(isolated_settings: SimpleNamespace) -> None:
+    """H-3⑤: 스케줄러 reschedule/pause가 예외를 던지면 상태 저장 자체는
+    성공해도 `schedule_applied: False`로 알려야 한다 -- `saved: true`만
+    보면 프런트가 새 주기가 적용된 줄 착각한다."""
+
+    class _FailingScheduler:
+        def reschedule_job(self, *args, **kwargs):
+            raise RuntimeError("scheduler unavailable")
+
+        def resume_job(self, *args, **kwargs):
+            pass
+
+        def pause_job(self, *args, **kwargs):
+            pass
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(scheduler=_FailingScheduler())))
+    response = state_routes.save_training_state(
+        TrainingStateSaveRequest(dataset="train", payload={"performance": {"model_id": "m1"}, "refreshIntervalMinutes": 30}),
+        request,
+    )
+    assert response == {"saved": True, "schedule_applied": False}
 
 
 def test_save_and_restore_analysis(isolated_settings: SimpleNamespace) -> None:

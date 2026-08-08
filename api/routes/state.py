@@ -13,6 +13,7 @@ from api.schemas.state import (
     LatestStateResponse,
     StateSaveResponse,
     TrainingStateSaveRequest,
+    TrainingStateSaveResponse,
 )
 from api.settings import settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID
@@ -97,29 +98,34 @@ def get_latest() -> dict[str, Any]:
     return {**state, "notifications": notifications, "dataset_fallback_applied": dataset_fallback_applied, "degraded": degraded}
 
 
-def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> None:
+def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> bool:
     """자동 수집 파이프라인 §1-2: 팝업에서 주기를 바꾸면 서버 재시작
     없이 다음 실행 간격에 반영한다. `null`이면 잡을 일시정지한다.
-    스케줄러가 아직 뜨지 않은 상태(테스트 등)에서도 조용히 넘어간다.
+    스케줄러가 아직 뜨지 않은 상태(테스트 등)에서도 조용히 넘어간다
+    (그 경우는 반영 "실패"가 아니라 애초에 반영 대상이 없는 것이므로
+    True를 반환한다). H-3⑤: 실제 reschedule/pause 호출이 예외를 던지면
+    False를 반환해 호출부가 응답에 반영 실패를 실어 보낼 수 있게 한다.
     """
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler is None:
-        return
+        return True
     try:
         if isinstance(refresh_interval_minutes, (int, float)) and refresh_interval_minutes > 0:
             scheduler.reschedule_job(AUTO_INGEST_JOB_ID, trigger=IntervalTrigger(minutes=refresh_interval_minutes))
             scheduler.resume_job(AUTO_INGEST_JOB_ID)
         else:
             scheduler.pause_job(AUTO_INGEST_JOB_ID)
+        return True
     except Exception:
         logger.exception("자동 수집 주기 반영 실패")
+        return False
 
 
-@router.post("/training", response_model=StateSaveResponse)
+@router.post("/training", response_model=TrainingStateSaveResponse)
 def save_training_state(body: TrainingStateSaveRequest, request: Request) -> dict[str, bool]:
     saved = save_state(_store(), "training", dataset={"dataset": body.dataset}, payload=body.payload)
-    _apply_ingest_schedule(request, body.payload.get("refreshIntervalMinutes"))
-    return {"saved": saved}
+    schedule_applied = _apply_ingest_schedule(request, body.payload.get("refreshIntervalMinutes"))
+    return {"saved": saved, "schedule_applied": schedule_applied}
 
 
 @router.post("/analysis", response_model=StateSaveResponse)

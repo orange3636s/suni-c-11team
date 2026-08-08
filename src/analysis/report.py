@@ -294,7 +294,7 @@ def build_analysis_report(
                 "control_range": control_range,
                 "band_stability": band_stability(pd.to_numeric(train_df[factor.feature], errors="coerce")),
                 "band_width": None if one_sided else control_range.band_width,
-                "window": compute_factor_recommendation(train_df, factor, control_range),
+                "window": compute_factor_recommendation(train_df, factor, control_range, dataset_id=train_dataset_id),
                 "config_col": config_col,
                 "chamber_p": chamber_p,
             }

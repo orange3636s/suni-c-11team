@@ -10,6 +10,7 @@ MarkdownV2, 메일은 HTML로 각각 포맷한다. 세 플랫폼을 하나의 �
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import smtplib
@@ -201,24 +202,30 @@ def send_telegram_alarm(bot_token: str, chat_id: str, payload: AlarmNotification
 
 
 def build_email_html(payload: AlarmNotificationPayload) -> str:
+    # H-3④: dataset_label은 사용자가 올린 CSV 원본 파일명이라 그대로
+    # HTML에 꽂으면 <script>같은 태그를 주입할 수 있다 -- 여기서 만드는
+    # 모든 동적 문자열에 이스케이프를 적용한다(다른 채널은 이미
+    # Markdown/MarkdownV2 이스케이프가 있었는데 이 함수만 빠져 있었다).
     rows = "".join(
-        f"<tr><td style='padding:6px 10px;font-weight:600'>{title}</td></tr>"
-        f"<tr><td style='padding:0 10px 10px;color:#555;font-size:13px'>{reason}</td></tr>"
+        f"<tr><td style='padding:6px 10px;font-weight:600'>{html.escape(title)}</td></tr>"
+        f"<tr><td style='padding:0 10px 10px;color:#555;font-size:13px'>{html.escape(reason)}</td></tr>"
         for title, reason in _item_lines(payload)
     )
     remainder = _remainder_note(payload)
-    remainder_html = f"<p style='color:#888;font-size:12px'>{remainder}</p>" if remainder else ""
+    remainder_html = f"<p style='color:#888;font-size:12px'>{html.escape(remainder)}</p>" if remainder else ""
     dashboard_html = (
-        f"<p><a href='{payload.dashboard_url}'>대시보드에서 확인 →</a></p>" if payload.dashboard_url else ""
+        f"<p><a href='{html.escape(payload.dashboard_url)}'>대시보드에서 확인 →</a></p>"
+        if payload.dashboard_url
+        else ""
     )
     return f"""
     <div style="font-family:sans-serif;max-width:520px">
       <h2 style="margin:0 0 4px">[SUNI] 알람 {payload.total}건 발생</h2>
-      <p style="color:#555;margin:0 0 12px">데이터셋 {payload.dataset_label} &middot; {payload.timestamp_label}</p>
-      <p style="font-weight:600">{_grade_counts_line(payload.grade_counts)}</p>
+      <p style="color:#555;margin:0 0 12px">데이터셋 {html.escape(payload.dataset_label)} &middot; {html.escape(payload.timestamp_label)}</p>
+      <p style="font-weight:600">{html.escape(_grade_counts_line(payload.grade_counts))}</p>
       <table style="border-collapse:collapse;width:100%">{rows}</table>
       {remainder_html}
-      <p style="margin-top:16px">분석 신뢰도 {payload.reliability_grade} ({payload.reliability_score}점)</p>
+      <p style="margin-top:16px">분석 신뢰도 {html.escape(payload.reliability_grade)} ({payload.reliability_score}점)</p>
       {dashboard_html}
     </div>
     """

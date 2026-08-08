@@ -127,7 +127,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
 
     reference_model = _cached_reference_model(dataset)
     gbdt_features = alarm_gbdt.feature_columns(schema)
-    data = build_scatter_data(df, df, factor, reference_model=reference_model, gbdt_features=gbdt_features)
+    data = build_scatter_data(df, df, factor, dataset_id=dataset, reference_model=reference_model, gbdt_features=gbdt_features)
     # Only the bulky per-point/per-bin arrays are rounded -- they're what
     # actually drives payload size (108KB for 1,470 points); scalar stats
     # (p_value/q_value/eps2) keep full precision since a very small
@@ -843,12 +843,13 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     if not show_full_card:
         summary = compute_measurement_expansion(
             train_df, eval_df, {}, {}, {}, classify_measured_bands(
-                train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, [], []
+                train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, [], [], dataset_id=dataset
             ), [], total_wafers=total_wafers,
         )
     else:
         bands = classify_measured_bands(
-            train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, judgment_factors, control_ranges
+            train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, judgment_factors, control_ranges,
+            dataset_id=dataset,
         )
 
         # B-3 인자별 우선순위 표는 스펙 예시("Step1_D1 -> Y3")대로 타깃당
@@ -864,7 +865,7 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
         factor_summaries: dict[str, FactorRecommendation] = {}
         for target, factor in primary_factors.items():
             control_range = compute_control_range(train_df, factor)
-            factor_summary = compute_factor_recommendation(train_df, factor, control_range)
+            factor_summary = compute_factor_recommendation(train_df, factor, control_range, dataset_id=dataset)
             if factor_summary is not None:
                 factor_summaries[target] = factor_summary
 

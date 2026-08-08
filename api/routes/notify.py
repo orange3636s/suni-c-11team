@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -256,3 +257,20 @@ def run_daily_dispatch_job() -> None:
         )
     except Exception:
         logger.exception("일일 알림 발송 잡 실행 실패")
+
+
+# H-3②: notify_sent_log는 24시간 재발송 방지 조회에만 쓰이므로 그보다 훨씬
+# 오래된 행은 볼 일이 없다 -- 지우지 않으면 무한히 커진다. 발송 잡과
+# 겹치지 않도록 별도 스케줄 id로 등록한다(api/main.py).
+NOTIFY_LOG_RETENTION_DAYS = 30
+
+
+def run_notify_log_cleanup_job() -> None:
+    """APScheduler가 주기적으로 호출해 오래된 notify_sent_log 행을 지운다."""
+    store = _store()
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=NOTIFY_LOG_RETENTION_DAYS)).isoformat()
+        deleted = store.purge_old_notification_log(older_than_iso=cutoff)
+        logger.info("notify_sent_log 정리: %d건 삭제 (%d일 이전)", deleted, NOTIFY_LOG_RETENTION_DAYS)
+    except Exception:
+        logger.exception("notify_sent_log 정리 잡 실행 실패")

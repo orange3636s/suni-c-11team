@@ -74,6 +74,8 @@ def compute_factor_recommendation(
     train_df: pd.DataFrame,
     factor: ParetoFactor,
     control_range: ControlRange,
+    *,
+    dataset_id: str,
 ) -> FactorRecommendation | None:
     """None when the factor has no usable train-side x/y pair (e.g. a
     Config/categorical factor -- 권장 구간 only applies to numeric
@@ -89,7 +91,7 @@ def compute_factor_recommendation(
 
     methods = compare_methods(
         x, y, control_range.lower, control_range.upper,
-        cache_key=(id(train_df), factor.feature, factor.target),
+        cache_key=(dataset_id, factor.feature, factor.target),
     )
     winner = methods.ml if methods.adopted == "ml" else methods.spc
     if winner is None:

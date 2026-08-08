@@ -328,6 +328,12 @@ class DatasetRegistry:
         if path.is_file():
             path.unlink()
         self.store.delete_dataset(dataset_id)
+        # H-3③: `_read_uploaded_csv`는 파일 경로로 lru_cache된다 -- 삭제
+        # 후 같은 stored_path로 새 파일이 올라오면(업로드 파일명이 겹치는
+        # 경우) 캐시가 옛 DataFrame을 계속 돌려준다. `lru_cache`는 키
+        # 하나만 지우는 API가 없으므로 전체를 비운다 (업로드 캐시는
+        # 최대 8개뿐이라 비용이 작다).
+        _read_uploaded_csv.cache_clear()
         # A deleted dataset's saved 학습/원인 분석/사전 알람 results would
         # otherwise keep pointing a selector at data that no longer exists
         # (spec §3-5) -- best-effort, deletion itself already succeeded above.

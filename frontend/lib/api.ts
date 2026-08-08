@@ -400,7 +400,13 @@ export function getLatestState(): Promise<LatestStateResponse> {
 // failure must never surface as an analysis/training failure) -- these
 // still return a Promise so a caller that wants to log a failure can,
 // but every call site here is expected to `.catch(() => {})`.
-export function saveTrainingState(dataset: string, payload: LatestTrainingPayload): Promise<{ saved: boolean }> {
+// H-3⑤: `schedule_applied`가 false면 상태 저장은 됐지만 자동 수집 주기
+// 반영(스케줄러 reschedule/pause)은 실패한 것 -- 호출부가 구분해서
+// 안내할 수 있게 응답에 그대로 실어 보낸다.
+export function saveTrainingState(
+  dataset: string,
+  payload: LatestTrainingPayload,
+): Promise<{ saved: boolean; schedule_applied: boolean }> {
   return postJson("/api/state/training", { dataset, payload }, 15_000);
 }
 

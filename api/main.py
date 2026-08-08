@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import Any, Coroutine
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -21,7 +22,7 @@ from api.routes.chat import router as chat_router
 from api.routes.datasets import get_dataset_registry, router as datasets_router
 from api.routes.favorites import router as favorites_router
 from api.routes.monitoring import router as monitoring_router
-from api.routes.notify import router as notify_router, run_daily_dispatch_job
+from api.routes.notify import router as notify_router, run_daily_dispatch_job, run_notify_log_cleanup_job
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID, DEFAULT_INGEST_MINUTES, run_auto_ingest_job
@@ -64,6 +65,21 @@ if (
         "origins are allowed."
     )
 
+# H-3①: `asyncio.create_task(...)`의 반환값을 아무 데도 보관하지 않으면
+# 그 Task 객체를 참조하는 것이 이벤트 루프의 내부 약한 참조뿐이라, GC가
+# 도중에 태스크를 수거해 조용히 중단시킬 수 있다(asyncio 공식 문서가
+# 명시적으로 경고하는 함정). 모듈 레벨 집합에 강한 참조를 들고 있다가
+# 완료되면 콜백에서 스스로 빼도록 한다.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
 def _warm_bundled_dataset_cache() -> None:
     """Pre-populates the module-level bundled-CSV cache (see
     src/runtime/datasets.py) so the first real request doesn't pay the
@@ -97,7 +113,7 @@ async def lifespan(app: FastAPI):
         recover_interrupted_training_jobs()
     except Exception:
         logger.exception("중단된 학습 Job 시작 복구 실패")
-    asyncio.create_task(_warmup_datasets_background())
+    _spawn_background_task(_warmup_datasets_background())
     if _is_deployment_environment():
         try:
             results = run_startup_migrations(
@@ -134,6 +150,14 @@ async def lifespan(app: FastAPI):
         run_daily_dispatch_job,
         CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),
         id="daily_alarm_notification",
+        misfire_grace_time=3600,
+    )
+    # H-3②: notify_sent_log 정리 -- 발송 잡과 겹치지 않도록 별도 id·시각으로
+    # 등록한다(같은 id를 쓰면 재등록 시 서로 덮어쓴다).
+    scheduler.add_job(
+        run_notify_log_cleanup_job,
+        CronTrigger(hour=3, minute=0, timezone="Asia/Seoul"),
+        id="notify_sent_log_cleanup",
         misfire_grace_time=3600,
     )
 

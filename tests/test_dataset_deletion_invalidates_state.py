@@ -88,3 +88,31 @@ def test_uploading_a_new_dataset_never_invalidates_existing_state(tmp_path: Path
     record = store.get_app_state("latest_training")
     assert record is not None
     assert record["payload"] == {"kept": True}
+
+
+def test_deleting_dataset_clears_dataframe_cache_for_reused_path(tmp_path: Path) -> None:
+    """H-3③: `get_dataframe`은 파일 경로로 lru_cache된다 -- 삭제 후 같은
+    stored_path에 새 파일이 놓이면(업로드 파일명이 겹치는 경우) 캐시가
+    옛 내용을 계속 돌려주면 안 된다."""
+    registry = _registry(tmp_path)
+    dataset_id = f"upload-{uuid4().hex}"
+    _seed_uploaded_dataset(registry, dataset_id)
+
+    first = registry.get_dataframe(dataset_id)
+    assert first["Y"].iloc[0] == 1
+
+    registry.delete(dataset_id)
+
+    # 같은 stored_path에 다른 내용의 새 데이터셋을 등록한다.
+    stored_path = f"{dataset_id}.csv"
+    (registry.upload_root / stored_path).write_text("Lot_Wafer_ID,Y\nA,999\n", encoding="utf-8")
+    registry.store.create_dataset(
+        dataset_id=dataset_id,
+        original_filename="uploaded.csv",
+        stored_path=stored_path,
+        row_count=1,
+        column_count=2,
+    )
+
+    second = registry.get_dataframe(dataset_id)
+    assert second["Y"].iloc[0] == 999

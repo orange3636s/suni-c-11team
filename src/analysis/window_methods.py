@@ -43,25 +43,23 @@ MIN_ROWS_FOR_ML = 20
 
 # Per-run cache for the 120-fit (60 bootstrap reps x 2 methods) comparison
 # -- spec §2-5: computed once per analysis run, never recomputed just
-# because a scatter chart got reopened. Keyed by (id(train_df), feature,
-# target): `train_df` is itself an lru_cache'd object from
-# src/runtime/datasets.py (same DataFrame instance for the same dataset
-# across the whole process, until the underlying file changes), so
-# object identity is a valid cheap cache key here without needing to
-# hash the actual column values. Bounded + LRU-evicted so a long-running
-# process doesn't grow this unboundedly across dataset reloads/uploads.
+# because a scatter chart got reopened. Keyed by (dataset_id, feature,
+# target) (H-2: not id(train_df) -- see compare_methods' docstring for
+# why object identity is unsafe here). Bounded + LRU-evicted so a
+# long-running process doesn't grow this unboundedly across dataset
+# reloads/uploads.
 _CACHE_MAXSIZE = 256
-_comparison_cache: "OrderedDict[tuple[int, str, str], MethodComparison]" = OrderedDict()
+_comparison_cache: "OrderedDict[tuple[str, str, str], MethodComparison]" = OrderedDict()
 
 
-def _cache_get(key: tuple[int, str, str]) -> "MethodComparison | None":
+def _cache_get(key: tuple[str, str, str]) -> "MethodComparison | None":
     value = _comparison_cache.get(key)
     if value is not None:
         _comparison_cache.move_to_end(key)
     return value
 
 
-def _cache_put(key: tuple[int, str, str], value: "MethodComparison") -> None:
+def _cache_put(key: tuple[str, str, str], value: "MethodComparison") -> None:
     _comparison_cache[key] = value
     _comparison_cache.move_to_end(key)
     while len(_comparison_cache) > _CACHE_MAXSIZE:
@@ -264,7 +262,7 @@ def compare_methods(
     lcl: float | None,
     ucl: float | None,
     *,
-    cache_key: tuple[int, str, str] | None = None,
+    cache_key: tuple[str, str, str] | None = None,
 ) -> MethodComparison:
     """`x`/`y` must already be paired and NA-dropped (same contract as
     the recommendation engine's raw-window helpers); `lcl`/`ucl` are the
@@ -272,10 +270,16 @@ def compare_methods(
     §2-3), `None` on a monotonic factor's non-alarming side.
 
     `cache_key`, when given, memoizes the full comparison (spec §2-5) --
-    pass `(id(train_df), feature, target)` so repeat callers (a reopened
+    pass `(dataset_id, feature, target)` so repeat callers (a reopened
     scatter chart, the alarm/recommendation endpoints all touching the
     same factor within one analysis run) hit the cache instead of
-    rerunning the 120-fit bootstrap.
+    rerunning the 120-fit bootstrap. H-2: this used to be
+    `(id(train_df), feature, target)` -- `id()` is only unique among
+    currently-alive objects, so if `train_df` (itself an lru_cache'd
+    DataFrame, see src/runtime/datasets.py) gets evicted and a later
+    reload for a *different* dataset happens to reuse the same freed
+    memory address, a stale cache entry could silently be returned for
+    the wrong dataset. A string dataset_id has no such collision.
     """
     if cache_key is not None:
         cached = _cache_get(cache_key)

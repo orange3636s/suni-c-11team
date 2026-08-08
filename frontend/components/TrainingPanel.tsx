@@ -159,7 +159,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
           row_count: null,
           feature_count: null,
         };
-      await saveTrainingState(dataset, {
+      const result = await saveTrainingState(dataset, {
         performance,
         sqlHost,
         sqlPort,
@@ -181,7 +181,14 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
               refreshIntervalMinutes,
             },
       );
-      setMessage("설정을 저장했습니다.");
+      // H-3⑤: 저장 자체는 성공했지만 서버의 스케줄러 반영(reschedule/pause)이
+      // 실패하면 다음 자동 수집이 이전 주기로 계속 돈다 -- 조용히 넘기지
+      // 않고 별도 안내로 구분한다.
+      if (!result.schedule_applied) {
+        setError("설정은 저장됐지만 자동 수집 주기 반영에는 실패했습니다. 다시 시도해 주세요.");
+      } else {
+        setMessage("설정을 저장했습니다.");
+      }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "설정을 저장하지 못했습니다.");
     }

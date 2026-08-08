@@ -1229,8 +1229,13 @@ export default function ScatterChart({
   // 드래그 브러시 히트테스트용 렌더 좌표 -- Box 모드는 지터된 화면 위치
   // 기준으로 판정한다(지시서 B: "지터된 점 좌표 기준"), Scatter 모드는
   // 실제 값 좌표. 숨겨진(inlier/outlier 토글 꺼짐) 점은 제외한다.
-  const dragHitPoints: { point: ScatterPoint; screenX: number; screenY: number }[] =
-    view === "box"
+  // H-4: 이 배열(최대 1,470개 점)이 매 렌더(호버 포함)마다 새로 만들어지고
+  // 있었다 -- 실제로 좌표가 바뀔 수 있는 입력이 바뀔 때만 다시 만든다.
+  // catScale은 매 렌더 새로 만들어지는 함수라 그 자체를 deps에 넣으면
+  // 메모가 무력화되므로, 대신 catScale의 실제 값을 좌우하는
+  // plotWidth/catDomain을 deps로 쓴다.
+  const dragHitPoints = useMemo<{ point: ScatterPoint; screenX: number; screenY: number }[]>(() => {
+    return view === "box"
       ? boxBins.flatMap((bin) =>
           bin.members
             .filter((member) => (member.isOutlier ? boxPointsVisible.outlier : boxPointsVisible.inlier))
@@ -1241,6 +1246,8 @@ export default function ScatterChart({
             })),
         )
       : data.points.map((point) => ({ point, screenX: xScale(point.x), screenY: yScale(point.y) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, boxBins, data.points, boxPointsVisible, xScale, yScale, plotWidth, catDomain]);
 
   function toPlotRelative(clientX: number, clientY: number): DragPos | null {
     const rect = svgRef.current?.getBoundingClientRect();
