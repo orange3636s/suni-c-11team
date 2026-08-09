@@ -44,10 +44,13 @@ ALARM_SHARE_WARNING_THRESHOLD = 0.10  # spec §A-2: 평가 대상의 10% 초과 
 
 # 사용자가 아직 목표 수율/민감도를 설정하지 않은 화면(예: 원인 분석 탭의
 # 알람 삼각형 마커, 알림 발송 스케줄러)이 쓰는 기본값 -- 사전 알람 로그
-# 화면 자체의 기본값과 동일하다 (spec §A-1/§A-2: 목표 85.0, 민감도 균형
-# 0.5).
+# 화면 자체의 기본값과 동일하다. AA-4: 민감도 기본값은 "오경보 최소"
+# 프리셋(frontend/app/alerts/page.tsx SENSITIVITY_PRESETS.low_fp)과
+# 반드시 같은 값을 유지한다 -- 프런트 AnalysisStateProvider의
+# DEFAULT_SENSITIVITY도 함께 바꿔야 첫 로딩과 서버 판정 기준이 어긋나지
+# 않는다.
 DEFAULT_TARGET_YIELD = 85.0
-DEFAULT_SENSITIVITY = 0.5
+DEFAULT_SENSITIVITY = 0.2
 
 # 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- 교차 데이터셋 홀드아웃
 # AUC 하한이 이 값 미만이면 알람을 아예 내지 않는다. 통계적으로 도출된

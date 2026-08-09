@@ -12,8 +12,20 @@ import type { PromotionEvent } from "@/types/data";
 // 셋 -- 3줄 읽기전용 정보, SQL/Refresh 입력, 파일 첨부·수동 학습 실행
 // 버튼. 성능 지표·히트맵·전처리 비교 등은 절대 넣지 않는다(원인 분석
 // 탭에 히트맵이 이미 있다).
+// AD그룹: 사이드바 하단 3줄(CHAMPION/SNAPSHOT/SQL 연결 여부)을 여기로
+// 옮겼다 -- 헤더에 이미 SOURCE 항목(연결 상태)이 있어(Header.tsx의
+// .headerContextSource) 사이드바에 점을 새로 만들지 않고 세 줄만
+// 제거했다(중복 방지). "다음 갱신"은 스냅샷이 저장하지 않으므로
+// created_at + refreshIntervalMinutes로 계산한다.
+function formatNextRefresh(createdAtIso: string | null | undefined, refreshIntervalMinutes: number | null | undefined): string | null {
+  if (!createdAtIso || !refreshIntervalMinutes) return null;
+  const created = new Date(createdAtIso);
+  if (Number.isNaN(created.getTime())) return null;
+  return formatLastRun(new Date(created.getTime() + refreshIntervalMinutes * 60_000).toISOString());
+}
+
 export default function TrainingPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { training, setTraining } = useAnalysisState();
+  const { training, setTraining, snapshot } = useAnalysisState();
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, open);
   const [sqlHost, setSqlHost] = useState(training?.sqlHost ?? "");
@@ -234,6 +246,19 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
             <h3>현재 모델</h3>
             <dl className="trainingInfoList">
               <div>
+                <dt>자동화</dt>
+                <dd>
+                  {snapshot ? (
+                    <span className={`trainingAutomationStatus${snapshot.source.mode === "sql" ? "" : " offline"}`}>
+                      <span className="sidebarStatusDot" aria-hidden="true" />
+                      {snapshot.source.mode === "sql" ? "연결됨 · SQL" : "데모 데이터 · SQL 미연결"}
+                    </span>
+                  ) : (
+                    "-"
+                  )}
+                </dd>
+              </div>
+              <div>
                 <dt>최근 학습</dt>
                 <dd>{formatLastRun(performance?.trained_at)}</dd>
               </div>
@@ -247,6 +272,21 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
                   {performance?.row_count != null && performance?.feature_count != null
                     ? `${performance.row_count.toLocaleString()} 행 × ${performance.feature_count.toLocaleString()} 열`
                     : "-"}
+                </dd>
+              </div>
+              <div>
+                <dt>챔피언</dt>
+                <dd className="trainingChampionId" title={snapshot?.model.champion_version ?? undefined}>
+                  {snapshot?.model.champion_version ?? "-"}
+                </dd>
+              </div>
+              <div>
+                <dt>스냅샷</dt>
+                <dd>
+                  {snapshot?.created_at ? formatLastRun(snapshot.created_at) : "-"}
+                  {formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes) && (
+                    <> · 다음 갱신 {formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes)}</>
+                  )}
                 </dd>
               </div>
             </dl>

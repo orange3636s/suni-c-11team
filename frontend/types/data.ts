@@ -605,6 +605,9 @@ export type BootstrapStatus = {
 export type SnapshotMetaResponse = {
   created_at: string | null;
   bootstrap: BootstrapStatus | null;
+  // AF: 주기 잡이든 수동 최신화 버튼이든, 자동 갱신 파이프라인이 지금
+  // 실행 중이면 true -- 모니터링의 "최신화" 버튼이 이 값으로 disabled.
+  refresh_running: boolean;
 };
 
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------

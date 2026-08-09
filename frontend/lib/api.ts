@@ -410,6 +410,13 @@ export function getSnapshot(): Promise<SnapshotResponse> {
   return getJson("/api/state/snapshot", 15_000);
 }
 
+// AF: 모니터링의 "최신화" 버튼 -- 주기 잡과 같은 파이프라인을 백그라운드로
+// 1회 실행한다(응답은 즉시 온다, 완료는 getSnapshotMeta 폴링이 감지).
+// 이미 실행 중이면 409(ApiResponseError.status === 409).
+export function triggerRefresh(): Promise<{ triggered: boolean }> {
+  return postJson("/api/state/refresh", {}, 10_000);
+}
+
 // Fire-and-forget from the caller's point of view (spec §3-2: a save
 // failure must never surface as an analysis/training failure) -- these
 // still return a Promise so a caller that wants to log a failure can,

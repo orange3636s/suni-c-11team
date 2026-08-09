@@ -5748,7 +5748,9 @@ html[data-theme="dark"] .button.secondary:hover:not(:disabled){
 @media (max-width: 1023px) {
   .sidebar{
     border-bottom-color: rgba(255, 255, 255, 0.14);
-    background: #0e306d;
+    /* AE그룹: 768~1023px 구간(≤767px는 위 6296행 규칙이 이김)도 같은
+       --ink로 맞춘다. */
+    background: var(--ink);
   }
 
   .brand{
@@ -6303,7 +6305,12 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
     overflow: visible;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 22px;
-    background: rgba(14, 48, 109, 0.93);
+    /* AE그룹: 데스크톱 사이드바의 실제 보이는 색은 .sidebarSurface가 얹는
+       var(--ink)다(.sidebar 자체 배경은 그 안에 가려진다) -- 모바일에서
+       사이드바가 상단바로 펼쳐지면 이 바깥 배경이 그대로 노출되는데
+       예전 브랜드 남색(rgba(14,48,109,.93))이 남아 있어 데스크톱과
+       색이 달라 보였다. 같은 --ink로 통일한다. */
+    background: var(--ink);
     box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
   }
 
@@ -8619,27 +8626,10 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 }
 .paretoRunStage{ font-size: var(--fs-sm); color: var(--text-secondary); }
 
-/* Confidence-tier badge -- same four tiers everywhere a factor is named
-   (Pareto bars/legend, scatter/box-plot card headers, heatmap tooltip,
-   training-tab factor table): strong=filled, moderate=outline,
-   weak=pale fill, reference=hatched. FDR (q<0.05) still gates the alarm
-   engine; this badge is the p-value-based tier shown on screen instead
-   of a hard significance gate. */
-.confidenceBadge{
-  display: inline-flex; align-items: center; margin-left: 8px; padding: 2px 9px;
-  border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; vertical-align: middle;
-  line-height: 1.6;
-}
-.confidenceBadge.tier-strong{ background: var(--accent); color: #fff; }
-.confidenceBadge.tier-moderate{ background: transparent; border: 1.5px solid var(--accent); color: var(--accent); }
-.confidenceBadge.tier-weak{ background: var(--accent-soft); color: var(--accent); }
-.confidenceBadge.tier-reference{
-  border: 1px solid var(--border-card, var(--border)); color: var(--text-secondary);
-  background-image: repeating-linear-gradient(45deg, var(--border-card, var(--border)) 0 4px, transparent 4px 8px);
-}
-/* Same component/size/radius as the tier badges, green instead (spec §1-5). */
-.confidenceBadge.adopted{ background: #059669; color: #fff; }
-html[data-theme="dark"] .confidenceBadge.adopted{ background: #34D399; color: #052e1f; }
+/* AB그룹: 이 블록 전체가 아래 10776행 .confidenceBadge 블록에 property별로
+   완전히 가려져 있던 죽은 규칙이었다(같은 명시성, 소스 순서상 후자가
+   항상 이김) -- 실제로 반영되는 쪽은 10776행이라 강함/보통 강조는
+   거기서만 고치면 된다. 혼동을 막기 위해 죽은 사본을 지운다. */
 
 /* 모델 학습 -- 요약바 + 통합 테이블 (spec §1). Horizontal padding matches
    every other card (--card-pad-x, defined below) so stacked cards line
@@ -9791,7 +9781,10 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   margin: 12px 16px;
   padding: 8px;
   border-radius: var(--radius-panel);
-  background: var(--brand-navy, #0e306d);
+  /* AE그룹: 주석은 "same background var as .sidebarSurface"라 써놓고
+     실제로는 다른 값(brand-navy)을 쓰고 있었다 -- .sidebarSurface가
+     실제로 쓰는 --ink로 맞춘다. */
+  background: var(--ink);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
 .mobileTabBarScroll{
@@ -9824,8 +9817,14 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   text-decoration: none;
   transition: background-color 140ms ease, color 140ms ease;
 }
-.mobileTab[aria-selected="true"]{ background: #FFFFFF; color: var(--brand-navy, #0e306d); }
-.mobileTab[aria-selected="false"]{ background: transparent; color: rgba(255, 255, 255, 0.72); }
+/* AE그룹: MobileTabBar.tsx는 aria-selected가 아니라 aria-current="page"를
+   쓴다 -- 이 규칙이 [aria-selected]를 짚고 있어 실제로는 한 번도
+   매치되지 않았고(활성 탭 표시가 아예 동작하지 않았다), 매치됐더라도
+   채워진 흰 pill이라 데스크톱(왼쪽 2px 인디케이터, 투명 배경)과
+   형태가 달랐다. 데스크톱과 같은 방식 -- 투명 배경 + 인디케이터 선(가로
+   탭이므로 아래쪽) -- 으로 맞춘다. */
+.mobileTab[aria-current="page"]{ background: transparent; color: #fff; box-shadow: inset 0 -2px 0 #fff; }
+.mobileTab:not([aria-current="page"]){ background: transparent; color: rgba(255, 255, 255, 0.72); }
 .mobileTabStatusDot{
   width: 4px; height: 4px; border-radius: 50%;
   background: #34C759; flex: 0 0 auto;
@@ -10449,6 +10448,11 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
    헤더 컨텍스트 스트립과 같은 소형 대문자 스타일로. */
 .trainingInfoList dt{ font: 500 10px var(--font-data); letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
 .trainingInfoList dd{ margin: 0; font: 600 13px var(--font-data); font-variant-numeric: tabular-nums; text-align: right; color: var(--text-primary); }
+/* AD그룹: 자동화 상태(연결 점 + 라벨) / 챔피언 ID(길면 말줄임 + 툴팁 전체
+   표시, title 속성으로). */
+.trainingAutomationStatus{ display: inline-flex; align-items: center; gap: 6px; }
+.trainingAutomationStatus.offline .sidebarStatusDot{ background: var(--text-muted); }
+.trainingChampionId{ max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
 .trainingSqlRow{ display: flex; gap: 10px; margin-bottom: 10px; }
 .trainingSqlRow .notifyFieldLabel{ flex: 1 1 auto; }
 .trainingSqlRow .trainingPortField{ flex: 0 0 110px; }
@@ -10623,6 +10627,12 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   .monitoringTreemap{ height: 420px; }
 }
 
+/* AF그룹: "최신화" 버튼 -- 페이지 제목과 같은 줄, 우측 정렬. .button.secondary
+   (테두리)를 그대로 쓴다 -- 채워진 primary로 만들지 않는다(모니터링은
+   읽기 전용이 원칙, 이 버튼은 자동 갱신을 기다리지 않을 때의 보조 수단). */
+.monitoringHeadingRow{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.monitoringRefreshButton{ flex: 0 0 auto; }
+
 /* -- 모니터링 홈 §4①/②: SUMMARY 소제목 · 액션 3분류 리스트 · 랏 큐 표.
    컨테이너/표/버튼은 .resultCard/.tableWrap/.button을 그대로 쓰고, 이
    페이지에만 있는 두 요소(소제목, 액션 리스트 행)만 새로 정의한다. */
@@ -10787,15 +10797,15 @@ html[data-theme="dark"] .evidenceBandBoundary{ border-left-color: var(--text-pri
   vertical-align: middle;
   line-height: 1.6;
 }
-/* N-4: 위 8587/8589행의 옛 채워진 배경(파랑/연파랑)이 background만 남고
-   지워지지 않아, 이 블록이 바꾼 어두운 글자색과 겹쳐 라이트 모드에서
-   "강함" 글자가 거의 안 보이던 버그 -- background를 명시적으로
-   투명화해서 끝낸다. */
-.confidenceBadge.tier-strong{ background: transparent; border-color: var(--text-secondary); color: var(--text-primary); }
-.confidenceBadge.tier-moderate{ background: transparent; border-color: var(--line); color: var(--text-secondary); }
-.confidenceBadge.tier-weak{ background: transparent; border-color: var(--line-soft); color: var(--text-muted); }
+/* AB그룹: "정상은 무채색" 규율의 의도적 예외 -- 근거 있는 인자(강함·보통)를
+   빠르게 찾는 것이 이 배지의 목적이라 그 둘만 신호색을 쓴다. 배경은
+   채우지 않는다(테두리+글자만) -- 알람 등급 배지(채워진 pill)와 형태로
+   구분되어야 혼동이 없다. 예외를 상관성 4단계 밖으로 넓히지 않는다. */
+.confidenceBadge.tier-strong{ background: transparent; border-color: var(--sig-red); color: var(--sig-red); }
+.confidenceBadge.tier-moderate{ background: transparent; border-color: var(--sig-amber); color: var(--sig-amber); }
+.confidenceBadge.tier-weak{ background: transparent; border-color: var(--line); color: var(--text-secondary); }
 .confidenceBadge.tier-reference{
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   color: var(--text-muted);
   background-image: repeating-linear-gradient(45deg, var(--line-soft) 0 4px, transparent 4px 8px);
 }
@@ -10988,33 +10998,12 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   box-shadow: inset 2px 0 0 #fff;
 }
 .sidebar .railNavItem.active{ background: transparent; box-shadow: inset 2px 0 0 #fff; }
-.sidebarStatus{
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 0 2px 10px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, .12);
-  border-radius: var(--radius-panel);
-  font-family: var(--font-data);
-  font-size: var(--fs-micro);
-  letter-spacing: .04em;
-  color: rgba(255, 255, 255, .56);
-}
-.sidebarStatusRow{ display: flex; align-items: center; gap: 6px; text-transform: uppercase; }
+/* AD그룹: .sidebarStatus/.sidebarStatusRow와 접힘 상태 규칙은 죽었다
+   (Sidebar.tsx의 CHAMPION/SNAPSHOT/SQL 세 줄 블록을 제거하면서 유일한
+   사용처가 사라졌다 -- 정보는 TrainingPanel.tsx로 옮겼다). .sidebarStatusDot은
+   TrainingPanel의 "자동화" 행이 그대로 재사용하므로 남긴다. */
 .sidebarStatusDot{
   width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
   background: var(--sig-green);
 }
 .sidebarStatusDot.offline{ background: var(--text-muted); }
-/* 모바일 반응형 패치 S-1: 접힘(rail) 상태에서는 CHAMPION/SNAPSHOT 행을
-   숨기고 연결 점만 남긴다 -- 예전처럼 블록 전체를 display:none하지
-   않는다(정보를 완전히 지우면 접힘 상태에서 확인할 방법이 없어진다).
-   숨겨진 정보는 Sidebar.tsx가 .sidebarStatus의 title 툴팁으로 합쳐
-   올려둔다. */
-.sidebar.collapsed .sidebarStatus{
-  align-items: center; padding: 8px 4px; gap: 0; cursor: default;
-}
-.sidebar.collapsed .sidebarStatusDetail{ display: none; }
-.sidebar.collapsed .sidebarStatusConnection{ gap: 0; }
-.sidebar.collapsed .sidebarStatusConnectionLabel{ display: none; }

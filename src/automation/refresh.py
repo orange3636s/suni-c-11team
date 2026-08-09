@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -39,6 +40,22 @@ FALLBACK_EVAL_DATASET = "test"
 DATA_HASH_STATE_KEY = "automation:last_train_hash"
 TARGETS = ("Y1", "Y2", "Y3", "Y4", "Y5")
 
+# AF/AG: 주기 잡(APScheduler)과 수동 최신화 버튼·업로드 연동이 전부 이
+# 함수 하나를 호출한다 -- 두 경로가 동시에 들어와도 파이프라인이 두 번
+# 돌지 않도록 진입점 자체를 non-blocking 락으로 감싼다.
+# operation_coordinator(training 전용, 이 함수 안에서 재학습 시 다시
+# 잡는다)를 여기서 같이 쓰면 "이미 analysis를 잡은 채로 training을
+# 잡으려는" 자기 자신과의 교착을 만들기 때문에 별도의 단순 락을 쓴다.
+_refresh_lock = threading.Lock()
+
+
+def is_refresh_running() -> bool:
+    """AF: 최신화 버튼이 disabled 여부·툴팁을 결정하는 데 쓴다."""
+    acquired = _refresh_lock.acquire(blocking=False)
+    if acquired:
+        _refresh_lock.release()
+    return not acquired
+
 
 def _runtime_store() -> RuntimeStore:
     return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
@@ -58,13 +75,19 @@ class _RetryLater(Exception):
 
 
 def run_refresh_pipeline() -> None:
-    store = _runtime_store()
+    if not _refresh_lock.acquire(blocking=False):
+        logger.info("auto_refresh: 이미 다른 실행이 진행 중이라 이번 호출은 건너뜁니다.")
+        return
     try:
-        _run_refresh_pipeline_inner(store)
-    except Exception:
-        # 개별 단계는 각자 try/except하지만, 예상하지 못한 예외가 여기까지
-        # 올라오면 스케줄러 자체가 죽지 않도록 마지막 방어선에서 삼킨다.
-        logger.exception("auto_refresh: 파이프라인 실행 중 예기치 않은 오류")
+        store = _runtime_store()
+        try:
+            _run_refresh_pipeline_inner(store)
+        except Exception:
+            # 개별 단계는 각자 try/except하지만, 예상하지 못한 예외가 여기까지
+            # 올라오면 스케줄러 자체가 죽지 않도록 마지막 방어선에서 삼킨다.
+            logger.exception("auto_refresh: 파이프라인 실행 중 예기치 않은 오류")
+    finally:
+        _refresh_lock.release()
 
 
 def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:

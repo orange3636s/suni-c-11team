@@ -213,7 +213,10 @@ function AlertsContent() {
   const [evalDataset, setEvalDataset] = useState("test");
   const [targetYield, setTargetYield] = useState(DEFAULT_TARGET_YIELD);
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY);
-  const [activePreset, setActivePreset] = useState<PresetKey | null>("balanced");
+  // AA-4: DEFAULT_SENSITIVITY(0.2)가 "오경보 최소" 프리셋과 같은 값이라
+  // 첫 로딩 시 그 프리셋이 선택된 상태로 보여야 한다 -- 기본값과
+  // 어느 프리셋도 활성이 아닌 상태로 어긋나면 안 된다.
+  const [activePreset, setActivePreset] = useState<PresetKey | null>("low_fp");
   const [gradeFilter, setGradeFilter] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -397,7 +400,7 @@ function AlertsContent() {
         <div className="alertsQueryGrid">
           <div className="alertsQueryRow1">
             <div className="alertsDatasetBlock">
-              <DatasetSelector label="판정 대상 (eval)" value={evalDataset} onChange={setEvalDataset} />
+              <DatasetSelector label="예측 대상" value={evalDataset} onChange={setEvalDataset} />
               <p className="sectionCaption alertsDatasetCaption">정상범위 기준: {trainDatasetLabel}</p>
             </div>
             <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
@@ -851,7 +854,7 @@ function FiveClassGrid({
         })}
       </div>
       <p className="sectionCaption alertsClassGridFoot">
-        판별불가는 예측 구간이 목표 수율을 가로질러 판단을 유보한 wafer입니다.
+        판별불가는 계측이 없거나 예측 구간이 넓어 판정을 보류한 wafer입니다.
       </p>
       {!gatePassed && (
         <p className="alertsGateNote">

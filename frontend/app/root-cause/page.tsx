@@ -821,7 +821,7 @@ function RootCauseContent() {
 
       <section className="uploadCard">
         <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr)" }}>
-          <DatasetSelector label="분석 데이터셋" value={datasetId} onChange={setDatasetId} />
+          <DatasetSelector label="분석 대상" value={datasetId} onChange={setDatasetId} />
         </div>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
       </section>

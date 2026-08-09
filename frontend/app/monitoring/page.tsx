@@ -10,6 +10,7 @@ import EvidenceBand from "@/components/EvidenceBand";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
+import { ApiResponseError, triggerRefresh } from "@/lib/api";
 import {
   buildMonitoringSnapshot,
   getMeasurementQueue,
@@ -99,7 +100,31 @@ export default function MonitoringPage() {
   // 일어났으면) 재조회하지 않고 캐시를 그대로 쓴다. 캐시는
   // AnalysisStateProvider에 있어 탭을 옮겼다 돌아와도(페이지 언마운트)
   // 살아남는다 -- 하드 새로고침(조건 ③)만 이 컨텍스트 자체를 초기화한다.
-  const { hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome } = useAnalysisState();
+  const { hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome, refreshRunning } = useAnalysisState();
+  // AF그룹: 모니터링은 읽기 전용이 원칙이므로 이 버튼은 자동 갱신을
+  // 기다리지 않을 때의 보조 수단이다 -- 채워진 primary가 아니라 테두리
+  // 버튼으로 둔다. 클릭은 주기 잡과 같은 파이프라인(POST /api/state/refresh
+  // -> run_refresh_pipeline)을 1회 실행할 뿐, 이 화면이 직접 무언가를
+  // 계산하지 않는다.
+  const [manualRefreshPending, setManualRefreshPending] = useState(false);
+  const [manualRefreshError, setManualRefreshError] = useState<string | null>(null);
+  const refreshBusy = refreshRunning || manualRefreshPending;
+
+  async function handleManualRefresh() {
+    setManualRefreshError(null);
+    setManualRefreshPending(true);
+    try {
+      await triggerRefresh();
+    } catch (failure) {
+      setManualRefreshError(
+        failure instanceof ApiResponseError && failure.status === 409
+          ? "자동 갱신이 이미 진행 중입니다."
+          : "최신화를 시작하지 못했습니다.",
+      );
+    } finally {
+      setManualRefreshPending(false);
+    }
+  }
   // A-9: alarms.createdAt도 캐시 키에 포함해야 한다 -- 알림 이력에서
   // 목표 수율·민감도를 바꾸면(alerts/page.tsx가 alarms.createdAt을
   // 갱신) 이 화면의 SUMMARY 갭·경보 배지도 새 기준으로 다시 계산해야
@@ -172,7 +197,20 @@ export default function MonitoringPage() {
     <DashboardShell activeItem="모니터링">
       <div className="rcPage">
         <div className="pageHeading">
-          <h1>모니터링</h1>
+          <div className="monitoringHeadingRow">
+            <h1>모니터링</h1>
+            {/* AF그룹: LAST RUN이 이미 아래 줄에 표시되므로 버튼 옆에
+                다시 적지 않는다. */}
+            <button
+              type="button"
+              className="button secondary monitoringRefreshButton"
+              onClick={() => void handleManualRefresh()}
+              disabled={refreshBusy}
+              title={refreshBusy ? "자동 갱신이 진행 중입니다" : "지금 자동 갱신 파이프라인을 1회 실행합니다"}
+            >
+              {refreshBusy ? "갱신 중…" : "↻ 최신화"}
+            </button>
+          </div>
           <p>가장 최근 원인 분석 결과를 한눈에 봅니다.</p>
           {/* 지시서 V: SUMMARY 카드 안에 있던 실행 시각을 페이지 상단으로
               옮겼다 -- 이력이 없으면(snapshot.createdAt이 없으면) 표시하지
@@ -183,6 +221,7 @@ export default function MonitoringPage() {
               <FallbackModeBadge />
             </p>
           )}
+          {manualRefreshError && <p className="notifyFieldError">{manualRefreshError}</p>}
         </div>
 
         {loading ? (

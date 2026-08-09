@@ -31,7 +31,11 @@ const SNAPSHOT_JUST_UPDATED_MS = 5_000;
 // 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 설정한 적 없거나
 // 첫 접속이면 이 값이 기본이다.
 export const DEFAULT_TARGET_YIELD = 85.0;
-export const DEFAULT_SENSITIVITY = 0.5;
+// AA-4: "오경보 최소" 프리셋(alerts/page.tsx SENSITIVITY_PRESETS.low_fp)과
+// 같은 값이어야 한다 -- 다르면 "기본 상태인데 어느 프리셋도 활성이 아닌"
+// 어색한 상태가 된다. src/analysis/alarm_gbdt.py의 DEFAULT_SENSITIVITY와도
+// 반드시 같은 값을 유지한다(첫 로딩과 서버 판정 기준 불일치 방지).
+export const DEFAULT_SENSITIVITY = 0.2;
 
 const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
   slack: { connected: false, target: null, webhook_masked: null, verified_at: null },
@@ -183,6 +187,8 @@ type AnalysisStateValue = {
   // 실패 배너의 "다시 시도"용 -- 폴링 타이머를 기다리지 않고 즉시
   // meta/snapshot을 다시 확인한다.
   refreshSnapshotNow: () => void;
+  // AF: 자동 갱신 파이프라인(주기 잡 또는 최신화 버튼)이 지금 실행 중인지.
+  refreshRunning: boolean;
 };
 
 // W-1: 부트스트랩/주기 자동 갱신이 채운 스냅샷을, 한 번도 저장된 적
@@ -241,6 +247,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [snapshotStaleVersion, setSnapshotStaleVersion] = useState(false);
   const [snapshotJustUpdated, setSnapshotJustUpdated] = useState(false);
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null);
+  // AF: 주기 잡이든 최신화 버튼이든, 자동 갱신 파이프라인이 지금 실행
+  // 중인지 -- 모니터링의 "최신화" 버튼 disabled 여부에 쓴다.
+  const [refreshRunning, setRefreshRunning] = useState(false);
   // 폴링 콜백이 매번 최신 snapshot을 읽어야 하는데, setInterval에 넘긴
   // 클로저는 등록 시점 값을 붙잡는다 -- ref로 최신 값을 따라간다.
   const snapshotRef = useRef<RefreshSnapshot | null>(null);
@@ -404,6 +413,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       try {
         const meta = await getSnapshotMeta();
         setBootstrapStatus(meta.bootstrap ?? null);
+        setRefreshRunning(meta.refresh_running);
         const cachedCreatedAt = snapshotRef.current?.created_at ?? null;
         if (meta.created_at && meta.created_at !== cachedCreatedAt) {
           const full = await getSnapshot();
@@ -473,10 +483,12 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       snapshotJustUpdated,
       bootstrapStatus,
       refreshSnapshotNow,
+      refreshRunning,
     }),
     [
       hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome,
       notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated, bootstrapStatus, refreshSnapshotNow,
+      refreshRunning,
     ],
   );
 

@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from api.routes.datasets import get_dataset_registry
 from api.schemas.state import (
@@ -17,7 +17,7 @@ from api.schemas.state import (
 )
 from api.settings import settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID
-from src.automation.refresh import REFRESH_JOB_ID
+from src.automation.refresh import REFRESH_JOB_ID, is_refresh_running, run_refresh_pipeline
 from src.notifications.settings_store import get_settings_summary
 from src.runtime.app_state import get_latest_state, is_state_degraded, save_state
 from src.runtime.store import RuntimeStore
@@ -173,7 +173,26 @@ def get_snapshot_meta() -> dict[str, Any]:
     return {
         "created_at": meta.get("created_at") if meta else None,
         "bootstrap": store.get_bootstrap_status(),
+        # AF: 모니터링의 "최신화" 버튼이 이 값으로 disabled 여부·툴팁을
+        # 정한다 -- 주기 잡이 돌고 있어도 true가 된다(같은 락을 공유).
+        "refresh_running": is_refresh_running(),
     }
+
+
+@router.post("/refresh")
+def trigger_refresh(background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """AF/AG: 모니터링의 "최신화" 버튼과 업로드 연동이 부르는 단일
+    진입점 -- 주기 잡과 같은 `run_refresh_pipeline`을 그대로 재사용한다
+    (별도 파이프라인을 만들지 않는다). 실행 자체는 백그라운드로 넘겨
+    응답을 블록하지 않는다 -- 완료는 기존 `created_at` 폴링이 감지한다.
+    """
+    if is_refresh_running():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="자동 갱신이 이미 진행 중입니다.",
+        )
+    background_tasks.add_task(run_refresh_pipeline)
+    return {"triggered": True}
 
 
 @router.get("/snapshot")

@@ -5,21 +5,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
-
-// HP-HMI 사이드바 하단 상태 표기 (지시서 §G) -- 자동 갱신 파이프라인이
-// 붙은 뒤로는 상시로 필요한 정보라, 이미 AnalysisStateProvider가
-// 들고 있는 RefreshSnapshot(J그룹)을 그대로 읽어 보여준다. 별도 조회는
-// 하지 않는다.
-function formatSnapshotClock(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
 
 // Exported so MobileTabBar (≤1023px horizontal tab bar, same nav set) can
 // share one source of truth instead of a second hardcoded list drifting
@@ -71,7 +59,6 @@ export default function Sidebar({
   const isDrawer = mode === "drawer";
   const { theme, setTheme } = useTheme();
   const { settingsPanelOpen, setSettingsPanelOpen, trainingPanelOpen, setTrainingPanelOpen } = usePanelState();
-  const { snapshot } = useAnalysisState();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
   // 접힘 상태 전용 (spec §D-2) -- 트리거 아이콘의 실제 위치를 읽어 패널을
@@ -216,51 +203,12 @@ export default function Sidebar({
             .sidebar.collapsed 쪽 CSS가 라벨/셰브론을 숨기고 세로로 쌓는다 --
             분기를 늘리는 대신 같은 마크업을 CSS로만 다르게 보이게 한다. */}
         <div className="sidebarFooter">
-          {/* 지시서 §G: 자동 갱신 파이프라인(J그룹)이 붙은 뒤로 챔피언
-              버전·스냅샷 시각·SQL 연결 여부는 상시 필요한 정보다.
-              snapshot이 아직 없으면(자동 갱신이 이 세션에서 한 번도
-              돌지 않았으면) 없는 값을 지어내지 않고 아예 렌더하지
-              않는다. */}
-          {snapshot && (
-            // 모바일 반응형 패치 S-1: 접힘(rail) 상태에서는 이 블록이
-            // 연결 점 하나로 줄어든다 -- CHAMPION/SNAPSHOT 행은 각각
-            // display:none(.sidebar.collapsed .sidebarStatusDetail)이지만
-            // 정보 자체는 지우지 않고, 세 줄을 합친 문자열을 title
-            // 툴팁으로 컨테이너에 올려 접힘 상태에서도 호버로 확인할 수
-            // 있게 한다.
-            <div
-              className="sidebarStatus"
-              aria-live="off"
-              title={
-                collapsed
-                  ? [
-                      snapshot.model.champion_version ? `CHAMPION ${snapshot.model.champion_version}` : null,
-                      formatSnapshotClock(snapshot.created_at) ? `SNAPSHOT ${formatSnapshotClock(snapshot.created_at)}` : null,
-                      snapshot.source.mode === "sql" ? "SQL 연결됨" : "데모 데이터 · SQL 미연결",
-                    ]
-                      .filter((part): part is string => part != null)
-                      .join(" · ")
-                  : undefined
-              }
-            >
-              {snapshot.model.champion_version && (
-                <span className="sidebarStatusRow sidebarStatusDetail" title={`CHAMPION ${snapshot.model.champion_version}`}>
-                  CHAMPION {snapshot.model.champion_version}
-                </span>
-              )}
-              {formatSnapshotClock(snapshot.created_at) && (
-                <span className="sidebarStatusRow sidebarStatusDetail" title={`SNAPSHOT ${formatSnapshotClock(snapshot.created_at)}`}>
-                  SNAPSHOT {formatSnapshotClock(snapshot.created_at)}
-                </span>
-              )}
-              <span className="sidebarStatusRow sidebarStatusConnection">
-                <span className={`sidebarStatusDot${snapshot.source.mode === "sql" ? "" : " offline"}`} aria-hidden="true" />
-                <span className="sidebarStatusConnectionLabel">
-                  {snapshot.source.mode === "sql" ? "SQL 연결됨" : "데모 데이터 · SQL 미연결"}
-                </span>
-              </span>
-            </div>
-          )}
+          {/* AD그룹: 예전에는 여기 CHAMPION/SNAPSHOT/SQL 연결 세 줄이
+              있었다 -- 모델 ID가 길어 200px 사이드바를 넘쳤고, 정보의
+              소속도 모델 학습·자동화다(TrainingPanel.tsx로 이전).
+              헤더에 이미 SOURCE 항목(연결 상태, Header.tsx의
+              .headerContextSource)이 있어 사이드바에 점을 새로
+              만들지 않는다(중복 표시 금지) -- 세 줄만 제거한다. */}
           {/* 지시서 L-1: 모델 학습 진입점 -- 설정 버튼과 동일한 패턴
               (.themeToggle 공유, 접힘 시 아이콘만). 화면 모드 위에 둔다. */}
           <button
