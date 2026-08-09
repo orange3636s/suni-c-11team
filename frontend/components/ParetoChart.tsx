@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import InterpretationCard, { type InterpretationRow } from "@/components/InterpretationCard";
 import { TIER_LABEL } from "@/lib/confidenceTier";
 import { formatPValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -14,6 +15,14 @@ const MAX_BAR = 48;
 const MIN_BAR = 20;
 const PADDING = 56;
 const PLOT_HEIGHT = 360;
+// HB그룹: 좌우 y축의 최상단 눈금 라벨(100)이 .paretoTick의
+// `bottom:100%` + `transform:translateY(50%)` 배치 때문에 tick column의
+// y=0(플롯 최상단) 경계 위로 반쯤 넘쳐 그려진다 -- 해석 카드 쪽 여백만
+// 늘려서는(margin) 못 고친다, 이 넘침 자체가 차트 내부 좌표계 문제이기
+// 때문이다. 플롯 영역(및 그 안의 눈금 라벨) 시작 위치를 이 값만큼 아래로
+// 밀어 넘침이 카드가 아니라 이 여백 안에서만 일어나게 한다. plotHeight
+// (막대·선 비례 계산)는 그대로 두고 전체 렌더 높이만 늘린다.
+const CHART_PADDING_TOP = 16;
 const FLAT_LABEL_HEIGHT = 18; // one horizontal line of label text, tightly boxed
 const ROTATED_LABEL_HEIGHT = 84; // -90deg labels need room to run vertically
 const LABEL_MIN_GAP = 4; // px of breathing room required between adjacent horizontal labels
@@ -103,6 +112,7 @@ export default function ParetoChart({
   embedded = false,
   height,
   thumbnail = false,
+  reliabilityText,
 }: {
   target: string;
   items: ParetoRankingItem[];
@@ -121,6 +131,11 @@ export default function ParetoChart({
   // 않고(그 문구는 카드 본문이 저장 시점 스냅샷으로 따로 보여준다),
   // 상단에 여유 패딩을 둬 Scatter/Box 썸네일과 같은 높이로 보이게 한다.
   thumbnail?: boolean;
+  // HA그룹: "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김,
+  // root-cause/page.tsx의 buildModerateInterpretation과 동일 로직) --
+  // Pareto 종합 문구("해석")와 카드 하나로 합친다. 빈 문자열/undefined면
+  // "신뢰도" 행을 만들지 않는다.
+  reliabilityText?: string;
 }) {
   const theme = useResolvedTheme();
   const [containerRef, containerWidth] = useContainerWidth();
@@ -169,11 +184,16 @@ export default function ParetoChart({
 
   const tooltipItem = tooltip ? items[tooltip.index] : null;
 
-  // DC-3: Pareto의 종합 문구(해석 카드) -- 예전에는 차트 하단에 있었다.
-  // 메타 줄 바로 아래·차트 위로 옮기고, DC-1과 같은 .interpretCard
-  // 스타일을 쓴다. 썸네일(즐겨찾기 카드 미리보기)에서는 그리지 않는다 --
-  // 그 문구는 저장 시점 스냅샷으로 카드 본문이 따로 보여준다(DE-1).
-  const summaryCaption = <p className="interpretCard">{buildParetoSummaryText(items, n80)}</p>;
+  // DC-3/HA그룹: Pareto의 종합 문구(해석) -- 예전에는 차트 하단에 있었다.
+  // 메타 줄 바로 아래·차트 위로 옮기고, "해석" 라벨을 붙여 Scatter/Box와
+  // 같은 InterpretationCard로 그린다(신뢰도 행은 caller가 넘겨줄 때만).
+  // 썸네일(즐겨찾기 카드 미리보기)에서는 그리지 않는다 -- 그 문구는
+  // 저장 시점 스냅샷으로 카드 본문이 따로 보여준다(DE-1).
+  const summaryRows: InterpretationRow[] = [
+    { label: "해석", text: buildParetoSummaryText(items, n80) },
+    ...(reliabilityText ? [{ label: "신뢰도" as const, text: reliabilityText }] : []),
+  ];
+  const summaryCaption = <InterpretationCard rows={summaryRows} />;
 
   // Chart body -- shared as-is between the standalone card (non-embedded)
   // and the embedded-in-a-factor-card mode; only the wrapper around it
@@ -182,7 +202,13 @@ export default function ParetoChart({
   const body = (
     <>
       {!thumbnail && summaryCaption}
-      <div className="paretoChartBody" ref={containerRef}>
+      {/* HB그룹: 상단 여백 -- 최상단 눈금 라벨(100)이 tick column의 y=0
+          경계 위로 넘쳐 그려지는 것 자체는 막지 않되(그 라벨의 상대
+          위치는 그대로), 그 넘침이 이 빈 공간 안에서 끝나도록 플롯 전체를
+          아래로 민다. plotHeight(막대·선 비례 계산)는 건드리지 않으므로
+          막대가 작아지지 않고, 전체 렌더 높이만 CHART_PADDING_TOP만큼
+          늘어난다. */}
+      <div className="paretoChartBody" ref={containerRef} style={{ paddingTop: CHART_PADDING_TOP }}>
         <div className="paretoAxisCol paretoAxisCol-left" style={{ height: plotHeight }}>
           <span className="paretoAxisLabel"><span className="paretoAxisLabelText">기여율 (%)</span></span>
           <div className="paretoTickCol" style={{ height: plotHeight }}>

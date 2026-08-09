@@ -8788,24 +8788,34 @@ html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c
    grey/secondary color and a matching font-size. */
 .scatterAxisTitleSvg{ font-family: var(--font-data); font-size: var(--fs-sm); fill: var(--text-secondary); }
 
-/* 해석 팁 (spec §2-1) -- 차트 바로 위, 옅은 파란 카드. 라이트/다크 각각
-   배경·테두리·본문 색을 명시해 둘 다에서 카드 경계가 읽힌다. */
-.scatterInterpretationTip{
-  display: flex; align-items: flex-start; gap: 8px;
-  margin-bottom: 12px; padding: 8px 12px; border-radius: 8px;
-  background: #F2F7FC; border: 1px solid #D6E4F0;
+/* 해석·신뢰도 카드 (HA그룹) -- 차트 바로 위, 옅은 파란 카드. Scatter·Box·
+   Pareto 세 뷰가 전부 이 클래스 하나를 쓴다(InterpretationCard.tsx) --
+   "해석"(항상)과 "신뢰도"(조건부) 두 행을 카드 하나 안에 쌓는다. 이전에는
+   차트마다 별도 컴포넌트(ScatterChart 전용 해석 팁 클래스)와 별도 카드
+   (.interpretCard, ModerateTierCaption)가 갈라져 있어 스타일이
+   일치하지 않았다 -- 이 클래스로 통합했다. */
+.interpretationCard{
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 12px 0 16px;
+  padding: 9px 13px;
+  border-radius: var(--radius-control);
+  background: #F2F7FC;
+  border: 1px solid #D6E4F0;
 }
-html[data-theme="dark"] .scatterInterpretationTip{
+html[data-theme="dark"] .interpretationCard{
   background: rgba(59, 130, 246, 0.10); border-color: rgba(255, 255, 255, 0.10);
 }
-.scatterInterpretationTipLabel{
-  flex: 0 0 auto; font-size: var(--fs-xs); font-weight: 600; color: #0E306D; padding-top: 1px;
+.interpretationRow{ display: flex; align-items: flex-start; gap: 10px; }
+.interpretationLabel{
+  flex: 0 0 40px; /* 라벨 폭 고정 -> 본문 좌측 정렬 */
+  font-size: var(--fs-xs); font-weight: 600;
+  color: var(--measured); padding-top: 1px;
 }
-html[data-theme="dark"] .scatterInterpretationTipLabel{ color: #93C5FD; }
-.scatterInterpretationTipBody{
-  margin: 0; flex: 1 1 auto; font-size: var(--fs-sm); line-height: 1.5; color: #3B4A5A; word-break: keep-all;
+.interpretationBody{
+  flex: 1 1 auto; margin: 0;
+  font-size: var(--fs-sm); line-height: 1.55;
+  color: var(--text-secondary); word-break: keep-all;
 }
-html[data-theme="dark"] .scatterInterpretationTipBody{ color: #C7CFD9; }
 
 /* 범례 (spec §5) -- 각 행이 최대 5항목, 견본+굵은 라벨(+있을 때만 작은
    설명)을 갖는 카드. 토글 가능한 카드(관리한계/최적 중심/권장 구간/구간

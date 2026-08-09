@@ -68,7 +68,7 @@ async function fetchAlarmGradeByWaferId(
 ): Promise<Record<string, AlarmGrade>> {
   // 지시서: 알림 기록에서 저장한 목표 수율·민감도를 그대로 넘겨 두 화면의
   // 알람 판정 기준을 일치시킨다. 저장된 값이 없으면(최초 실행 등)
-  // undefined로 넘어가 백엔드 기본값(85.0/0.5)을 쓴다.
+  // undefined로 넘어가 백엔드 기본값(88.0/0.2)을 쓴다.
   const response = await getAlarms(datasetId, datasetId, { target, sensitivity });
   const map: Record<string, AlarmGrade> = {};
   for (const item of response.items) {
@@ -1028,7 +1028,6 @@ function RootCauseContent() {
                 <p className="sectionCaption">트리맵에서 선택: {configFromTreemap}</p>
               )}
               {quickLookError && <p className="errorMessage">{quickLookError}</p>}
-              {quickLookNumeric && <ModerateTierCaption tier={quickLookNumeric.confidence_tier} eps2={quickLookNumeric.eps2} />}
               {quickLookCategorical && <ModerateTierCaption tier={quickLookCategorical.confidence_tier} eps2={quickLookCategorical.eps2} />}
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
@@ -1050,6 +1049,7 @@ function RootCauseContent() {
                   height={chartHeight}
                   alarmGradeByWaferId={analysis?.alarmGradeByWaferId}
                   alarmCriteriaLabel={alarmCriteriaLabel}
+                  reliabilityText={buildModerateInterpretation(quickLookNumeric.confidence_tier, quickLookNumeric.eps2)}
                 />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={chartHeight} />
@@ -1512,7 +1512,6 @@ function NumericFactorCard({
           )}
         </div>
       </div>
-      <ModerateTierCaption tier={item.confidence_tier} eps2={item.eps2} />
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
           이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 아래 경고선은 예측 수율을 기준으로 별도 산출된 것이라 별개이지만, 원인으로 단정할 근거는 부족합니다.
@@ -1531,6 +1530,7 @@ function NumericFactorCard({
           onBarClick={onParetoBarClick}
           embedded
           height={chartHeight}
+          reliabilityText={buildModerateInterpretation(item.confidence_tier, item.eps2)}
         />
       ) : numericData ? (
         <>
@@ -1543,6 +1543,7 @@ function NumericFactorCard({
             height={chartHeight}
             alarmGradeByWaferId={alarmGradeByWaferId}
             alarmCriteriaLabel={alarmCriteriaLabel}
+            reliabilityText={buildModerateInterpretation(item.confidence_tier, item.eps2)}
           />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import InterpretationCard, { type InterpretationRow } from "@/components/InterpretationCard";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
 import { ALARM_GRADE_COLOR, parseConfig } from "@/lib/constants";
 import { niceTicksFitted } from "@/lib/niceTicks";
@@ -705,6 +706,7 @@ export default function ScatterChart({
   height = HEIGHT,
   alarmGradeByWaferId,
   alarmCriteriaLabel,
+  reliabilityText,
   thumbnail = false,
 }: {
   data: ScreeningScatterResponse;
@@ -736,6 +738,11 @@ export default function ScatterChart({
   // 포맷해 넘긴다. 이 컴포넌트는 AnalysisState를 모르므로 여기서 직접
   // 계산하지 않는다.
   alarmCriteriaLabel?: string | null;
+  // HA그룹: "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김
+  // -- root-cause/page.tsx의 buildModerateInterpretation과 동일 로직).
+  // 이 컴포넌트가 자체 계산한 "해석" 행과 함께 카드 하나로 합쳐 그린다.
+  // 빈 문자열/undefined면 "신뢰도" 행 자체를 만들지 않는다(조건부).
+  reliabilityText?: string;
   // 즐겨찾기 썸네일 모드 (지시서 P-2) -- 점을 훨씬 작게, 참조선은 최적
   // 중심 하나만, 축은 눈금/라벨 없이 선만 남긴다. 식별용이라 값을 읽을
   // 필요가 없다.
@@ -1417,6 +1424,13 @@ export default function ScatterChart({
   // displayedOptimalCenter(ML 중심)를 따르는데 해석 문장만 SPC 값에
   // 머물러 있었다.
   const interpretationText = buildInterpretationTip(data.eps2, data.relation_shape, displayedOptimalCenter, targetAxisLabel(data.axis.y_label), view);
+  // HA그룹: 해석(항상) + 신뢰도(조건부, caller가 넘겨줄 때만) 두 행을
+  // 카드 하나로 합친다 -- 순서는 해석 -> 신뢰도(무엇인지 먼저, 얼마나
+  // 믿을지 나중).
+  const interpretationRows: InterpretationRow[] = [
+    { label: "해석", text: interpretationText },
+    ...(reliabilityText ? [{ label: "신뢰도" as const, text: reliabilityText }] : []),
+  ];
 
   // Reference-line legend labels/descriptions (spec §5-1/§5-2) -- the
   // numeric value now rides in the *label* itself ("관리한계 LCL/UCL  49.9
@@ -1508,13 +1522,11 @@ export default function ScatterChart({
 
   return (
     <div className="scatterChart" ref={containerRef}>
-      {/* 해석 팁 (spec §2) -- 차트 바로 위, 제목/메타 정보와는 별도 줄로
-          쌓인다. 통계 용어 없이 이 차트가 무엇을 보여주는지 한 줄로
-          요약한다. */}
-      <div className="scatterInterpretationTip">
-        <span className="scatterInterpretationTipLabel">해석</span>
-        <p className="scatterInterpretationTipBody">{interpretationText}</p>
-      </div>
+      {/* 해석+신뢰도 카드 (HA그룹) -- 차트 바로 위, 제목/메타 정보와는
+          별도 줄로 쌓인다. 통계 용어 없이 이 차트가 무엇을 보여주는지
+          한 줄로 요약하고, 설명력이 낮은 경우에는 그 사실을 같은 카드
+          안 두 번째 행으로 덧붙인다(카드를 두 개 쌓지 않는다). */}
+      <InterpretationCard rows={interpretationRows} />
 
       <div className="scatterPlotWrap">
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
