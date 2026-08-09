@@ -248,7 +248,10 @@ export default function ConfigTreemap({
           </p>
           {!data.significant && (
             <p className="monitoringTreemapCaption">
-              <span className="data">FDR 미통과 (Step{step}) → 전량 중립색.</span> 이 스텝의 장비 구성은 최종 수율 차이를 통계적으로 설명하지 못합니다 — 색 대신 수치로만 비교하세요.
+              {/* GB-2: "없음"이 아니라 "왜 색이 없는지"를 말한다 -- FDR
+                  미통과라 Config 간 수율 차이가 검출 한계 이하라는 뜻이지,
+                  집계 자체가 없다는 뜻이 아니다(타일은 그대로 보인다). */}
+              <span className="data">FDR 미통과 (Step{step})</span> — Config 간 수율 차이가 검출 한계 이하입니다. 색 대신 수치로만 비교하세요.
             </p>
           )}
         </>

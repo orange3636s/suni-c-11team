@@ -191,6 +191,54 @@ export function targetYieldMismatch(target: number, p1: number, p99: number): bo
   return target < p1 || target > p99;
 }
 
+// GB-2: 알람 0건 빈 상태는 "없음"만 말하면 정상인지 판정 불가인지 구분이
+//안 된다. 게이트 미달은 alarmGateBanner가 이미 별도로 보여준다(이
+// 함수는 auc_gate_passed=true일 때만 불린다) -- 여기서는 그 다음 세 가지
+// 원인 중 가장 근본적인 것 하나만 고른다(GB-3: 여러 사유를 동시에
+// 나열하지 않는다). 판정 순서는 데이터로 확인 가능한 순서대로다:
+//   1) 미분류가 아예 없다 -- 전 wafer가 실제로 목표 이상(정상)이다.
+//   2) 미분류 중 predMean이 이미 목표 이하인 wafer가 있다 -- 민감도를
+//      올리면(컷이 목표에 가까워지면) 알람으로 바뀔 후보다.
+//   3) 그 외 -- 미분류(계측 부족/구간이 목표를 걸침)가 대부분이라
+//      점추정만으로는 알람이 안 나온 것이다.
+export type AlarmEmptyReason =
+  | { kind: "all_above_target"; target: number }
+  | { kind: "low_sensitivity"; sensitivity: number; marginPp: number }
+  | { kind: "mostly_unclassified"; judgeable: number; unclassified: number }
+  | { kind: "unknown" };
+
+export function alarmEmptyReason(
+  classSummary: Record<ClassKey, ClassSummary>,
+  opts: { target: number; sensitivity: number; totalWafers: number },
+): AlarmEmptyReason {
+  const { target, sensitivity, totalWafers } = opts;
+  const unclassified = classSummary.판별불가;
+  if (unclassified.count === 0) return { kind: "all_above_target", target };
+
+  // 민감도를 최대(1.0, margin=0)로 올렸을 때 "주의" 컷이 target 자체가
+  // 되므로, 계측된 미분류 wafer 중 predMean이 이미 목표 이하인 것이
+  // 있으면 민감도만 올려도 알람으로 바뀐다.
+  const wouldAlarmAtFullSensitivity = unclassified.items.some((item) => item.measured && item.pred_mean <= target);
+  if (wouldAlarmAtFullSensitivity) {
+    return { kind: "low_sensitivity", sensitivity, marginPp: classifyMargin(sensitivity) };
+  }
+
+  return { kind: "mostly_unclassified", judgeable: totalWafers - unclassified.count, unclassified: unclassified.count };
+}
+
+export function alarmEmptyReasonText(reason: AlarmEmptyReason): string {
+  switch (reason.kind) {
+    case "all_above_target":
+      return `모든 wafer의 예측 수율이 목표(${reason.target.toFixed(1)}%) 이상입니다`;
+    case "low_sensitivity":
+      return `현재 민감도(${reason.sensitivity.toFixed(2)})에서는 판정 컷이 목표보다 ${reason.marginPp.toFixed(1)}%p 낮습니다. 민감도를 올리면 더 많은 wafer가 판정됩니다`;
+    case "mostly_unclassified":
+      return `판정 가능 ${reason.judgeable.toLocaleString()}장 중 목표 미달로 판정된 wafer가 없습니다 (미분류 ${reason.unclassified.toLocaleString()}장)`;
+    case "unknown":
+      return "조건에 해당하는 항목이 없습니다";
+  }
+}
+
 function csvEscape(value: string): string {
   if (/[",\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;

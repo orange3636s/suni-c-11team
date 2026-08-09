@@ -21,6 +21,8 @@ import {
   type ClassifiedWafer,
   type ClassKey,
   type PrecisionRecallEstimate,
+  alarmEmptyReason,
+  alarmEmptyReasonText,
   CLASS_KEYS,
   CLASS_LABELS,
   classifyAll,
@@ -579,15 +581,12 @@ function AlertsContent() {
           <>
             {alarmItems.length === 0 && (
               <p className="emptyMessage">
-                현재 설정을 충족하는 알람이 없습니다.
-                <br />
-                목표 수율이나 민감도를 조절해 다시 확인해 보세요.
-                <br />
-                {/* spec §BD-1: 알람 0건이 "안전"으로 읽히지 않도록 판정
-                    범위를 함께 보여준다 -- 구간이 넓으면 대부분이
-                    미분류로 빠지고 알람은 애초에 나오기 어렵다. */}
-                판정 가능 {(data.total_wafers - classSummary.판별불가.count).toLocaleString()}장 · 미분류{" "}
-                {classSummary.판별불가.count.toLocaleString()}장
+                {/* GB-2: "없음"만 말하면 정상이라 없는 건지 판정을 못 해
+                    없는 건지 구분이 안 된다 -- alarmEmptyReason이 데이터
+                    근거로 원인 하나를 고른다(추측 문구를 쓰지 않는다). */}
+                {alarmEmptyReasonText(
+                  alarmEmptyReason(classSummary, { target: targetYield, sensitivity, totalWafers: data.total_wafers }),
+                )}
               </p>
             )}
             {alarmItems.length > 0 && gradeFilteredAlarmItems.length === 0 && (

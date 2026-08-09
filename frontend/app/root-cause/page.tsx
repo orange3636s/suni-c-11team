@@ -18,7 +18,7 @@ import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
-import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
+import { buildCategoricalSpec, noChartReason, noChartReasonText, TARGETS } from "@/lib/constants";
 import { formatPValue } from "@/lib/numberFormat";
 import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
@@ -647,15 +647,19 @@ function RootCauseContent() {
     if (!allTargetsHaveNoChart) return null;
     let totalTested = 0;
     let effectSizePass = 0;
+    let fdrPass = 0;
     let maxEps2 = 0;
+    const allItems: ParetoRankingItem[] = [];
     for (const t of TARGETS) {
       const response = paretoByTarget[t];
       if (!response) continue;
       totalTested += response.total_factor_count;
       effectSizePass += response.effect_size_pass_count;
+      fdrPass += response.fdr_pass_count;
       maxEps2 = Math.max(maxEps2, response.max_eps2 ?? 0);
+      allItems.push(...response.items);
     }
-    return { totalTested, effectSizePass, maxEps2 };
+    return { totalTested, effectSizePass, maxEps2, reason: noChartReason(allItems, { totalTested, fdrPassCount: fdrPass, maxEps2 }) };
   }, [allTargetsHaveNoChart, paretoByTarget]);
 
   /** 인자 카드 하나를 그린다 (numeric -> ScatterChart, Config -> Box Plot) --
@@ -1061,7 +1065,12 @@ function RootCauseContent() {
             <section className="resultCard noChartMessage">
               <h2>강함·보통 등급 인자가 없습니다</h2>
               <p className="noChartStats">
-                검정 {datasetNoChartStats.totalTested.toLocaleString()}건 · 효과 크기 조건 통과 {datasetNoChartStats.effectSizePass.toLocaleString()}건 · 최대 설명력 {datasetNoChartStats.maxEps2.toFixed(4)}
+                {/* GB-2: 계측 부족/FDR 미통과/효과크기 미달 중 가장 근본적인
+                    사유 하나를 우선 보여준다 -- 셋 다 판정 불가면(드묾)
+                    기존 통합 통계 문구로 폴백한다. */}
+                {datasetNoChartStats.reason
+                  ? noChartReasonText(datasetNoChartStats.reason)
+                  : `검정 ${datasetNoChartStats.totalTested.toLocaleString()}건 · 효과 크기 조건 통과 ${datasetNoChartStats.effectSizePass.toLocaleString()}건 · 최대 설명력 ${datasetNoChartStats.maxEps2.toFixed(4)}`}
                 <br />
                 불량률 변동의 대부분이 계측되지 않은 공정 변수로 설명됩니다. 안전율 예측 기반 알람은 계속 동작합니다.
               </p>
@@ -1072,9 +1081,22 @@ function RootCauseContent() {
             <section className="resultCard noChartMessage">
               <h2>{activeTarget} · 강함·보통 등급 인자가 없습니다</h2>
               <p className="noChartStats">
-                검정 {activeParetoResponse.total_factor_count.toLocaleString()}건 · 효과 크기 조건 통과 {activeParetoResponse.effect_size_pass_count.toLocaleString()}건
-                <br />
-                최대 설명력 {(activeParetoResponse.max_eps2 ?? 0).toFixed(4)}
+                {(() => {
+                  const reason = noChartReason(activeParetoResponse.items, {
+                    totalTested: activeParetoResponse.total_factor_count,
+                    fdrPassCount: activeParetoResponse.fdr_pass_count,
+                    maxEps2: activeParetoResponse.max_eps2,
+                  });
+                  return reason ? (
+                    noChartReasonText(reason)
+                  ) : (
+                    <>
+                      검정 {activeParetoResponse.total_factor_count.toLocaleString()}건 · 효과 크기 조건 통과 {activeParetoResponse.effect_size_pass_count.toLocaleString()}건
+                      <br />
+                      최대 설명력 {(activeParetoResponse.max_eps2 ?? 0).toFixed(4)}
+                    </>
+                  );
+                })()}
               </p>
               <p className="noChartStats">전체 상위 3개로 전환하면 순위대로 확인할 수 있습니다.</p>
               <button type="button" className="button" onClick={() => setChartCriterion("all")}>전체 상위 3개로 전환</button>

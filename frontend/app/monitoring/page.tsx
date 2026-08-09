@@ -19,7 +19,7 @@ import {
   type MonitoringSnapshot,
   type SignificantFactorDetail,
 } from "@/lib/monitoringSource";
-import type { ConfigTreemapResponse } from "@/types/data";
+import type { ConfigTreemapResponse, MeasurementExpansionResponse } from "@/types/data";
 
 type ActionItem = { key: string; text: string; href: string; buttonLabel: string; note?: string };
 
@@ -29,9 +29,39 @@ type ActionItem = { key: string; text: string; href: string; buttonLabel: string
  * 함께 둔다. 계측 관련만 "지금 할 수 있는 것"에 들어간다. 이미 fetch된
  * snapshot/queue 데이터에서 파생만 할 뿐 별도 조회는 하지 않는다.
  */
+// GB-2: "없다"만 말하면 기능 고장인지 데이터 상태인지 구분되지 않는다 --
+// 세 레일 각각 실제 필터 조건과 숫자를 근거로 "왜 비었는지"를 판정하는
+// 함수를 따로 둔다(GB-3: 하드코딩된 문장 하나로 때우지 않는다). 판정
+// 대상 자체가 없으면(원본 데이터가 비어 있어 필터를 적용할 수조차
+// 없으면) 추측하지 않고 공통 폴백으로 떨어진다.
+const EMPTY_RAIL_FALLBACK = "조건에 해당하는 항목이 없습니다";
+
+function doNowEmptyReason(measurementExpansion: MeasurementExpansionResponse | null): string {
+  const priorities = measurementExpansion?.priorities ?? [];
+  if (priorities.length === 0) return EMPTY_RAIL_FALLBACK;
+  return `계측 확대가 필요한 인자가 없습니다 — 현재 계측률로 판정 가능합니다 (전체 ${priorities.length}개 인자 모두 "유지")`;
+}
+
+function experimentEmptyReason(significantFactors: SignificantFactorDetail[]): string {
+  const eligible = significantFactors.filter((f) => f.feature && f.kind !== "Config");
+  if (eligible.length === 0) return EMPTY_RAIL_FALLBACK;
+  const allUShape = eligible.every((f) => f.relationShape === "u_shape");
+  const shapeLabel = allUShape ? "V자 형태" : "비단조(V자·불명확) 형태";
+  return `단조 증가·감소 관계 인자가 없습니다 — 유의 인자 ${eligible.length}개가 모두 ${shapeLabel}입니다`;
+}
+
+function needsCheckEmptyReason(significantFactors: SignificantFactorDetail[]): string {
+  const eligible = significantFactors.filter((f) => f.feature && f.step != null);
+  if (eligible.length === 0) return EMPTY_RAIL_FALLBACK;
+  return "미지 Config가 검출되지 않았습니다 — 평가 데이터의 Config가 모두 학습 데이터에 존재합니다";
+}
+
 function buildActionTriage(
   snapshot: MonitoringSnapshot,
-): { doNow: ActionItem[]; experiment: ActionItem[]; needsCheck: ActionItem[] } {
+): {
+  doNow: ActionItem[]; experiment: ActionItem[]; needsCheck: ActionItem[];
+  doNowEmpty: string; experimentEmpty: string; needsCheckEmpty: string;
+} {
   // 지시서 K-5: "지금 할 수 있는 것"은 랏 단위 큐 대신 계측 확대 제안의
   // 인자별 우선순위 목록(유지 아닌 것만)에서 가져온다 -- 랏 집계 로직
   // 자체를 없앴으므로 그 데이터를 다시 만들 수 없다.
@@ -72,7 +102,12 @@ function buildActionTriage(
     });
   }
 
-  return { doNow, experiment: experiment.slice(0, 3), needsCheck: Array.from(needsCheckMap.values()).slice(0, 3) };
+  return {
+    doNow, experiment: experiment.slice(0, 3), needsCheck: Array.from(needsCheckMap.values()).slice(0, 3),
+    doNowEmpty: doNowEmptyReason(snapshot.measurementExpansion),
+    experimentEmpty: experimentEmptyReason(snapshot.significantFactors),
+    needsCheckEmpty: needsCheckEmptyReason(snapshot.significantFactors),
+  };
 }
 
 type YieldStatus = "high" | "medium" | "low";
@@ -361,13 +396,13 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
       <p className="meScrollHint" aria-hidden="true">← 좌우 스크롤</p>
 
       <h3 className="monitoringSubheading">실행 과제</h3>
-      <ActionList items={triage.doNow} empty="계측 확대가 시급한 랏이 없습니다." />
+      <ActionList items={triage.doNow} empty={triage.doNowEmpty} />
 
       <h3 className="monitoringSubheading">실험 확인 대상</h3>
-      <ActionList items={triage.experiment} empty="실험 후보로 제안할 인자가 없습니다." />
+      <ActionList items={triage.experiment} empty={triage.experimentEmpty} />
 
       <h3 className="monitoringSubheading">확인 필요 대상</h3>
-      <ActionList items={triage.needsCheck} empty="확인이 필요한 데이터 이상이 없습니다." />
+      <ActionList items={triage.needsCheck} empty={triage.needsCheckEmpty} />
     </section>
   );
 }
@@ -415,7 +450,10 @@ function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
 // 라벨도 모두 "상세"로 통일했다 -- 강조색(.primary)은 쓰지 않는다
 // (지시서 P-2: 세 레일 버튼이 같은 모양이어야 한다).
 function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
-  if (items.length === 0) return <p className="emptyMessage">{empty}</p>;
+  // GB-1: 빈 상태 박스가 항목 카드(li)와 같은 컨테이너 스타일(배경·테두리·
+  // radius·padding)에 min-height까지 맞춰야 세 레일을 나란히 봤을 때
+  // 빈 레일만 납작해지지 않는다 -- 범용 .emptyMessage 대신 전용 클래스.
+  if (items.length === 0) return <p className="monitoringActionEmpty">{empty}</p>;
   return (
     <ul className="monitoringActionList">
       {items.map((item) => (
