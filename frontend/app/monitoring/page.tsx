@@ -81,11 +81,13 @@ type YieldStatus = "high" | "medium" | "low";
 // 판정한다 -- 점추정(predMean)으로 판정하지 않는다. gapLo = target -
 // predHi(최선의 경우 갭), gapHi = target - predLo(최악의 경우 갭).
 // gapLo > 0이면 최선의 경우조차 목표 미달(경보), gapHi <= 0이면 최악의
-// 경우도 목표 달성(정상), 그 사이는 불확실 -- 예측 구간 conformal
-// 캘리브레이션(spec §BA/§BD-2) 이후 구간 폭이 넓어져(±5.5%p 안팎) 이
-// 가운데 구간이 다수가 된다. "주의"라고 부르면 실제로는 조치가 필요한
-// 신호가 아니라 "구간이 넓어 판정을 못 낸다"는 뜻인데도 경보성으로
-// 읽혀 오해를 만든다 -- "판정 보류"로 정확히 부른다.
+// 경우도 목표 달성(정상), 그 사이는 불확실. 이 함수가 받는 predLo/predHi는
+// (GA그룹) 웨이퍼 conformal 여유가 아니라 집계 여유(interval_conformal_q_agg,
+// 약 ±0.2%p)로 낸 구간이다 -- 웨이퍼 여유(±5.5%p 안팎)를 그대로 썼을 때는
+// 이 가운데 구간(판정 보류)이 항상 다수였지만, 이는 통계적으로 틀린
+// 계산이었다(평균의 불확실성을 개별값 수준으로 과대평가). 여전히 구간이
+// 실제로 목표를 걸치는 경우는 존재하며 그때는 "판정 보류"가 맞다 --
+// "주의"라고 부르면 조치가 필요한 신호처럼 읽혀 오해를 만든다.
 function classifyYieldStatus(predLo: number, predHi: number, target: number): { status: YieldStatus; label: string; icon: string } {
   const gapLo = target - predHi;
   const gapHi = target - predLo;

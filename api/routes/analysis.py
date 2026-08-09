@@ -776,6 +776,7 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
             "interval_coverage_target": prediction.coverage_target if prediction is not None else alarm_gbdt.CONFORMAL_TARGET_COVERAGE,
             "interval_coverage_actual": prediction.coverage_actual if prediction is not None else None,
             "interval_conformal_q": prediction.conformal_q if prediction is not None else None,
+            "interval_conformal_q_agg": prediction.conformal_q_agg if prediction is not None else None,
         }
     )
 

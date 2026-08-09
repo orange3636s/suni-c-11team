@@ -225,9 +225,18 @@ export type MeasurementQueueData = {
 };
 
 /** SUMMARY의 예상 수율 구간을 계산한다 -- 기존 알람 API(getAlertsData)의
- * wafer별 원시 예측치를 평균해 구한다. 지시서 K-5: 랏 단위 집계(분산·
- * 사유·계측 권고 표)는 화면 높이만 과도하게 차지하고 홈의 요약 성격에
- * 맞지 않아 제거했다 -- 그 집계 로직도 함께 지운다(더 쓰는 곳이 없다). */
+ * wafer별 원시 예측치를 평균해 점추정을 구한다. 지시서 K-5: 랏 단위
+ * 집계(분산·사유·계측 권고 표)는 화면 높이만 과도하게 차지하고 홈의
+ * 요약 성격에 맞지 않아 제거했다 -- 그 집계 로직도 함께 지운다(더 쓰는
+ * 곳이 없다).
+ *
+ * 구간(predLo/predHi)은 wafer별 pred_lo/pred_hi를 평균하지 않는다 --
+ * 그건 웨이퍼 한 장의 conformal 여유(interval_conformal_q)를 1,000장
+ * 평균에 그대로 적용하는 셈이라 평균의 불확실성을 개별값 수준으로
+ * 과대평가한다(spec GA). 서버가 랏 블록 부트스트랩으로 별도 산출한
+ * 집계 여유(interval_conformal_q_agg)를 점추정 평균에 적용한다. 이
+ * 값이 없으면(랏 수 부족) 구간을 내지 않는다 -- 웨이퍼 여유로 대체하면
+ * 다시 같은 과대평가 버그가 된다. */
 export async function getMeasurementQueue(alarmsRecord: LatestAlarmsRecord | null): Promise<MeasurementQueueData> {
   if (!alarmsRecord) return { yieldSummary: null };
 
@@ -240,12 +249,11 @@ export async function getMeasurementQueue(alarmsRecord: LatestAlarmsRecord | nul
   const preds = alerts.predictions;
   if (preds.length === 0) return { yieldSummary: null };
 
+  const predMean = average(preds.map((p) => p.pred_mean));
+  const qAgg = alerts.interval_conformal_q_agg;
+  const { predLo, predHi } = qAgg != null ? { predLo: predMean - qAgg, predHi: predMean + qAgg } : { predLo: predMean, predHi: predMean };
+
   return {
-    yieldSummary: {
-      predMean: average(preds.map((p) => p.pred_mean)),
-      predLo: average(preds.map((p) => p.pred_lo)),
-      predHi: average(preds.map((p) => p.pred_hi)),
-      totalWafers: alerts.total_wafers,
-    },
+    yieldSummary: { predMean, predLo, predHi, totalWafers: alerts.total_wafers },
   };
 }

@@ -369,6 +369,11 @@ export type AlertsDataResponse = {
   interval_coverage_target: number;
   interval_coverage_actual: number | null;
   interval_conformal_q: number | null;
+  // 집계 수준(SUMMARY 등 eval 전체 평균) conformal 여유 (spec GA) -- 웨이퍼
+  // interval_conformal_q를 평균에 그대로 적용하면 평균의 불확실성을
+  // 과대평가한다(랏 블록 부트스트랩으로 별도 산출, 항상 웨이퍼 q보다
+  // 훨씬 좁다). null이면 웨이퍼 q와 같은 이유(랏 수 부족)로 못 낸 것.
+  interval_conformal_q_agg: number | null;
 };
 
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";

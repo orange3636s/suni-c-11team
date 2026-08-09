@@ -270,6 +270,12 @@ class AlertsDataResponse(BaseModel):
     interval_coverage_target: float
     interval_coverage_actual: float | None = None
     interval_conformal_q: float | None = None
+    # 집계 수준(SUMMARY 등 eval 전체 평균) conformal 여유 (spec GA) -- 웨이퍼
+    # interval_conformal_q를 평균에 그대로 적용하면 평균의 불확실성을
+    # 과대평가한다. 랏 블록 부트스트랩으로 별도 산출한 값이며 항상
+    # interval_conformal_q보다 훨씬 좁다. None이면 웨이퍼 q와 같은 이유
+    # (랏 수 부족)로 낼 수 없었다는 뜻.
+    interval_conformal_q_agg: float | None = None
 
 
 class TargetPerformanceSchema(BaseModel):

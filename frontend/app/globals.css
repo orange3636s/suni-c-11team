@@ -10729,7 +10729,12 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 .evidenceBand{ padding: 0 4px; }
 .evidenceBand.mini{ width: 96px; padding: 0; margin-top: 4px; }
 .evidenceBandTrack{ position: relative; height: 3px; background: var(--line); }
-.evidenceBandFill{ position: absolute; top: 0; bottom: 0; background: var(--inferred); }
+/* GA-5: 집계 구간(SUMMARY)은 웨이퍼 구간보다 훨씬 좁아(약 ±0.2%p) 고정
+   스케일(80~95)에서 %폭이 선처럼 사라질 수 있다 -- 트랙 폭이 좁은
+   화면에서도 채워진 구간이 항상 보이도록 최소 3px를 절대값으로
+   보장한다(퍼센트 기반 최소폭만으로는 좁은 트랙에서 1px 밑으로
+   내려간다). */
+.evidenceBandFill{ position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--inferred); }
 .evidenceBandBoundary{ position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--ink); opacity: .35; }
 /* Y-5/Y-6: --ink은 사이드바 전용 고정 남색이라 의도적으로 다크
    오버라이드가 없다(위 5605행 주석) -- 그런데 이 경계선은 사이드바가

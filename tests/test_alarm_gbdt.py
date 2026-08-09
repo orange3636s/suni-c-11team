@@ -15,6 +15,7 @@ from src.analysis.alarm_gbdt import (
     MARGIN_MAX_PP,
     classify_margin,
     classify_wafer,
+    compute_aggregate_conformal_q,
     compute_holdout_predictions,
     cross_validate_auc,
     cross_validate_transfer_auc,
@@ -327,3 +328,76 @@ def test_cross_validate_transfer_auc_returns_none_when_too_few_lots():
     eval_df = _synthetic_df(n=50, n_lots=10, seed=4)
     result = cross_validate_transfer_auc(train_df, eval_df, ["Step1_R1", "Step2_R1"], n_splits=5)
     assert result is None
+
+
+def test_compute_aggregate_conformal_q_is_much_narrower_than_wafer_q():
+    """spec GA-1 핵심: 웨이퍼 conformal_q를 1,000장 평균에 그대로 쓰면
+    30배 가까이 과대평가한다. 랏 블록 부트스트랩으로 낸 집계 여유
+    (conformal_q_agg)는 웨이퍼 여유보다 훨씬 좁아야 한다."""
+    df = _synthetic_df(n=800, n_lots=80, seed=5)
+    features = ["Step1_R1", "Step2_R1"]
+    holdout = compute_holdout_predictions(df, features, n_splits=5)
+    assert holdout is not None
+    q_agg = compute_aggregate_conformal_q(holdout, n_lots=40, n_rounds=500)
+    assert q_agg is not None
+    assert q_agg > 0
+    assert q_agg < holdout.conformal_q / 2
+
+
+def test_compute_aggregate_conformal_q_is_not_naive_sqrt_n_division():
+    """spec GA-1 핵심: q/sqrt(n) 같은 단순 나눗셈을 쓰지 않는다 -- 잔차에
+    랏 내 상관이 있으면(같은 랏 wafer가 같은 방향으로 함께 틀림) 그
+    상관을 무시하는 naive 나눗셈보다 여유가 넓어야 한다(과소평가
+    방지). `_synthetic_df`의 잔차는 랏 간 독립이라 이 테스트는 랏
+    단위 공통 오프셋 노이즈를 직접 주입해 상관을 만든다."""
+    n, n_lots = 800, 80
+    rng = np.random.default_rng(5)
+    r1 = rng.normal(50, 10, n)
+    r2 = rng.normal(20, 5, n)
+    lot_ids = [f"LOT{i % n_lots:03d}" for i in range(n)]
+    lot_offset = {lot: rng.normal(0, 3) for lot in set(lot_ids)}  # 랏 단위 공통 편향
+    offsets = np.array([lot_offset[lot] for lot in lot_ids])
+    noise = rng.normal(0, 1, n)
+    y = 90 - 0.3 * np.abs(r1 - 50) + 0.1 * r2 + offsets + noise
+    df = pd.DataFrame(
+        {
+            "Lot_Wafer_ID": [f"W{i}" for i in range(n)],
+            "Lot_ID": lot_ids,
+            "Step1_R1": r1,
+            "Step2_R1": r2,
+            "Y": y,
+        }
+    )
+    features = ["Step1_R1", "Step2_R1"]
+    holdout = compute_holdout_predictions(df, features, n_splits=5)
+    assert holdout is not None
+    n_wafers_per_round = len(holdout.actual_y) // 2  # 대략 절반 랏을 뽑을 때 웨이퍼 수 근사
+    naive = holdout.conformal_q / np.sqrt(max(n_wafers_per_round, 1))
+    q_agg = compute_aggregate_conformal_q(holdout, n_lots=40, n_rounds=500)
+    assert q_agg is not None
+    assert q_agg > naive
+
+
+def test_compute_aggregate_conformal_q_is_deterministic():
+    df = _synthetic_df(n=600, n_lots=60, seed=6)
+    features = ["Step1_R1", "Step2_R1"]
+    holdout = compute_holdout_predictions(df, features, n_splits=5)
+    assert holdout is not None
+    first = compute_aggregate_conformal_q(holdout, n_lots=30, n_rounds=300)
+    second = compute_aggregate_conformal_q(holdout, n_lots=30, n_rounds=300)
+    assert first == pytest.approx(second)
+
+
+def test_fit_bootstrap_ensemble_exposes_aggregate_interval():
+    """spec GA-1/GA-2 핵심: fit_bootstrap_ensemble이 웨이퍼 구간(pred_lo/hi,
+    conformal_q)과 별도로 집계 구간(pred_agg_lo/hi, conformal_q_agg)을
+    함께 낸다 -- 집계 여유가 웨이퍼 여유보다 좁아야 한다."""
+    df = _synthetic_df(n=600, n_lots=60, seed=7)
+    train_df, eval_df = df.iloc[:400], df.iloc[400:]
+    features = ["Step1_R1", "Step2_R1"]
+    pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    assert pred.conformal_q_agg is not None
+    assert pred.conformal_q_agg < pred.conformal_q
+    assert pred.pred_agg_lo == pytest.approx(pred.pred_agg_mean - pred.conformal_q_agg)
+    assert pred.pred_agg_hi == pytest.approx(pred.pred_agg_mean + pred.conformal_q_agg)
+    assert pred.pred_agg_mean == pytest.approx(float(pred.pred_mean.mean()))

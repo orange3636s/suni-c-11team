@@ -112,6 +112,15 @@ class BootstrapPrediction:
     # 조건).
     holdout_oof_actual: np.ndarray | None
     holdout_oof_pred: np.ndarray | None
+    # 집계 수준(SUMMARY 등 eval 전체 평균) conformal 여유 (spec GA) -- 웨이퍼
+    # 단위 conformal_q를 평균에 그대로 적용하면 평균의 불확실성을 개별값
+    # 수준으로 과대평가한다(랏 내 상관 때문에 q/sqrt(n)도 과소평가라 쓰지
+    # 않는다, GA-1). 랏 블록 부트스트랩으로 별도 산출한다. None이면
+    # conformal_q와 같은 이유(랏 수 부족)로 낼 수 없었다는 뜻.
+    conformal_q_agg: float | None
+    pred_agg_mean: float  # eval 전체 pred_mean 평균 (SUMMARY 예측 수율 점추정)
+    pred_agg_lo: float | None  # pred_agg_mean - conformal_q_agg
+    pred_agg_hi: float | None  # pred_agg_mean + conformal_q_agg
 
 
 HOLDOUT_OOF_SAMPLE_SIZE = 1000
@@ -170,6 +179,7 @@ def fit_bootstrap_ensemble(
     target_col: str = FINAL_YIELD_COLUMN,
     n_boot: int = N_BOOTSTRAP,
     id_column: str = "Lot_Wafer_ID",
+    group_col: str = "Lot_ID",
     coverage_target: float = CONFORMAL_TARGET_COVERAGE,
 ) -> BootstrapPrediction:
     """예측 구간 conformal 캘리브레이션 (spec §BA) -- 부트스트랩 앙상블은
@@ -203,7 +213,9 @@ def fit_bootstrap_ensemble(
         eval_df[id_column].astype(str).tolist() if id_column in eval_df.columns else [str(i) for i in eval_df.index]
     )
 
-    holdout = compute_holdout_predictions(train_df, features, target_col=target_col, coverage=coverage_target)
+    holdout = compute_holdout_predictions(
+        train_df, features, target_col=target_col, group_col=group_col, coverage=coverage_target
+    )
     if holdout is not None:
         q = holdout.conformal_q
         pred_lo = pred_mean - q
@@ -228,6 +240,19 @@ def fit_bootstrap_ensemble(
             covered = (actual_y.to_numpy()[valid] >= pred_lo[valid]) & (actual_y.to_numpy()[valid] <= pred_hi[valid])
             coverage_actual = float(covered.mean())
 
+    # 집계 수준 conformal 여유 (spec GA-1) -- eval 전체를 랏 몇 개로
+    # 나눠 평균 내는지(n_lots_eval)에 맞춰 랏 블록 부트스트랩으로 별도
+    # 산출한다. 웨이퍼 q를 그대로 쓰거나 q/sqrt(n)으로 나누지 않는다.
+    pred_agg_mean = float(pred_mean.mean())
+    q_agg: float | None = None
+    if holdout is not None:
+        n_lots_eval = (
+            int(eval_df[group_col].nunique()) if group_col in eval_df.columns else len(eval_df)
+        )
+        q_agg = compute_aggregate_conformal_q(holdout, n_lots_eval, coverage=coverage_target)
+    pred_agg_lo = pred_agg_mean - q_agg if q_agg is not None else None
+    pred_agg_hi = pred_agg_mean + q_agg if q_agg is not None else None
+
     return BootstrapPrediction(
         lot_wafer_id=lot_wafer_id,
         pred_mean=pred_mean,
@@ -238,6 +263,10 @@ def fit_bootstrap_ensemble(
         coverage_actual=coverage_actual,
         holdout_oof_actual=holdout_oof_actual,
         holdout_oof_pred=holdout_oof_pred,
+        conformal_q_agg=q_agg,
+        pred_agg_mean=pred_agg_mean,
+        pred_agg_lo=pred_agg_lo,
+        pred_agg_hi=pred_agg_hi,
     )
 
 
@@ -500,6 +529,10 @@ class HoldoutPredictions:
     conformal_q: float
     coverage: float
     n_holdout: int  # q를 낸 out-of-fold 표본 수 -- 표본 부족 경고에 쓴다
+    # 집계 수준 여유(spec GA-1) 산출용 -- actual_y/pred_point와 같은 순서로
+    # 정렬된 랏 ID. 랏 블록 부트스트랩(compute_aggregate_conformal_q)이
+    # 잔차를 랏 단위로 묶는 데 쓴다.
+    lot_id: np.ndarray
 
 
 def compute_holdout_predictions(
@@ -547,6 +580,7 @@ def compute_holdout_predictions(
         oof_pred[ev_idx] = pred
 
     y_arr = y.to_numpy()
+    lot_arr = groups.astype(str).to_numpy()
     covered = ~np.isnan(oof_pred)
     if not covered.any():
         return None
@@ -560,4 +594,57 @@ def compute_holdout_predictions(
         conformal_q=conformal_q,
         coverage=coverage,
         n_holdout=int(covered.sum()),
+        lot_id=lot_arr[covered],
     )
+
+
+# 집계 수준 conformal 여유 (spec GA-1) -- 랏 블록 부트스트랩 회차 수. 2,000회는
+# 90분위 절대값 추정의 몬테카를로 오차를 실무적으로 무시할 수준까지 줄이면서도
+# (표준오차가 대략 sqrt(0.9*0.1/2000)≈0.0067) 요청 하나로 감당 가능한 비용이다.
+AGGREGATE_BOOTSTRAP_ROUNDS = 2000
+AGGREGATE_BOOTSTRAP_SEED = 0
+
+
+def compute_aggregate_conformal_q(
+    holdout: HoldoutPredictions,
+    n_lots: int,
+    *,
+    coverage: float = CONFORMAL_TARGET_COVERAGE,
+    n_rounds: int = AGGREGATE_BOOTSTRAP_ROUNDS,
+    seed: int = AGGREGATE_BOOTSTRAP_SEED,
+) -> float | None:
+    """집계(SUMMARY 등 eval 전체 평균) 수준 conformal 여유 (spec GA-1).
+
+    웨이퍼 단위 conformal_q(홀드아웃 |잔차|의 분위수)를 그대로 평균에
+    적용하면 평균의 불확실성을 개별 웨이퍼 수준으로 과대평가한다.
+    `conformal_q / sqrt(n)`으로 나누지도 않는다 -- 같은 랏 안에서 잔차가
+    상관돼 있어 sqrt(n) 이득이 그대로 나오지 않고, 단순 나눗셈은 그
+    상관을 무시해 이번엔 반대로 과소평가한다.
+
+    대신 홀드아웃 OOF 잔차를 랏 단위로 묶고, `n_lots`개 랏을 복원추출로
+    리샘플링하는 랏 블록 부트스트랩을 `n_rounds`회 반복한다. 회차마다
+    뽑힌 랏들에 속한 모든 웨이퍼 잔차의 평균을 모아 분포를 만들고, 그
+    분포의 절대값 `coverage` 분위수를 여유로 쓴다 -- 랏 내부 상관을
+    리샘플링 단위(랏)로 자연스럽게 반영한다.
+
+    `n_lots`은 실제로 평균 내는 대상(eval 전체)의 랏 수와 맞춰야 한다 --
+    다른 집계 크기(예: 랏 단위 25장 평균)에는 그 크기에 맞는 `n_lots`로
+    별도 호출해야 하며, 이 함수가 반환한 값을 다른 크기에 재사용하면
+    안 된다.
+    """
+    if n_lots <= 0:
+        return None
+    unique_lots, inverse = np.unique(holdout.lot_id, return_inverse=True)
+    if len(unique_lots) == 0:
+        return None
+    residuals = holdout.actual_y - holdout.pred_point
+    residuals_by_lot = [residuals[inverse == i] for i in range(len(unique_lots))]
+
+    rng = np.random.default_rng(seed)
+    round_means = np.empty(n_rounds)
+    n_unique_lots = len(unique_lots)
+    for i in range(n_rounds):
+        drawn = rng.integers(0, n_unique_lots, size=n_lots)
+        pooled = np.concatenate([residuals_by_lot[lot_idx] for lot_idx in drawn])
+        round_means[i] = pooled.mean()
+    return float(np.percentile(np.abs(round_means), coverage * 100.0))
