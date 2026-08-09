@@ -10,6 +10,7 @@ import type {
   BootstrapStatus,
   CategoricalScatterResponse,
   ConfigTreemapResponse,
+  ManualEvalOverride,
   MeasurementExpansionResponse,
   ModelPerformanceResponse,
   NotificationSettingsSummary,
@@ -189,6 +190,8 @@ type AnalysisStateValue = {
   refreshSnapshotNow: () => void;
   // AF: 자동 갱신 파이프라인(주기 잡 또는 최신화 버튼)이 지금 실행 중인지.
   refreshRunning: boolean;
+  // AG-3: 업로드로 활성화된 수동 평가 데이터셋. null이면 자동(SQL/폴백) 모드.
+  manualEvalOverride: ManualEvalOverride | null;
 };
 
 // W-1: 부트스트랩/주기 자동 갱신이 채운 스냅샷을, 한 번도 저장된 적
@@ -250,6 +253,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   // AF: 주기 잡이든 최신화 버튼이든, 자동 갱신 파이프라인이 지금 실행
   // 중인지 -- 모니터링의 "최신화" 버튼 disabled 여부에 쓴다.
   const [refreshRunning, setRefreshRunning] = useState(false);
+  // AG-3: 업로드로 활성화된 수동 평가 데이터셋 -- 있으면 셸 레벨 배너가
+  // "수동 · {filename}" + "자동 갱신으로 복귀"를 보여준다.
+  const [manualEvalOverride, setManualEvalOverride] = useState<ManualEvalOverride | null>(null);
   // 폴링 콜백이 매번 최신 snapshot을 읽어야 하는데, setInterval에 넘긴
   // 클로저는 등록 시점 값을 붙잡는다 -- ref로 최신 값을 따라간다.
   const snapshotRef = useRef<RefreshSnapshot | null>(null);
@@ -414,6 +420,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         const meta = await getSnapshotMeta();
         setBootstrapStatus(meta.bootstrap ?? null);
         setRefreshRunning(meta.refresh_running);
+        setManualEvalOverride(meta.manual_eval_override ?? null);
         const cachedCreatedAt = snapshotRef.current?.created_at ?? null;
         if (meta.created_at && meta.created_at !== cachedCreatedAt) {
           const full = await getSnapshot();
@@ -484,11 +491,12 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       bootstrapStatus,
       refreshSnapshotNow,
       refreshRunning,
+      manualEvalOverride,
     }),
     [
       hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome,
       notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated, bootstrapStatus, refreshSnapshotNow,
-      refreshRunning,
+      refreshRunning, manualEvalOverride,
     ],
   );
 

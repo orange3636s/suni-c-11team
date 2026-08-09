@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from api.routes.datasets import get_dataset_registry
 from api.schemas.state import (
+    ActivateDatasetRequest,
     AlarmsStateSaveRequest,
     AnalysisStateSaveRequest,
     LatestStateResponse,
@@ -176,6 +177,10 @@ def get_snapshot_meta() -> dict[str, Any]:
         # AF: 모니터링의 "최신화" 버튼이 이 값으로 disabled 여부·툴팁을
         # 정한다 -- 주기 잡이 돌고 있어도 true가 된다(같은 락을 공유).
         "refresh_running": is_refresh_running(),
+        # AG-3/AG-4: 활성화 직후(파이프라인이 아직 도는 중이라 스냅샷의
+        # source.mode가 "manual"로 바뀌기 전)에도 배너가 "수동 모드"를
+        # 바로 보여줄 수 있게, 스냅샷과 별개로 override 자체를 싣는다.
+        "manual_eval_override": store.get_manual_eval_override(),
     }
 
 
@@ -193,6 +198,42 @@ def trigger_refresh(background_tasks: BackgroundTasks) -> dict[str, Any]:
         )
     background_tasks.add_task(run_refresh_pipeline)
     return {"triggered": True}
+
+
+@router.post("/activate-dataset")
+def activate_dataset(body: ActivateDatasetRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """AG: 원인 분석·알림 기록에서 새 파일을 업로드하면 이 엔드포인트가
+    불린다 -- "업로드는 활성 평가 데이터셋 전환이다"(지시서 AG-1). 화면별로
+    개별 재분석을 걸지 않고, 스냅샷 파이프라인을 한 번만 실행해 세 화면이
+    같은 결과를 공유하게 한다. 학습은 절대 걸지 않는다(AG-2) -- 여기서는
+    평가 데이터셋 포인터만 바꾸고, `_maybe_retrain`은 train_dataset를
+    건드리지 않으므로 자동 학습 트리거가 없다."""
+    registry = get_dataset_registry()
+    summary = registry.get_summary(body.dataset_id)
+    if summary is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.")
+    if is_refresh_running():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="자동 갱신이 이미 진행 중입니다. 잠시 후 다시 시도하세요.",
+        )
+    store = _store()
+    store.set_manual_eval_override(body.dataset_id, summary["original_filename"])
+    background_tasks.add_task(run_refresh_pipeline)
+    return {"activated": True, "dataset_id": body.dataset_id}
+
+
+@router.post("/deactivate-dataset")
+def deactivate_dataset(background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """AG-3: "자동 갱신으로 복귀" -- 수동 override를 지우고, 다음 파이프라인
+    실행부터 SQL/폴백으로 되돌아간다. 되돌아간 결과를 바로 보여주기 위해
+    한 번 즉시 실행한다."""
+    store = _store()
+    cleared = store.clear_manual_eval_override()
+    if is_refresh_running():
+        return {"deactivated": cleared, "triggered": False}
+    background_tasks.add_task(run_refresh_pipeline)
+    return {"deactivated": cleared, "triggered": True}
 
 
 @router.get("/snapshot")

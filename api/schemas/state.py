@@ -25,6 +25,10 @@ class StateSaveResponse(BaseModel):
     saved: bool
 
 
+class ActivateDatasetRequest(BaseModel):
+    dataset_id: str
+
+
 class TrainingStateSaveResponse(StateSaveResponse):
     # H-3⑤: 자동 수집 주기 반영(스케줄러 reschedule/pause)은 상태 저장과
     # 별개 작업이다 -- 저장은 성공했지만 반영이 실패해도 `saved: true`만

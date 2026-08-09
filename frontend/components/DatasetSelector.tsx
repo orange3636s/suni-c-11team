@@ -10,6 +10,12 @@ type DatasetSelectorProps = {
   value: string;
   onChange: (datasetId: string) => void;
   onDatasetsLoaded?: (datasets: DatasetSummary[]) => void;
+  // AG-1: 드롭다운에서 기존 항목을 고르는 것과 달리, "새 파일을
+  // 업로드"했을 때만 호출된다 -- 원인 분석·알림 기록은 이 콜백에서
+  // 업로드된 파일을 활성 평가 데이터셋으로 전환한다(다른 화면도 같이
+  // 갱신). 즐겨찾기 등 다른 화면에서 재사용해도 이 콜백을 넘기지 않으면
+  // 기존 동작(로컬 선택만 바뀜) 그대로다.
+  onUploaded?: (datasetId: string, hasTargetColumns: boolean) => void;
 };
 
 type MenuPosition = { left: number; width: number; top?: number; bottom?: number };
@@ -19,7 +25,7 @@ type MenuPosition = { left: number; width: number; top?: number; bottom?: number
 // that would need the height in advance -- it just grows upward on its own.
 const MENU_MAX_HEIGHT = 360;
 
-export default function DatasetSelector({ label, value, onChange, onDatasetsLoaded }: DatasetSelectorProps) {
+export default function DatasetSelector({ label, value, onChange, onDatasetsLoaded, onUploaded }: DatasetSelectorProps) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<MenuPosition | null>(null);
@@ -130,7 +136,10 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
         return;
       }
       await refresh();
-      if (result.dataset_id) onChange(result.dataset_id);
+      if (result.dataset_id) {
+        onChange(result.dataset_id);
+        onUploaded?.(result.dataset_id, result.has_target_columns ?? false);
+      }
       setOpen(false);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "업로드에 실패했습니다.");

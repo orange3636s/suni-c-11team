@@ -110,11 +110,18 @@ def validate_dataset(
         blocking_errors.append(
             "Step{n}_R{m} / Step{n}_D{m} / Step{n}_Config 패턴에 맞는 컬럼이 하나도 없습니다."
         )
-    if not schema.target_cols:
-        blocking_errors.append("이 파일에는 타깃 열이 없어 원인 분석에 사용할 수 없습니다.")
 
     if blocking_errors:
         return DatasetValidation(blocking_errors=blocking_errors, schema=schema)
+
+    # AG-5: 타깃(Y) 열이 없어도 차단하지 않는다 -- 업로드 연동(원인
+    # 분석·알림 기록에서 새 파일을 올리는 것)은 대부분 "평가 데이터셋"
+    # 용도라 Y가 없는 게 정상이다. 학습 전용 업로드(`/api/train/jobs`)는
+    # 이 함수를 쓰지 않고 별도 검증(src/data_validation.py)을 거치므로
+    # 여기서 풀어도 학습 경로에는 영향이 없다. 대신 경고로 남겨 "학습에는
+    # 못 쓴다"를 알린다.
+    if not schema.target_cols:
+        warnings.append("이 파일에는 타깃(Y) 열이 없습니다 -- 평가 데이터셋으로 쓸 수 있지만 학습에는 쓸 수 없습니다.")
 
     row_count = len(df)
     if row_count < LOW_ROW_COUNT_THRESHOLD:
@@ -310,6 +317,10 @@ class DatasetRegistry:
                 "lot_min": lot_min,
                 "lot_max": lot_max,
                 "lot_count": lot_count,
+                # AG-2: 프런트가 "이 파일에는 Y 계열이 있습니다" 안내를
+                # 띄울지 결정하는 데 쓴다 -- 경고 문구를 문자열로 매칭하지
+                # 않도록 별도 필드로 내려준다.
+                "has_target_columns": bool(validation.schema.target_cols) if validation.schema else False,
             }
         finally:
             # The uploaded DataFrame is only needed for this validation pass --

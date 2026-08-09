@@ -417,6 +417,19 @@ export function triggerRefresh(): Promise<{ triggered: boolean }> {
   return postJson("/api/state/refresh", {}, 10_000);
 }
 
+// AG-1: 원인 분석·알림 기록에서 새 파일을 업로드하면 부른다 -- 그
+// 데이터셋을 활성 평가 데이터셋으로 바꾸고 스냅샷 파이프라인을 1회
+// 실행한다. 화면별 개별 재분석은 만들지 않는다.
+export function activateDataset(datasetId: string): Promise<{ activated: boolean; dataset_id: string }> {
+  return postJson("/api/state/activate-dataset", { dataset_id: datasetId }, 10_000);
+}
+
+// AG-3: "자동 갱신으로 복귀" -- 수동 override를 지우고 원래 소스(SQL/폴백)로
+// 되돌린다.
+export function deactivateDataset(): Promise<{ deactivated: boolean; triggered: boolean }> {
+  return postJson("/api/state/deactivate-dataset", {}, 10_000);
+}
+
 // Fire-and-forget from the caller's point of view (spec §3-2: a save
 // failure must never surface as an analysis/training failure) -- these
 // still return a Promise so a caller that wants to log a failure can,

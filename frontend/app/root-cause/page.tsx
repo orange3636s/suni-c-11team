@@ -23,6 +23,7 @@ import { formatPValue } from "@/lib/numberFormat";
 import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
+  activateDataset,
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
@@ -178,7 +179,21 @@ export default function RootCausePage() {
 function RootCauseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setAnalysisDataset } = usePanelState();
+  const { setAnalysisDataset, setTrainingPanelOpen } = usePanelState();
+  // AG-1/AG-2: 새 파일을 업로드하면 활성 평가 데이터셋으로 전환하고
+  // 스냅샷 파이프라인을 1회 실행한다(화면별 개별 재분석은 걸지 않는다).
+  // Y 계열이 감지되면 자동 학습은 절대 걸지 않고 안내만 띄운다.
+  const [showTrainingSuggestion, setShowTrainingSuggestion] = useState(false);
+  const [activateError, setActivateError] = useState("");
+  function handleDatasetUploaded(uploadedId: string, hasTargetColumns: boolean) {
+    setActivateError("");
+    void activateDataset(uploadedId)
+      .then(() => refreshSnapshotNow())
+      .catch((failure) => {
+        setActivateError(failure instanceof Error ? failure.message : "활성 평가 데이터셋 전환에 실패했습니다.");
+      });
+    setShowTrainingSuggestion(hasTargetColumns);
+  }
   // 원인 분석 결과 상태 유지 (spec: 학습·분석 결과 상태 유지) -- the actual
   // result (Pareto/스크리닝/산점도) lives in the shared AnalysisStateProvider
   // context, not local useState, so tab switching renders it from memory
@@ -187,7 +202,7 @@ function RootCauseContent() {
   // GET /api/state/latest.
   const {
     analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice, alarms,
-    snapshot: automationSnapshot,
+    snapshot: automationSnapshot, refreshSnapshotNow,
   } = useAnalysisState();
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
@@ -821,9 +836,20 @@ function RootCauseContent() {
 
       <section className="uploadCard">
         <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr)" }}>
-          <DatasetSelector label="분석 대상" value={datasetId} onChange={setDatasetId} />
+          <DatasetSelector label="분석 대상" value={datasetId} onChange={setDatasetId} onUploaded={handleDatasetUploaded} />
         </div>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
+        {activateError && <p className="notifyFieldError">{activateError}</p>}
+        {/* AG-2: Y 계열이 감지돼도 자동 학습은 걸지 않는다 -- 안내 +
+            모델 학습·자동화 팝업을 여는 링크만 제공한다. */}
+        {showTrainingSuggestion && (
+          <p className="analysisFallbackNotice" role="status">
+            이 파일에는 Y 계열이 있습니다. 학습에 사용하려면 모델 학습·자동화에서 실행하세요.{" "}
+            <button type="button" className="linkButton" onClick={() => setTrainingPanelOpen(true)}>
+              열기
+            </button>
+          </p>
+        )}
       </section>
 
       <section className="uploadCard">

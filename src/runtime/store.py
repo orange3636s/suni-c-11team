@@ -35,6 +35,9 @@ BOOTSTRAP_LOCK_STATE_KEY = "automation:bootstrap_lock"
 BOOTSTRAP_STATUS_STATE_KEY = "automation:bootstrap_status"
 BOOTSTRAP_LOCK_STALE_SECONDS = 3600
 
+# AG: 업로드로 활성화된 수동 평가 데이터셋 (RuntimeStore.set/get/clear_manual_eval_override).
+MANUAL_EVAL_OVERRIDE_STATE_KEY = "automation:manual_eval_override"
+
 
 def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
     """D-1: 같은 (dataset, target, feature, viewType)는 같은 즐겨찾기로
@@ -814,6 +817,24 @@ class RuntimeStore:
         건너뛴다는 판단에 쓰는 헬퍼."""
         status = self.get_refresh_snapshot_status()
         return status["snapshot"] is not None and not status["stale_version"]
+
+    # -- AG: 업로드로 활성화된 "수동 평가 데이터셋" ------------------------
+    # 원인 분석·알림 기록에서 새 파일을 올리면 이 값이 채워지고,
+    # `src.automation.refresh._resolve_source`가 SQL/폴백보다 먼저
+    # 이 값을 본다 -- 주기 잡이 도는 동안에도 사용자가 올린 파일이
+    # 그대로 유지된다("자동 갱신으로 복귀"를 누르기 전까지).
+
+    def set_manual_eval_override(self, dataset_id: str, filename: str) -> None:
+        self.set_app_state(
+            MANUAL_EVAL_OVERRIDE_STATE_KEY,
+            {"dataset_id": dataset_id, "filename": filename, "set_at": datetime.now(timezone.utc).isoformat()},
+        )
+
+    def get_manual_eval_override(self) -> dict[str, Any] | None:
+        return self.get_app_state(MANUAL_EVAL_OVERRIDE_STATE_KEY)
+
+    def clear_manual_eval_override(self) -> bool:
+        return self.delete_app_state(MANUAL_EVAL_OVERRIDE_STATE_KEY)
 
     # -- 첫 기동 스냅샷 부트스트랩 단일 실행 잠금 (W-2) -------------------
 

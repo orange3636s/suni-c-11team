@@ -115,12 +115,22 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
         logger.warning("auto_refresh: 알람 판정 실패 -- 스냅샷 저장 생략")
         return
 
+    # AG: 헤더·모니터링이 "수동 · uploaded_0809.csv"처럼 파일명을 보여줄
+    # 수 있게, eval_dataset_id뿐 아니라 원본 파일명도 스냅샷에 싣는다.
+    eval_dataset_filename = None
+    try:
+        eval_summary = registry.get_summary(eval_dataset_id)
+        eval_dataset_filename = eval_summary["original_filename"] if eval_summary else None
+    except Exception:
+        logger.exception("auto_refresh: 평가 데이터셋 파일명 조회 실패")
+
     snapshot = {
         "created_at": now_iso,
         "source": {
             "mode": mode,
             "train_dataset": train_dataset_id,
             "eval_dataset": eval_dataset_id,
+            "eval_dataset_filename": eval_dataset_filename,
             "row_count": source_row_count,
         },
         "model": model_meta,
@@ -137,6 +147,13 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
     # 회피(dispatch.py가 이 모듈을 다시 참조하지 않지만, notify 쪽
     # 모듈들이 얽혀 있어 안전하게 지연 임포트한다) 목적이다.
     from src.automation import refresh_dispatch
+
+    # AG-3: 수동 모드(업로드로 활성화된 평가 데이터셋)에서는 자동 발송을
+    # 중단한다 -- 사용자가 임의로 올린 파일의 판정 결과를 폰으로 보내면
+    # 안 된다.
+    if mode == "manual":
+        logger.info("auto_refresh: 수동 모드라 신규 알람 발송을 건너뜁니다.")
+        return
 
     try:
         refresh_dispatch.dispatch_new_alarms(
@@ -158,7 +175,26 @@ def _resolve_source(
     """SQL 모드를 먼저 시도하고, 실패하거나 설정이 없으면 폴백(train/test)
     으로 넘어간다. SQL 모드에서 얻은 배치가 학습용(Y 있음)인지 평가용
     (Y 없음)인지는 기존 파일 기반 자동 수집과 동일한 기준
-    (`has_target_column`)으로 가른다."""
+    (`has_target_column`)으로 가른다.
+
+    AG-3: 업로드로 활성화된 "수동 평가 데이터셋"이 있으면 SQL/폴백보다
+    먼저 그것을 쓴다 -- 주기 잡이 사용자가 올린 파일을 원래 소스로
+    되돌리지 않는다("자동 갱신으로 복귀"를 눌러 override를 지우기
+    전까지). 학습 대상(train_dataset)은 건드리지 않는다 -- 직전
+    스냅샷의 것을 그대로 이어받는다(자동 학습을 걸지 않는다, AG-2)."""
+    manual = store.get_manual_eval_override()
+    if manual is not None:
+        previous = store.get_refresh_snapshot_status()["snapshot"]
+        previous_source = (previous or {}).get("source") if previous else None
+        previous_train = (previous_source or {}).get("train_dataset") if previous_source else None
+        try:
+            row_count = len(registry.get_dataframe(manual["dataset_id"]))
+        except Exception:
+            logger.exception("auto_refresh: 수동 평가 데이터셋을 읽지 못했습니다 -- %s", manual.get("dataset_id"))
+            errors.append("업로드한 평가 데이터셋을 읽지 못했습니다.")
+            row_count = 0
+        return "manual", previous_train or FALLBACK_TRAIN_DATASET, manual["dataset_id"], row_count
+
     if sql_source.is_sql_configured(store):
         dataframe = sql_source.fetch_incremental(store)
         if dataframe is not None:

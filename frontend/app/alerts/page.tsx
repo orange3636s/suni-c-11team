@@ -26,7 +26,7 @@ import {
   summarizeClasses,
   targetYieldMismatch,
 } from "@/lib/alertsClassify";
-import { getAlertsData, getDatasets, getReliability, saveAlarmsState } from "@/lib/api";
+import { activateDataset, getAlertsData, getDatasets, getReliability, saveAlarmsState } from "@/lib/api";
 import { ALARM_GRADE_COLOR } from "@/lib/constants";
 import type { DatasetSummary, ReliabilityResponse } from "@/types/data";
 
@@ -173,8 +173,21 @@ export default function AlertsPage() {
 
 function AlertsContent() {
   const searchParams = useSearchParams();
-  const { analysisDataset, requestChat } = usePanelState();
-  const { alarms: alarmsState, setAlarms: setAlarmsState, training, hydrated } = useAnalysisState();
+  const { analysisDataset, requestChat, setTrainingPanelOpen } = usePanelState();
+  // AG-1/AG-2: 새 파일을 업로드하면 활성 평가 데이터셋으로 전환하고
+  // 스냅샷 파이프라인을 1회 실행한다 -- 화면별 개별 재분석은 걸지 않는다.
+  const [showTrainingSuggestion, setShowTrainingSuggestion] = useState(false);
+  const [activateError, setActivateError] = useState("");
+  function handleDatasetUploaded(uploadedId: string, hasTargetColumns: boolean) {
+    setActivateError("");
+    void activateDataset(uploadedId)
+      .then(() => refreshSnapshotNow())
+      .catch((failure) => {
+        setActivateError(failure instanceof Error ? failure.message : "활성 평가 데이터셋 전환에 실패했습니다.");
+      });
+    setShowTrainingSuggestion(hasTargetColumns);
+  }
+  const { alarms: alarmsState, setAlarms: setAlarmsState, training, hydrated, refreshSnapshotNow } = useAnalysisState();
 
   // 지시서 O-1: train 셀렉터를 없애고 최근 학습 모델의 데이터셋을 자동으로
   // 따른다 -- 모델 학습 팝업이 저장한 source_filename을 데이터셋 목록의
@@ -400,7 +413,7 @@ function AlertsContent() {
         <div className="alertsQueryGrid">
           <div className="alertsQueryRow1">
             <div className="alertsDatasetBlock">
-              <DatasetSelector label="예측 대상" value={evalDataset} onChange={setEvalDataset} />
+              <DatasetSelector label="예측 대상" value={evalDataset} onChange={setEvalDataset} onUploaded={handleDatasetUploaded} />
               <p className="sectionCaption alertsDatasetCaption">정상범위 기준: {trainDatasetLabel}</p>
             </div>
             <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
@@ -413,6 +426,17 @@ function AlertsContent() {
           </div>
         </div>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
+        {activateError && <p className="notifyFieldError">{activateError}</p>}
+        {/* AG-2: Y 계열이 감지돼도 자동 학습은 걸지 않는다 -- 안내 +
+            모델 학습·자동화 팝업을 여는 링크만 제공한다. */}
+        {showTrainingSuggestion && (
+          <p className="analysisFallbackNotice" role="status">
+            이 파일에는 Y 계열이 있습니다. 학습에 사용하려면 모델 학습·자동화에서 실행하세요.{" "}
+            <button type="button" className="linkButton" onClick={() => setTrainingPanelOpen(true)}>
+              열기
+            </button>
+          </p>
+        )}
         {error && <p className="errorMessage">{error}</p>}
         {data && mismatchWarning && (
           <div className="alertsMismatchWarning">

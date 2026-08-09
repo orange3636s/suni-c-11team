@@ -64,6 +64,9 @@ export type DatasetUploadResponse = {
   lot_min?: string | null;
   lot_max?: string | null;
   lot_count?: number | null;
+  // AG-2: Y 계열 감지 여부 -- true면 "학습에 사용하려면 모델 학습·
+  // 자동화에서 실행하세요" 안내를 띄운다(자동 학습은 절대 걸지 않는다).
+  has_target_columns?: boolean;
 };
 
 export type DatasetSchemaResponse = {
@@ -533,9 +536,13 @@ export type LatestStateResponse = {
 // -- J-3/J-4: 자동 갱신 파이프라인 스냅샷 --------------------------------
 
 export type RefreshSnapshotSource = {
-  mode: "sql" | "fallback";
+  // AG-3: "manual"은 원인 분석·알림 기록에서 업로드해 활성화한 평가
+  // 데이터셋 -- "자동 갱신으로 복귀"를 누르기 전까지 주기 잡도 이 값을
+  // 그대로 쓴다.
+  mode: "sql" | "fallback" | "manual";
   train_dataset: string;
   eval_dataset: string;
+  eval_dataset_filename: string | null;
   row_count: number;
 };
 
@@ -602,12 +609,21 @@ export type BootstrapStatus = {
   updated_at: string;
 };
 
+// AG-3: 업로드로 활성화된 수동 평가 데이터셋 -- 있으면 헤더/화면에
+// "수동 · {filename}" 배지와 "자동 갱신으로 복귀" 버튼을 보여준다.
+export type ManualEvalOverride = {
+  dataset_id: string;
+  filename: string;
+  set_at: string;
+};
+
 export type SnapshotMetaResponse = {
   created_at: string | null;
   bootstrap: BootstrapStatus | null;
   // AF: 주기 잡이든 수동 최신화 버튼이든, 자동 갱신 파이프라인이 지금
   // 실행 중이면 true -- 모니터링의 "최신화" 버튼이 이 값으로 disabled.
   refresh_running: boolean;
+  manual_eval_override: ManualEvalOverride | null;
 };
 
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------
