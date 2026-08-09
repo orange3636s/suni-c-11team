@@ -191,10 +191,10 @@ class ControlRangeListResponse(BaseModel):
 
 
 class AlarmItemSchema(BaseModel):
-    """알람 판정 GBDT 전환 (spec §A-3) -- 관리한계 이탈량이 아니라 부트스트랩
-    앙상블 예측 수율의 신뢰구간 상한(pred_hi) 기준. 예측 수율 절대값과
-    신뢰구간은 화면에 노출하지 않는다(spec §A-3: 오차가 Y 표준편차의
-    72~80%라 잘못된 확신을 준다) -- `risk_percentile`(순위)만 내보낸다.
+    """알람 판정 GBDT 전환 (spec §A-3) + 민감도 슬라이더를 실제
+    트레이드오프로 (spec §CA-1) -- 관리한계 이탈량이 아니라 부트스트랩
+    앙상블 예측 수율의 점추정(pred_mean) 기준. 예측 수율 절대값은 화면에
+    노출하지 않는다 -- `risk_percentile`(순위)만 내보낸다.
     """
 
     lot_wafer_id: str
@@ -239,8 +239,6 @@ class AlertsDataResponse(BaseModel):
     train_dataset_id: str
     eval_dataset_id: str
     total_wafers: int
-    # train Y 표준편차 -- classify_wafer의 σ 배수 임계 계산에 쓴다.
-    sigma: float
     # 목표 수율 분포 불일치 경고(spec §A-1)와 "중앙값으로 설정" 버튼에 쓴다.
     train_y_min: float
     train_y_max: float
@@ -248,17 +246,30 @@ class AlertsDataResponse(BaseModel):
     train_y_p1: float
     train_y_p99: float
     predictions: list[WaferPredictionSchema] = Field(default_factory=list)
+    # 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 랏 단위
+    # GroupKFold 홀드아웃 out-of-fold (실제 Y, 예측값) 쌍의 층화 샘플
+    # (최대 1,000쌍, `alarm_gbdt.HOLDOUT_OOF_SAMPLE_SIZE`). eval에는 실제
+    # 정답이 없으므로 이 학습 데이터 기반 추정치로 슬라이더 옆
+    # 정밀도·재현율을 클라이언트에서 즉시 재계산한다 -- "실측"이 아니라
+    # "홀드아웃 기준 추정"임을 화면에 반드시 병기한다. 랏 수 부족으로
+    # 홀드아웃을 못 냈으면(interval_conformal_q도 None인 경우와 동일
+    # 조건) 둘 다 빈 배열이다.
+    holdout_oof_actual: list[float] = Field(default_factory=list)
+    holdout_oof_predicted: list[float] = Field(default_factory=list)
     # 알람 신뢰도 게이트 -- AlarmListResponse와 동일한 값(같은 (train,eval)
     # 쌍이면 항상 일치한다). 게이트 미달이면 심각/위험/주의가 전부 0건이다.
     auc_lower_bound: float | None
     auc_gate_passed: bool
     auc_gate_threshold: float
-    # B-1: holdout/factor_bands/measurement_bias는 삭제했다 -- 이 필드들을
-    # 렌더하는 화면이 0곳이면서(estimatePrecisionRecall/representativeWafer
-    # 프런트 소비자도 죽은 코드였다) /alarms/predictions 요청마다 무캐시로
-    # GroupKFold 5회 GBDT 적합 + 88인자 전수 밴드 계산을 돌려 알림 이력
-    # 탭을 열 때마다 수십 초를 태웠다. 되살릴 거면 반드시
-    # lru_cache((train, eval))로 감싸라 -- 안 그러면 같은 문제가 재발한다.
+    # 예측 구간 conformal 캘리브레이션 (spec §BA-4) -- 이 세 값이 "구간을
+    # 믿어도 되는지"의 근거다. interval_coverage_actual은 eval_df에 실측
+    # Y가 있을 때만 채워진다(일반 평가 상황에서는 None -- 표시 문구는
+    # 프런트가 그 경우를 구분해서 보여준다). interval_conformal_q가
+    # None이면 랏 수 부족으로 캘리브레이션이 적용되지 않고 부트스트랩
+    # 분위수로 대체됐다는 뜻이다.
+    interval_coverage_target: float
+    interval_coverage_actual: float | None = None
+    interval_conformal_q: float | None = None
 
 
 class TargetPerformanceSchema(BaseModel):

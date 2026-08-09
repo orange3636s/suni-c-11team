@@ -500,7 +500,6 @@ def _measured_ids_for_alarm_factors(train: str, eval: str) -> frozenset[str]:
 def _scored_wafers(
     train: str,
     eval: str,
-    train_df: pd.DataFrame,
     eval_df: pd.DataFrame,
     *,
     target: float = alarm_gbdt.DEFAULT_TARGET_YIELD,
@@ -525,16 +524,21 @@ def _scored_wafers(
         return [], auc_lo, gate_passed
 
     measured_ids = _measured_ids_for_alarm_factors(train, eval)
-    sigma = float(pd.to_numeric(train_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").std())
     scored = alarm_gbdt.score_wafers(
         eval_df, prediction,
-        target=target, sensitivity=sensitivity, sigma=sigma,
+        target=target, sensitivity=sensitivity,
         gate_passed=gate_passed, measured_ids=measured_ids,
     )
     return scored, auc_lo, gate_passed
 
 
 def _reason_for(score, eval_by_id, warning_lines) -> str:
+    # spec §BC-2: 계측 없이 등급이 매겨진 wafer는 선정 인자 근거를 댈 수
+    # 없다 -- 정상 사유 대신 이 문구를 쓰고(배지 구분 표기는 프런트가
+    # 담당), compute_alarm_notification_items가 이 wafer를 자동 발송
+    # 대상에서 뺀다.
+    if not score.measured:
+        return alarm_gbdt.NO_REASON_UNMEASURED
     row = None
     if eval_by_id is not None and score.lot_wafer_id in eval_by_id.index:
         match = eval_by_id.loc[score.lot_wafer_id]
@@ -554,9 +558,9 @@ def get_alarms(
     target: float | None = None,
     sensitivity: float | None = None,
 ) -> dict[str, Any]:
-    """알람 판정 GBDT 전환 (spec §A) + 사전 알람 로그 전면 개편 (spec §B-1) --
-    부트스트랩 앙상블로 예측한 최종 수율(Y) 신뢰구간 상한(pred_hi)이 목표
-    수율 - 민감도 오프셋*σ 아래인 wafer만 알람으로 낸다.
+    """알람 판정 GBDT 전환 (spec §A) + 민감도 슬라이더를 실제 트레이드오프로
+    (spec §CA-1) -- 부트스트랩 앙상블로 예측한 최종 수율(Y)의 점추정이
+    목표 수율 - 민감도 margin(%p) 아래인 wafer만 알람으로 낸다.
 
     `target`/`sensitivity`는 선택 파라미터다 -- 지시서: 원인 분석 탭의
     알람 삼각형 마커가 알림 기록 탭에서 저장한 값을 그대로 넘겨 두
@@ -569,7 +573,9 @@ def get_alarms(
     알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
     AUC 하한이 0.65 미만이면 알람을 아예 내지 않는다.
     """
-    train_df = _dataframe_or_404(train)
+    # train 존재 여부는 _scored_wafers -> _auc_gate/_cached_bootstrap_prediction이
+    # 검증한다(둘 다 첫 줄에서 _dataframe_or_404(train)을 부른다) -- 여기서는
+    # eval_df 자체가 필요한 곳(warning_lines 조회, id_column 인덱싱)에만 fetch한다.
     eval_df = _dataframe_or_404(eval)
 
     resolved_target = target if target is not None else alarm_gbdt.DEFAULT_TARGET_YIELD
@@ -580,7 +586,7 @@ def get_alarms(
     # target/sensitivity와 무관한 원시 예측치라 그대로 재사용해도 안전
     # 하다 -- 분류 임계값은 이후 score_wafers에서 매번 새로 적용된다).
     scored, auc_lo, gate_passed = _scored_wafers(
-        train, eval, train_df, eval_df, target=resolved_target, sensitivity=resolved_sensitivity
+        train, eval, eval_df, target=resolved_target, sensitivity=resolved_sensitivity
     )
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
@@ -638,17 +644,25 @@ def compute_alarm_notification_items(
     읽어 넘긴다 -- 생략하면(저장된 조회가 없을 때) 기본값(85.0/0.5)을
     쓴다. 데이터셋을 찾을 수 없으면 예외 대신 None을 반환한다 -- 알림
     발송은 best-effort라 404로 스케줄러 잡 전체를 죽이면 안 된다.
+
+    spec §BC-2: 계측 없이(measured=False) 등급이 매겨진 wafer는 자동
+    발송 대상에서 제외한다 -- 사유를 댈 수 없는 알람을 폰으로 보내면
+    받는 사람이 조치할 수 없다. `get_alarms`(화면 표시)는 이 wafer를
+    "사유 제시 불가" 표시와 함께 그대로 보여준다 -- 여기서만 거른다.
     """
     try:
-        train_df = _dataframe_or_404(train)
+        # train 존재 여부는 _dataframe_or_404을 직접 결과 없이 불러서만
+        # 검증한다 -- 실제 사용은 eval_df뿐이다(_scored_wafers 내부에서
+        # train을 다시 조회한다).
+        _dataframe_or_404(train)
         eval_df = _dataframe_or_404(eval)
     except HTTPException:
         return None
 
     scored, _auc_lo, _gate_passed = _scored_wafers(
-        train, eval, train_df, eval_df, target=target, sensitivity=sensitivity
+        train, eval, eval_df, target=target, sensitivity=sensitivity
     )
-    alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
+    alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의") and s.measured]
 
     warning_lines = _cached_all_warning_lines(train)
     id_column = "Lot_Wafer_ID"
@@ -672,10 +686,16 @@ def compute_alarm_notification_items(
 def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str, Any]:
     """사전 알람 로그 전면 개편 (spec §A-3) -- 등급을 서버가 매겨 내려주지
     않고, wafer별 원시 예측치(pred_mean/pred_lo/pred_hi)와 목표 수율 조정에
-    필요한 학습 Y 통계(sigma·분위수)를 내려준다. 목표 수율·민감도를 조절할
-    때마다 이 응답을 다시 받아올 필요가 없다 -- frontend의 classifyWafer가
+    필요한 학습 Y 분위수를 내려준다. 목표 수율·민감도를 조절할 때마다 이
+    응답을 다시 받아올 필요가 없다 -- frontend의 classifyWafer가
     `src.analysis.alarm_gbdt.classify_wafer`와 동일한 공식으로 클라이언트
     에서 즉시 재분류한다(§A-3: "API를 재호출하지 마라").
+
+    민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 홀드아웃 OOF
+    (실제 Y, 예측값) 층화 샘플도 함께 내려 클라이언트가 슬라이더를 움직일
+    때마다 정밀도·재현율을 즉시 추정하게 한다(`_cached_bootstrap_prediction`이
+    이미 계산해 캐시한 것을 그대로 읽을 뿐이라 이 요청에서 추가 계산이
+    없다).
     """
     train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
@@ -722,30 +742,40 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
 
     y_train = pd.to_numeric(train_df[alarm_gbdt.FINAL_YIELD_COLUMN], errors="coerce").dropna()
     has_y = len(y_train) > 0
-    sigma = float(y_train.std()) if has_y else 0.0
 
-    # B-1: holdout/factor_bands/measurement_bias는 여기서 계산해 응답에
-    # 실었었지만 렌더하는 화면이 0곳이었다(프런트 소비자도 죽은 코드--
-    # estimatePrecisionRecall/representativeWafer, 같은 커밋에서 삭제).
-    # 매 요청마다 무캐시로 GroupKFold 5회 GBDT 적합(holdout) + 88인자
-    # 전수 밴드 계산(factor_bands)을 돌려 알림 이력 탭을 열 때마다
-    # 수십 초가 걸렸다. 되살릴 거면 lru_cache((train, eval))가 필수다.
+    # B-1(과거)/§CA-4(현재): factor_bands/measurement_bias(개별 인자
+    # 88개 전수 밴드)는 되살리지 않는다 -- 렌더하는 화면이 없다. 반면
+    # 홀드아웃 OOF (실제, 예측) 쌍은 §CA-4가 요구하는 정밀도·재현율
+    # 실시간 추정의 재료라 되살렸다 -- 단, `_cached_bootstrap_prediction`
+    # 안에서 conformal q와 함께 "한 번만" 계산해 캐시된 것을 읽을 뿐,
+    # 이 요청에서 GroupKFold를 다시 돌리지 않는다(이전에 문제였던 매
+    # 요청 무캐시 재계산과 다르다).
+    holdout_oof_actual = (
+        prediction.holdout_oof_actual.tolist() if prediction is not None and prediction.holdout_oof_actual is not None else []
+    )
+    holdout_oof_predicted = (
+        prediction.holdout_oof_pred.tolist() if prediction is not None and prediction.holdout_oof_pred is not None else []
+    )
 
     return round_floats(
         {
             "train_dataset_id": train,
             "eval_dataset_id": eval,
             "total_wafers": len(eval_df),
-            "sigma": sigma,
             "train_y_min": float(y_train.min()) if has_y else 0.0,
             "train_y_max": float(y_train.max()) if has_y else 0.0,
             "train_y_median": float(y_train.median()) if has_y else 0.0,
             "train_y_p1": float(y_train.quantile(0.01)) if has_y else 0.0,
             "train_y_p99": float(y_train.quantile(0.99)) if has_y else 0.0,
             "predictions": predictions,
+            "holdout_oof_actual": holdout_oof_actual,
+            "holdout_oof_predicted": holdout_oof_predicted,
             "auc_lower_bound": auc_lo,
             "auc_gate_passed": gate_passed,
             "auc_gate_threshold": alarm_gbdt.AUC_GATE,
+            "interval_coverage_target": prediction.coverage_target if prediction is not None else alarm_gbdt.CONFORMAL_TARGET_COVERAGE,
+            "interval_coverage_actual": prediction.coverage_actual if prediction is not None else None,
+            "interval_conformal_q": prediction.conformal_q if prediction is not None else None,
         }
     )
 

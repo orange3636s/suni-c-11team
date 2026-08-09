@@ -20,9 +20,14 @@ import { usePanelState } from "@/components/PanelStateProvider";
 import {
   type ClassifiedWafer,
   type ClassKey,
+  type PrecisionRecallEstimate,
   CLASS_KEYS,
+  CLASS_LABELS,
   classifyAll,
+  classifyMargin,
   downloadAlarmsCsv,
+  estimatePrecisionRecall,
+  reasonFor,
   summarizeClasses,
   targetYieldMismatch,
 } from "@/lib/alertsClassify";
@@ -151,11 +156,15 @@ function useDebouncedNumber(value: number, delayMs: number): number {
 const LARGE_DATASET_DEBOUNCE_THRESHOLD = 10_000;
 const DEBOUNCE_MS = 100;
 
+// 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4 프리셋 재정의) --
+// 오탐이 실제로 나타나기 시작하는 지점(0.6)을 "균형"으로 삼는다. 세
+// 값은 holdout 실측 표(target=85, test.CSV)와 대조해 정한 것이라 다른
+// 값으로 바꾸려면 그 표를 다시 뽑아 확인해야 한다.
 type PresetKey = "low_fp" | "balanced" | "low_fn";
 const SENSITIVITY_PRESETS: Array<{ key: PresetKey; label: string; value: number }> = [
   { key: "low_fp", label: "오경보 최소", value: 0.2 },
-  { key: "balanced", label: "균형", value: 0.5 },
-  { key: "low_fn", label: "미탐 최소", value: 0.8 },
+  { key: "balanced", label: "균형", value: 0.6 },
+  { key: "low_fn", label: "미탐 최소", value: 1.0 },
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -312,13 +321,14 @@ function AlertsContent() {
   const sensitivityForClassify = useDebouncedNumber(sensitivity, debounceMs);
 
   // 사전 알람 로그 전면 개편의 핵심 -- API를 다시 부르지 않고, 이미 받아둔
-  // 원시 예측치를 목표 수율·민감도로 즉시 재분류한다 (spec §A-3).
+  // 원시 예측치를 목표 수율·민감도로 즉시 재분류한다 (spec §A-3). 민감도
+  // 슬라이더를 실제 트레이드오프로 (spec §CA-1) -- 판정은 점추정
+  // (pred_mean) 기준이라 sigma를 더 이상 넘기지 않는다.
   const classified = useMemo<ClassifiedWafer[]>(() => {
     if (!data) return [];
     return classifyAll(data.predictions, {
       target: targetYieldForClassify,
       sensitivity: sensitivityForClassify,
-      sigma: data.sigma,
       gatePassed: data.auc_gate_passed,
     });
   }, [data, targetYieldForClassify, sensitivityForClassify]);
@@ -338,9 +348,25 @@ function AlertsContent() {
     [alarmItems, gradeFilter],
   );
 
+  // 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 슬라이더 옆
+  // 정밀도·재현율 표시 전용 디바운스(150ms, 지시서 고정값). 데이터셋
+  // 크기와 무관하게 항상 적용한다 -- 매 프레임 홀드아웃 1,000쌍을 다시
+  // 훑는 건 아니지만, 드래그마다 갱신하면 숫자가 너무 빨리 바뀌어
+  // 읽기 어렵다.
+  const targetYieldForEstimate = useDebouncedNumber(targetYield, 150);
+  const sensitivityForEstimate = useDebouncedNumber(sensitivity, 150);
+  const precisionRecallEstimate = useMemo<PrecisionRecallEstimate | null>(() => {
+    if (!data) return null;
+    return estimatePrecisionRecall(data.holdout_oof_actual, data.holdout_oof_predicted, {
+      target: targetYieldForEstimate,
+      sensitivity: sensitivityForEstimate,
+      evalAlarmCount: alarmItems.length,
+    });
+  }, [data, targetYieldForEstimate, sensitivityForEstimate, alarmItems.length]);
+
   const alarmTable = useTableSearchSort(
     gradeFilteredAlarmItems,
-    (item) => `${item.lot_wafer_id} ${item.reason ?? ""}`,
+    (item) => `${item.lot_wafer_id} ${reasonFor(item)}`,
     ALARM_SORT_OPTIONS,
     "default",
     alarmTieBreak,
@@ -370,6 +396,10 @@ function AlertsContent() {
     setSensitivity(preset.value);
     setActivePreset(preset.key);
   }
+
+  // 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-2) -- 근거 밴드에
+  // 목표선과 별개로 판정선(현재 민감도의 "주의" 컷)을 그린다.
+  const judgmentLine = targetYield - classifyMargin(sensitivity);
 
   const mismatchWarning = data ? targetYieldMismatch(targetYield, data.train_y_p1, data.train_y_p99) : false;
   const nonNormalPct = data && data.total_wafers > 0
@@ -422,7 +452,13 @@ function AlertsContent() {
             </button>
           </div>
           <div className="alertsQueryRow2">
-            <SensitivityField value={sensitivity} activePreset={activePreset} onApplyPreset={applyPreset} onChange={handleSensitivityChange} />
+            <SensitivityField
+              value={sensitivity}
+              activePreset={activePreset}
+              onApplyPreset={applyPreset}
+              onChange={handleSensitivityChange}
+              estimate={precisionRecallEstimate}
+            />
           </div>
         </div>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
@@ -460,6 +496,8 @@ function AlertsContent() {
           gatePassed={data.auc_gate_passed}
           aucLowerBound={data.auc_lower_bound}
           aucGateThreshold={data.auc_gate_threshold}
+          coverageTarget={data.interval_coverage_target}
+          coverageActual={data.interval_coverage_actual}
         />
       )}
 
@@ -527,6 +565,12 @@ function AlertsContent() {
                 현재 설정을 충족하는 알람이 없습니다.
                 <br />
                 목표 수율이나 민감도를 조절해 다시 확인해 보세요.
+                <br />
+                {/* spec §BD-1: 알람 0건이 "안전"으로 읽히지 않도록 판정
+                    범위를 함께 보여준다 -- 구간이 넓으면 대부분이
+                    미분류로 빠지고 알람은 애초에 나오기 어렵다. */}
+                판정 가능 {(data.total_wafers - classSummary.판별불가.count).toLocaleString()}장 · 미분류{" "}
+                {classSummary.판별불가.count.toLocaleString()}장
               </p>
             )}
             {alarmItems.length > 0 && gradeFilteredAlarmItems.length === 0 && (
@@ -556,6 +600,7 @@ function AlertsContent() {
                             key={`${item.lot_wafer_id}-${index}`}
                             item={item}
                             targetYield={targetYield}
+                            judgmentLine={judgmentLine}
                             onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
                             explainDisabled={!analysisDataset}
                           />
@@ -570,6 +615,7 @@ function AlertsContent() {
                       key={`card-${item.lot_wafer_id}-${index}`}
                       item={item}
                       targetYield={targetYield}
+                      judgmentLine={judgmentLine}
                       onExplain={() => requestChat(alarmExplainMessage(item), "chat")}
                       explainDisabled={!analysisDataset}
                     />
@@ -592,15 +638,24 @@ function AlertsContent() {
 function alarmExplainMessage(item: ClassifiedWafer): string {
   return (
     `알람: ${item.lot_wafer_id} · 등급 ${item.grade} · 예측 수율 ${item.pred_lo.toFixed(1)}~${item.pred_hi.toFixed(1)}\n` +
-    `사유: ${item.reason ?? "-"}\n` +
+    `사유: ${reasonFor(item)}\n` +
     "이 알람에 대해 설명해 주세요."
   );
 }
 
 const GRADE_CLASS: Record<string, string> = { 심각: "severe", 위험: "danger", 주의: "caution" };
 
-function GradeBadge({ grade }: { grade: string }) {
-  return <span className={`severityBadge severityBadge-grade-${GRADE_CLASS[grade] ?? "caution"}`}>{grade}</span>;
+// spec §BC-2: 계측 없이(measured=false) 매겨진 등급은 배지에 구분 표기를
+// 붙여 사유 있는 알람과 구분한다 -- 옅은 테두리 + "*" 접미사.
+function GradeBadge({ grade, unreasoned }: { grade: string; unreasoned?: boolean }) {
+  return (
+    <span
+      className={`severityBadge severityBadge-grade-${GRADE_CLASS[grade] ?? "caution"}${unreasoned ? " severityBadge-unreasoned" : ""}`}
+      title={unreasoned ? "선정 인자가 계측되지 않아 사유를 제시할 수 없습니다 (자동 발송 제외)" : undefined}
+    >
+      {grade}{unreasoned ? "*" : ""}
+    </span>
+  );
 }
 
 const GRADE_RANK: Record<string, number> = { 심각: 3, 위험: 2, 주의: 1 };
@@ -624,11 +679,13 @@ const ALARM_SORT_OPTIONS: SortOption<ClassifiedWafer>[] = [
 function AlarmRow({
   item,
   targetYield,
+  judgmentLine,
   onExplain,
   explainDisabled,
 }: {
   item: ClassifiedWafer;
   targetYield: number;
+  judgmentLine: number;
   onExplain: () => void;
   explainDisabled: boolean;
 }) {
@@ -639,18 +696,21 @@ function AlarmRow({
         {item.pred_lo.toFixed(1)} ~ {item.pred_hi.toFixed(1)}
         {/* 보정 §I-1: 근거 밴드 위치 2 -- 진짜 lo/hi가 있는 이 표로
             옮겼다. SUMMARY와 동일한 컴포넌트(EvidenceBand), 전 행이 같은
-            고정 축을 쓴다(행별 자동 스케일 금지). */}
+            고정 축을 쓴다(행별 자동 스케일 금지). 판정과 표시는 분리된
+            개념이다(spec §CA-2) -- 구간(lo/hi)은 conformal 그대로,
+            판정선(judgmentLine)만 민감도에 따라 움직인다. */}
         <EvidenceBand
           lo={item.pred_lo}
           hi={item.pred_hi}
           target={targetYield}
+          judgmentLine={judgmentLine}
           scaleMin={ALARM_YIELD_SCALE_MIN}
           scaleMax={ALARM_YIELD_SCALE_MAX}
           mini
         />
       </td>
-      <td className="col-severity colNoTruncate">{item.grade && <GradeBadge grade={item.grade} />}</td>
-      <td className="alarmReasonCell">{item.reason ?? "-"}</td>
+      <td className="col-severity colNoTruncate">{item.grade && <GradeBadge grade={item.grade} unreasoned={!item.measured} />}</td>
+      <td className="alarmReasonCell">{reasonFor(item)}</td>
       <td>{item.lot_id ?? "-"}</td>
       <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
@@ -660,11 +720,13 @@ function AlarmRow({
 function AlarmCard({
   item,
   targetYield,
+  judgmentLine,
   onExplain,
   explainDisabled,
 }: {
   item: ClassifiedWafer;
   targetYield: number;
+  judgmentLine: number;
   onExplain: () => void;
   explainDisabled: boolean;
 }) {
@@ -672,7 +734,7 @@ function AlarmCard({
     <div className="alarmCard">
       <div className="alarmCardTopRow">
         <span className="alarmCardId">{item.lot_wafer_id}</span>
-        {item.grade && <GradeBadge grade={item.grade} />}
+        {item.grade && <GradeBadge grade={item.grade} unreasoned={!item.measured} />}
       </div>
       <div className="alarmCardMeta">
         예측 수율 {item.pred_lo.toFixed(1)} ~ {item.pred_hi.toFixed(1)}
@@ -681,13 +743,14 @@ function AlarmCard({
           lo={item.pred_lo}
           hi={item.pred_hi}
           target={targetYield}
+          judgmentLine={judgmentLine}
           scaleMin={ALARM_YIELD_SCALE_MIN}
           scaleMax={ALARM_YIELD_SCALE_MAX}
           mini
         />
       </div>
       <div className="alarmCardStatsRow">
-        <span>{item.reason ?? "-"}</span>
+        <span>{reasonFor(item)}</span>
       </div>
       <div className="alarmCardActions">
         <ExplainButton onClick={onExplain} disabled={explainDisabled} />
@@ -739,16 +802,22 @@ function TargetYieldField({ value, onChange }: { value: number; onChange: (value
   );
 }
 
+// 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 이 아래로 정밀도가
+// 떨어지면 주황으로 표시한다.
+const PRECISION_WARNING_THRESHOLD_PCT = 95;
+
 function SensitivityField({
   value,
   activePreset,
   onApplyPreset,
   onChange,
+  estimate,
 }: {
   value: number;
   activePreset: PresetKey | null;
   onApplyPreset: (preset: (typeof SENSITIVITY_PRESETS)[number]) => void;
   onChange: (value: number) => void;
+  estimate: PrecisionRecallEstimate | null;
 }) {
   return (
     <div className="alertsSensitivityField">
@@ -791,7 +860,31 @@ function SensitivityField({
           title="직접 입력"
         />
       </div>
+      <SensitivityTradeoffLine estimate={estimate} />
     </div>
+  );
+}
+
+/** 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4 핵심) -- 사용자가
+ * 슬라이더를 밀 때 지불하는 대가(정밀도 하락)를 그 자리에서 보여준다.
+ * "홀드아웃 기준 추정"을 반드시 병기한다 -- eval 실측이 아니다. */
+function SensitivityTradeoffLine({ estimate }: { estimate: PrecisionRecallEstimate | null }) {
+  if (!estimate) return null;
+  if (estimate.oofSampleSize === 0) {
+    return <p className="alertsSensitivityEstimate sectionCaption">홀드아웃 표본이 부족해 정밀도·재현율을 추정할 수 없습니다.</p>;
+  }
+  const precisionLow = estimate.precisionPct != null && estimate.precisionPct < PRECISION_WARNING_THRESHOLD_PCT;
+  return (
+    <p className="alertsSensitivityEstimate sectionCaption">
+      알람 {estimate.evalAlarms.toLocaleString()}장 · 정밀도{" "}
+      <span className={precisionLow ? "alertsSensitivityEstimateWarning" : undefined}>
+        {estimate.precisionPct != null ? `${estimate.precisionPct.toFixed(1)}%` : "-"}
+      </span>{" "}
+      · 재현율 {estimate.recallPct != null ? `${estimate.recallPct.toFixed(1)}%` : "-"}
+      {estimate.missedEstimate != null && <> · 놓칠 것으로 추정 {estimate.missedEstimate.toLocaleString()}장</>}
+      <br />
+      <span className="alertsSensitivityEstimateNote">홀드아웃 기준 추정 (n={estimate.oofSampleSize.toLocaleString()})</span>
+    </p>
   );
 }
 
@@ -830,12 +923,17 @@ function FiveClassGrid({
   gatePassed,
   aucLowerBound,
   aucGateThreshold,
+  coverageTarget,
+  coverageActual,
 }: {
   summary: ReturnType<typeof summarizeClasses>;
   gatePassed: boolean;
   aucLowerBound: number | null;
   aucGateThreshold: number;
+  coverageTarget: number;
+  coverageActual: number | null;
 }) {
+  const unclassified = summary.판별불가;
   return (
     <section className="resultCard alertsClassSection">
       <div className="yieldBandCardTitle"><h3>판정 결과</h3></div>
@@ -846,7 +944,7 @@ function FiveClassGrid({
           const isAlarmTier = ALARM_CLASS_KEYS.includes(key);
           const color = CLASS_COLOR[key];
           const tooltip = key === "판별불가"
-            ? `구간 걸침 ${item.straddleCount}장 · 미계측 ${item.unmeasuredCount}장`
+            ? `상관성 부족 ${item.straddleCount}장 · 계측 부족 ${item.unmeasuredCount}장`
             : undefined;
           // C-1: 게이트 미달이면 알람 3등급(심각/위험/주의)은 실제로는
           // "0장"(알람 없음)이 아니라 "판정 불가"다 -- 배너를 안 읽으면
@@ -857,7 +955,7 @@ function FiveClassGrid({
             <div key={key} className="alertsClassCard" style={{ ["--class-color" as string]: color }} title={tooltip}>
               <div className="alertsClassCardHead">
                 {isAlarmTier ? <TriangleIcon color={color} /> : <CircleIcon color={color} />}
-                <strong>{key}</strong>
+                <strong>{CLASS_LABELS[key]}</strong>
               </div>
               {gated ? (
                 <>
@@ -871,14 +969,38 @@ function FiveClassGrid({
                   {item.avgPredMean != null && (
                     <div className="alertsClassCardYield">평균 수율 {item.avgPredMean.toFixed(1)}</div>
                   )}
+                  {/* spec §BB-1: 미분류를 하나의 카운트로 보여주되 사유별
+                      내역을 함께 표시한다 -- 조치 가능 여부가 다른 두
+                      사유를 구분해야 계측 우선순위 큐가 무엇을 대상으로
+                      하는지 오해하지 않는다. */}
+                  {key === "판별불가" && (
+                    <div className="alertsClassCardBreakdown">
+                      상관성 부족 {item.straddleCount.toLocaleString()} · 계측 부족 {item.unmeasuredCount.toLocaleString()}
+                    </div>
+                  )}
                 </>
               )}
             </div>
           );
         })}
       </div>
-      <p className="sectionCaption alertsClassGridFoot">
-        판별불가는 계측이 없거나 예측 구간이 넓어 판정을 보류한 wafer입니다.
+      <div className="sectionCaption alertsClassGridFoot">
+        <p>
+          미분류는 판정 근거가 부족한 wafer입니다 (정상이 아닙니다).
+          <br />
+          · 상관성 부족 {unclassified.straddleCount.toLocaleString()}장 — 예측 구간이 목표 수율을 걸쳐 방향을 정할 수
+          없습니다. 계측을 늘려도 해소되지 않습니다.
+          <br />
+          · 계측 부족 {unclassified.unmeasuredCount.toLocaleString()}장 — 선정 인자가 계측되지 않아 판정 근거가
+          없습니다. 계측을 늘리면 해소됩니다.
+        </p>
+      </div>
+      {/* spec §BA-4/§BD-1: "구간을 믿어도 되는지"가 이 시스템 신뢰도의
+          근간이므로 항상 표시한다 -- 숨기거나 생략하지 않는다. */}
+      <p className="sectionCaption alertsCoverageNote">
+        {coverageActual != null
+          ? `예측 구간 포함률 ${(coverageActual * 100).toFixed(1)}% (목표 ${(coverageTarget * 100).toFixed(0)}%)`
+          : `예측 구간 목표 포함률 ${(coverageTarget * 100).toFixed(0)}% (이 평가 데이터셋은 실제 정답이 없어 실측 포함률을 검증할 수 없습니다)`}
       </p>
       {!gatePassed && (
         <p className="alertsGateNote">

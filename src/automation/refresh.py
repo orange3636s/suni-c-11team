@@ -407,9 +407,12 @@ def _analyze_and_score(
     ) or FALLBACK_TRAIN_DATASET
 
     try:
-        train_df_for_alarms = registry.get_dataframe(train_dataset_for_alarms)
+        # 존재 검증만 필요하다 -- _scored_wafers는 더 이상 train_df를
+        # 받지 않는다(판정이 점추정 기준으로 바뀌며 sigma 계산이 없어짐,
+        # spec §CA-1).
+        registry.get_dataframe(train_dataset_for_alarms)
         scored, auc_lo, gate_passed = _scored_wafers(
-            train_dataset_for_alarms, eval_dataset_id, train_df_for_alarms, eval_df,
+            train_dataset_for_alarms, eval_dataset_id, eval_df,
             target=target_yield, sensitivity=sensitivity,
         )
     except Exception:
@@ -442,6 +445,9 @@ def _analyze_and_score(
         "items_top": items_top,
         "total": len(alarm_items),
     }
+    # spec §BC-2: 계측 없이 등급이 매겨진 wafer는 사유를 댈 수 없으므로
+    # 자동 발송(dispatch_new_alarms) 대상에서 제외한다 -- alarms_block/
+    # items_top(화면 표시용)은 걸러내지 않는다.
     alarm_items_for_dispatch = [
         {
             "lot_wafer_id": item.lot_wafer_id,
@@ -451,6 +457,7 @@ def _analyze_and_score(
             "reason": "",
         }
         for item in alarm_items
+        if item.measured
     ]
 
     monitoring_block = _build_monitoring_block(scored, target_yield, measurement_expansion, errors)

@@ -9538,6 +9538,13 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   color: var(--text-primary); text-align: center;
 }
 
+/* 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 슬라이더 옆
+   정밀도·재현율 표시. flex-basis 100%로 항상 자기 줄을 차지한다(다른
+   컨트롤과 같은 줄에서 줄바꿈되면 읽기 어렵다). */
+.alertsSensitivityEstimate{ flex-basis: 100%; margin: 2px 0 0; line-height: 1.5; }
+.alertsSensitivityEstimateWarning{ color: var(--sig-amber); font-weight: 600; }
+.alertsSensitivityEstimateNote{ color: var(--text-secondary); font-size: var(--fs-micro); }
+
 .alertsMismatchWarning{
   display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
   padding: 12px 14px; border-radius: var(--radius-panel);
@@ -9577,6 +9584,12 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.5;
   background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
 }
+/* 예측 구간 캘리브레이션 + 미분류 사유 분리 (spec §BB-1) -- 미분류 카드
+   안의 상관성 부족/계측 부족 내역. */
+.alertsClassCardBreakdown{ font-size: var(--fs-xs); color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+/* spec §BA-4/§BD-1: 구간 신뢰도(실측 포함률) 표시 -- 눈에 띄되 경고는
+   아니므로 alertsGateNote와 같은 강조 배경은 쓰지 않는다. */
+.alertsCoverageNote{ margin-top: 6px; }
 
 .alertsAlarmListActions{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 /* 지시서 O-4: 등급 필터(라벨+select가 세로로 쌓이는 기본 .fieldGroup)와
@@ -10212,6 +10225,11 @@ html[data-theme="dark"] .severityBadge-grade-severe{ color: #F87171; }
 html[data-theme="dark"] .severityBadge-grade-danger{ color: #FB923C; }
 html[data-theme="dark"] .severityBadge-grade-caution{ color: #FACC15; }
 
+/* 예측 구간 캘리브레이션 + 미분류 사유 분리 (spec §BC-2) -- 계측 없이
+   매겨진 등급을 사유 있는 알람과 시각적으로 구분한다(옅은 점선 테두리).
+   배지 안의 "*" 접미사와 함께 쓴다. */
+.severityBadge-unreasoned{ border: 1px dashed currentColor; opacity: .82; }
+
 .alarmReasonCell{ color: var(--text-secondary); font-size: var(--fs-sm); max-width: 360px; }
 .alarmShareWarning{
   margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
@@ -10684,6 +10702,20 @@ html[data-theme="dark"] .evidenceBandBoundary{ border-left-color: var(--text-pri
   position: absolute; top: -18px; transform: translateX(-50%);
   font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 500; color: var(--text-muted); white-space: nowrap;
 }
+/* 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-2) -- 판정선(현재
+   민감도의 "주의" 컷). 목표선(--sig-amber, 실선, 라벨 위쪽)과 시각적으로
+   구분되도록 강조색 점선 + 라벨을 트랙 아래쪽에 둔다 -- 둘이 가까운
+   위치에 와도 라벨이 겹치지 않는다. */
+.evidenceBandJudgmentTick{
+  position: absolute; top: -3px; bottom: -3px; width: 0;
+  border-left: 1px dashed var(--accent);
+}
+html[data-theme="dark"] .evidenceBandJudgmentTick{ border-left-color: #7ba3e8; }
+.evidenceBandJudgmentLabel{
+  position: absolute; top: 6px; transform: translateX(-50%);
+  font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 500; color: var(--accent); white-space: nowrap;
+}
+html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 .evidenceBandTicks{ position: relative; height: 28px; margin-top: 4px; }
 .evidenceBandTick{
   position: absolute; top: 0; transform: translateX(-50%);

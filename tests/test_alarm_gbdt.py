@@ -10,7 +10,10 @@ import pandas as pd
 import pytest
 
 from src.analysis.alarm_gbdt import (
-    classify_offset,
+    CONFORMAL_TARGET_COVERAGE,
+    GRADE_STEP_PP,
+    MARGIN_MAX_PP,
+    classify_margin,
     classify_wafer,
     compute_holdout_predictions,
     cross_validate_auc,
@@ -58,48 +61,140 @@ def test_fit_bootstrap_ensemble_is_deterministic():
     assert (first.pred_mean <= first.pred_hi).all()
 
 
-def test_classify_offset_maps_sensitivity_to_sigma_multiplier():
-    """spec 사전 알람 로그 전면 개편 §A-3: s=0(오경보 최소)이 가장 보수적
-    (+0.6σ), s=1(미탐 최소)이 가장 민감(-0.2σ)해야 한다."""
-    assert classify_offset(0.0) == pytest.approx(0.6)
-    assert classify_offset(1.0) == pytest.approx(-0.2)
-    assert classify_offset(0.5) == pytest.approx(0.2)
+def test_fit_bootstrap_ensemble_uses_conformal_margin_for_interval():
+    """spec §BA-2 핵심: 구간은 부트스트랩 5/95 분위수가 아니라 홀드아웃
+    conformal margin(q)으로 낸다 -- pred_hi - pred_mean == q, pred_mean -
+    pred_lo == q가 전 wafer에 걸쳐 성립해야 한다(부트스트랩 분위수는
+    wafer마다 폭이 다르다)."""
+    df = _synthetic_df(n=300, n_lots=40, seed=0)
+    train_df, eval_df = df.iloc[:240], df.iloc[240:]
+    features = ["Step1_R1", "Step2_R1"]
+    pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    holdout = compute_holdout_predictions(train_df, features)
+    assert holdout is not None
+    assert pred.conformal_q == pytest.approx(holdout.conformal_q)
+    np.testing.assert_allclose(pred.pred_hi - pred.pred_mean, pred.conformal_q)
+    np.testing.assert_allclose(pred.pred_mean - pred.pred_lo, pred.conformal_q)
+    assert pred.coverage_target == pytest.approx(CONFORMAL_TARGET_COVERAGE)
 
 
-def test_classify_wafer_uses_pred_hi_not_pred_mean():
-    """spec §B-1 핵심: 알람 판정은 pred_hi(상한) 기준 -- 예측이 흔들리는
-    (구간이 넓은) wafer는 상한이 높아 알람에서 자동 제외되어야 한다."""
-    # target=85, sensitivity=0.5 -> off=0.2, sigma=10 이면 심각 임계는
-    # 85-6=79, 위험 81, 주의 83.
-    grade = classify_wafer(pred_hi=90.0, pred_lo=80.0, target=85.0, sensitivity=0.5, sigma=10.0)
-    assert grade is None  # 구간이 목표를 가로지름 -- 판별불가
-    assert classify_wafer(pred_hi=78.0, pred_lo=70.0, target=85.0, sensitivity=0.5, sigma=10.0) == "심각"
+def test_fit_bootstrap_ensemble_reports_actual_coverage_when_eval_has_known_y():
+    """spec §BA-4 핵심: eval에 실측 Y가 있으면(예: 내장 test.CSV) 실제
+    포함률을 계산해 coverage_actual에 채운다."""
+    df = _synthetic_df(n=300, n_lots=40, seed=0)
+    train_df, eval_df = df.iloc[:240], df.iloc[240:]
+    features = ["Step1_R1", "Step2_R1"]
+    pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    assert pred.coverage_actual is not None
+    assert 0.0 <= pred.coverage_actual <= 1.0
+    expected = float(
+        (
+            (eval_df["Y"].to_numpy() >= pred.pred_lo) & (eval_df["Y"].to_numpy() <= pred.pred_hi)
+        ).mean()
+    )
+    assert pred.coverage_actual == pytest.approx(expected)
+
+
+def test_fit_bootstrap_ensemble_exposes_holdout_oof_sample_for_precision_recall():
+    """spec §CA-4 핵심: 클라이언트가 슬라이더를 움직일 때마다 정밀도·재현율을
+    다시 추정할 수 있도록 홀드아웃 (실제, 예측) 쌍을 함께 낸다. 표본이
+    HOLDOUT_OOF_SAMPLE_SIZE보다 적으면 전량, 많으면 그 이하로 층화
+    샘플링된다."""
+    from src.analysis.alarm_gbdt import HOLDOUT_OOF_SAMPLE_SIZE
+
+    df = _synthetic_df(n=300, n_lots=40, seed=0)
+    train_df, eval_df = df.iloc[:240], df.iloc[240:]
+    features = ["Step1_R1", "Step2_R1"]
+    pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    assert pred.holdout_oof_actual is not None
+    assert pred.holdout_oof_pred is not None
+    assert len(pred.holdout_oof_actual) == len(pred.holdout_oof_pred)
+    assert len(pred.holdout_oof_actual) == min(len(train_df), HOLDOUT_OOF_SAMPLE_SIZE)
+
+
+def test_fit_bootstrap_ensemble_holdout_oof_sample_is_deterministic():
+    df = _synthetic_df(n=300, n_lots=40, seed=0)
+    train_df, eval_df = df.iloc[:240], df.iloc[240:]
+    features = ["Step1_R1", "Step2_R1"]
+    first = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    second = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    np.testing.assert_allclose(first.holdout_oof_actual, second.holdout_oof_actual)
+    np.testing.assert_allclose(first.holdout_oof_pred, second.holdout_oof_pred)
+
+
+def test_classify_margin_maps_sensitivity_to_pp_margin():
+    """spec §CA-1: s=0(오경보 최소)이 가장 보수적(margin=MARGIN_MAX_PP),
+    s=1(미탐 최소)이 가장 민감(margin=0)해야 한다. %p 절대값이지 σ 배수가
+    아니다."""
+    assert classify_margin(0.0) == pytest.approx(MARGIN_MAX_PP)
+    assert classify_margin(1.0) == pytest.approx(0.0)
+    assert classify_margin(0.5) == pytest.approx(MARGIN_MAX_PP / 2)
+
+
+def test_classify_wafer_uses_pred_mean_not_pred_hi():
+    """spec §CA-1 핵심: 알람 판정은 점추정(pred_mean) 기준이다 -- 이전
+    방식(신뢰구간 상한 pred_hi)은 conformal 캘리브레이션 이후 구간이
+    넓어져 민감도를 끝까지 올려도 오탐이 전혀 나지 않는 문제를 낳았다.
+    구간 하한(pred_lo)이 아무리 낮아도(=구간이 넓어도) pred_mean이
+    컷보다 낮으면 알람이 나와야 한다."""
+    # target=85, sensitivity=0.5 -> margin=2.0, 컷은 심각 81.4/위험
+    # 82.2/주의 83.0(GRADE_STEP_PP=0.8 간격 기준).
+    grade = classify_wafer(pred_mean=90.0, pred_lo=70.0, target=85.0, sensitivity=0.5)
+    assert grade is None  # 점추정 자체가 목표보다 높음 -- 판별불가
+    assert classify_wafer(pred_mean=81.0, pred_lo=70.0, target=85.0, sensitivity=0.5) == "심각"
 
 
 def test_classify_wafer_five_classes_do_not_overlap():
-    """spec §B-1 핵심: 심각 -> 위험 -> 주의 -> 정상 -> 판별불가는 서로
-    배타적이다."""
-    target, sensitivity, sigma = 85.0, 0.5, 10.0
-    off = classify_offset(sensitivity)
-    severe_edge = target - (off + 0.4) * sigma
-    danger_edge = target - (off + 0.2) * sigma
-    caution_edge = target - off * sigma
-    assert classify_wafer(pred_hi=severe_edge, pred_lo=severe_edge - 1, target=target, sensitivity=sensitivity, sigma=sigma) == "심각"
-    assert classify_wafer(pred_hi=danger_edge, pred_lo=danger_edge - 1, target=target, sensitivity=sensitivity, sigma=sigma) == "위험"
-    assert classify_wafer(pred_hi=caution_edge, pred_lo=caution_edge - 1, target=target, sensitivity=sensitivity, sigma=sigma) == "주의"
-    assert classify_wafer(pred_hi=target + 5, pred_lo=target + 1, target=target, sensitivity=sensitivity, sigma=sigma) == "정상"
-    assert classify_wafer(pred_hi=target + 5, pred_lo=target - 1, target=target, sensitivity=sensitivity, sigma=sigma) is None
+    """spec §CA-1/§CA-3 핵심: 심각 -> 위험 -> 주의 -> 정상 -> 판별불가는
+    서로 배타적이다."""
+    target, sensitivity = 85.0, 0.5
+    margin = classify_margin(sensitivity)
+    severe_edge = target - margin - 2 * GRADE_STEP_PP
+    danger_edge = target - margin - GRADE_STEP_PP
+    caution_edge = target - margin
+    assert classify_wafer(pred_mean=severe_edge, pred_lo=severe_edge - 1, target=target, sensitivity=sensitivity) == "심각"
+    assert classify_wafer(pred_mean=danger_edge, pred_lo=danger_edge - 1, target=target, sensitivity=sensitivity) == "위험"
+    assert classify_wafer(pred_mean=caution_edge, pred_lo=caution_edge - 1, target=target, sensitivity=sensitivity) == "주의"
+    assert classify_wafer(pred_mean=target + 5, pred_lo=target + 1, target=target, sensitivity=sensitivity) == "정상"
+    assert classify_wafer(pred_mean=target + 5, pred_lo=target - 1, target=target, sensitivity=sensitivity) is None
+
+
+def test_classify_wafer_normal_still_uses_pred_lo():
+    """spec §CA-3 핵심: `정상`만은 판정 기준이 점추정으로 바뀐 뒤에도
+    여전히 구간 하한(pred_lo) 기준이다 -- 점추정으로 정상을 선언하면
+    실제 미달 wafer를 놓친다."""
+    target, sensitivity = 85.0, 0.5
+    # pred_mean은 목표를 넘지만(정상처럼 보임) pred_lo가 목표 밑이면
+    # 아직 "정상"이라고 단정할 수 없다 -- 미분류여야 한다.
+    grade = classify_wafer(pred_mean=90.0, pred_lo=80.0, target=target, sensitivity=sensitivity)
+    assert grade is None
+    grade_normal = classify_wafer(pred_mean=90.0, pred_lo=86.0, target=target, sensitivity=sensitivity)
+    assert grade_normal == "정상"
 
 
 def test_classify_wafer_gate_failure_suppresses_alarm_tiers_only():
     """spec §B-4 핵심: 신뢰도 게이트 미달이면 심각/위험/주의는 안 나오지만
     정상/판별불가는 그대로 계산된다."""
-    target, sensitivity, sigma = 85.0, 0.5, 10.0
+    target, sensitivity = 85.0, 0.5
     # 심각 조건을 만족하는 wafer라도 gate_passed=False면 알람이 아니다.
-    grade = classify_wafer(pred_hi=50.0, pred_lo=40.0, target=target, sensitivity=sensitivity, sigma=sigma, gate_passed=False)
+    grade = classify_wafer(pred_mean=50.0, pred_lo=40.0, target=target, sensitivity=sensitivity, gate_passed=False)
     assert grade is None
-    grade_normal = classify_wafer(pred_hi=90.0, pred_lo=86.0, target=target, sensitivity=sensitivity, sigma=sigma, gate_passed=False)
+    grade_normal = classify_wafer(pred_mean=90.0, pred_lo=86.0, target=target, sensitivity=sensitivity, gate_passed=False)
     assert grade_normal == "정상"
+
+
+def test_higher_sensitivity_never_produces_fewer_alarms():
+    """spec §CA-4 핵심: 민감도를 올리면 margin이 줄어(느슨해져) 알람이
+    단조 비감소해야 한다 -- 이게 "실제 트레이드오프"의 최소 조건이다."""
+    df = _synthetic_df(n=300, n_lots=40, seed=7)
+    train_df, eval_df = df.iloc[:240], df.iloc[240:]
+    features = ["Step1_R1", "Step2_R1"]
+    pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
+    counts = []
+    for sensitivity in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0):
+        scored = score_wafers(eval_df, pred, target=85.0, sensitivity=sensitivity)
+        counts.append(sum(1 for s in scored if s.grade in ("심각", "위험", "주의")))
+    assert counts == sorted(counts)
 
 
 def test_score_wafers_does_not_fix_a_count_and_sums_to_all_wafers():
@@ -109,24 +204,30 @@ def test_score_wafers_does_not_fix_a_count_and_sums_to_all_wafers():
     train_df, eval_df = df.iloc[:150], df.iloc[150:]
     features = ["Step1_R1", "Step2_R1"]
     pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
-    sigma = float(train_df["Y"].std())
-    scored = score_wafers(eval_df, pred, target=85.0, sensitivity=0.5, sigma=sigma)
+    scored = score_wafers(eval_df, pred, target=85.0, sensitivity=0.5)
     assert len(scored) == len(eval_df)
     assert all(s.grade in ("심각", "위험", "주의", "정상", None) for s in scored)
     assert all(0.0 <= s.risk_percentile <= 100.0 for s in scored)
 
 
-def test_score_wafers_marks_unmeasured_wafers_as_ungraded():
-    """spec §B-2 핵심: measured_ids에 없는 wafer는 measured=False이고
-    grade는 항상 None(판별불가-미계측)이어야 한다."""
+def test_score_wafers_measured_ids_only_affects_the_measured_field():
+    """spec §BC-1 핵심: measured_ids는 더 이상 판정 게이트가 아니다 --
+    measured=False로 표시된 wafer도 구간 기준으로 정상 등급이 매겨져야
+    한다(measured_ids=set()로 아무도 계측되지 않았다고 해도, 등급은
+    measured_ids=None일 때와 완전히 같아야 한다)."""
     df = _synthetic_df(n=100, seed=2)
     train_df, eval_df = df.iloc[:60], df.iloc[60:]
     features = ["Step1_R1", "Step2_R1"]
     pred = fit_bootstrap_ensemble(train_df, eval_df, features, n_boot=5)
-    sigma = float(train_df["Y"].std())
-    scored = score_wafers(eval_df, pred, target=200.0, sensitivity=1.0, sigma=sigma, measured_ids=set())
-    assert all(not s.measured for s in scored)
-    assert all(s.grade is None for s in scored)
+    scored_all_unmeasured = score_wafers(eval_df, pred, target=200.0, sensitivity=1.0, measured_ids=set())
+    scored_ungated = score_wafers(eval_df, pred, target=200.0, sensitivity=1.0, measured_ids=None)
+    assert all(not s.measured for s in scored_all_unmeasured)
+    assert all(s.measured for s in scored_ungated)
+    assert [s.grade for s in scored_all_unmeasured] == [s.grade for s in scored_ungated]
+    # target=200(전 구간을 벗어난 목표)이므로 최소 한 wafer는 등급이
+    # 매겨져야 게이트가 실제로 풀렸다는 걸 증명한다 -- 전부 None이면
+    # (여전히 게이트가 걸려 있어도) 우연히 통과한 assert가 된다.
+    assert any(s.grade is not None for s in scored_all_unmeasured)
 
 
 def test_compute_holdout_predictions_covers_full_train_out_of_fold():
@@ -136,12 +237,37 @@ def test_compute_holdout_predictions_covers_full_train_out_of_fold():
     assert holdout is not None
     assert len(holdout.actual_y) == len(holdout.pred_point) == len(df)
     assert holdout.residual_std >= 0
+    assert holdout.n_holdout == len(df)
 
 
 def test_compute_holdout_predictions_returns_none_when_too_few_lots():
     df = _synthetic_df(n=50, n_lots=2, seed=2)
     features = ["Step1_R1", "Step2_R1"]
     assert compute_holdout_predictions(df, features, n_splits=5) is None
+
+
+def test_compute_holdout_predictions_conformal_q_is_nonnegative_quantile_of_abs_residual():
+    """spec §BA-1 핵심: q는 |실제 - OOF 예측|의 목표 포함률 분위수다 --
+    ±1.645*residual_std 근사(정규성 가정)가 아니라 분포 가정 없는
+    분위수여야 한다."""
+    df = _synthetic_df(n=300, n_lots=60, seed=3)
+    features = ["Step1_R1", "Step2_R1"]
+    holdout = compute_holdout_predictions(df, features, n_splits=5)
+    assert holdout is not None
+    assert holdout.coverage == pytest.approx(CONFORMAL_TARGET_COVERAGE)
+    residuals = np.abs(holdout.actual_y - holdout.pred_point)
+    assert holdout.conformal_q == pytest.approx(float(np.percentile(residuals, CONFORMAL_TARGET_COVERAGE * 100.0)))
+    assert holdout.conformal_q >= 0
+
+
+def test_compute_holdout_predictions_higher_coverage_yields_wider_margin():
+    """spec §BA-3 핵심: 목표 포함률을 올리면(보수적으로) q가 커져야
+    한다(더 넓은 구간 -> 알람 감소 방향)."""
+    df = _synthetic_df(n=300, n_lots=60, seed=3)
+    features = ["Step1_R1", "Step2_R1"]
+    q_90 = compute_holdout_predictions(df, features, n_splits=5, coverage=0.90).conformal_q
+    q_95 = compute_holdout_predictions(df, features, n_splits=5, coverage=0.95).conformal_q
+    assert q_95 >= q_90
 
 
 def test_cross_validate_auc_returns_none_when_too_few_lots():

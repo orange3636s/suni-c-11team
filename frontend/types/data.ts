@@ -339,21 +339,31 @@ export type AlertsDataResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
   total_wafers: number;
-  sigma: number;
   train_y_min: number;
   train_y_max: number;
   train_y_median: number;
   train_y_p1: number;
   train_y_p99: number;
   predictions: WaferPrediction[];
+  // 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 랏 단위 홀드아웃
+  // OOF (실제 Y, 예측값) 쌍의 층화 샘플(최대 1,000쌍). eval의 실제 정답은
+  // 알 수 없으므로 이 학습 데이터 기반 추정치로 정밀도·재현율을 계산한다
+  // -- "홀드아웃 기준 추정"임을 화면에 반드시 병기한다. 랏 수 부족으로
+  // 홀드아웃을 못 냈으면 둘 다 빈 배열이다.
+  holdout_oof_actual: number[];
+  holdout_oof_predicted: number[];
   // 알람 신뢰도 게이트 -- AlarmListResponse와 같은 (train,eval) 쌍이면
   // 항상 일치한다.
   auc_lower_bound: number | null;
   auc_gate_passed: boolean;
   auc_gate_threshold: number;
-  // B-1: holdout/factor_bands/measurement_bias는 삭제했다 -- 렌더하는
-  // 화면이 없었다(estimatePrecisionRecall/representativeWafer도 죽은
-  // 코드였다).
+  // 예측 구간 conformal 캘리브레이션 (spec §BA-4) -- "구간을 믿어도
+  // 되는지"를 화면 하단에 보여주는 근거. interval_coverage_actual은
+  // eval에 실측 Y가 있을 때만 값이 있다(없으면 null). interval_conformal_q가
+  // null이면 랏 수 부족으로 부트스트랩 분위수로 대체됐다는 뜻이다.
+  interval_coverage_target: number;
+  interval_coverage_actual: number | null;
+  interval_conformal_q: number | null;
 };
 
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";

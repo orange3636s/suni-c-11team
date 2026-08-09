@@ -21,6 +21,12 @@ export type EvidenceBandProps = {
   hi: number;
   /** 목표선. 없으면 목표 tick/라벨을 그리지 않는다. */
   target?: number | null;
+  /** 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-2) -- 현재 민감도의
+   * "주의" 컷(가장 느슨한 알람 컷) 위치. 목표선과 별개로 그린다 --
+   * 목표선은 "모델이 아는 만큼의 불확실성"과 무관하게 고정된 기준이고,
+   * 판정선은 "사용자가 고른 위험 감수 수준"이라 서로 다른 정보다. 없으면
+   * 그리지 않는다. */
+  judgmentLine?: number | null;
   /** 고정 스케일 -- 관측값에 맞춰 자동 조정하지 않는다(지시서 원칙). */
   scaleMin: number;
   scaleMax: number;
@@ -28,9 +34,14 @@ export type EvidenceBandProps = {
   mini?: boolean;
   /** 목표선 텍스트 라벨("목표" 등). 기본값 "목표". */
   targetLabel?: string;
+  /** 판정선 텍스트 라벨. 기본값 "판정선". */
+  judgmentLabel?: string;
 };
 
-export default function EvidenceBand({ lo, hi, target = null, scaleMin, scaleMax, mini = false, targetLabel = "목표" }: EvidenceBandProps) {
+export default function EvidenceBand({
+  lo, hi, target = null, judgmentLine = null, scaleMin, scaleMax, mini = false,
+  targetLabel = "목표", judgmentLabel = "판정선",
+}: EvidenceBandProps) {
   const span = scaleMax - scaleMin;
   // 범위 밖 값은 경계에 클램프하되, 라벨에 화살표(←/→)를 붙여 "표시
   // 위치 ≠ 실제 값"임을 알린다 (mini에는 라벨이 없어 해당 없음).
@@ -38,6 +49,7 @@ export default function EvidenceBand({ lo, hi, target = null, scaleMin, scaleMax
   const bandLoPct = pctOf(Math.min(lo, hi));
   const bandHiPct = pctOf(Math.max(lo, hi));
   const targetPct = target != null ? pctOf(target) : null;
+  const judgmentPct = judgmentLine != null ? pctOf(judgmentLine) : null;
 
   if (mini) {
     return (
@@ -47,6 +59,7 @@ export default function EvidenceBand({ lo, hi, target = null, scaleMin, scaleMax
             className="evidenceBandFill"
             style={{ left: `${bandLoPct}%`, width: `${Math.max(bandHiPct - bandLoPct, 0.6)}%` }}
           />
+          {judgmentPct != null && <div className="evidenceBandJudgmentTick" style={{ left: `${judgmentPct}%` }} />}
           {targetPct != null && <div className="evidenceBandTargetTick" style={{ left: `${targetPct}%` }} />}
         </div>
       </div>
@@ -77,6 +90,12 @@ export default function EvidenceBand({ lo, hi, target = null, scaleMin, scaleMax
         />
         <div className="evidenceBandBoundary" style={{ left: `${bandLoPct}%` }} />
         <div className="evidenceBandBoundary" style={{ left: `${bandHiPct}%` }} />
+        {judgmentPct != null && (
+          <>
+            <div className="evidenceBandJudgmentTick" style={{ left: `${judgmentPct}%` }} />
+            <span className="evidenceBandJudgmentLabel" style={{ left: `${judgmentPct}%` }}>{judgmentLabel}</span>
+          </>
+        )}
         {targetPct != null && (
           <>
             <div className="evidenceBandTargetTick" style={{ left: `${targetPct}%` }} />

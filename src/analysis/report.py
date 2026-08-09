@@ -23,7 +23,9 @@ from typing import Any
 
 import pandas as pd
 
+from src.analysis.alarm_gbdt import CONFORMAL_TARGET_COVERAGE
 from src.analysis.alarm_gbdt import FINAL_YIELD_COLUMN as GBDT_TARGET_COLUMN
+from src.analysis.alarm_gbdt import compute_holdout_predictions
 from src.analysis.alarm_gbdt import feature_columns as gbdt_feature_columns
 from src.analysis.control_range import (
     ControlRange,
@@ -90,7 +92,6 @@ LIMITATIONS = [
     # 지시서 G: 화면에서 "해석 시 한계" 블록을 없애면서 챗봇이 유일한
     # 안내 경로가 되므로, 화면에서만 쓰이던 두 캐비어트를 여기로 옮긴다.
     "'근거 부족'·'관계 없음' 등급 인자는 통계적 신뢰도가 낮아 원인으로 단정할 근거가 부족하다.",
-    "정밀도·재현율은 학습 데이터 홀드아웃 기준 추정치다. 평가 데이터의 실제 정답을 알 수 없으므로 실측치가 아니다.",
 ]
 
 # Below this measurement rate, "~만 분석 대상이다" (only the measured
@@ -119,6 +120,36 @@ def _measurement_rate_limitation(df: pd.DataFrame, schema: Schema) -> str:
     if all(r >= _HIGH_MEASUREMENT_RATE_THRESHOLD for r in rates):
         return f"해당 인자가 계측된 wafer를 분석 대상으로 한다. {', '.join(parts)}에서 관측되었다."
     return f"해당 인자가 계측된 wafer만 분석 대상이다. {', '.join(parts)}에서 관측되었다."
+
+
+def _interval_calibration_limitation(train_df: pd.DataFrame, features: list[str]) -> str:
+    """예측 구간 캘리브레이션 + 미분류 사유 분리 (spec §BD-3) -- 챗봇의
+    한계 설명에 conformal 캘리브레이션 사실을 명시한다. 하드코딩된 숫자
+    (예: "±5.5%p")를 쓰지 않고 이 데이터셋에서 실제로 낸 conformal
+    margin(q)을 매번 다시 계산한다 -- 다른 데이터셋에서는 폭이 다르므로
+    고정 문구를 쓰면 거짓 정보가 된다. `compute_holdout_predictions`가
+    이미 GroupKFold(5) GBDT를 한 번 적합해야 하므로(`fit_reference_model`과
+    비슷한 비용), 보고서 생성 1회당 한 번만 계산한다.
+    """
+    coverage_pct = int(round(CONFORMAL_TARGET_COVERAGE * 100))
+    if not features or GBDT_TARGET_COLUMN not in train_df.columns:
+        return (
+            f"예측 구간은 홀드아웃 잔차 기반 conformal 방식으로 산출되며 목표 포함률 {coverage_pct}%를 "
+            "보장하도록 설계되어 있으나, 이 데이터셋에는 예측에 쓸 R+D 인자나 최종 수율(Y)이 없어 구간을 "
+            "산출하지 못했다."
+        )
+    holdout = compute_holdout_predictions(train_df, features)
+    if holdout is None:
+        return (
+            f"예측 구간은 홀드아웃 잔차 기반 conformal 방식으로 산출되며 목표 포함률 {coverage_pct}%를 "
+            "보장하도록 설계되어 있으나, 이 데이터셋은 랏 수가 부족해(GroupKFold 5-fold 구성 불가) "
+            "conformal 캘리브레이션을 적용하지 못했다 -- 부트스트랩 분위수로 대체되어 포함률이 보장되지 않는다."
+        )
+    return (
+        f"예측 구간은 홀드아웃 잔차 기반 conformal 방식으로 산출되며 목표 포함률 {coverage_pct}%를 보장한다. "
+        f"이 데이터셋에서는 구간 폭이 약 ±{holdout.conformal_q:.1f}%p이므로, 웨이퍼 단위 판정이 가능한 비율이 "
+        "낮을 수 있다. 이는 모델 결함이 아니라 데이터의 설명력 한계다."
+    )
 
 
 def _binned_profile(x: pd.Series, y: pd.Series, bins: int = BINNED_PROFILE_BINS) -> list[dict[str, float]]:
@@ -448,7 +479,11 @@ def build_analysis_report(
     )
 
     config_screening = config_main_effect_screening(train_df, schema)
-    limitations = [_measurement_rate_limitation(train_df, schema), *LIMITATIONS]
+    limitations = [
+        _measurement_rate_limitation(train_df, schema),
+        *LIMITATIONS,
+        _interval_calibration_limitation(train_df, gbdt_features),
+    ]
 
     # 계측 편향 재검토 (spec 문구 전수 검토 §A-7): the old whole-wafer
     # aggregate test ("any R/D reading at all" vs "none") can be

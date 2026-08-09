@@ -10,6 +10,7 @@ import EvidenceBand from "@/components/EvidenceBand";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
+import { classifyMargin } from "@/lib/alertsClassify";
 import { ApiResponseError, triggerRefresh } from "@/lib/api";
 import {
   buildMonitoringSnapshot,
@@ -80,13 +81,17 @@ type YieldStatus = "high" | "medium" | "low";
 // 판정한다 -- 점추정(predMean)으로 판정하지 않는다. gapLo = target -
 // predHi(최선의 경우 갭), gapHi = target - predLo(최악의 경우 갭).
 // gapLo > 0이면 최선의 경우조차 목표 미달(경보), gapHi <= 0이면 최악의
-// 경우도 목표 달성(정상), 그 사이는 불확실(주의).
+// 경우도 목표 달성(정상), 그 사이는 불확실 -- 예측 구간 conformal
+// 캘리브레이션(spec §BA/§BD-2) 이후 구간 폭이 넓어져(±5.5%p 안팎) 이
+// 가운데 구간이 다수가 된다. "주의"라고 부르면 실제로는 조치가 필요한
+// 신호가 아니라 "구간이 넓어 판정을 못 낸다"는 뜻인데도 경보성으로
+// 읽혀 오해를 만든다 -- "판정 보류"로 정확히 부른다.
 function classifyYieldStatus(predLo: number, predHi: number, target: number): { status: YieldStatus; label: string; icon: string } {
   const gapLo = target - predHi;
   const gapHi = target - predLo;
   if (gapHi <= 0) return { status: "high", label: "정상", icon: "●" };
   if (gapLo > 0) return { status: "low", label: "경보", icon: "●" };
-  return { status: "medium", label: "주의", icon: "◐" };
+  return { status: "medium", label: "판정 보류", icon: "◐" };
 }
 
 // 지시서 K-1: 고정 스케일(80~95%) -- 갱신 때마다 관측값에 맞춰 축을
@@ -271,6 +276,10 @@ export default function MonitoringPage() {
 
 function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue: MeasurementQueueData }) {
   const targetYield = snapshot.alarmsRecord?.payload.targetYield ?? null;
+  const sensitivity = snapshot.alarmsRecord?.payload.sensitivity ?? null;
+  // 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-2) -- 근거 밴드에
+  // 목표선과 별개로 판정선을 그린다.
+  const judgmentLine = targetYield != null && sensitivity != null ? targetYield - classifyMargin(sensitivity) : null;
   const yieldStatus =
     queue.yieldSummary && targetYield != null
       ? classifyYieldStatus(queue.yieldSummary.predLo, queue.yieldSummary.predHi, targetYield)
@@ -317,6 +326,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
             lo={queue.yieldSummary.predLo}
             hi={queue.yieldSummary.predHi}
             target={targetYield}
+            judgmentLine={judgmentLine}
             scaleMin={YIELD_GAP_SCALE_MIN}
             scaleMax={YIELD_GAP_SCALE_MAX}
           />
