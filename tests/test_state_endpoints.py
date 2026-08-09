@@ -14,6 +14,7 @@ import pytest
 
 from api.routes import state as state_routes
 from api.schemas.state import AlarmsStateSaveRequest, AnalysisStateSaveRequest, TrainingStateSaveRequest
+from src.analysis import alarm_gbdt
 
 
 @pytest.fixture()
@@ -88,14 +89,58 @@ def test_save_training_reports_schedule_apply_failure(isolated_settings: SimpleN
     assert response == {"saved": True, "schedule_applied": False}
 
 
-def test_save_and_restore_analysis(isolated_settings: SimpleNamespace) -> None:
+def test_save_and_restore_analysis(isolated_settings: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 지시서 JA-1: save_analysis_state가 저장 시점에 FMEA를 채운다 --
+    # 실제 _fmea_payload(원본 데이터셋 전수 스코어링 + SPC/ML 부트스트랩)
+    # 는 이 라우팅 테스트에 비해 너무 느리므로 가벼운 스텁으로 대체한다.
+    monkeypatch.setattr(state_routes, "_fmea_payload", lambda dataset, targets: {"dataset_id": dataset, "items": []})
     payload = {"activeTarget": "Y1", "paretoByTarget": {}, "scatterByKey": {}, "categoricalByKey": {}}
     state_routes.save_analysis_state(AnalysisStateSaveRequest(dataset="test", payload=payload))
 
     result = state_routes.get_latest()
     assert result["analysis"]["dataset"] == "test"
-    assert result["analysis"]["payload"] == payload
+    assert result["analysis"]["payload"]["activeTarget"] == "Y1"
+    assert result["analysis"]["payload"]["fmea"] == {"dataset_id": "test", "items": []}
+    assert result["analysis"]["payload"]["fmeaError"] is None
     assert result["dataset_fallback_applied"] is False
+
+
+def test_save_analysis_keeps_fmea_already_in_payload(
+    isolated_settings: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JA-1: 이미 fmea가 실려 있으면(비어 있지 않으면) 다시 계산하지
+    않는다 -- 계산이 불렸으면 실패하도록 만든 스텁으로 확인한다."""
+
+    def _fail(dataset: str, targets):
+        raise AssertionError("fmea가 이미 있으면 _fmea_payload를 다시 부르면 안 된다")
+
+    monkeypatch.setattr(state_routes, "_fmea_payload", _fail)
+    payload = {"activeTarget": "Y1", "paretoByTarget": {}, "fmea": {"dataset_id": "test", "items": [{"feature": "Step1_R1"}]}}
+    state_routes.save_analysis_state(AnalysisStateSaveRequest(dataset="test", payload=payload))
+
+    result = state_routes.get_latest()
+    assert result["analysis"]["payload"]["fmea"] == {"dataset_id": "test", "items": [{"feature": "Step1_R1"}]}
+
+
+def test_save_analysis_fmea_failure_does_not_block_save(
+    isolated_settings: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JA-2: FMEA 계산이 실패해도 Pareto 등 나머지 payload는 그대로
+    저장된다 -- 분석 저장 전체를 실패시키지 않는다."""
+
+    def _boom(dataset: str, targets):
+        raise RuntimeError("dataset unreadable")
+
+    monkeypatch.setattr(state_routes, "_fmea_payload", _boom)
+    payload = {"activeTarget": "Y1", "paretoByTarget": {"Y1": {"items": []}}, "measurementExpansion": {"total_wafers": 10}}
+    response = state_routes.save_analysis_state(AnalysisStateSaveRequest(dataset="test", payload=payload))
+
+    assert response == {"saved": True}
+    result = state_routes.get_latest()
+    assert result["analysis"]["payload"]["paretoByTarget"] == {"Y1": {"items": []}}
+    assert result["analysis"]["payload"]["measurementExpansion"] == {"total_wafers": 10}
+    assert result["analysis"]["payload"]["fmea"] is None
+    assert result["analysis"]["payload"]["fmeaError"]
 
 
 def test_get_latest_drops_record_for_deleted_dataset(isolated_settings: SimpleNamespace) -> None:
@@ -123,7 +168,11 @@ def test_save_and_restore_alarms(isolated_settings: SimpleNamespace) -> None:
     result = state_routes.get_latest()
     assert result["alarms"]["train_dataset"] == "train"
     assert result["alarms"]["eval_dataset"] == "test"
-    assert result["alarms"]["payload"] == payload
+    assert result["alarms"]["payload"]["summary"] == {"a": 1}
+    # 지시서 JD-2③: 이 요청 자체가 이미 "사용자가 실제로 조작했다"는
+    # 신호(프런트가 userModified로 가드한다) -- 저장 시점의 기본값 세대만
+    # 감사용으로 함께 찍는다.
+    assert result["alarms"]["payload"]["defaultsVersion"] == alarm_gbdt.ALARM_DEFAULTS_VERSION
 
 
 def test_save_overwrites_previous_training_result(isolated_settings: SimpleNamespace) -> None:

@@ -9,7 +9,9 @@ import pytest
 
 from src.ml.hybrid import PIPELINE_VERSION
 from src.runtime.migrations import (
+    LEGACY_ALARM_DEFAULTS_MIGRATION_ID,
     LEGACY_MODEL_MIGRATION_ID,
+    normalize_legacy_alarm_defaults,
     run_startup_migrations,
 )
 from src.runtime.store import RuntimeStore
@@ -62,7 +64,10 @@ def test_startup_migrations_delete_only_legacy_models(
 
     results = run_startup_migrations(model_dir=model_root, store=store)
 
-    assert [row["status"] for row in results] == ["completed"]
+    # 지시서 JD-2①: 이 store에서 처음 도는 것이므로 legacy 모델 정리
+    # 마이그레이션과 함께 alarms 기본값 정리 마이그레이션도 완료된다
+    # (alarms 레코드가 없으니 "kept/deleted" 판단 없이 그냥 완료).
+    assert [row["status"] for row in results] == ["completed", "completed"]
     assert not (model_root / "legacy_model.joblib").exists()
     assert not (model_root / "legacy_model.json").exists()
     assert (model_root / "current_model.joblib").exists()
@@ -76,11 +81,102 @@ def test_completed_startup_migrations_do_not_run_again(migration_root: Path) -> 
     model_root.mkdir()
     store = RuntimeStore(artifact_root / "dashboard.db", artifact_root)
     first = run_startup_migrations(model_dir=model_root, store=store)
-    assert [row["status"] for row in first] == ["completed"]
+    assert [row["status"] for row in first] == ["completed", "completed"]
 
     _flat_model(model_root, "created_after_migration", "old_pipeline_v1")
     second = run_startup_migrations(model_dir=model_root, store=store)
 
-    assert [row["status"] for row in second] == ["already_completed"]
+    assert [row["status"] for row in second] == ["already_completed", "already_completed"]
     assert (model_root / "created_after_migration.joblib").is_file()
     assert (model_root / "created_after_migration.json").is_file()
+
+
+def _runtime_store(migration_root: Path) -> RuntimeStore:
+    artifact_root = migration_root / "runtime"
+    return RuntimeStore(artifact_root / "dashboard.db", artifact_root)
+
+
+def test_normalize_legacy_alarm_defaults_deletes_exact_legacy_match(migration_root: Path) -> None:
+    """지시서 JD-2①: 기본값이 88.0/0.20으로 바뀌기 전에 저장된 정확히
+    91.0/0.5인 레코드만 지운다."""
+    store = _runtime_store(migration_root)
+    store.set_app_state(
+        "latest_alarms",
+        {
+            "schema_version": 1,
+            "created_at": "2026-08-07T17:18:08.895535+00:00",
+            "train_dataset": "train",
+            "eval_dataset": "train",
+            "payload": {"targetYield": 91, "sensitivity": 0.5},
+        },
+    )
+
+    result = normalize_legacy_alarm_defaults(store)
+
+    assert result["action"] == "deleted"
+    assert store.get_app_state("latest_alarms") is None
+
+
+def test_normalize_legacy_alarm_defaults_keeps_real_user_choice(migration_root: Path) -> None:
+    """91.0/0.5와 다른 값은 사용자가 실제로 고른 것일 수 있어 보존한다."""
+    store = _runtime_store(migration_root)
+    store.set_app_state(
+        "latest_alarms",
+        {
+            "schema_version": 1,
+            "created_at": "2026-08-08T00:00:00+00:00",
+            "train_dataset": "train",
+            "eval_dataset": "test",
+            "payload": {"targetYield": 93.0, "sensitivity": 0.5},
+        },
+    )
+
+    result = normalize_legacy_alarm_defaults(store)
+
+    assert result["action"] == "kept"
+    assert store.get_app_state("latest_alarms") is not None
+
+
+def test_normalize_legacy_alarm_defaults_noop_when_no_record(migration_root: Path) -> None:
+    store = _runtime_store(migration_root)
+    result = normalize_legacy_alarm_defaults(store)
+    assert result["action"] == "none"
+
+
+def test_normalize_legacy_alarm_defaults_migration_runs_once(migration_root: Path) -> None:
+    model_root = migration_root / "models"
+    model_root.mkdir()
+    store = _runtime_store(migration_root)
+    store.set_app_state(
+        "latest_alarms",
+        {
+            "schema_version": 1,
+            "created_at": "2026-08-07T17:18:08.895535+00:00",
+            "train_dataset": "train",
+            "eval_dataset": "train",
+            "payload": {"targetYield": 91, "sensitivity": 0.5},
+        },
+    )
+
+    first = run_startup_migrations(model_dir=model_root, store=store)
+    alarm_row = next(row for row in first if row["migration_id"] == LEGACY_ALARM_DEFAULTS_MIGRATION_ID)
+    assert alarm_row["status"] == "completed"
+    assert alarm_row["details"]["action"] == "deleted"
+    assert store.get_app_state("latest_alarms") is None
+
+    # 사용자가 다시 저장해도(마이그레이션이 이미 완료로 기록됐으므로)
+    # 두 번째 실행이 그 레코드를 건드리지 않는다 (하지 말 것: 두 번 실행).
+    store.set_app_state(
+        "latest_alarms",
+        {
+            "schema_version": 1,
+            "created_at": "2026-08-09T00:00:00+00:00",
+            "train_dataset": "train",
+            "eval_dataset": "test",
+            "payload": {"targetYield": 91, "sensitivity": 0.5},
+        },
+    )
+    second = run_startup_migrations(model_dir=model_root, store=store)
+    alarm_row_2 = next(row for row in second if row["migration_id"] == LEGACY_ALARM_DEFAULTS_MIGRATION_ID)
+    assert alarm_row_2["status"] == "already_completed"
+    assert store.get_app_state("latest_alarms") is not None

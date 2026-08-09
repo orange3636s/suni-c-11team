@@ -224,7 +224,13 @@ function RootCauseContent() {
   // 같은 인자명의 다른 데이터셋 차트가 경고 없이 표시된다. 이미 이
   // 페이지가 마운트된 채로 다른 즐겨찾기를 또 여는 경우는(같은 라우트라
   // 리마운트가 안 됨) target/feature 딥링크와 동일한 기존 한계다.
-  const [datasetId, setDatasetId] = useState(searchParams.get("dataset") || "train");
+  // 지시서 JC-1: 폴백 모드(SQL 미연결)의 원인 분석 기본 데이터셋은
+  // train.CSV가 아니라 test.CSV다 -- 상단 배지(FallbackModeBadge: "학습
+  // train.CSV → 평가 test.CSV")와 일치시킨다(JC-2). URL의 즐겨찾기
+  // 딥링크(dataset 파라미터)나 복원된 분석 결과(아래 syncedFromRestore
+  // 이펙트)가 있으면 이 기본값보다 항상 우선한다 -- SQL 연결 상태에서는
+  // 그 복원 값이 자동화가 실제로 정한 평가 데이터셋이므로 그대로 따른다.
+  const [datasetId, setDatasetId] = useState(searchParams.get("dataset") || "test");
   // hasConfig 판단(Eq. 색상 옵션·팝오버 행 노출 여부)에 쓰는 데이터셋 스키마.
   const [analysisSchema, setAnalysisSchema] = useState<DatasetSchemaResponse | null>(null);
   const [activeTarget, setActiveTarget] = useState(searchParams.get("target") || "Y1");
@@ -387,11 +393,20 @@ function RootCauseContent() {
   // 즉시 실행된다. 셀렉터/타깃/실행 상태를 컨텍스트의 결과에 맞춰 한 번만
   // 동기화한다 (spec §4-3) -- 이후 사용자가 셀렉터를 바꿔도 다시 개입하지
   // 않는다.
+  //
+  // 지시서 JC-1 진단: `hydrated`(GET /api/state/latest)와 `analysis`가
+  // 채워지는 시점(저장된 결과가 있으면 즉시, 없으면 자동 갱신 스냅샷의
+  // W-1 대체 채움이 나중에 도착)은 서로 다른 요청이라 순서가 보장되지
+  // 않는다. 예전 코드는 `hydrated`가 먼저 되면(=이 시점엔 `analysis`가
+  // 아직 null) `syncedFromRestore.current`를 바로 true로 세워버려, 이후
+  // W-1이 `analysis`를 채워도 이 이펙트가 다시 돌지 않았다 -- 그 결과
+  // 데이터셋 셀렉터가 초기값(폴백 모드에서 마땅히 test.CSV여야 할 값)에
+  // 영원히 멈춰 있었다. `analysis`가 실제로 왔을 때만 ref를 세워
+  // "한 번만 동기화"를 지킨다.
   const syncedFromRestore = useRef(false);
   useEffect(() => {
-    if (!hydrated || syncedFromRestore.current) return;
+    if (!hydrated || syncedFromRestore.current || !analysis) return;
     syncedFromRestore.current = true;
-    if (!analysis) return;
     const timer = window.setTimeout(() => {
       // B-5: 즐겨찾기 딥링크가 dataset을 지정했으면 복원된 결과의
       // dataset으로 덮어쓰지 않는다 -- 안 그러면 URL이 가리키는(favorite이

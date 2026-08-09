@@ -263,6 +263,13 @@ function AlertsContent() {
   // "초기화되는" 것처럼 보이는 원인이다. isRestoring이 true인 동안은
   // 저장 자체를 막아 이 창을 없앤다.
   const [isRestoring, setIsRestoring] = useState(true);
+  // 지시서 JD-2②: isRestoring 게이트만으로는 부족하다 -- 복원 이펙트가
+  // targetYield/sensitivity를 서버 값으로 세팅하고 isRestoring을 끄는
+  // 시점이 같은 렌더라, 그 직후 저장 이펙트가 "방금 막 복원한 값"을
+  // 다시 그대로 서버에 써버린다(내용은 같아도 불필요한 쓰기다). 사용자가
+  // 슬라이더/입력칸/프리셋 버튼을 실제로 조작했을 때만(아래 핸들러들)
+  // true로 세팅되는 플래그를 따로 두고, 저장 이펙트가 이것까지 확인한다.
+  const userModified = useRef(false);
   const data = alarmsState?.data ?? null;
   const datasetMismatch = Boolean(
     alarmsState && (alarmsState.trainDataset !== trainDataset || alarmsState.evalDataset !== evalDataset),
@@ -333,9 +340,11 @@ function AlertsContent() {
   // 800ms 묶어서 보낸다. 재분류 자체는 이 저장과 무관하게 즉시 일어난다.
   // HD그룹: isRestoring이 true인 동안은(복원이 아직 안 끝났으면) 절대
   // 저장하지 않는다 -- local state가 기본값인 채로 서버에 나가 사용자가
-  // 이전에 저장해 둔 값을 덮어쓰는 것을 막는다(HD-2 진단 참고).
+  // 이전에 저장해 둔 값을 덮어쓰는 것을 막는다(HD-2 진단 참고). 지시서
+  // JD-2②: isRestoring만으로는 "복원 완료 직후 첫 렌더"의 불필요한
+  // 재저장까지는 못 막는다 -- userModified.current까지 함께 확인한다.
   useEffect(() => {
-    if (!alarmsState || isRestoring) return;
+    if (!alarmsState || isRestoring || !userModified.current) return;
     const timer = window.setTimeout(() => {
       setSettingsSaveError(false);
       void saveAlarmsState(alarmsState.trainDataset, alarmsState.evalDataset, { targetYield, sensitivity }).catch(() => {
@@ -418,13 +427,16 @@ function AlertsContent() {
   }, [searchParams]);
 
   function handleTargetYieldChange(next: number) {
+    userModified.current = true;
     setTargetYield(clamp(next, 0, 100));
   }
   function handleSensitivityChange(next: number) {
+    userModified.current = true;
     setSensitivity(clamp(next, 0, 1));
     setActivePreset(null);
   }
   function applyPreset(preset: (typeof SENSITIVITY_PRESETS)[number]) {
+    userModified.current = true;
     setSensitivity(preset.value);
     setActivePreset(preset.key);
   }

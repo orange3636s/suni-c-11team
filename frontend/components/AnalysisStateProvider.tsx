@@ -90,11 +90,16 @@ export type AnalysisState = {
   // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
   // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
   measurementExpansion: MeasurementExpansionResponse | null;
-  // FMEA 분석표 (모니터링 홈, 지시서 IA) -- 자동 갱신 스냅샷에서만 채워진다
-  // (별도 온디맨드 조회가 없다, IA-5). 그래서 "원인 분석 실행" 직후 복원한
-  // 라이브 결과(hydrate())에는 항상 undefined다 -- FmeaTable이 그 경우를
-  // "스냅샷 대기 중"으로 별도 안내한다.
+  // FMEA 분석표 (모니터링 홈, 지시서 IA/JA) -- 계산은 백엔드 전용
+  // (`src/analysis/screening/fmea.py`), 프런트는 절대 계산하지 않는다.
+  // 자동 갱신 스냅샷(`src/automation/refresh.py`)과 수동 "다시 분석"
+  // 저장(`POST /api/state/analysis`, `api/routes/state.py`의 `_with_fmea`)
+  // 두 경로 모두 저장 시점에 채워 넣으므로 어느 쪽으로 복원해도 값이
+  // 있다. `fmea`가 null인데 `fmeaError`도 null이면 이 저장 경로가
+  // 갱신되기 전(JA-1 배포 이전)에 저장된 옛 레코드라는 뜻 -- 다시
+  // 분석하면 채워진다. `fmeaError`가 있으면 계산이 실패한 것이다.
   fmea?: FmeaTablePayload | null;
+  fmeaError?: string | null;
   // 알람 판정 GBDT 전환 (spec §B) -- wafer_id -> 등급. 분석 실행 시 한 번만
   // 가져와 모든 산점도/Box Plot 카드가 공유한다 (§B-2: 카드마다 재요청하지
   // 않는다).
@@ -223,6 +228,7 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
     pointsComplete: false,
     measurementExpansion: (snap.analysis.measurementExpansion as MeasurementExpansionResponse | null) ?? null,
     fmea: (snap.analysis.fmea as FmeaTablePayload | null) ?? null,
+    fmeaError: snap.analysis.fmeaError ?? null,
     alarmGradeByWaferId: null,
     alarmCriteria: null,
   };
@@ -319,6 +325,11 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
               // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
               // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
               measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
+              // 지시서 JA-1: 저장 시점(POST /api/state/analysis)에 서버가
+              // 채워 넣으므로 그대로 복원한다 -- 이 값이 undefined인 것은
+              // JA-1 배포 이전에 저장된 옛 레코드뿐이다.
+              fmea: state.analysis.payload.fmea ?? null,
+              fmeaError: state.analysis.payload.fmeaError ?? null,
               // wafer 수만큼 커질 수 있어(예: train.CSV 1만 행) 서버에 저장하지
               // 않는다 -- scatterByKey와 같은 방식으로 복원 직후 배경에서
               // 다시 채운다 (root-cause/page.tsx의 fetchAllScatterData 이펙트).

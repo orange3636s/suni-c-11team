@@ -541,6 +541,12 @@ export type LatestAnalysisPayload = {
   activeTarget: string;
   paretoByTarget: Record<string, ParetoRankingResponse>;
   measurementExpansion?: MeasurementExpansionResponse | null;
+  // 지시서 JA-1: 프런트는 이 필드를 절대 채워 보내지 않는다 -- 서버가
+  // POST /api/state/analysis 저장 시점에 채운다(api/routes/state.py의
+  // `_with_fmea`). 그래서 hydrate() 쪽에서는 항상 값이 있고(JA-1 배포
+  // 이전 옛 레코드만 예외), 프런트가 보내는 요청 바디에는 나타나지 않는다.
+  fmea?: FmeaTablePayload | null;
+  fmeaError?: string | null;
   // 지시서 AJ: 저장된 스냅샷의 응답 형태·내용 규칙(예: PARETO_TOP_N
   // 5->10)이 여전히 유효한지 프론트가 직접 검사하는 버전 --
   // frontend/lib/snapshotVersion.ts의 ANALYSIS_SNAPSHOT_VERSION과
@@ -646,6 +652,7 @@ export type RefreshSnapshot = {
     paretoByTarget: Record<string, unknown>;
     measurementExpansion: Record<string, unknown> | null;
     fmea: FmeaTablePayload | null;
+    fmeaError: string | null;
   };
   alarms: RefreshSnapshotAlarms;
   monitoring: RefreshSnapshotMonitoring;

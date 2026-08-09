@@ -25,10 +25,12 @@ export type MonitoringSnapshot = {
   hasAnalysis: boolean;
   createdAt: string | null;
   dataset: string | null;
-  // FMEA 분석표 (지시서 IA) -- 자동 갱신 스냅샷에만 실려 온다(별도 조회
-  // 없음, IA-5). "원인 분석 실행" 직후(스냅샷이 아직 안 돈 시점)에는
-  // null -- FmeaTable이 "다음 자동 갱신을 기다리는 중" 안내로 구분한다.
+  // FMEA 분석표 (지시서 IA/JA) -- 자동 갱신 스냅샷과 수동 "다시 분석"
+  // 저장 둘 다 백엔드가 채워 보낸다(JA-1). `fmea`가 null인데
+  // `fmeaError`도 null이면 JA-1 배포 이전에 저장된 옛 레코드 -- 다시
+  // 분석하면 채워진다. `fmeaError`가 있으면 계산이 실패한 것이다.
   fmea: FmeaTablePayload | null;
+  fmeaError: string | null;
   measurementExpansion: MeasurementExpansionResponse | null;
   alarmsRecord: LatestAlarmsRecord | null;
 };
@@ -62,6 +64,7 @@ export async function buildMonitoringSnapshot(
       createdAt: null,
       dataset: null,
       fmea: null,
+      fmeaError: null,
       measurementExpansion: null,
       alarmsRecord,
     };
@@ -72,6 +75,7 @@ export async function buildMonitoringSnapshot(
     createdAt: analysis.createdAt,
     dataset: analysis.dataset,
     fmea: analysis.fmea ?? null,
+    fmeaError: analysis.fmeaError ?? null,
     measurementExpansion: analysis.measurementExpansion ?? null,
     alarmsRecord,
   };

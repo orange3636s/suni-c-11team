@@ -202,30 +202,39 @@ export default function MonitoringPage() {
             {/* ID-3 배치: ① 판단 요약 ② FMEA 분석표 ③ 권고 조치
                 ④ 추가 계측 권고 ⑤ 설비 구성 트리맵 */}
             <SummaryBlock snapshot={snapshot} queue={queue} />
-            <FmeaTable data={snapshot.fmea} />
+            <FmeaTable data={snapshot.fmea} error={snapshot.fmeaError} />
             <RecommendedActions data={snapshot.fmea} />
-            <section className="resultCard">
-              <div className="sectionHeading compact">
-                <div>
-                  <span className="sectionLabel">계측 권고</span>
-                  <h2>추가 계측 권고</h2>
-                </div>
-              </div>
-              <MeasurementExpansionCard data={snapshot.measurementExpansion} />
+            {/* 지시서 JB-1: MeasurementExpansionCard가 이미 자기 카드
+                (resultCard, eyebrow "계측 우선순위" · 제목 "계측 확대
+                제안")를 갖고 있는데 여기서 "추가 계측 권고"라는 제목만
+                있는 빈 카드로 한 번 더 감싸 이중 카드가 됐었다 -- 바깥
+                래퍼만 제거한다(컴포넌트 내부는 그대로, JB-1). */}
+            <MeasurementExpansionCard data={snapshot.measurementExpansion} />
+            {/* 계측 확대 제안 카드 바로 아래 붙는 두 캡션 -- 하나의 grid
+                항목으로 묶어(.rcPage가 grid+gap이라 항목마다 별도 여백이
+                생긴다) 카드에서 시각적으로 분리되지 않게 한다.
+                MeasurementExpansionCard.tsx 내부는 건드리지 않는다
+                (JB-1 "하지 말 것": 바깥에서만 덧붙인다). */}
+            <div className="fmeaMeasurementFootnotes">
+              {/* 지시서 JB-2: "수율 기여"(이 카드의 표)와 "수율 편차"
+                  (FMEA 표)는 서로 다른 질문에 대한 답이라 값이 다른 게
+                  정상이다 -- "더 재면 얼마나 얻나" vs "구간에 맞추면
+                  얼마나 얻나". 계산을 통일하지 않고 정의만 병기한다. */}
+              <p className="fmeaMetricDefinitions">
+                수율 기여 — 계측 확대 시 추가로 판정되는 wafer에서 얻는 기대 이득 · 수율 편차 — 권장 구간 안팎의 평균 수율 차이(FMEA 표)
+              </p>
               {/* ID-4: FMEA 표의 실익 필터(편차 ≥ 0.3%p)와 정합성을 맞추는
-                  한 줄 -- MeasurementExpansionCard.tsx 자체는 원인 분석
-                  탭과 공유하는 컴포넌트라 손대지 않는다(ID-2). 계측 부족
-                  (선정 인자 전부 미계측) wafer만 계측 확대의 실제 대상이고,
-                  상관성 부족(실익 없다고 걸러진 인자에서만 근거가 나온) wafer는
-                  계측을 늘려도 해소되지 않아 제외했다는 사실만 별도로
-                  덧붙인다. */}
+                  한 줄. 계측 부족(선정 인자 전부 미계측) wafer만 계측
+                  확대의 실제 대상이고, 상관성 부족(실익 없다고 걸러진
+                  인자에서만 근거가 나온) wafer는 계측을 늘려도 해소되지
+                  않아 제외했다는 사실만 덧붙인다. */}
               {snapshot.fmea && (
                 <p className="fmeaMeasurementAlignmentNote">
                   FMEA 실익 기준 정합: 계측 부족 {snapshot.fmea.measurement_shortage_wafers.toLocaleString()}장이 대상 ·
                   상관성 부족 {snapshot.fmea.correlation_shortage_wafers.toLocaleString()}장은 제외
                 </p>
               )}
-            </section>
+            </div>
             <ConfigTreemap
               datasetId={snapshot.dataset ?? "train"}
               initialStep={cached?.treemap?.step}

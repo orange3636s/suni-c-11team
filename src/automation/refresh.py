@@ -395,17 +395,23 @@ def _analyze_and_score(
     # 모니터링 홈 FMEA 분석표 (지시서 IA) -- 다른 원인분석 결과와 같은
     # 스냅샷 저장 시점에 함께 계산한다. 별도 온디맨드 조회 경로는 없다
     # (IA-5). 실패해도 나머지 스냅샷 저장을 막지 않는다(J-2 부분 실패 정책).
+    # `fmeaError`는 수동 분석 저장 경로(api/routes/state.py `_with_fmea`)
+    # 와 같은 필드명을 써서, 화면이 두 경로 어느 쪽에서 왔든 같은 로직으로
+    # "계산 안 됨"과 "계산 실패"를 구분할 수 있게 한다(지시서 JA-3).
     fmea = None
+    fmea_error = None
     try:
         fmea = _fmea_payload(eval_dataset_id, TARGETS)
     except Exception:
         logger.exception("auto_refresh: FMEA 분석표 계산 실패")
         errors.append("FMEA 분석표 계산에 실패했습니다.")
+        fmea_error = "FMEA 분석표 계산 중 오류가 발생했습니다."
 
     analysis_block = {
         "paretoByTarget": pareto_by_target,
         "measurementExpansion": measurement_expansion,
         "fmea": fmea,
+        "fmeaError": fmea_error,
     }
 
     # 알람 판정 -- 저장된 목표 수율·민감도를 그대로 따른다(A-3 원칙과

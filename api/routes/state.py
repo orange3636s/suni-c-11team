@@ -6,6 +6,7 @@ from typing import Any
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
+from api.routes.analysis import _fmea_payload
 from api.routes.datasets import get_dataset_registry
 from api.schemas.state import (
     ActivateDatasetRequest,
@@ -17,6 +18,8 @@ from api.schemas.state import (
     TrainingStateSaveResponse,
 )
 from api.settings import settings
+from src.analysis import alarm_gbdt
+from src.analysis.screening.schema import ALL_TARGET_COLUMNS
 from src.automation.ingest import AUTO_INGEST_JOB_ID
 from src.automation.refresh import REFRESH_JOB_ID, is_refresh_running, run_refresh_pipeline
 from src.notifications.settings_store import get_settings_summary
@@ -138,19 +141,49 @@ def save_training_state(body: TrainingStateSaveRequest, request: Request) -> dic
     return {"saved": saved, "schedule_applied": schedule_applied}
 
 
+def _with_fmea(dataset: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """지시서 JA-1: FMEA 분석표는 자동 갱신(`src/automation/refresh.py`)과
+    수동 "다시 분석"(`POST /api/state/analysis`) 두 경로가 같은 계산을
+    공유해야 한다 -- 프런트가 이미 `fmea`를 실어 보냈으면(현재는 안
+    그런다, 앞으로도 프런트에서 계산하지 않는다) 그대로 두고, 없으면
+    저장 시점에 여기서 채운다.
+
+    JA-2: FMEA 계산 실패가 분석 저장 전체를 막으면 안 된다 -- Pareto·
+    계측 확대는 이미 계산이 끝나 `payload`에 담겨 있으므로, 여기서
+    예외가 나도 그 값들은 그대로 저장한다. 실패 사유는 `fmeaError`에
+    남겨 화면이 "계산 안 됨"과 "계산 실패"를 구분할 수 있게 한다.
+    """
+    if payload.get("fmea") is not None:
+        return payload
+    try:
+        payload = {**payload, "fmea": _fmea_payload(dataset, ALL_TARGET_COLUMNS), "fmeaError": None}
+    except Exception:
+        logger.exception("분석 저장: FMEA 분석표 계산 실패 dataset=%s", dataset)
+        payload = {**payload, "fmea": None, "fmeaError": "FMEA 분석표 계산 중 오류가 발생했습니다."}
+    return payload
+
+
 @router.post("/analysis", response_model=StateSaveResponse)
 def save_analysis_state(body: AnalysisStateSaveRequest) -> dict[str, bool]:
-    saved = save_state(_store(), "analysis", dataset={"dataset": body.dataset}, payload=body.payload)
+    payload = _with_fmea(body.dataset, body.payload)
+    saved = save_state(_store(), "analysis", dataset={"dataset": body.dataset}, payload=payload)
     return {"saved": saved}
 
 
 @router.post("/alarms", response_model=StateSaveResponse)
 def save_alarms_state(body: AlarmsStateSaveRequest) -> dict[str, bool]:
+    # 지시서 JD-2③: 이 요청이 오는 시점 자체가 이미 "사용자가 실제로
+    # 조작했다"는 신호다 -- 프런트(alerts/page.tsx)가 userModified 플래그로
+    # 가드해, 복원·초기화로 인한 setState는 이 엔드포인트를 아예 부르지
+    # 않는다(JD-2②). 여기서는 그 저장이 어느 기본값 세대에서 만들어졌는지만
+    # 감사용으로 찍어 둔다 -- 이 값으로 자동 무효화하지 않는다(진짜 사용자
+    # 선택을 지울 위험).
+    payload = {**body.payload, "defaultsVersion": alarm_gbdt.ALARM_DEFAULTS_VERSION}
     saved = save_state(
         _store(),
         "alarms",
         dataset={"train_dataset": body.train_dataset, "eval_dataset": body.eval_dataset},
-        payload=body.payload,
+        payload=payload,
     )
     return {"saved": saved}
 

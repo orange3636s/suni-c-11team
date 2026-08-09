@@ -59,6 +59,14 @@ ALARM_SHARE_WARNING_THRESHOLD = 0.10  # spec §A-2: 평가 대상의 10% 초과 
 DEFAULT_TARGET_YIELD = 88.0
 DEFAULT_SENSITIVITY = 0.2
 
+# 지시서 JD-2③: 위 두 기본값을 또 바꿀 일이 생기면 올린다 -- 저장된
+# alarms 레코드(api/routes/state.py의 save_alarms_state)에 이 버전을
+# 함께 찍어 둔다. JD-2②(프런트 userModified 게이트)로 "사용자가 실제로
+# 조작하지 않은 값"은 애초에 저장되지 않으므로, 이 값은 자동 무효화에
+# 쓰지 않는다(그러면 진짜 사용자 선택까지 지울 위험이 있다) -- 저장된
+# 값이 몇 번째 기본값 세대에서 만들어졌는지 남기는 감사(audit) 용도다.
+ALARM_DEFAULTS_VERSION = 1
+
 # 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- 교차 데이터셋 홀드아웃
 # AUC 하한이 이 값 미만이면 알람을 아예 내지 않는다. 통계적으로 도출된
 # 값이 아니라 실측 AUC 분포의 빈 구간(0.55~0.70 사이에 값이 없음) 가운데를

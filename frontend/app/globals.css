@@ -11179,7 +11179,10 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 /* 권고 조치 표 (지시서 IC) -- 비고 열은 근거 문장이라 길다. */
 .fmeaActionNote{ color: var(--text-secondary); font-size: var(--fs-sm); white-space: normal; }
 
-/* 추가 계측 권고 카드 아래, FMEA 실익 필터와의 정합성 한 줄 (지시서 ID-4).
-   MeasurementExpansionCard.tsx 자체는 손대지 않고 monitoring/page.tsx가
-   같은 카드 안에 덧붙이는 캡션이라 별도 클래스를 쓴다. */
-.fmeaMeasurementAlignmentNote{ margin: 10px 0 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
+/* 계측 확대 제안 카드 바로 아래 붙는 두 캡션(정의 병기 + FMEA 정합성,
+   지시서 JB-2/ID-4). 카드가 아니라 .rcPage 그리드의 별도 항목이라
+   (MeasurementExpansionCard.tsx 내부는 건드리지 않는다, JB-1) 카드처럼
+   보이지 않도록 배경·테두리 없이 좁은 줄간격만 준다. */
+.fmeaMeasurementFootnotes{ display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
+.fmeaMetricDefinitions,
+.fmeaMeasurementAlignmentNote{ margin: 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }

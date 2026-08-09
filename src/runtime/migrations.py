@@ -12,6 +12,14 @@ from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
 LEGACY_MODEL_MIGRATION_ID = "cleanup_legacy_models_v2"
+LEGACY_ALARM_DEFAULTS_MIGRATION_ID = "normalize_legacy_alarm_defaults_v1"
+ALARMS_STATE_KEY = "latest_alarms"
+# 지시서 JD: 목표 수율·민감도 기본값이 88.0/0.20으로 바뀌기 전에 저장된
+# 레거시 값. 사용자가 실제로 91.0/0.5를 선택한 경우와 구분할 수 없어
+# (JD-2① 자체가 그 한계를 인정한다) 값이 정확히 일치할 때만, 딱 한 번
+# 정리한다.
+LEGACY_ALARM_TARGET_YIELD = 91.0
+LEGACY_ALARM_SENSITIVITY = 0.5
 
 
 def _metadata_candidates(root: Path) -> list[tuple[str, Path]]:
@@ -106,6 +114,35 @@ def cleanup_legacy_models(model_dir: str | Path) -> dict[str, Any]:
     }
 
 
+def normalize_legacy_alarm_defaults(store: RuntimeStore) -> dict[str, Any]:
+    """지시서 JD-2①: DB에 남아 있던 옛 목표 수율/민감도 저장값(91.0/0.5,
+    기본값이 88.0/0.20으로 바뀌기 전에 저장됨)을 일회성으로 정리한다.
+    값이 레거시 기본값과 정확히 같을 때만 지운다 -- 지우면 다음 접속에
+    현재 기본값(88.0/0.20)이 쓰이고, 사용자가 값을 바꾸면 그때부터
+    다시 저장된다(JD-2②의 userModified 게이트가 그 저장을 지킨다).
+    """
+    record = store.get_app_state(ALARMS_STATE_KEY)
+    if record is None:
+        return {"action": "none", "reason": "저장된 alarms 레코드 없음"}
+    payload = record.get("payload") or {}
+    target = payload.get("targetYield")
+    sensitivity = payload.get("sensitivity")
+    if target == LEGACY_ALARM_TARGET_YIELD and sensitivity == LEGACY_ALARM_SENSITIVITY:
+        store.delete_app_state(ALARMS_STATE_KEY)
+        return {
+            "action": "deleted",
+            "created_at": record.get("created_at"),
+            "target_yield": target,
+            "sensitivity": sensitivity,
+        }
+    return {
+        "action": "kept",
+        "reason": "저장값이 레거시 기본값과 다름 -- 사용자가 실제로 선택했을 수 있어 보존",
+        "target_yield": target,
+        "sensitivity": sensitivity,
+    }
+
+
 def _run_once(
     store: RuntimeStore,
     migration_id: str,
@@ -135,5 +172,10 @@ def run_startup_migrations(
             store,
             LEGACY_MODEL_MIGRATION_ID,
             lambda: cleanup_legacy_models(model_dir),
+        ),
+        _run_once(
+            store,
+            LEGACY_ALARM_DEFAULTS_MIGRATION_ID,
+            lambda: normalize_legacy_alarm_defaults(store),
         ),
     ]
