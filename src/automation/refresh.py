@@ -142,18 +142,19 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
     store.save_refresh_snapshot(snapshot)
     logger.info("auto_refresh: 스냅샷 저장 완료 mode=%s eval=%s", mode, eval_dataset_id)
 
-    # -- 6. 신규 알람 자동 발송 (J-5) -- 별도 모듈, 게이트/폴백/발송
-    # 조건은 그쪽에서 판단한다. 임포트를 함수 안에 둔 것은 순환 임포트
-    # 회피(dispatch.py가 이 모듈을 다시 참조하지 않지만, notify 쪽
-    # 모듈들이 얽혀 있어 안전하게 지연 임포트한다) 목적이다.
+    # -- 6. 신규 알람 자동 발송 (J-5) -- 별도 모듈, 게이트/발송 시점/
+    # 수동 업로드 10분 간격 조건은 그쪽에서 판단한다. 임포트를 함수
+    # 안에 둔 것은 순환 임포트 회피(dispatch.py가 이 모듈을 다시
+    # 참조하지 않지만, notify 쪽 모듈들이 얽혀 있어 안전하게 지연
+    # 임포트한다) 목적이다.
+    #
+    # EB그룹: 수동 모드(업로드로 활성화된 평가 데이터셋)도 이제
+    # 발송한다 -- 이전(AG-3)에는 여기서 통째로 건너뛰었지만, 사용자가
+    # 올린 파일의 판정 결과를 받아볼 수 있어야 한다는 요구로 바뀌었다.
+    # 대신 refresh_dispatch.dispatch_new_alarms가 메시지에 "[수동] 파일명"
+    # 출처를 붙이고 10분 최소 간격을 둔다(연속 업로드가 연속 발송이
+    # 되지 않도록).
     from src.automation import refresh_dispatch
-
-    # AG-3: 수동 모드(업로드로 활성화된 평가 데이터셋)에서는 자동 발송을
-    # 중단한다 -- 사용자가 임의로 올린 파일의 판정 결과를 폰으로 보내면
-    # 안 된다.
-    if mode == "manual":
-        logger.info("auto_refresh: 수동 모드라 신규 알람 발송을 건너뜁니다.")
-        return
 
     try:
         refresh_dispatch.dispatch_new_alarms(

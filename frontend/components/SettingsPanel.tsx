@@ -568,6 +568,14 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
         <p className="notifyFieldError">발송 시점이 선택되지 않아 알림이 전송되지 않습니다</p>
       )}
       {error && <p className="notifyFieldError">{error}</p>}
+      {/* EB-5: 현재 발송 정책을 그대로 보여주기만 한다 -- 토글로 켜고
+          끄는 옵션이 아니다(조건이 늘수록 "왜 안 왔는지" 추적이
+          어려워진다). */}
+      <p className="notifyDispatchPolicyNote">
+        발송 대상: 자동 갱신 · 수동 업로드 · 데모 데이터
+        <br />
+        게이트 미달 시에는 발송하지 않습니다
+      </p>
       <p className="notifyReliabilityGateNote">
         신뢰도 낮은 데이터셋은 발송하지 않습니다
         <br />

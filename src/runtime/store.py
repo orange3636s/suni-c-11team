@@ -210,6 +210,12 @@ class RuntimeStore:
             existing_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notify_sent_log)")}
             if "channel" not in existing_columns:
                 connection.execute("ALTER TABLE notify_sent_log ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+            # EB그룹: 발송/차단 이력에서 출처(수동 업로드/폴백 데모)를
+            # 나중에 추적할 수 있도록 컬럼을 추가한다 -- 위와 같은 이유로
+            # CREATE TABLE IF NOT EXISTS만으로는 기존 DB에 반영되지 않는다.
+            dispatch_log_columns = {row["name"] for row in connection.execute("PRAGMA table_info(refresh_dispatch_log)")}
+            if "source" not in dispatch_log_columns:
+                connection.execute("ALTER TABLE refresh_dispatch_log ADD COLUMN source TEXT")
 
     def active_model(self) -> dict[str, Any] | None:
         with _lock, self._connect() as connection:
@@ -902,20 +908,24 @@ class RuntimeStore:
         blocked_reason: str | None,
         summarized: bool,
         channels: dict[str, Any],
+        source: str | None = None,
     ) -> None:
         """차단된 경우에도 기록한다 -- "왜 안 보냈는지"가 알림 기록
-        화면에서 보여야 한다."""
+        화면에서 보여야 한다. `source`(EB그룹)는 이 사이클이 어느 데이터
+        출처(수동 업로드/폴백 데모/None=SQL 자동 갱신)에서 나온 것인지
+        -- 나중에 "이 알람이 왜 왔지"를 추적할 수 있게 남긴다."""
         with _lock, self._connect() as connection:
             connection.execute(
                 """INSERT INTO refresh_dispatch_log
-                (created_at, new_alarm_count, blocked_reason, summarized, channels_json)
-                VALUES (?,?,?,?,?)""",
+                (created_at, new_alarm_count, blocked_reason, summarized, channels_json, source)
+                VALUES (?,?,?,?,?,?)""",
                 (
                     datetime.now(timezone.utc).isoformat(),
                     new_alarm_count,
                     blocked_reason,
                     1 if summarized else 0,
                     self._json(channels),
+                    source,
                 ),
             )
 

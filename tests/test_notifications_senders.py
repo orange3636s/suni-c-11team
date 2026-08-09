@@ -80,3 +80,47 @@ def test_email_html_escapes_user_supplied_dataset_label():
     html_body = build_email_html(payload)
     assert "<script>alert(1)</script>" not in html_body
     assert "&lt;script&gt;" in html_body
+
+
+# -- EB그룹: 발송 출처(source_note) 표시 -------------------------------
+
+
+def test_source_note_absent_by_default_in_all_channels():
+    """source_note를 안 주면(SQL 자동 갱신 경로) 기존 메시지 형태가
+    그대로 유지된다 -- 새 표시가 추가되지 않는다."""
+    payload = _payload(1)
+    assert payload.source_note is None
+    blocks = build_slack_blocks(payload)["blocks"]
+    assert blocks[0]["type"] == "header"
+    assert "[데모]" not in str(blocks) and "[수동]" not in str(blocks)
+    assert "[데모]" not in build_telegram_text(payload)
+    assert "[데모]" not in build_email_html(payload)
+
+
+def test_slack_blocks_prepend_source_note_context_block():
+    payload = _payload(1)
+    payload.source_note = "[데모] 내장 데이터 기준 — 실제 공정 데이터가 아닙니다"
+    blocks = build_slack_blocks(payload)["blocks"]
+    assert blocks[0]["type"] == "context"
+    assert payload.source_note in blocks[0]["elements"][0]["text"]
+    assert blocks[1]["type"] == "header"
+
+
+def test_telegram_text_escapes_and_prepends_source_note():
+    payload = _payload(1)
+    payload.source_note = "[수동] uploaded_0809.csv 업로드 결과"
+    text = build_telegram_text(payload)
+    unescaped = text.replace("\\", "")
+    # 볼드(*...*)로 감싸므로 정확히 맨 앞은 아니지만, [SUNI] 알람 줄보다는 앞에 와야 한다.
+    assert "[수동] uploaded_0809.csv 업로드 결과" in unescaped
+    assert unescaped.index("[수동] uploaded_0809.csv 업로드 결과") < unescaped.index("[SUNI]")
+
+
+def test_email_html_escapes_source_note_filename():
+    """EB-3: 수동 업로드 파일명이 그대로 출처 문구에 들어가므로, 다른
+    동적 문자열과 동일하게 반드시 HTML 이스케이프를 거쳐야 한다."""
+    payload = _payload(1)
+    payload.source_note = "[수동] <script>alert(1)</script>.csv 업로드 결과"
+    html_body = build_email_html(payload)
+    assert "<script>alert(1)</script>" not in html_body
+    assert "&lt;script&gt;" in html_body

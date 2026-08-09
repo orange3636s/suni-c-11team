@@ -89,8 +89,10 @@ def test_resolve_source_keeps_previous_train_dataset_in_manual_mode(tmp_path: Pa
     assert eval_dataset_id == upload_result["dataset_id"]
 
 
-def test_dispatch_skipped_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """AG-3: 수동 모드에서는 신규 알람 자동 발송을 부르지 않는다."""
+def test_dispatch_is_called_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """EB그룹: 이전(AG-3)에는 수동 모드에서 발송 자체를 건너뛰었지만,
+    이제는 refresh_dispatch.dispatch_new_alarms를 정상 호출한다 -- 차단
+    여부(신규 0건/10분 간격/게이트 등)는 그 함수 내부가 판단한다."""
     store, registry = _store_and_registry(tmp_path)
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
@@ -115,12 +117,19 @@ def test_dispatch_skipped_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_pa
         def dispatch_new_alarms(*args, **kwargs):
             dispatch_called["n"] += 1
 
-    import sys
-    monkeypatch.setitem(sys.modules, "src.automation.refresh_dispatch", _FakeDispatch)
+    # refresh.py는 함수 안에서 매번 `from src.automation import
+    # refresh_dispatch`를 실행한다 -- `src.automation` 패키지가 이미
+    # (다른 테스트 모듈이 먼저 real import했을 수 있어) `refresh_dispatch`
+    # 속성을 캐싱하고 있으면, CPython의 fromlist 처리(`hasattr(module, x)`가
+    # 참이면 sys.modules를 다시 보지 않는다)는 sys.modules만 바꿔서는
+    # 우회되지 않는다 -- 패키지 객체 자체의 속성을 갈아끼워야 한다.
+    import src.automation as automation_pkg
+
+    monkeypatch.setattr(automation_pkg, "refresh_dispatch", _FakeDispatch)
 
     refresh.run_refresh_pipeline()
 
-    assert dispatch_called["n"] == 0
+    assert dispatch_called["n"] == 1
     status = store.get_refresh_snapshot_status()
     assert status["snapshot"] is not None
     assert status["snapshot"]["source"]["mode"] == "manual"

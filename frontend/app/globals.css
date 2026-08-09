@@ -10623,6 +10623,12 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   margin: 4px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
   background: transparent; border: 1px solid var(--line); color: var(--text-secondary);
 }
+/* EB-5: 발송 정책 안내 -- 토글이 아니라 현재 정책을 보여주기만 하는
+   정보성 문구라 위 게이트 안내와 같은 스타일을 쓴다. */
+.notifyDispatchPolicyNote{
+  margin: 4px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
+  background: transparent; border: 1px solid var(--line); color: var(--text-secondary);
+}
 
 @media (max-width: 767px){
   .settingsPanelBackdrop{ padding: 0; align-items: flex-end; justify-content: center; }

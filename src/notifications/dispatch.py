@@ -65,7 +65,14 @@ def _filter_new_alarms(store: RuntimeStore, dataset_id: str, channel: str, candi
     return result
 
 
-def _build_payload(dataset_label: str, items: list[dict[str, Any]], reliability_grade: str, reliability_score: int, dashboard_url: str | None) -> AlarmNotificationPayload:
+def _build_payload(
+    dataset_label: str,
+    items: list[dict[str, Any]],
+    reliability_grade: str,
+    reliability_score: int,
+    dashboard_url: str | None,
+    source_note: str | None = None,
+) -> AlarmNotificationPayload:
     grade_counts: dict[str, int] = {}
     for item in items:
         grade_counts[item["grade"]] = grade_counts.get(item["grade"], 0) + 1
@@ -85,6 +92,7 @@ def _build_payload(dataset_label: str, items: list[dict[str, Any]], reliability_
         reliability_grade=reliability_grade,
         reliability_score=reliability_score,
         dashboard_url=dashboard_url,
+        source_note=source_note,
     )
 
 
@@ -97,6 +105,7 @@ def _send_to_all_channels(
     reliability_grade: str,
     reliability_score: int,
     dashboard_url: str | None,
+    source_note: str | None = None,
 ) -> tuple[dict[str, dict[str, Any]], set[tuple[str, str]], set[tuple[str, str]]]:
     """D-7: 채널마다 자기 24시간 dedupe 기준으로 자기만의 발송 대상을
     다시 추린다 -- 채널 하나가 이미 성공한 (wafer, grade)라도 다른
@@ -117,7 +126,7 @@ def _send_to_all_channels(
             results[channel] = {"ok": True, "error": None, "sent_count": 0}
             return
         attempted_keys.update((item["lot_wafer_id"], item["grade"]) for item in to_send)
-        payload = _build_payload(dataset_label, to_send, reliability_grade, reliability_score, dashboard_url)
+        payload = _build_payload(dataset_label, to_send, reliability_grade, reliability_score, dashboard_url, source_note)
         ok, error = _send_with_retry(lambda: send_fn(payload))
         results[channel] = {"ok": ok, "error": error, "sent_count": len(to_send) if ok else 0}
         if ok:
@@ -165,9 +174,14 @@ def dispatch_alarm_notifications(
     reliability_grade: str,
     reliability_score: int,
     dashboard_url: str | None = None,
+    source_note: str | None = None,
 ) -> dict[str, Any]:
     """`alarms`의 각 원소는 {lot_wafer_id, risk_percentile, grade, reason}
     형태다 (알람 판정 GBDT 전환 §A-3의 알람 목록 항목과 동일한 필드).
+
+    `source_note`(EB그룹)는 수동 업로드/폴백(데모) 모드에서 발송할 때
+    본문 맨 위에 붙는 출처 한 줄이다 -- SQL 연동 자동 갱신 경로에서는
+    생략(None)해 아무 표시도 하지 않는다.
 
     `trigger`는 호출부가 어느 경로로 불렀는지(`settings_store.TIMING_ON_ANALYSIS`
     "분석 실행 직후", `TIMING_DAILY_9AM` 매일 09:00, `TIMING_DAILY_13` 매일
@@ -208,6 +222,7 @@ def dispatch_alarm_notifications(
             reliability_grade=reliability_grade,
             reliability_score=reliability_score,
             dashboard_url=dashboard_url,
+            source_note=source_note,
         )
 
         if not results:

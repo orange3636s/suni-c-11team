@@ -44,6 +44,12 @@ class AlarmNotificationPayload:
     reliability_grade: str
     reliability_score: int
     dashboard_url: str | None = None
+    # EB그룹: 수동 업로드/폴백(데모) 모드에서 발송할 때 본문 맨 위에 붙는
+    # 출처 한 줄 -- 예: "[데모] 내장 데이터 기준 -- 실제 공정 데이터가
+    # 아닙니다", "[수동] uploaded_0809.csv 업로드 결과". 원본(미이스케이프)
+    # 텍스트이며, 채널별 이스케이프는 각 build_* 함수가 담당한다. SQL
+    # 연동 자동 갱신 경로에서는 None(표시 없음).
+    source_note: str | None = None
 
     @property
     def total(self) -> int:
@@ -71,7 +77,11 @@ def _remainder_note(payload: AlarmNotificationPayload) -> str | None:
 
 
 def format_plain_summary(payload: AlarmNotificationPayload) -> str:
-    lines = [
+    lines = []
+    if payload.source_note:
+        lines.append(payload.source_note)
+        lines.append("")
+    lines += [
         f"[SUNI] 알람 {payload.total}건 발생",
         f"데이터셋  {payload.dataset_label}        {payload.timestamp_label}",
         "",
@@ -95,7 +105,10 @@ def format_plain_summary(payload: AlarmNotificationPayload) -> str:
 
 
 def build_slack_blocks(payload: AlarmNotificationPayload) -> dict[str, Any]:
-    blocks: list[dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = []
+    if payload.source_note:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"*{payload.source_note}*"}]})
+    blocks += [
         {
             "type": "header",
             "text": {"type": "plain_text", "text": f"[SUNI] 알람 {payload.total}건 발생", "emoji": True},
@@ -154,7 +167,11 @@ def escape_markdown_v2(text: str) -> str:
 
 
 def build_telegram_text(payload: AlarmNotificationPayload) -> str:
-    lines = [
+    lines = []
+    if payload.source_note:
+        lines.append(f"*{escape_markdown_v2(payload.source_note)}*")
+        lines.append("")
+    lines += [
         f"*\\[SUNI\\] 알람 {payload.total}건 발생*",
         escape_markdown_v2(f"데이터셋 {payload.dataset_label} · {payload.timestamp_label}"),
         "",
@@ -218,8 +235,17 @@ def build_email_html(payload: AlarmNotificationPayload) -> str:
         if payload.dashboard_url
         else ""
     )
+    # EB그룹: 출처 한 줄도 사용자가 올린 파일명을 포함할 수 있으므로(예:
+    # "[수동] <script>.csv") 다른 동적 문자열과 동일하게 반드시
+    # html.escape를 거친다.
+    source_html = (
+        f"<p style='color:#b45309;font-weight:600;margin:0 0 10px'>{html.escape(payload.source_note)}</p>"
+        if payload.source_note
+        else ""
+    )
     return f"""
     <div style="font-family:sans-serif;max-width:520px">
+      {source_html}
       <h2 style="margin:0 0 4px">[SUNI] 알람 {payload.total}건 발생</h2>
       <p style="color:#555;margin:0 0 12px">데이터셋 {html.escape(payload.dataset_label)} &middot; {html.escape(payload.timestamp_label)}</p>
       <p style="font-weight:600">{html.escape(_grade_counts_line(payload.grade_counts))}</p>
