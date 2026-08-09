@@ -21,6 +21,8 @@ from typing import Any
 
 import httpx
 
+from src.analysis.alarm_gbdt import DEFAULT_SENSITIVITY, DEFAULT_TARGET_YIELD, classify_margin
+
 logger = logging.getLogger(__name__)
 
 SEND_TIMEOUT_SECONDS = 10
@@ -50,16 +52,38 @@ class AlarmNotificationPayload:
     # 텍스트이며, 채널별 이스케이프는 각 build_* 함수가 담당한다. SQL
     # 연동 자동 갱신 경로에서는 None(표시 없음).
     source_note: str | None = None
+    # GD-2: 판정 기준 -- 이게 없으면 받는 사람이 무엇에 대한 알람인지
+    # 모른다("심각 8건"이 무슨 기준으로 심각인지 알 수 없다). 개별 wafer의
+    # 예측 수율 절대값은 여전히 안 보여주지만(위 모듈 docstring, §C-6),
+    # 목표 수율·민감도와 그 둘로 정해지는 판정 컷(문턱값 하나)은 특정
+    # wafer의 예측이 아니라 이번 판정 자체의 설정값이라 같은 문제가 없다.
+    target_yield: float = DEFAULT_TARGET_YIELD
+    sensitivity: float = DEFAULT_SENSITIVITY
 
     @property
     def total(self) -> int:
         return sum(self.grade_counts.values())
+
+    @property
+    def judgment_cut(self) -> float:
+        """가장 느슨한 등급("주의")의 컷 -- src.analysis.alarm_gbdt.classify_wafer
+        와 같은 공식(목표 - margin)이다. 알람 여부 자체가 이 컷 하나로
+        정해지므로, 개별 등급 컷 셋을 전부 나열하지 않고 이것만 보여준다."""
+        return self.target_yield - classify_margin(self.sensitivity)
 
 
 def _grade_counts_line(counts: dict[str, int]) -> str:
     order = ["심각", "위험", "주의"]
     parts = [f"{grade} {counts[grade]}건" for grade in order if counts.get(grade)]
     return " · ".join(parts)
+
+
+def _criteria_line(payload: AlarmNotificationPayload) -> str:
+    """GD-2: 목표·민감도·판정 컷 -- 이게 없으면 받는 사람이 무엇에 대한
+    알람인지 모른다. "수율"이라는 단어를 쓰지 않는다 -- 개별 wafer의
+    예측 수율 절대값 노출 금지(§C-6)와 혼동하지 않도록, 이 값들은
+    이번 판정의 설정값이라는 점을 문구로도 구분한다."""
+    return f"목표 {payload.target_yield:.1f}% · 민감도 {payload.sensitivity:.2f} · 판정 컷 {payload.judgment_cut:.1f}%"
 
 
 def _item_lines(payload: AlarmNotificationPayload) -> list[tuple[str, str]]:
@@ -86,6 +110,7 @@ def format_plain_summary(payload: AlarmNotificationPayload) -> str:
         f"데이터셋  {payload.dataset_label}        {payload.timestamp_label}",
         "",
         _grade_counts_line(payload.grade_counts),
+        _criteria_line(payload),
         "",
     ]
     for title, reason in _item_lines(payload):
@@ -118,6 +143,7 @@ def build_slack_blocks(payload: AlarmNotificationPayload) -> dict[str, Any]:
             "elements": [{"type": "mrkdwn", "text": f"데이터셋 *{payload.dataset_label}* · {payload.timestamp_label}"}],
         },
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{_grade_counts_line(payload.grade_counts)}*"}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": _criteria_line(payload)}]},
     ]
     for title, reason in _item_lines(payload):
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\n{reason}"}})
@@ -176,6 +202,7 @@ def build_telegram_text(payload: AlarmNotificationPayload) -> str:
         escape_markdown_v2(f"데이터셋 {payload.dataset_label} · {payload.timestamp_label}"),
         "",
         escape_markdown_v2(_grade_counts_line(payload.grade_counts)),
+        escape_markdown_v2(_criteria_line(payload)),
         "",
     ]
     for title, reason in _item_lines(payload):
@@ -249,6 +276,7 @@ def build_email_html(payload: AlarmNotificationPayload) -> str:
       <h2 style="margin:0 0 4px">[SUNI] 알람 {payload.total}건 발생</h2>
       <p style="color:#555;margin:0 0 12px">데이터셋 {html.escape(payload.dataset_label)} &middot; {html.escape(payload.timestamp_label)}</p>
       <p style="font-weight:600">{html.escape(_grade_counts_line(payload.grade_counts))}</p>
+      <p style="color:#555;font-size:13px;margin:0 0 12px">{html.escape(_criteria_line(payload))}</p>
       <table style="border-collapse:collapse;width:100%">{rows}</table>
       {remainder_html}
       <p style="margin-top:16px">분석 신뢰도 {html.escape(payload.reliability_grade)} ({payload.reliability_score}점)</p>

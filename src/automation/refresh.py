@@ -165,6 +165,8 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
             alarm_items=alarm_items_for_dispatch,
             gate_passed=alarms_block["gate_passed"],
             snapshot_created_at=now_iso,
+            target_yield=alarms_block["target_yield"],
+            sensitivity=alarms_block["sensitivity"],
         )
     except Exception:
         logger.exception("auto_refresh: 신규 알람 발송 처리 실패")

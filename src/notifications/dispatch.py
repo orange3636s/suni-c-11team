@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from api.settings import settings
+from src.analysis.alarm_gbdt import DEFAULT_SENSITIVITY, DEFAULT_TARGET_YIELD
 from src.notifications import senders, settings_store
 from src.notifications.senders import AlarmNotificationItem, AlarmNotificationPayload
 from src.runtime.store import RuntimeStore
@@ -72,6 +73,9 @@ def _build_payload(
     reliability_score: int,
     dashboard_url: str | None,
     source_note: str | None = None,
+    *,
+    target_yield: float = DEFAULT_TARGET_YIELD,
+    sensitivity: float = DEFAULT_SENSITIVITY,
 ) -> AlarmNotificationPayload:
     grade_counts: dict[str, int] = {}
     for item in items:
@@ -93,6 +97,8 @@ def _build_payload(
         reliability_score=reliability_score,
         dashboard_url=dashboard_url,
         source_note=source_note,
+        target_yield=target_yield,
+        sensitivity=sensitivity,
     )
 
 
@@ -106,6 +112,8 @@ def _send_to_all_channels(
     reliability_score: int,
     dashboard_url: str | None,
     source_note: str | None = None,
+    target_yield: float = DEFAULT_TARGET_YIELD,
+    sensitivity: float = DEFAULT_SENSITIVITY,
 ) -> tuple[dict[str, dict[str, Any]], set[tuple[str, str]], set[tuple[str, str]]]:
     """D-7: 채널마다 자기 24시간 dedupe 기준으로 자기만의 발송 대상을
     다시 추린다 -- 채널 하나가 이미 성공한 (wafer, grade)라도 다른
@@ -126,7 +134,10 @@ def _send_to_all_channels(
             results[channel] = {"ok": True, "error": None, "sent_count": 0}
             return
         attempted_keys.update((item["lot_wafer_id"], item["grade"]) for item in to_send)
-        payload = _build_payload(dataset_label, to_send, reliability_grade, reliability_score, dashboard_url, source_note)
+        payload = _build_payload(
+            dataset_label, to_send, reliability_grade, reliability_score, dashboard_url, source_note,
+            target_yield=target_yield, sensitivity=sensitivity,
+        )
         ok, error = _send_with_retry(lambda: send_fn(payload))
         results[channel] = {"ok": ok, "error": error, "sent_count": len(to_send) if ok else 0}
         if ok:
@@ -175,6 +186,8 @@ def dispatch_alarm_notifications(
     reliability_score: int,
     dashboard_url: str | None = None,
     source_note: str | None = None,
+    target_yield: float = DEFAULT_TARGET_YIELD,
+    sensitivity: float = DEFAULT_SENSITIVITY,
 ) -> dict[str, Any]:
     """`alarms`의 각 원소는 {lot_wafer_id, risk_percentile, grade, reason}
     형태다 (알람 판정 GBDT 전환 §A-3의 알람 목록 항목과 동일한 필드).
@@ -182,6 +195,12 @@ def dispatch_alarm_notifications(
     `source_note`(EB그룹)는 수동 업로드/폴백(데모) 모드에서 발송할 때
     본문 맨 위에 붙는 출처 한 줄이다 -- SQL 연동 자동 갱신 경로에서는
     생략(None)해 아무 표시도 하지 않는다.
+
+    `target_yield`/`sensitivity`(GD-2)는 이 알람 목록을 실제로 판정한
+    기준값이다 -- 발송 메시지에 판정 컷과 함께 그대로 실린다. 호출부가
+    넘기지 않으면(기존 호출부와의 호환) 기본값(85.0/0.2)을 쓴다 -- 단,
+    그러면 메시지에 실제 판정 기준과 다른 값이 표시될 수 있으므로 알람
+    목록을 낸 것과 같은 target/sensitivity를 반드시 함께 넘겨야 한다.
 
     `trigger`는 호출부가 어느 경로로 불렀는지(`settings_store.TIMING_ON_ANALYSIS`
     "분석 실행 직후", `TIMING_DAILY_9AM` 매일 09:00, `TIMING_DAILY_13` 매일
@@ -223,6 +242,8 @@ def dispatch_alarm_notifications(
             reliability_score=reliability_score,
             dashboard_url=dashboard_url,
             source_note=source_note,
+            target_yield=target_yield,
+            sensitivity=sensitivity,
         )
 
         if not results:

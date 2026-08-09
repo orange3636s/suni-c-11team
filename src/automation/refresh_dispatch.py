@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.analysis import alarm_gbdt
 from src.notifications import dispatch, senders, settings_store
 from src.runtime.store import RuntimeStore
 
@@ -186,6 +187,8 @@ def dispatch_new_alarms(
     alarm_items: list[dict[str, Any]],
     gate_passed: bool,
     snapshot_created_at: str,
+    target_yield: float = alarm_gbdt.DEFAULT_TARGET_YIELD,
+    sensitivity: float = alarm_gbdt.DEFAULT_SENSITIVITY,
 ) -> None:
     """호출부(`src/automation/refresh.py`)는 스냅샷 저장이 성공했을
     때만 이 함수를 부른다 -- "스냅샷 저장이 생략된 경우" 차단 조건은
@@ -261,6 +264,8 @@ def dispatch_new_alarms(
         reliability_grade=reliability["grade"],
         reliability_score=reliability["total_score"],
         source_note=source_note,
+        target_yield=target_yield,
+        sensitivity=sensitivity,
     )
     # EB-4: 정책상 스킵(게이트/timing/등급/채널없음/24시간 dedupe)이 아니라
     # 실제로 발송을 시도했을 때만 10분 타이머를 시작한다 -- 예를 들어

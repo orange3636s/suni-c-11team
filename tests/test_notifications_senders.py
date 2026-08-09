@@ -116,6 +116,34 @@ def test_telegram_text_escapes_and_prepends_source_note():
     assert unescaped.index("[수동] uploaded_0809.csv 업로드 결과") < unescaped.index("[SUNI]")
 
 
+# -- GD-2: 판정 기준(목표·민감도·판정 컷) 포함 ------------------------
+
+
+def test_plain_summary_includes_judgment_criteria():
+    """GD-2 핵심: 등급·wafer ID만으로는 받는 사람이 무엇에 대한 알람인지
+    모른다 -- 목표·민감도·판정 컷이 본문에 있어야 한다."""
+    payload = _payload(1)
+    payload.target_yield = 85.0
+    payload.sensitivity = 0.2
+    text = format_plain_summary(payload)
+    assert "목표 85.0%" in text
+    assert "민감도 0.20" in text
+    # 컷 = 85.0 - (1-0.2)*4.0 = 81.8
+    assert "판정 컷 81.8%" in text
+
+
+def test_criteria_line_present_in_all_three_channels():
+    payload = _payload(1)
+    payload.target_yield = 85.0
+    payload.sensitivity = 0.2
+    slack_text = str(build_slack_blocks(payload))
+    telegram_text = build_telegram_text(payload).replace("\\", "")
+    email_text = build_email_html(payload)
+    for text in (slack_text, telegram_text, email_text):
+        assert "81.8" in text
+        assert "85.0" in text
+
+
 def test_email_html_escapes_source_note_filename():
     """EB-3: 수동 업로드 파일명이 그대로 출처 문구에 들어가므로, 다른
     동적 문자열과 동일하게 반드시 HTML 이스케이프를 거쳐야 한다."""

@@ -211,6 +211,8 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
         reliability_grade=reliability["grade"],
         reliability_score=reliability["total_score"],
         dashboard_url=body.dashboard_url,
+        target_yield=target,
+        sensitivity=sensitivity,
     )
     return result
 
@@ -260,6 +262,8 @@ def _run_scheduled_dispatch_job(trigger: str, *, label: str) -> None:
             alarms=items,
             reliability_grade=reliability["grade"],
             reliability_score=reliability["total_score"],
+            target_yield=target,
+            sensitivity=sensitivity,
         )
     except Exception:
         logger.exception("%s 알림 발송 잡 실행 실패", label)
