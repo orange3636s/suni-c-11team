@@ -24,7 +24,9 @@ PROMOTION_TOLERANCE = 0.005
 # J-3: 자동 갱신 스냅샷 스키마 버전 -- 필드 모양이 호환되지 않게 바뀌면
 # 올린다. 복원 시 이 값이 다르면 옛 스냅샷을 쓰지 않는다(그대로 쓰면
 # 백엔드 로직이 바뀐 뒤에도 옛 스냅샷이 새 화면을 덮어쓴다).
-REFRESH_SNAPSHOT_SCHEMA_VERSION = 3
+# v4: analysis 블록에 FMEA 분석표(fmea)가 추가됐다 -- 모니터링 홈 재편
+# (지시서 IA)로 옛 스냅샷에는 이 키가 없다.
+REFRESH_SNAPSHOT_SCHEMA_VERSION = 4
 REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
 
 # W-2/W-6: 첫 기동 스냅샷 부트스트랩 -- 단일 실행 잠금과 진행 상태를

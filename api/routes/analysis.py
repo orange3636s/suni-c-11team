@@ -40,6 +40,7 @@ from src.analysis.recommendations import FactorRecommendation, compute_factor_re
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
+from src.analysis.screening.fmea import build_fmea_table
 from src.analysis.screening.heatmap import HeatmapData, build_categorical_heatmap, build_heatmap
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import (
@@ -410,6 +411,55 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
         "max_eps2": max_eps2,
         "items": items,
     }
+
+
+def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
+    """FMEA 분석표 (모니터링 홈, 지시서 IA) -- 전 타깃 인자 풀에서 RPN 상위
+    7개만 골라 스냅샷에 담는다. 온디맨드 REST 엔드포인트는 두지 않는다
+    (지시서 IA-5: "자동 갱신 파이프라인에서 함께 계산되게 하라, 별도 조회
+    금지") -- `src/automation/refresh.py`가 이 함수를 직접 호출해 다른
+    분석 결과와 같은 스냅샷 저장 시점에 함께 계산한다.
+    """
+    df = _dataframe_or_404(dataset_id)
+    schema = parse_schema(df)
+    usable_targets = [t for t in targets if t in schema.target_cols]
+    rows_by_target = {t: list(_cached_ranked_rows(dataset_id, t)) for t in usable_targets}
+    table = build_fmea_table(df, rows_by_target, usable_targets, dataset_id=dataset_id)
+    return round_floats(
+        {
+            "dataset_id": dataset_id,
+            "total_wafers": table.total_wafers,
+            "excluded_count": table.excluded_count,
+            "excluded_negative_count": table.excluded_negative_count,
+            "measurement_shortage_wafers": table.measurement_shortage_wafers,
+            "correlation_shortage_wafers": table.correlation_shortage_wafers,
+            "items": [
+                {
+                    "target": f.target,
+                    "feature": f.feature,
+                    "kind": f.kind,
+                    "step": f.step,
+                    "eps2": f.eps2,
+                    "relation_shape": f.relation_shape,
+                    "factor_value": f.factor_value,
+                    "range_lo": f.range_lo,
+                    "range_hi": f.range_hi,
+                    "measurement_rate": f.measurement_rate,
+                    "deviation_rate_pct": f.deviation_rate_pct,
+                    "detection_method": f.detection_method,
+                    "detection_kind": f.detection_kind,
+                    "expected_yield": f.expected_yield,
+                    "yield_deviation": f.yield_deviation,
+                    "severity_score": f.severity_score,
+                    "occurrence_score": f.occurrence_score,
+                    "detection_score": f.detection_score,
+                    "rpn": f.rpn,
+                    "mnar_gap_pp": f.mnar_gap_pp,
+                }
+                for f in table.items
+            ],
+        }
+    )
 
 
 @router.get("/screening/pareto", response_model=ParetoRankingResponse)

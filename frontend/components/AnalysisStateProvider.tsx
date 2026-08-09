@@ -10,6 +10,7 @@ import type {
   BootstrapStatus,
   CategoricalScatterResponse,
   ConfigTreemapResponse,
+  FmeaTablePayload,
   ManualEvalOverride,
   MeasurementExpansionResponse,
   ModelPerformanceResponse,
@@ -89,6 +90,11 @@ export type AnalysisState = {
   // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
   // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
   measurementExpansion: MeasurementExpansionResponse | null;
+  // FMEA 분석표 (모니터링 홈, 지시서 IA) -- 자동 갱신 스냅샷에서만 채워진다
+  // (별도 온디맨드 조회가 없다, IA-5). 그래서 "원인 분석 실행" 직후 복원한
+  // 라이브 결과(hydrate())에는 항상 undefined다 -- FmeaTable이 그 경우를
+  // "스냅샷 대기 중"으로 별도 안내한다.
+  fmea?: FmeaTablePayload | null;
   // 알람 판정 GBDT 전환 (spec §B) -- wafer_id -> 등급. 분석 실행 시 한 번만
   // 가져와 모든 산점도/Box Plot 카드가 공유한다 (§B-2: 카드마다 재요청하지
   // 않는다).
@@ -216,6 +222,7 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
     categoricalByKey: {},
     pointsComplete: false,
     measurementExpansion: (snap.analysis.measurementExpansion as MeasurementExpansionResponse | null) ?? null,
+    fmea: (snap.analysis.fmea as FmeaTablePayload | null) ?? null,
     alarmGradeByWaferId: null,
     alarmCriteria: null,
   };

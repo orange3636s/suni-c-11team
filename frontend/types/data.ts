@@ -403,6 +403,45 @@ export type ParetoRankingResponse = {
   items: ParetoRankingItem[];
 };
 
+// FMEA 분석표 (모니터링 홈, 지시서 IA) -- 백엔드가 이미 상위 7개로 걸러
+// S·O·D·RPN까지 산출해 스냅샷에 담아 보낸다. 프런트는 표시만 한다
+// (구간 내/외 평균 Y는 원본 데이터가 있어야 계산할 수 있어 여기서 다시
+// 계산하지 않는다). `dataset_id`가 없는 스냅샷(자동 갱신이 아직 한 번도
+// 돌지 않았거나 계산이 실패한 경우)에서는 undefined/null -- FmeaTable이
+// 그 상태를 별도로 안내한다.
+export type FmeaFactorItem = {
+  target: string;
+  feature: string;
+  kind: "R" | "D";
+  step: number;
+  eps2: number;
+  relation_shape: RelationShape;
+  factor_value: number | null;
+  range_lo: number | null;
+  range_hi: number | null;
+  measurement_rate: number; // 0-100
+  deviation_rate_pct: number; // O의 근거 -- 권장 구간 밖 wafer 비율(계측된 wafer 기준), 0-100
+  detection_method: string; // "In-line 샘플 계측" | "Defect 검사"
+  detection_kind: "R" | "D";
+  expected_yield: number | null;
+  yield_deviation: number | null; // %p -- 실익 필터를 통과한 값만 내려오므로 항상 0.3 이상
+  severity_score: number; // S, 1-10
+  occurrence_score: number; // O, 1-10
+  detection_score: number; // D, 1-10
+  rpn: number; // S x O x D
+  mnar_gap_pp: number | null; // 계측군-미계측군 최종 수율 평균 차, 표본 부족 시 null
+};
+
+export type FmeaTablePayload = {
+  dataset_id: string;
+  total_wafers: number;
+  excluded_count: number;
+  excluded_negative_count: number;
+  measurement_shortage_wafers: number;
+  correlation_shortage_wafers: number;
+  items: FmeaFactorItem[];
+};
+
 export type HeatmapMetric = "spearman" | "eps2";
 export type HeatmapKind = "numeric" | "categorical";
 export type ConfigHeatmapLevel = "model" | "eq" | "chamber";
@@ -606,6 +645,7 @@ export type RefreshSnapshot = {
   analysis: {
     paretoByTarget: Record<string, unknown>;
     measurementExpansion: Record<string, unknown> | null;
+    fmea: FmeaTablePayload | null;
   };
   alarms: RefreshSnapshotAlarms;
   monitoring: RefreshSnapshotMonitoring;

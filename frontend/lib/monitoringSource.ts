@@ -6,12 +6,7 @@
 // 작성하지 않는다).
 "use client";
 
-import {
-  getAlertsData,
-  getConfigTreemap,
-  getScreeningScatter,
-} from "@/lib/api";
-import { CONFIG_FORMAT_RE, TARGETS } from "@/lib/constants";
+import { getAlertsData, getConfigTreemap } from "@/lib/api";
 // W-1: analysis/alarms는 항상 호출부(모니터링 페이지)가 공용
 // AnalysisStateProvider에서 이미 읽은 값을 그대로 넘긴다 -- 이 파일이
 // 따로 GET /api/state/latest를 다시 부르지 않는다(지시서: "화면별로
@@ -20,151 +15,29 @@ import { CONFIG_FORMAT_RE, TARGETS } from "@/lib/constants";
 // 이미 판단했으므로 여기서 다시 검사하지 않는다. 타입만 참조하므로(값은
 // 쓰지 않는다) 순환 임포트가 되지 않는다.
 import type { AlarmsState, AnalysisState } from "@/components/AnalysisStateProvider";
-import type {
-  ConfidenceTier,
-  ConfigTreemapResponse,
-  LatestAlarmsRecord,
-  MeasurementExpansionResponse,
-  ParetoRankingItem,
-  RelationShape,
-} from "@/types/data";
-
-// 이 미만이면 이탈률 대신 "계측 N%"를 보여준다 (지시서 §4①) -- 표본이
-// 적을 때 이탈률을 크게 보여주면 근거 없는 신호를 만든다.
-const LOW_MEASUREMENT_RATE_PCT = 10;
+import type { ConfigTreemapResponse, FmeaTablePayload, LatestAlarmsRecord, MeasurementExpansionResponse } from "@/types/data";
 
 function average(values: number[]): number {
   return values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
-}
-
-function isReliableTier(tier: ConfidenceTier): boolean {
-  return tier === "strong" || tier === "moderate";
-}
-
-/** 카드 헤더의 유의 인자 한 줄. `feature: null`은 "유의 인자 없음"(빈칸이
- * 정보다 -- 없는 근거를 채우지 않는다). `unknownConfigCount`는 이 인자가
- * 속한 스텝의 Config 값 중 Model/EQ/Chamber 형식으로 파싱되지 않는
- * 값의 개수 -- "확인이 필요한 것" 액션의 근거로 쓴다. */
-export type SignificantFactorDetail = {
-  target: string;
-  feature: string | null;
-  kind: string | null;
-  step: number | null;
-  confidenceTier: ConfidenceTier | null;
-  rangeText: string | null;
-  deviationText: string | null;
-  // HP-HMI 근거 밴드용 원시 이탈률(0-100) -- deviationText가 "이탈 N%"
-  // 문구일 때만 값이 있다("계측 N%" 저표본 대체 문구일 때는 다른
-  // 지표라 null). deviationText와 별도 필드로 둔 것은 표시 문구를
-  // 파싱하지 않고 이미 계산된 값을 그대로 전달하기 위해서다.
-  deviationPct: number | null;
-  relationShape: RelationShape | null;
-  optimalCenter: number | null;
-  unknownConfigCount: number;
-};
-
-function emptyFactorDetail(target: string, item: ParetoRankingItem | undefined): SignificantFactorDetail {
-  return {
-    target,
-    feature: null,
-    kind: item?.kind ?? null,
-    step: item?.step ?? null,
-    confidenceTier: item?.confidence_tier ?? null,
-    rangeText: null,
-    deviationText: null,
-    deviationPct: null,
-    relationShape: null,
-    optimalCenter: null,
-    unknownConfigCount: 0,
-  };
-}
-
-async function buildSignificantFactor(
-  dataset: string,
-  target: string,
-  item: ParetoRankingItem | undefined,
-  totalWafers: number | null,
-): Promise<SignificantFactorDetail> {
-  // "유의 인자 없음": 1위조차 없거나, 있어도 근거 부족/관계 없음 등급이면
-  // 인자명을 쓰지 않는다 (지시서 §4①).
-  if (!item || !isReliableTier(item.confidence_tier)) return emptyFactorDetail(target, item);
-
-  // Config(범주형) 인자는 권장구간/이탈 개념이 없다 -- 인자명·등급만 표시.
-  if (item.kind === "Config") {
-    return {
-      target, feature: item.feature, kind: item.kind, step: item.step,
-      confidenceTier: item.confidence_tier, rangeText: null, deviationText: null,
-      deviationPct: null, relationShape: null, optimalCenter: null, unknownConfigCount: 0,
-    };
-  }
-
-  try {
-    const data = await getScreeningScatter(dataset, target, item.feature);
-    // "권장구간"은 normal_range다 -- reference_lines의 iqr_lo/hi는 다른
-    // 개념(관리한계 LCL/UCL, CompareAcrossTargetsModal 등이 쓰는 것)이라
-    // 여기 쓰면 항상 null이 나온다 (Step1_D1 실측: reference_lines에는
-    // iqr_lo/hi 자체가 없고 mean/q1/q3/s3_*/s6_*/warning_*만 있음).
-    const { lo, hi } = data.normal_range;
-    let rangeText: string | null = null;
-    if (lo != null && hi != null) rangeText = `${lo.toFixed(1)}–${hi.toFixed(1)}`;
-    else if (hi != null) rangeText = `≤ ${hi.toFixed(1)}`;
-    else if (lo != null) rangeText = `≥ ${lo.toFixed(1)}`;
-
-    const measurementRatePct = totalWafers ? (data.n / totalWafers) * 100 : null;
-    let deviationText: string | null = null;
-    let deviationPct: number | null = null;
-    if (measurementRatePct != null && measurementRatePct < LOW_MEASUREMENT_RATE_PCT) {
-      deviationText = `계측 ${measurementRatePct.toFixed(1)}%`;
-    } else if (data.points.length > 0) {
-      // 관리한계(in_range) 대신 위에서 이미 구한 권장구간(normal_range
-      // lo/hi)을 기준으로 이탈 여부를 판정한다 -- in_range는 GBDT 전환으로
-      // 제거된 개념이라 화면에서 더는 읽지 않는다.
-      const outCount = data.points.filter((p) => (lo != null && p.x < lo) || (hi != null && p.x > hi)).length;
-      deviationPct = (outCount / data.points.length) * 100;
-      deviationText = `이탈 ${deviationPct.toFixed(0)}%`;
-    }
-
-    // 이 인자가 속한 스텝의 Config만 본다(다른 스텝 Config가 섞이면
-    // 의미가 없다) -- points[].config는 이미 그 스텝의 Config 컬럼
-    // 값이다 (src/analysis/scatter.py의 _config_column_for).
-    const unknownConfigs = new Set(
-      data.points
-        .map((p) => p.config)
-        .filter((c): c is string => c != null && !CONFIG_FORMAT_RE.test(c)),
-    );
-
-    return {
-      target, feature: item.feature, kind: item.kind, step: item.step,
-      confidenceTier: item.confidence_tier, rangeText, deviationText, deviationPct,
-      relationShape: data.relation_shape, optimalCenter: data.optimal_center,
-      unknownConfigCount: unknownConfigs.size,
-    };
-  } catch {
-    // 개별 인자 조회 실패는 그 줄만 비워두고 나머지 타깃은 정상 렌더한다.
-    return {
-      target, feature: item.feature, kind: item.kind, step: item.step,
-      confidenceTier: item.confidence_tier, rangeText: null, deviationText: null,
-      deviationPct: null, relationShape: null, optimalCenter: null, unknownConfigCount: 0,
-    };
-  }
 }
 
 export type MonitoringSnapshot = {
   hasAnalysis: boolean;
   createdAt: string | null;
   dataset: string | null;
-  significantFactors: SignificantFactorDetail[];
+  // FMEA 분석표 (지시서 IA) -- 자동 갱신 스냅샷에만 실려 온다(별도 조회
+  // 없음, IA-5). "원인 분석 실행" 직후(스냅샷이 아직 안 돈 시점)에는
+  // null -- FmeaTable이 "다음 자동 갱신을 기다리는 중" 안내로 구분한다.
+  fmea: FmeaTablePayload | null;
   measurementExpansion: MeasurementExpansionResponse | null;
   alarmsRecord: LatestAlarmsRecord | null;
 };
 
 /** AnalysisStateProvider가 이미 들고 있는 analysis/alarms(저장된 결과를
  * 복원했든, 아직 아무도 실행한 적 없어 자동 갱신 스냅샷으로 대체
- * 채웠든 -- W-1)를 받아, 타깃 5개의 1위 인자만 개별 조회해(최대 5회)
- * 권장구간·이탈률을 채운 "모니터링에 바로 쓸 수 있는" 스냅샷을 반환한다.
- * 인자별 산점도 상세는 analysis에 실려 있지 않으므로(types/data.ts
- * LatestAnalysisPayload 주석 참고) 여기서 보강한다 -- 전체 인자를 다시
- * 부르지 않는다. */
+ * 채웠든 -- W-1)를 그대로 "모니터링에 바로 쓸 수 있는" 스냅샷으로
+ * 감싼다. FMEA 분석표는 백엔드가 이미 다 계산해 analysis.fmea에 실어
+ * 보내므로(지시서 IA-5) 여기서 추가로 조회하지 않는다. */
 export async function buildMonitoringSnapshot(
   analysis: AnalysisState,
   alarms: AlarmsState,
@@ -188,24 +61,17 @@ export async function buildMonitoringSnapshot(
       hasAnalysis: false,
       createdAt: null,
       dataset: null,
-      significantFactors: [],
+      fmea: null,
       measurementExpansion: null,
       alarmsRecord,
     };
   }
 
-  const totalWafers = analysis.measurementExpansion?.total_wafers ?? null;
-  const significantFactors = await Promise.all(
-    TARGETS.map((target) =>
-      buildSignificantFactor(analysis.dataset, target, analysis.paretoByTarget[target]?.items[0], totalWafers),
-    ),
-  );
-
   return {
     hasAnalysis: true,
     createdAt: analysis.createdAt,
     dataset: analysis.dataset,
-    significantFactors,
+    fmea: analysis.fmea ?? null,
     measurementExpansion: analysis.measurementExpansion ?? null,
     alarmsRecord,
   };

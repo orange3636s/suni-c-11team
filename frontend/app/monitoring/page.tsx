@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import ConfidenceBadge from "@/components/ConfidenceBadge";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
 import EvidenceBand from "@/components/EvidenceBand";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
+import FmeaTable from "@/components/FmeaTable";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
+import RecommendedActions from "@/components/RecommendedActions";
 import { classifyMargin } from "@/lib/alertsClassify";
 import { ApiResponseError, triggerRefresh } from "@/lib/api";
 import {
@@ -17,98 +18,8 @@ import {
   getMeasurementQueue,
   type MeasurementQueueData,
   type MonitoringSnapshot,
-  type SignificantFactorDetail,
 } from "@/lib/monitoringSource";
-import type { ConfigTreemapResponse, MeasurementExpansionResponse } from "@/types/data";
-
-type ActionItem = { key: string; text: string; href: string; buttonLabel: string; note?: string };
-
-/** SUMMARY의 "지금 할 수 있는 것 / 실험으로 확인할 것 / 확인이 필요한 것"
- * 3분류 (지시서 §4①) -- R/Eq 조정 권고는 인과 검증이 안 됐으므로 절대
- * "지금 할 수 있는 것"에 넣지 않고 "실험으로 확인할 것"에 "단정 아님"과
- * 함께 둔다. 계측 관련만 "지금 할 수 있는 것"에 들어간다. 이미 fetch된
- * snapshot/queue 데이터에서 파생만 할 뿐 별도 조회는 하지 않는다.
- */
-// GB-2: "없다"만 말하면 기능 고장인지 데이터 상태인지 구분되지 않는다 --
-// 세 레일 각각 실제 필터 조건과 숫자를 근거로 "왜 비었는지"를 판정하는
-// 함수를 따로 둔다(GB-3: 하드코딩된 문장 하나로 때우지 않는다). 판정
-// 대상 자체가 없으면(원본 데이터가 비어 있어 필터를 적용할 수조차
-// 없으면) 추측하지 않고 공통 폴백으로 떨어진다.
-const EMPTY_RAIL_FALLBACK = "조건에 해당하는 항목이 없습니다";
-
-function doNowEmptyReason(measurementExpansion: MeasurementExpansionResponse | null): string {
-  const priorities = measurementExpansion?.priorities ?? [];
-  if (priorities.length === 0) return EMPTY_RAIL_FALLBACK;
-  return `계측 확대가 필요한 인자가 없습니다 — 현재 계측률로 판정 가능합니다 (전체 ${priorities.length}개 인자 모두 "유지")`;
-}
-
-function experimentEmptyReason(significantFactors: SignificantFactorDetail[]): string {
-  const eligible = significantFactors.filter((f) => f.feature && f.kind !== "Config");
-  if (eligible.length === 0) return EMPTY_RAIL_FALLBACK;
-  const allUShape = eligible.every((f) => f.relationShape === "u_shape");
-  const shapeLabel = allUShape ? "V자 형태" : "비단조(V자·불명확) 형태";
-  return `단조 증가·감소 관계 인자가 없습니다 — 유의 인자 ${eligible.length}개가 모두 ${shapeLabel}입니다`;
-}
-
-function needsCheckEmptyReason(significantFactors: SignificantFactorDetail[]): string {
-  const eligible = significantFactors.filter((f) => f.feature && f.step != null);
-  if (eligible.length === 0) return EMPTY_RAIL_FALLBACK;
-  return "미지 Config가 검출되지 않았습니다 — 평가 데이터의 Config가 모두 학습 데이터에 존재합니다";
-}
-
-function buildActionTriage(
-  snapshot: MonitoringSnapshot,
-): {
-  doNow: ActionItem[]; experiment: ActionItem[]; needsCheck: ActionItem[];
-  doNowEmpty: string; experimentEmpty: string; needsCheckEmpty: string;
-} {
-  // 지시서 K-5: "지금 할 수 있는 것"은 랏 단위 큐 대신 계측 확대 제안의
-  // 인자별 우선순위 목록(유지 아닌 것만)에서 가져온다 -- 랏 집계 로직
-  // 자체를 없앴으므로 그 데이터를 다시 만들 수 없다.
-  const doNow: ActionItem[] = (snapshot.measurementExpansion?.priorities ?? [])
-    .filter((priority) => priority.recommendation !== "유지")
-    .slice(0, 2)
-    .map((priority) => ({
-      key: `priority-${priority.target}-${priority.feature}`,
-      text: `${priority.feature} → ${priority.target} 계측 확대 (${priority.recommendation})`,
-      href: `/root-cause?target=${encodeURIComponent(priority.target)}&feature=${encodeURIComponent(priority.feature)}`,
-      buttonLabel: "상세",
-    }));
-
-  const experiment: ActionItem[] = [];
-  for (const f of snapshot.significantFactors) {
-    if (!f.feature || f.kind === "Config") continue;
-    const direction =
-      f.relationShape === "monotonic_increasing" ? "상향" : f.relationShape === "monotonic_decreasing" ? "하향" : null;
-    if (!direction) continue;
-    experiment.push({
-      key: `exp-${f.target}-${f.feature}`,
-      text: `${f.feature} ${direction} SPLIT LOT (단정 아님)`,
-      href: `/root-cause?target=${encodeURIComponent(f.target)}&feature=${encodeURIComponent(f.feature)}`,
-      buttonLabel: "상세",
-    });
-  }
-
-  const needsCheckMap = new Map<string, ActionItem>();
-  for (const f of snapshot.significantFactors) {
-    if (f.unknownConfigCount <= 0 || f.step == null || !f.feature) continue;
-    const key = `check-Step${f.step}`;
-    if (needsCheckMap.has(key)) continue;
-    needsCheckMap.set(key, {
-      key,
-      text: `Step${f.step} 미지 Config ${f.unknownConfigCount}건`,
-      href: `/root-cause?target=${encodeURIComponent(f.target)}&feature=${encodeURIComponent(f.feature)}`,
-      buttonLabel: "상세",
-    });
-  }
-
-  return {
-    doNow, experiment: experiment.slice(0, 3), needsCheck: Array.from(needsCheckMap.values()).slice(0, 3),
-    doNowEmpty: doNowEmptyReason(snapshot.measurementExpansion),
-    experimentEmpty: experimentEmptyReason(snapshot.significantFactors),
-    needsCheckEmpty: needsCheckEmptyReason(snapshot.significantFactors),
-  };
-}
+import type { ConfigTreemapResponse } from "@/types/data";
 
 type YieldStatus = "high" | "medium" | "low";
 
@@ -288,7 +199,11 @@ export default function MonitoringPage() {
           </section>
         ) : (
           <>
+            {/* ID-3 배치: ① 판단 요약 ② FMEA 분석표 ③ 권고 조치
+                ④ 추가 계측 권고 ⑤ 설비 구성 트리맵 */}
             <SummaryBlock snapshot={snapshot} queue={queue} />
+            <FmeaTable data={snapshot.fmea} />
+            <RecommendedActions data={snapshot.fmea} />
             <section className="resultCard">
               <div className="sectionHeading compact">
                 <div>
@@ -297,6 +212,19 @@ export default function MonitoringPage() {
                 </div>
               </div>
               <MeasurementExpansionCard data={snapshot.measurementExpansion} />
+              {/* ID-4: FMEA 표의 실익 필터(편차 ≥ 0.3%p)와 정합성을 맞추는
+                  한 줄 -- MeasurementExpansionCard.tsx 자체는 원인 분석
+                  탭과 공유하는 컴포넌트라 손대지 않는다(ID-2). 계측 부족
+                  (선정 인자 전부 미계측) wafer만 계측 확대의 실제 대상이고,
+                  상관성 부족(실익 없다고 걸러진 인자에서만 근거가 나온) wafer는
+                  계측을 늘려도 해소되지 않아 제외했다는 사실만 별도로
+                  덧붙인다. */}
+              {snapshot.fmea && (
+                <p className="fmeaMeasurementAlignmentNote">
+                  FMEA 실익 기준 정합: 계측 부족 {snapshot.fmea.measurement_shortage_wafers.toLocaleString()}장이 대상 ·
+                  상관성 부족 {snapshot.fmea.correlation_shortage_wafers.toLocaleString()}장은 제외
+                </p>
+              )}
             </section>
             <ConfigTreemap
               datasetId={snapshot.dataset ?? "train"}
@@ -324,7 +252,6 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
   const gapLo = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predHi : null;
   const gapHi = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predLo : null;
 
-  const triage = buildActionTriage(snapshot);
   // E-4: SUMMARY가 쓰는 alarmsRecord(알림 기록에서 저장한 판정 결과)와
   // 현재 조회 중인 snapshot.dataset이 다르면, 서로 다른 데이터셋의
   // 숫자를 섞어 보여주는 것이다 -- 다른 화면들처럼 경고를 띄운다.
@@ -379,102 +306,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
           />
         </div>
       )}
-
-      <h3 className="monitoringSubheading">유의 인자</h3>
-      {/* 모바일 반응형 패치 S-3: 컬럼을 카드로 접지 않고 가로 스크롤을
-          기본 전략으로 쓴다 -- .meScrollTable 클래스가 첫 컬럼 sticky ·
-          셀 패딩 축소 · 스크롤 힌트를 globals.css에서 켠다(MeasurementExpansionCard.tsx
-          의 계측 확대 표와 공유하는 규칙). */}
-      <div className="tableWrap meScrollTable">
-        <table>
-          <thead>
-            <tr>
-              <th>타깃</th>
-              <th>인자</th>
-              <th>권장구간 / 기준</th>
-              <th className="numCol">이탈 · 계측</th>
-              <th>상관성</th>
-            </tr>
-          </thead>
-          <tbody>
-            {snapshot.significantFactors.map((f) => (
-              <SignificantFactorRow key={f.target} factor={f} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="meScrollHint" aria-hidden="true">← 좌우 스크롤</p>
-
-      <h3 className="monitoringSubheading">실행 과제</h3>
-      <ActionList items={triage.doNow} empty={triage.doNowEmpty} />
-
-      <h3 className="monitoringSubheading">실험 확인 대상</h3>
-      <ActionList items={triage.experiment} empty={triage.experimentEmpty} />
-
-      <h3 className="monitoringSubheading">확인 필요 대상</h3>
-      <ActionList items={triage.needsCheck} empty={triage.needsCheckEmpty} />
     </section>
-  );
-}
-
-function SignificantFactorRow({ factor }: { factor: SignificantFactorDetail }) {
-  if (!factor.feature) {
-    return (
-      <tr>
-        <td>{factor.target}</td>
-        <td colSpan={4} className="emptyMessage" style={{ padding: "6px 0" }}>유의 인자 없음</td>
-      </tr>
-    );
-  }
-  return (
-    <tr>
-      <td className="data">{factor.target}</td>
-      <td>
-        <Link className="data" href={`/root-cause?target=${encodeURIComponent(factor.target)}&feature=${encodeURIComponent(factor.feature)}`}>
-          {factor.feature}
-        </Link>
-      </td>
-      <td className="data">{factor.rangeText ?? "-"}</td>
-      <td className="numCol">
-        {factor.deviationText ?? "-"}
-        {/* 근거 밴드 위치 3 (spec §E) -- "이탈 N%"일 때만 표시한다.
-            "계측 N%"(저표본 대체 문구)는 이탈률이 아닌 다른 지표라
-            같은 트랙에 얹으면 오독을 만든다. 실측된 이탈 비율이라
-            --inferred가 아니라 --measured 계열로 채운다(§B-2 원칙). */}
-        {factor.deviationPct != null && (
-          <div className="evidence-band mini factorDeviationBand">
-            <div className="track">
-              <div className="band-measured" style={{ left: 0, width: `${Math.min(100, Math.max(0, factor.deviationPct))}%` }} />
-            </div>
-          </div>
-        )}
-      </td>
-      <td>{factor.confidenceTier ? <ConfidenceBadge tier={factor.confidenceTier} /> : "-"}</td>
-    </tr>
-  );
-}
-
-// 지시서 K-4/P-2/CC: 세 레일(실행 과제/실험 확인 대상/확인 필요 대상)의
-// 버튼 크기를 하나로 통일한다 -- 새 버튼 스타일을 만들지 않고 다른
-// 화면과 공유하는 `.button.sm`을 쓴다. 셋 다 흰 배경(secondary)이고
-// 라벨도 모두 "상세"로 통일했다 -- 강조색(.primary)은 쓰지 않는다
-// (지시서 P-2: 세 레일 버튼이 같은 모양이어야 한다).
-function ActionList({ items, empty }: { items: ActionItem[]; empty: string }) {
-  // GB-1: 빈 상태 박스가 항목 카드(li)와 같은 컨테이너 스타일(배경·테두리·
-  // radius·padding)에 min-height까지 맞춰야 세 레일을 나란히 봤을 때
-  // 빈 레일만 납작해지지 않는다 -- 범용 .emptyMessage 대신 전용 클래스.
-  if (items.length === 0) return <p className="monitoringActionEmpty">{empty}</p>;
-  return (
-    <ul className="monitoringActionList">
-      {items.map((item) => (
-        <li key={item.key}>
-          <span>{item.text}</span>
-          <Link href={item.href} className="button sm secondary">
-            {item.buttonLabel}
-          </Link>
-        </li>
-      ))}
-    </ul>
   );
 }
 

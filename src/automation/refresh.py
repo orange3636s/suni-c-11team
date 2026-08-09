@@ -359,7 +359,7 @@ def _analyze_and_score(
     신호로 결정한다(J-2 "부분 실패 정책"). 다섯 번째 반환값은 알람
     판정에 실제로 쓰인 train 데이터셋 id다(J-5의 신뢰도 재계산이 같은
     기준을 써야 한다)."""
-    from api.routes.analysis import _pareto_payload, _scored_wafers, get_measurement_expansion
+    from api.routes.analysis import _fmea_payload, _pareto_payload, _scored_wafers, get_measurement_expansion
     from src.runtime.app_state import get_latest_state
 
     registry = _dataset_registry(store)
@@ -392,9 +392,20 @@ def _analyze_and_score(
         logger.exception("auto_refresh: 계측 확대 계산 실패")
         errors.append("계측 확대 계산에 실패했습니다.")
 
+    # 모니터링 홈 FMEA 분석표 (지시서 IA) -- 다른 원인분석 결과와 같은
+    # 스냅샷 저장 시점에 함께 계산한다. 별도 온디맨드 조회 경로는 없다
+    # (IA-5). 실패해도 나머지 스냅샷 저장을 막지 않는다(J-2 부분 실패 정책).
+    fmea = None
+    try:
+        fmea = _fmea_payload(eval_dataset_id, TARGETS)
+    except Exception:
+        logger.exception("auto_refresh: FMEA 분석표 계산 실패")
+        errors.append("FMEA 분석표 계산에 실패했습니다.")
+
     analysis_block = {
         "paretoByTarget": pareto_by_target,
         "measurementExpansion": measurement_expansion,
+        "fmea": fmea,
     }
 
     # 알람 판정 -- 저장된 목표 수율·민감도를 그대로 따른다(A-3 원칙과

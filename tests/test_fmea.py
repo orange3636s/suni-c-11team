@@ -1,0 +1,205 @@
+"""Tests for src/analysis/screening/fmea.py -- the FMEA(고장모드영향분석)
+분석표 (모니터링 홈, 지시서 IA). Synthetic frames only, so these always run
+in CI regardless of whether data/raw/*.CSV is present.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pandas as pd
+
+from src.analysis.screening.fmea import (
+    MIN_YIELD_DEVIATION_PP,
+    _clamp_ceil,
+    _mnar_gap_pp,
+    _score_factor,
+    _target_loss_shares,
+    build_fmea_table,
+)
+from src.analysis.screening.schema import parse_schema
+from src.analysis.screening.selector import _ranked_rows_with_contribution, _row_to_factor
+
+
+def _synthetic_df(n: int = 2000, seed: int = 0) -> pd.DataFrame:
+    """Two targets (Y1/Y2), three candidate factors:
+
+    - Step1_R1 -> Y1: real signal, low measurement rate (~15%). Its measured
+      values are mostly a tight "core" cluster (stays inside the recommended
+      range) plus a small far-outlier "tail" (falls outside the range)
+      whose Y1 is deliberately much higher (worse) -- so "out-of-range mean
+      Y1" is well above "in-range mean Y1", giving a large positive yield
+      deviation (benefit of staying in range) that should survive the
+      benefit filter.
+    - Step2_R1 -> Y2: well-measured (~90%) but pure noise -- near-zero
+      deviation, should be excluded by the benefit filter.
+    - Step3_Config -> Y1: categorical, fully measured -- must never appear
+      in the FMEA table regardless of its score (Config is out of scope).
+
+    Y3/Y4/Y5 are present (constant-ish) so every target in TARGETS resolves,
+    matching the shape of a real 5-target dataset.
+    """
+    rng = np.random.default_rng(seed)
+    df = pd.DataFrame({"Lot_Wafer_ID": [f"W{i:04d}" for i in range(n)]})
+
+    measured1 = rng.random(n) < 0.15
+    is_tail = measured1 & (rng.random(n) < 0.10)  # ~10% of the measured subset
+    is_core = measured1 & ~is_tail
+
+    x1 = np.full(n, np.nan)
+    y1 = np.full(n, np.nan)
+    # Y1 behaves like the real Y1~Y5 columns: a "불량률" where higher is
+    # worse (scatter.py's axis label). The core cluster (inside the
+    # recommended range) gets a LOW (good) Y1; the far outlier tail
+    # (outside the range) gets a HIGH (bad) Y1 -- so "out-of-range mean −
+    # in-range mean" (the benefit of staying in range) comes out positive.
+    x1[is_core] = rng.normal(loc=50, scale=5, size=int(is_core.sum()))
+    y1[is_core] = rng.normal(loc=10, scale=2, size=int(is_core.sum()))
+    x1[is_tail] = rng.normal(loc=200, scale=5, size=int(is_tail.sum()))  # far outside any IQR bound
+    y1[is_tail] = rng.normal(loc=40, scale=2, size=int(is_tail.sum()))  # much higher (worse) Y1
+    df["Step1_R1"] = x1
+    df["Y1"] = np.where(measured1, y1, rng.normal(loc=15, scale=5, size=n))
+
+    x2 = rng.normal(loc=30, scale=5, size=n)
+    measured2 = rng.random(n) < 0.9
+    df["Step2_R1"] = np.where(measured2, x2, np.nan)
+    df["Y2"] = rng.normal(loc=15, scale=3, size=n)  # independent of Step2_R1
+
+    df["Step3_Config"] = rng.choice(["EQ1-CH1", "EQ2-CH2"], size=n)
+
+    df["Y3"] = rng.normal(loc=10, scale=1, size=n)
+    df["Y4"] = rng.normal(loc=5, scale=1, size=n)
+    df["Y5"] = rng.normal(loc=8, scale=1, size=n)
+
+    # Final yield column, shifted between Step1_R1's measured/unmeasured
+    # groups -- exercises the MNAR gap.
+    df["Y"] = np.where(measured1, rng.normal(loc=80, scale=2, size=n), rng.normal(loc=90, scale=2, size=n))
+    return df
+
+
+DATASET_ID = "synthetic-test"
+
+
+def _rows_by_target(df: pd.DataFrame, targets: list[str]) -> dict[str, list[dict]]:
+    schema = parse_schema(df)
+    return {t: _ranked_rows_with_contribution(df, schema, t, 0.05, 100, 20) for t in targets}
+
+
+def test_clamp_ceil_bounds():
+    assert _clamp_ceil(0.0) == 1
+    assert _clamp_ceil(4.1) == 5
+    assert _clamp_ceil(999) == 10
+    assert _clamp_ceil(float("nan")) == 1
+
+
+def test_target_loss_shares_matches_mean_ratio():
+    df = pd.DataFrame({"Y1": [10.0, 10.0], "Y2": [30.0, 30.0]})
+    shares = _target_loss_shares(df, ["Y1", "Y2"])
+    assert shares["Y1"] == 25.0
+    assert shares["Y2"] == 75.0
+
+
+def test_target_loss_shares_zero_total_is_safe():
+    df = pd.DataFrame({"Y1": [0.0, 0.0], "Y2": [0.0, 0.0]})
+    shares = _target_loss_shares(df, ["Y1", "Y2"])
+    assert shares == {"Y1": 0.0, "Y2": 0.0}
+
+
+def test_score_factor_excludes_config():
+    df = _synthetic_df()
+    schema = parse_schema(df)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    config_row = next(r for r in rows if r["kind"] == "Config")
+    factor = _row_to_factor(df, "Y1", config_row)
+    assert _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID) is None
+
+
+def test_score_factor_computes_rpn_and_deviation_for_real_signal():
+    df = _synthetic_df()
+    schema = parse_schema(df)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    row = next(r for r in rows if r["feature"] == "Step1_R1")
+    factor = _row_to_factor(df, "Y1", row)
+    scored = _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID)
+    assert scored is not None
+    assert scored.rpn == scored.severity_score * scored.occurrence_score * scored.detection_score
+    assert 1 <= scored.severity_score <= 10
+    assert 1 <= scored.occurrence_score <= 10
+    assert 1 <= scored.detection_score <= 10
+    assert 0.0 <= scored.deviation_rate_pct <= 100.0
+    assert scored.occurrence_score == min(10, max(1, math.ceil(scored.deviation_rate_pct / 10.0)))
+    # low measurement rate (~15%) -> detection is hard -> high D score
+    assert scored.detection_score >= 7
+    # the recommended range genuinely separates Y1 -- expect a real positive gap
+    assert scored.yield_deviation is not None and scored.yield_deviation > MIN_YIELD_DEVIATION_PP
+
+
+def test_build_fmea_table_filters_noise_and_excludes_config():
+    df = _synthetic_df()
+    targets = ["Y1", "Y2", "Y3", "Y4", "Y5"]
+    rows_by_target = _rows_by_target(df, targets)
+
+    table = build_fmea_table(df, rows_by_target, targets, dataset_id=DATASET_ID)
+
+    features = [item.feature for item in table.items]
+    assert "Step1_R1" in features
+    assert "Step3_Config" not in features  # Config never appears
+    assert "Step2_R1" not in features  # pure noise -> filtered by benefit rule
+    assert table.excluded_count >= 1
+    assert len(table.items) <= 7
+
+    # RPN descending
+    rpns = [item.rpn for item in table.items]
+    assert rpns == sorted(rpns, reverse=True)
+
+    # every surviving row cleared the benefit filter
+    for item in table.items:
+        assert item.yield_deviation is not None
+        assert item.yield_deviation >= MIN_YIELD_DEVIATION_PP
+
+
+def test_build_fmea_table_severity_is_a_target_attribute():
+    """S depends only on the target's loss share -- two factors on the same
+    target must get the same severity score regardless of their own eps2."""
+    df = _synthetic_df()
+    schema = parse_schema(df)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    numeric_rows = [r for r in rows if r["kind"] in ("R", "D")]
+    assert len(numeric_rows) >= 1
+    loss_shares = _target_loss_shares(df, ["Y1", "Y2", "Y3", "Y4", "Y5"])
+    scored = [
+        _score_factor(df, _row_to_factor(df, "Y1", row), loss_shares["Y1"], len(df), dataset_id=DATASET_ID)
+        for row in numeric_rows
+    ]
+    severities = {s.severity_score for s in scored if s is not None}
+    assert len(severities) == 1
+
+
+def test_mnar_gap_pp_detects_shifted_final_yield():
+    df = _synthetic_df()
+    gap = _mnar_gap_pp(df, "Step1_R1")
+    assert gap is not None
+    # measured group centered at Y=80, unmeasured at Y=90 -> gap is negative
+    assert gap < -5.0
+
+
+def test_mnar_gap_pp_none_when_sample_too_small():
+    df = pd.DataFrame(
+        {
+            "Step1_R1": [1.0] * 5 + [np.nan] * 200,
+            "Y": [80.0] * 5 + [90.0] * 200,
+        }
+    )
+    assert _mnar_gap_pp(df, "Step1_R1") is None
+
+
+def test_build_fmea_table_empty_when_no_targets():
+    df = _synthetic_df()
+    table = build_fmea_table(df, {}, [], dataset_id=DATASET_ID)
+    assert table.items == []
+    assert table.excluded_count == 0
+    assert table.correlation_shortage_wafers == 0
+    # No candidate factor at all -> nobody is measured on "the qualifying
+    # set", so every wafer trivially counts as a measurement-shortage wafer.
+    assert table.measurement_shortage_wafers == len(df)
