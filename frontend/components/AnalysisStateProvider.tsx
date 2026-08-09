@@ -30,8 +30,9 @@ const SNAPSHOT_META_POLL_BOOTSTRAP_MS = 10_000;
 const SNAPSHOT_JUST_UPDATED_MS = 5_000;
 
 // 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 설정한 적 없거나
-// 첫 접속이면 이 값이 기본이다.
-export const DEFAULT_TARGET_YIELD = 85.0;
+// 첫 접속이면 이 값이 기본이다. HD그룹: 88.0 -- src/analysis/alarm_gbdt.py의
+// DEFAULT_TARGET_YIELD와 반드시 같은 값을 유지한다.
+export const DEFAULT_TARGET_YIELD = 88.0;
 // AA-4: "오경보 최소" 프리셋(alerts/page.tsx SENSITIVITY_PRESETS.low_fp)과
 // 같은 값이어야 한다 -- 다르면 "기본 상태인데 어느 프리셋도 활성이 아닌"
 // 어색한 상태가 된다. src/analysis/alarm_gbdt.py의 DEFAULT_SENSITIVITY와도

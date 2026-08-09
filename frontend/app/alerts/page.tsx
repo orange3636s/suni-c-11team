@@ -249,6 +249,20 @@ function AlertsContent() {
   // DG그룹: 목표 수율·민감도의 서버 저장이 실패해도 조용히 넘어가지
   // 않는다 -- 발송 판정이 화면과 다른 기준을 쓰게 될 수 있다.
   const [settingsSaveError, setSettingsSaveError] = useState(false);
+  // HD그룹: 복원이 끝나기 전에는 저장하지 않는다 -- 원인 진단(HD-2): 이
+  // 화면의 targetYield/sensitivity local state는 useState(DEFAULT_...)로
+  // 시작하고, 복원 이펙트(아래)가 실제 서버 값을 반영하기까지는 여전히
+  // 기본값이다. 그런데 저장 이펙트는 `alarmsState`(컨텍스트, 최상위
+  // AnalysisStateProvider가 별도로 hydrate하는 값)가 non-null이기만 하면
+  // 저장을 시작했다 -- `alarmsState`가 채워지는 시점(hydrated)과 이
+  // 화면이 그 값을 실제로 읽어 local state에 반영하는 시점(hydrated &&
+  // datasetsLoaded, 이 화면 자신의 getDatasets() 완료까지 별도로 기다림)
+  // 사이에 간극이 있다. `getDatasets()`가 800ms(저장 debounce)보다 느리면
+  // 그 사이 저장 이펙트가 먼저 기본값을 서버에 써버려, 사용자가 이전에
+  // 저장해 둔 값을 기본값으로 덮어쓴다 -- 재접속마다 기본값으로
+  // "초기화되는" 것처럼 보이는 원인이다. isRestoring이 true인 동안은
+  // 저장 자체를 막아 이 창을 없앤다.
+  const [isRestoring, setIsRestoring] = useState(true);
   const data = alarmsState?.data ?? null;
   const datasetMismatch = Boolean(
     alarmsState && (alarmsState.trainDataset !== trainDataset || alarmsState.evalDataset !== evalDataset),
@@ -305,6 +319,10 @@ function AlertsContent() {
       } else {
         void load();
       }
+      // HD그룹: local state가 서버 값(있다면)을 실제로 반영한 뒤에야
+      // "복원 완료"로 본다 -- 저장 이펙트가 이 시점 이전의 기본값을
+      // 서버로 내보내지 못하게 막는 게이트를 여기서 연다.
+      setIsRestoring(false);
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -313,8 +331,11 @@ function AlertsContent() {
   // 목표 수율·민감도는 가볍게 서버에 저장해 둔다 (spec: 재접속 시 마지막
   // 설정을 복원) -- 슬라이더를 계속 움직이는 동안 매번 POST하지 않도록
   // 800ms 묶어서 보낸다. 재분류 자체는 이 저장과 무관하게 즉시 일어난다.
+  // HD그룹: isRestoring이 true인 동안은(복원이 아직 안 끝났으면) 절대
+  // 저장하지 않는다 -- local state가 기본값인 채로 서버에 나가 사용자가
+  // 이전에 저장해 둔 값을 덮어쓰는 것을 막는다(HD-2 진단 참고).
   useEffect(() => {
-    if (!alarmsState) return;
+    if (!alarmsState || isRestoring) return;
     const timer = window.setTimeout(() => {
       setSettingsSaveError(false);
       void saveAlarmsState(alarmsState.trainDataset, alarmsState.evalDataset, { targetYield, sensitivity }).catch(() => {
@@ -325,7 +346,7 @@ function AlertsContent() {
       });
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [targetYield, sensitivity, alarmsState]);
+  }, [targetYield, sensitivity, alarmsState, isRestoring]);
 
   const debounceMs = (data?.total_wafers ?? 0) >= LARGE_DATASET_DEBOUNCE_THRESHOLD ? DEBOUNCE_MS : 0;
   const targetYieldForClassify = useDebouncedNumber(targetYield, debounceMs);
@@ -457,7 +478,7 @@ function AlertsContent() {
               <DatasetSelector label="예측 대상" value={evalDataset} onChange={setEvalDataset} onUploaded={handleDatasetUploaded} />
               <p className="sectionCaption alertsDatasetCaption">정상범위 기준: {trainDatasetLabel}</p>
             </div>
-            <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} disabled={!hydrated} />
+            <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} disabled={isRestoring} />
             <button type="button" className="button primary alertsQueryButton" disabled={loading} onClick={() => void load()}>
               {loading ? "조회 중…" : data ? "다시 조회" : "조회"}
             </button>
@@ -469,14 +490,17 @@ function AlertsContent() {
               onApplyPreset={applyPreset}
               onChange={handleSensitivityChange}
               estimate={precisionRecallEstimate}
-              disabled={!hydrated}
+              disabled={isRestoring}
             />
           </div>
         </div>
-        {/* DG그룹: 서버에 저장된 목표·민감도를 복원하기 전에는 값을 만질
-            수 없게 막는다 -- 기본값이 잠깐 보였다가 저장값으로 튀는
-            혼란을 막는다. */}
-        {!hydrated && <p className="sectionCaption">이전 설정을 불러오는 중…</p>}
+        {/* DG그룹/HD그룹: 서버에 저장된 목표·민감도를 복원하기 전에는 값을
+            만질 수 없게 막는다 -- 기본값이 잠깐 보였다가 저장값으로 튀는
+            혼란을 막는다. `!hydrated`만으로는 부족했다(HD-2 진단) --
+            hydrated는 AnalysisStateProvider의 복원 완료만 알 뿐, 이 화면
+            자신의 getDatasets() 완료·local state 반영까지는 보장하지
+            않는다. isRestoring은 그 둘을 모두 기다린 뒤에만 꺼진다. */}
+        {isRestoring && <p className="sectionCaption">이전 설정을 불러오는 중…</p>}
         {settingsSaveError && (
           <p className="notifyFieldError">목표 수율·민감도 저장에 실패했습니다. 네트워크를 확인해 주세요.</p>
         )}
