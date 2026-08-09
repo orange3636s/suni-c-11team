@@ -9,8 +9,32 @@ export type ActionStrength = "확정" | "실험 후보" | "관찰" | "제안하�
 
 export type InlineAction = { text: string; strength: ActionStrength };
 
-// 계측률 20% 미만인 R 인자를 "확대 대상"으로 묶는다 (지시서 IC-2).
-const LOW_MEASUREMENT_RATE_PCT = 20;
+// 배지 의미 (지시서 KB-3) -- "확정"이 "원인이 확정됐다"로 오독되지
+// 않도록 툴팁으로 명시한다.
+export const BADGE_TOOLTIP: Record<ActionStrength, string> = {
+  확정: "인과 가정 없이 지금 실행 가능한 조치 (계측 확대·규칙 재검토)",
+  "실험 후보": "공정 조건 변경이라 스플릿랏으로 확인 필요",
+  관찰: "현재 근거로는 조치를 제안하지 않음",
+  "제안하지 않음": "검정 결과 근거가 없어 제안하지 않음",
+};
+
+export function badgeClass(strength: ActionStrength): string {
+  if (strength === "확정") return "badge badge-green";
+  if (strength === "실험 후보") return "badge badge-amber";
+  return "badge badge-neutral";
+}
+
+// 지시서 KB-1: R(약 15%)과 D(약 5%)는 계측 성격이 다르다 -- R은 정기
+// 샘플 계측이라 15%가 설계값이고, D는 사후 선별이라 5%가 비정상이다.
+// 20%는 둘을 가르지 못해(R이 항상 걸림) 배지가 변별력을 잃었다 --
+// 10%가 그 경계다.
+const LOW_MEASUREMENT_RATE_PCT = 10;
+// 지시서 KB-2: 임계를 10%로 낮추면 계측률만으로는 R 인자가 거의 안
+// 걸릴 수 있다(실측: test.CSV 상위 7개 R 인자 전부 13.5~15.5%로 10%
+// 미만이 하나도 없어 이 조건 단독으로는 0건). 계측률이 낮거나 편차가
+// 크면(=계측을 늘렸을 때 실익이 크면) 계측 확대가 실익 있다는 조건을
+// 더해 변별력을 회복한다.
+const HIGH_DEFECT_RATE_DEVIATION_PP = 1.0;
 // chat_system.md 근거 수치(Step1_D1 계측군 83.7% vs 미계측군 89.6%, 갭
 // 약 5.9%p)를 "경고로 볼만한" 크기의 하한으로 삼는다 -- 이보다 작은
 // 갭은 표본 잡음과 구분하기 어렵다.
@@ -32,8 +56,8 @@ function hasMnarWarning(item: FmeaFactorItem): boolean {
 function maxDeviationFeature(items: FmeaFactorItem[]): string | null {
   let best: FmeaFactorItem | null = null;
   for (const item of items) {
-    if (item.yield_deviation == null) continue;
-    if (best == null || item.yield_deviation > (best.yield_deviation ?? -Infinity)) best = item;
+    if (item.defect_rate_deviation_pct == null) continue;
+    if (best == null || item.defect_rate_deviation_pct > (best.defect_rate_deviation_pct ?? -Infinity)) best = item;
   }
   return best?.feature ?? null;
 }
@@ -45,7 +69,7 @@ export function inlineFactorAction(item: FmeaFactorItem, fmea: FmeaTablePayload)
   if (item.feature === maxDeviationFeature(fmea.items)) {
     return { text: "계측 규칙 재검토", strength: "확정" };
   }
-  if (item.kind === "R" && item.measurement_rate < LOW_MEASUREMENT_RATE_PCT) {
+  if (item.kind === "R" && (item.measurement_rate < LOW_MEASUREMENT_RATE_PCT || (item.defect_rate_deviation_pct ?? 0) >= HIGH_DEFECT_RATE_DEVIATION_PP)) {
     return { text: "계측률 확대", strength: "확정" };
   }
   if (isMonotonic(item.relation_shape)) {
@@ -87,7 +111,7 @@ const NOT_PROPOSED_ROWS: Omit<RecommendedActionRow, "order">[] = [
 ];
 
 /** 권고 조치 표 (지시서 IC) -- FMEA 표에서 규칙 기반으로 도출한다
- * (하드코딩 금지, IC-2). 정렬은 RPN이 아니라 실익(수율 편차) 순이다 --
+ * (하드코딩 금지, IC-2). 정렬은 RPN이 아니라 실익(불량률 편차) 순이다 --
  * RPN 1위와 실익 1위가 다를 수 있고, 조치 우선순위는 실익을 따른다.
  * "제안하지 않음" 두 행은 조건과 무관하게 항상 맨 끝에 붙는다(IC-3). */
 export function buildRecommendedActions(fmea: FmeaTablePayload | null): RecommendedActionRow[] {
@@ -101,10 +125,10 @@ export function buildRecommendedActions(fmea: FmeaTablePayload | null): Recommen
         key: `max-deviation-${top.feature}`,
         action: `${top.feature} 계측 규칙 재검토`,
         target: `${top.feature} → ${top.target}`,
-        expectedEffect: formatSignedPp(top.yield_deviation),
+        expectedEffect: formatSignedPp(top.defect_rate_deviation_pct),
         strength: "확정",
-        note: "실익(수율 편차) 1위",
-        sortValue: top.yield_deviation ?? 0,
+        note: "실익(불량률 편차) 1위",
+        sortValue: top.defect_rate_deviation_pct ?? 0,
       });
     }
 
@@ -113,7 +137,7 @@ export function buildRecommendedActions(fmea: FmeaTablePayload | null): Recommen
     );
     if (lowRateR.length > 0) {
       const avgRate = lowRateR.reduce((sum, item) => sum + item.measurement_rate, 0) / lowRateR.length;
-      const maxDeviation = Math.max(...lowRateR.map((item) => item.yield_deviation ?? 0));
+      const maxDeviation = Math.max(...lowRateR.map((item) => item.defect_rate_deviation_pct ?? 0));
       derived.push({
         key: "low-rate-bundle",
         action: `계측률 확대 — ${lowRateR.map((item) => item.feature).join(", ")}`,
@@ -131,10 +155,10 @@ export function buildRecommendedActions(fmea: FmeaTablePayload | null): Recommen
         key: `split-lot-${item.feature}`,
         action: "권장 구간 관리 스플릿랏",
         target: `${item.feature} → ${item.target}`,
-        expectedEffect: formatSignedPp(item.yield_deviation),
+        expectedEffect: formatSignedPp(item.defect_rate_deviation_pct),
         strength: "실험 후보",
         note: item.relation_shape === "monotonic_increasing" ? "단조 증가 관계 (단정 아님)" : "단조 감소 관계 (단정 아님)",
-        sortValue: item.yield_deviation ?? 0,
+        sortValue: item.defect_rate_deviation_pct ?? 0,
       });
     }
 
@@ -144,10 +168,10 @@ export function buildRecommendedActions(fmea: FmeaTablePayload | null): Recommen
         key: `mnar-${item.feature}`,
         action: "계측 규칙 재검토 — 무작위 표본 병행",
         target: `${item.feature} → ${item.target}`,
-        expectedEffect: formatSignedPp(item.yield_deviation),
+        expectedEffect: formatSignedPp(item.defect_rate_deviation_pct),
         strength: "확정",
         note: `MNAR 경고 — 계측군·미계측군 최종 수율 갭 ${item.mnar_gap_pp!.toFixed(1)}%p`,
-        sortValue: item.yield_deviation ?? 0,
+        sortValue: item.defect_rate_deviation_pct ?? 0,
       });
     }
   }

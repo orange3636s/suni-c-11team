@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from src.analysis.screening.fmea import (
-    MIN_YIELD_DEVIATION_PP,
+    MIN_DEFECT_RATE_DEVIATION_PP,
     _clamp_ceil,
     _mnar_gap_pp,
     _score_factor,
@@ -132,7 +132,16 @@ def test_score_factor_computes_rpn_and_deviation_for_real_signal():
     # low measurement rate (~15%) -> detection is hard -> high D score
     assert scored.detection_score >= 7
     # the recommended range genuinely separates Y1 -- expect a real positive gap
-    assert scored.yield_deviation is not None and scored.yield_deviation > MIN_YIELD_DEVIATION_PP
+    assert scored.defect_rate_deviation_pct is not None
+    assert scored.defect_rate_deviation_pct > MIN_DEFECT_RATE_DEVIATION_PP
+    # KA-1: expected_defect_rate_pct is target-column basis (~10, the core
+    # cluster's Y1 mean) -- expected_yield_pct is a *different* question,
+    # the final-Y-column basis (~80, since Y is independent of the x1
+    # core/tail split and only depends on measured1).
+    assert scored.expected_defect_rate_pct is not None
+    assert 5.0 <= scored.expected_defect_rate_pct <= 15.0
+    assert scored.expected_yield_pct is not None
+    assert 75.0 <= scored.expected_yield_pct <= 85.0
 
 
 def test_build_fmea_table_filters_noise_and_excludes_config():
@@ -155,8 +164,8 @@ def test_build_fmea_table_filters_noise_and_excludes_config():
 
     # every surviving row cleared the benefit filter
     for item in table.items:
-        assert item.yield_deviation is not None
-        assert item.yield_deviation >= MIN_YIELD_DEVIATION_PP
+        assert item.defect_rate_deviation_pct is not None
+        assert item.defect_rate_deviation_pct >= MIN_DEFECT_RATE_DEVIATION_PP
 
 
 def test_build_fmea_table_severity_is_a_target_attribute():
@@ -192,6 +201,22 @@ def test_mnar_gap_pp_none_when_sample_too_small():
         }
     )
     assert _mnar_gap_pp(df, "Step1_R1") is None
+
+
+def test_score_factor_expected_yield_pct_none_without_final_y_column():
+    """KA-1: '진짜 수율' 열은 최종 Y 컬럼이 있을 때만 채워진다 -- 없으면
+    조용히 None이지, 불량률 값으로 대체하지 않는다."""
+    df = _synthetic_df()
+    df = df.drop(columns=["Y"])
+    schema = parse_schema(df)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    row = next(r for r in rows if r["feature"] == "Step1_R1")
+    factor = _row_to_factor(df, "Y1", row)
+    scored = _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID)
+    assert scored is not None
+    assert scored.expected_yield_pct is None
+    # defect-rate fields are unaffected by the missing final-Y column.
+    assert scored.expected_defect_rate_pct is not None
 
 
 def test_build_fmea_table_empty_when_no_targets():

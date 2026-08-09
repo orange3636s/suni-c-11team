@@ -11113,7 +11113,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
    스크롤과 좌측 sticky 두 열(타깃·잠재 원인)만 추가한다. */
 .fmeaDescription{ margin: 4px 0 12px; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; }
 .fmeaScrollTable{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.fmeaTable{ min-width: 1320px; table-layout: fixed; }
+.fmeaTable{ min-width: 1420px; table-layout: fixed; }
 .fmeaTable th, .fmeaTable td{ white-space: nowrap; }
 .fmeaTable th:nth-child(1), .fmeaTable td:nth-child(1){ width: 56px; }
 .fmeaTable th:nth-child(2), .fmeaTable td:nth-child(2){ width: 34px; }
@@ -11128,27 +11128,56 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .fmeaTable th:nth-child(11), .fmeaTable td:nth-child(11){ width: 74px; }
 .fmeaTable th:nth-child(12), .fmeaTable td:nth-child(12){ width: 96px; }
 .fmeaTable th:nth-child(13), .fmeaTable td:nth-child(13){ width: 96px; }
-.fmeaTable th:nth-child(14), .fmeaTable td:nth-child(14){ width: 260px; }
+/* 지시서 KA-1: 14열이 새로 추가된 "예상 수율"(Y 컬럼 기준) -- 기존
+   14열("권고 조치")은 15열로 밀렸다. */
+.fmeaTable th:nth-child(14), .fmeaTable td:nth-child(14){ width: 96px; }
+.fmeaTable th:nth-child(15), .fmeaTable td:nth-child(15){ width: 260px; }
 /* 권고 조치만 white-space:normal -- 유일한 자유 서식 열(지시서 IB-3). */
 .fmeaColAction{ white-space: normal !important; }
 .fmeaColScore{ text-align: center; font-weight: 700; font-family: var(--font-data); }
 .fmeaColRpn{ font-weight: 700; font-family: var(--font-data); }
-/* 좌측 sticky 두 열: 타깃(1열, left:0)과 잠재 원인(3열, left:56px --
-   1열 폭과 맞춰야 그 사이 S열이 스크롤에 가려질 때 이가 맞물린다).
+/* 좌측 sticky 두 열: 타깃(1열, left:0)과 잠재 원인(3열, left:90px --
+   1열(56px) + 2열 S(34px) 폭의 합이어야 그 사이 S열이 스크롤에 가려질
+   때 이가 맞물린다. 지시서 KA-2 회귀: 90px 대신 56px(1열 폭만)로 잘못
+   둬서, 스크롤 시 3열이 실제 표 흐름상 위치(90px)보다 34px 왼쪽에
+   붙어 4·5열(인자값·권장 구간) 앞부분이 sticky 3열 밑에 가려졌다 --
+   "권장 구간" 셀이 "50.7~69.4"가 아니라 뒷부분만 보이는 "~69.4"로
+   보이던 원인이었다(데이터/포맷 문제가 아니라 sticky 오프셋 오류).
    td/th 둘 다 불투명 배경을 명시한다 -- 배경이 비면 스크롤 중 아래
    내용이 비쳐 보인다(하지 말 것 목록). */
 .fmeaTable .fmeaSticky{ position: sticky; z-index: 1; background: var(--surface-card, var(--surface)); }
 .fmeaTable th.fmeaSticky{ z-index: calc(var(--z-sticky-seg) + 1); background: var(--table-header-bg); }
 .fmeaTable .fmeaStickyTarget{ left: 0; }
-.fmeaTable .fmeaStickyFeature{ left: 56px; }
+.fmeaTable .fmeaStickyFeature{ left: 90px; }
 
+/* 지시서 KC-1: 색은 이 7개 조건에만 -- 인자값(구간 밖)·계측률(<10%)·
+   D(=10)·RPN(임계)·불량률 편차(≥0.3%p)·잠재 원인(항상). 나머지(타깃·
+   구간·이탈률·S·O·구간 내 불량률·예상 수율)는 무채색이다(KC-3). */
 .fmeaOutOfRange{ color: var(--sig-amber); font-weight: 700; }
 .fmeaRateLow{ color: var(--sig-red); }
+/* D가 10(최댓값)이면 계측률이 이 공정의 구조적 문제임을 드러낸다 --
+   S·O에는 이 처리를 하지 않는다(KC-3, D만 색을 쓰는 이유). */
+.fmeaScoreMax{ color: var(--sig-red); }
 .fmeaRpn-red{ color: var(--sig-red); }
 .fmeaRpn-amber{ color: var(--sig-amber); }
-.fmeaDeviationPositive{ color: var(--sig-amber); }
+.fmeaDeviationPositive{ color: var(--sig-amber); font-weight: 700; }
 .fmeaDeviationMuted{ color: var(--text-muted); }
 .fmeaDetectionKind{ font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 700; color: var(--text-secondary); }
+/* 잠재 원인(인자명)은 항상 강조 -- "정상은 무채색" 규율의 의도적
+   예외로, 이 표에서 유일하게 링크인 셀임을 드러낸다(초록 --sig-green은
+   FMEA 표에 쓰지 않는다, KC-3). */
+.fmeaFeatureLink{ color: var(--measured); font-weight: 600; }
+
+/* MNAR 경고 행 배경 (지시서 KC-2) -- 딱 한 행만(가장 큰 |mnar_gap_pp|)
+   강조한다. 다른 조건으로 행 배경을 쓰지 않는다(KC-3). td는 배경이
+   투명해 기본적으로 부모 tr의 배경이 비쳐 보이지만, sticky 셀(타깃·
+   잠재 원인)은 스크롤 중 투명해지면 안 되므로(IB-4) 자기 배경을 이미
+   불투명하게 갖고 있다 -- 그 셀에도 같은 톤을 명시로 덮어써야 강조가
+   행 전체에 고르게 보인다. */
+.fmeaMnarRow{ background: #FFFAF5; }
+.fmeaMnarRow .fmeaSticky{ background: #FFFAF5; }
+html[data-theme="dark"] .fmeaMnarRow{ background: rgba(255, 170, 60, 0.08); }
+html[data-theme="dark"] .fmeaMnarRow .fmeaSticky{ background: rgba(255, 170, 60, 0.08); }
 
 /* 산출 규칙 4칸 카드 (지시서 IB-5) */
 .fmeaRuleGrid{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }

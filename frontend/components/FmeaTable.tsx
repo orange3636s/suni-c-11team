@@ -1,14 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { inlineFactorAction } from "@/lib/fmeaActions";
+import { BADGE_TOOLTIP, badgeClass, inlineFactorAction } from "@/lib/fmeaActions";
 import { formatNumber, formatPct, formatSignedPp, isOutOfRange, rangeText } from "@/lib/fmeaFormat";
 import type { FmeaFactorItem, FmeaTablePayload } from "@/types/data";
 
 const RPN_RED = 300;
 const RPN_AMBER = 100;
 const LOW_MEASUREMENT_RATE_PCT = 10;
-const MIN_YIELD_DEVIATION_PP = 0.3;
+const MIN_DEFECT_RATE_DEVIATION_PP = 0.3;
+const MAX_DETECTION_SCORE = 10;
+// 지시서 KC-2: 목업(Step1_D1 행)과 같은 처리 -- MNAR 경고 임계는
+// fmeaActions.ts의 MNAR_WARNING_THRESHOLD_PP(3.0)와 같은 값이다.
+const MNAR_ROW_THRESHOLD_PP = 3.0;
 
 function rpnClass(rpn: number): string {
   if (rpn >= RPN_RED) return "fmeaRpn-red";
@@ -16,21 +20,37 @@ function rpnClass(rpn: number): string {
   return "";
 }
 
-function badgeClass(strength: string): string {
-  if (strength === "확정") return "badge badge-green";
-  if (strength === "실험 후보") return "badge badge-amber";
-  return "badge badge-neutral";
+// 지시서 KC-2: MNAR 경고에 해당하는 행이 여럿이어도 "한 행만" 강조한다
+// (여러 행이 깔리면 강조가 아니다) -- |mnar_gap_pp|가 가장 큰 행 하나만.
+function topMnarFeature(items: FmeaFactorItem[]): string | null {
+  let best: FmeaFactorItem | null = null;
+  for (const item of items) {
+    if (item.mnar_gap_pp == null || Math.abs(item.mnar_gap_pp) < MNAR_ROW_THRESHOLD_PP) continue;
+    if (best == null || Math.abs(item.mnar_gap_pp) > Math.abs(best.mnar_gap_pp ?? 0)) best = item;
+  }
+  return best?.feature ?? null;
 }
 
-function FmeaRow({ item, fmea }: { item: FmeaFactorItem; fmea: FmeaTablePayload }) {
+function FmeaRow({
+  item,
+  fmea,
+  mnarHighlighted,
+}: {
+  item: FmeaFactorItem;
+  fmea: FmeaTablePayload;
+  mnarHighlighted: boolean;
+}) {
   const outOfRange = isOutOfRange(item);
   const action = inlineFactorAction(item, fmea);
   return (
-    <tr>
+    <tr className={mnarHighlighted ? "fmeaMnarRow" : undefined}>
       <td className="data fmeaSticky fmeaStickyTarget">{item.target}</td>
       <td className="fmeaColScore">{item.severity_score}</td>
       <td className="data fmeaSticky fmeaStickyFeature">
-        <Link href={`/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`}>
+        <Link
+          className="fmeaFeatureLink"
+          href={`/root-cause?target=${encodeURIComponent(item.target)}&feature=${encodeURIComponent(item.feature)}`}
+        >
           {item.feature}
         </Link>
       </td>
@@ -44,14 +64,26 @@ function FmeaRow({ item, fmea }: { item: FmeaFactorItem; fmea: FmeaTablePayload 
       <td className={`numCol${item.measurement_rate < LOW_MEASUREMENT_RATE_PCT ? " fmeaRateLow" : ""}`}>
         {formatPct(item.measurement_rate, 1)}
       </td>
-      <td className="fmeaColScore">{item.detection_score}</td>
-      <td className={`numCol fmeaColRpn ${rpnClass(item.rpn)}`}>{item.rpn}</td>
-      <td className={item.yield_deviation != null && item.yield_deviation >= MIN_YIELD_DEVIATION_PP ? "fmeaDeviationPositive" : "fmeaDeviationMuted"}>
-        {formatSignedPp(item.yield_deviation)}
+      <td className={`fmeaColScore${item.detection_score >= MAX_DETECTION_SCORE ? " fmeaScoreMax" : ""}`}>
+        {item.detection_score}
       </td>
-      <td>{formatPct(item.expected_yield, 2)}</td>
+      <td className={`numCol fmeaColRpn ${rpnClass(item.rpn)}`}>{item.rpn}</td>
+      <td
+        className={
+          item.defect_rate_deviation_pct != null && item.defect_rate_deviation_pct >= MIN_DEFECT_RATE_DEVIATION_PP
+            ? "fmeaDeviationPositive"
+            : "fmeaDeviationMuted"
+        }
+      >
+        {formatSignedPp(item.defect_rate_deviation_pct)}
+      </td>
+      <td>{formatPct(item.expected_defect_rate_pct, 2)}</td>
+      <td>{formatPct(item.expected_yield_pct, 2)}</td>
       <td className="fmeaColAction">
-        {action.text} <span className={badgeClass(action.strength)}>{action.strength}</span>
+        {action.text}{" "}
+        <span className={badgeClass(action.strength)} title={BADGE_TOOLTIP[action.strength]}>
+          {action.strength}
+        </span>
       </td>
     </tr>
   );
@@ -80,17 +112,20 @@ function EmptyState({ data, error }: { data: FmeaTablePayload | null; error?: st
   if (data.excluded_count > 0) {
     return (
       <p className="emptyMessage">
-        실익 기준(편차 ≥ 0.3%p)을 넘는 인자가 없습니다 ({data.excluded_count}개 검토, 전부 미달).
+        실익 기준(불량률 편차 ≥ 0.3%p)을 넘는 인자가 없습니다 ({data.excluded_count}개 검토, 전부 미달).
       </p>
     );
   }
   return <p className="emptyMessage">FDR 보정 후 유의한 인자가 없습니다.</p>;
 }
 
-/** FMEA 분석표 (모니터링 홈, 지시서 IB/JA) -- 유의 인자 표를 대체한다.
- * 계산은 전부 백엔드에서 끝났으므로(자동 갱신·수동 "다시 분석" 저장
- * 둘 다 같은 함수를 공유한다, JA-1) 이 컴포넌트는 표시만 한다. */
+/** FMEA 분석표 (모니터링 홈, 지시서 IB/JA/KA~KC) -- 유의 인자 표를
+ * 대체한다. 계산은 전부 백엔드에서 끝났으므로(자동 갱신·수동 "다시
+ * 분석" 저장 둘 다 같은 함수를 공유한다, JA-1) 이 컴포넌트는 표시만
+ * 한다. */
 export default function FmeaTable({ data, error }: { data: FmeaTablePayload | null; error?: string | null }) {
+  const mnarFeature = data ? topMnarFeature(data.items) : null;
+
   return (
     <section className="resultCard">
       <div className="sectionHeading compact">
@@ -126,14 +161,20 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
                   <th className="numCol">계측률</th>
                   <th className="fmeaColScore">D</th>
                   <th className="numCol fmeaColRpn">RPN</th>
-                  <th>수율 편차</th>
+                  <th>불량률 편차</th>
+                  <th>구간 내 불량률</th>
                   <th>예상 수율</th>
                   <th className="fmeaColAction">권고 조치</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((item) => (
-                  <FmeaRow key={`${item.target}-${item.feature}`} item={item} fmea={data} />
+                  <FmeaRow
+                    key={`${item.target}-${item.feature}`}
+                    item={item}
+                    fmea={data}
+                    mnarHighlighted={item.feature === mnarFeature}
+                  />
                 ))}
               </tbody>
             </table>
@@ -165,12 +206,13 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
 
           <div className="fmeaNotice fmeaNoticeCaution">
             <p>
-              RPN만 보고 판단하지 마세요 — 수율 편차를 함께 봐야 합니다. RPN이 높은 이유는 발생도가 아니라 계측률이
-              낮아 D가 크기 때문일 수 있습니다.
+              RPN만 보고 판단하지 마세요 — 불량률 편차를 함께 봐야 합니다. RPN이 높은 이유는 발생도가 아니라
+              계측률이 낮아 D가 크기 때문일 수 있습니다.
             </p>
             <p>
-              실익 기준(편차 ≥ 0.3%p) 미달 {data.excluded_count}개는 표에서 제외했습니다
+              실익 기준(불량률 편차 ≥ 0.3%p, 타깃 컬럼 기준) 미달 {data.excluded_count}개는 표에서 제외했습니다
               {data.excluded_negative_count > 0 ? ` (그중 편차가 음수인 인자 ${data.excluded_negative_count}개 포함)` : ""}.
+              &ldquo;예상 수율&rdquo;(Y 컬럼)은 별도 표시용이며 이 필터에는 쓰이지 않습니다.
             </p>
           </div>
           <div className="fmeaNotice fmeaNoticeInfo">

@@ -423,8 +423,14 @@ export type FmeaFactorItem = {
   deviation_rate_pct: number; // O의 근거 -- 권장 구간 밖 wafer 비율(계측된 wafer 기준), 0-100
   detection_method: string; // "In-line 샘플 계측" | "Defect 검사"
   detection_kind: "R" | "D";
-  expected_yield: number | null;
-  yield_deviation: number | null; // %p -- 실익 필터를 통과한 값만 내려오므로 항상 0.3 이상
+  // 지시서 KA-1: 아래 둘은 타깃 컬럼(Y1~Y5) 기준 "불량률"이지 수율이
+  // 아니다 -- 실익 필터(백엔드)도 defect_rate_deviation_pct를 쓴다
+  // (항상 0.3 이상만 내려온다). 진짜 수율은 expected_yield_pct.
+  expected_defect_rate_pct: number | null;
+  defect_rate_deviation_pct: number | null; // %p, 불량률 기준 -- 실익 필터가 쓰는 값
+  // 최종 Y 컬럼 기준 진짜 수율 -- "이 인자를 구간 안으로 관리하면 수율이
+  // 얼마가 되는가"에 대한 답. 위 불량률 값과는 다른 질문(합치지 않는다).
+  expected_yield_pct: number | null;
   severity_score: number; // S, 1-10
   occurrence_score: number; // O, 1-10
   detection_score: number; // D, 1-10

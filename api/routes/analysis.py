@@ -448,8 +448,13 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
                     "deviation_rate_pct": f.deviation_rate_pct,
                     "detection_method": f.detection_method,
                     "detection_kind": f.detection_kind,
-                    "expected_yield": f.expected_yield,
-                    "yield_deviation": f.yield_deviation,
+                    # 지시서 KA-1: 아래 둘은 타깃 컬럼(Y1~Y5) 기준 불량률이지
+                    # 수율이 아니다 -- 이름을 그렇게 정정했다. 실익 필터도
+                    # defect_rate_deviation_pct를 쓴다(기준 불변).
+                    "expected_defect_rate_pct": f.expected_defect_rate_pct,
+                    "defect_rate_deviation_pct": f.defect_rate_deviation_pct,
+                    # 진짜 수율(최종 Y 컬럼) 기준 -- 위 불량률과 다른 값이다.
+                    "expected_yield_pct": f.expected_yield_pct,
                     "severity_score": f.severity_score,
                     "occurrence_score": f.occurrence_score,
                     "detection_score": f.detection_score,

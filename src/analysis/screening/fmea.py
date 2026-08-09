@@ -2,9 +2,14 @@
 실행 과제/실험 확인 대상/확인 필요 대상 3개 레일을 대체한다.
 
 타깃별 상위 인자 풀을 모아 중복을 제거하고, S(심각도)·O(발생도)·D(검출도)·
-RPN을 산출한 뒤 실익(수율 편차) 기준으로 걸러 상위 7개만 남긴다. "구간 내/외
-평균 Y"를 구하려면 원본 데이터가 필요하므로 이 계산은 전부 여기(백엔드)에서
-끝내고, 프런트는 표시만 한다 (지시서 IA-5).
+RPN을 산출한 뒤 실익(불량률 편차, defect_rate_deviation_pct) 기준으로 걸러
+상위 7개만 남긴다. "구간 내/외 평균 Y"를 구하려면 원본 데이터가 필요하므로
+이 계산은 전부 여기(백엔드)에서 끝내고, 프런트는 표시만 한다 (지시서 IA-5).
+
+지시서 KA-1: 타깃 컬럼(Y1~Y5)은 "불량률"이지 수율이 아니다 -- 이 모듈이
+산출하는 expected_defect_rate_pct/defect_rate_deviation_pct는 그 불량률
+기준이고, 실익 필터도 이 값을 쓴다(방향·기준 불변). 진짜 수율(최종 Y
+컬럼) 기준 값은 별도로 expected_yield_pct에 담는다 -- 둘을 합치지 않는다.
 
 Config(범주형) 인자는 후보에서 제외한다 -- 수치형 권장구간 개념이 없고,
 README/챗봇 컨텍스트 문서가 이미 밝힌 대로 약 600건 검정에서 FDR 통과 0건이라
@@ -27,7 +32,10 @@ from src.analysis.screening.selector import ParetoFactor, _row_to_factor
 
 TOP_N_PER_TARGET = 5  # 타깃별로 이 안에서만 후보를 뽑는다 (지시서 IA-1)
 TOP_N_FINAL = 7
-MIN_YIELD_DEVIATION_PP = 0.3  # 실익 필터 하한 (지시서 IA-4)
+# 실익 필터 하한 (지시서 IA-4) -- 불량률 편차(defect_rate_deviation_pct)
+# 기준이다. 진짜 수율(Y) 기준이 아니다(지시서 KA-1: 이름이 값과 일치해야
+# 한다).
+MIN_DEFECT_RATE_DEVIATION_PP = 0.3
 MIN_MNAR_SAMPLE = 30  # 이보다 표본이 적은 쪽은 MNAR 갭을 신뢰할 수 없어 None 처리
 
 DETECTION_METHOD_LABELS: dict[str, str] = {
@@ -90,8 +98,15 @@ class FmeaFactor:
     deviation_rate_pct: float  # O의 근거 -- 권장 구간 밖 wafer 비율 (계측된 wafer 기준)
     detection_method: str
     detection_kind: str
-    expected_yield: float | None
-    yield_deviation: float | None
+    # 지시서 KA-1: 이 둘은 타깃 컬럼(Y1~Y5, "불량률") 기준이다 -- 계산은
+    # 그대로 두고 이름만 정정했다("예상 수율"이라 부르던 게 실제로는
+    # 타깃 불량률이었다). 실익 필터는 이 defect_rate_deviation_pct를
+    # 그대로 쓴다(방향 불변, KA-1 "하지 말 것").
+    expected_defect_rate_pct: float | None
+    defect_rate_deviation_pct: float | None
+    # KA-1: 진짜 수율(최종 Y 컬럼) 기준 -- "이 인자를 관리하면 수율이
+    # 어떻게 되는가"에 대한 답. 위 두 필드와 다른 질문이라 합치지 않는다.
+    expected_yield_pct: float | None
     severity_score: int
     occurrence_score: int
     detection_score: int
@@ -139,17 +154,33 @@ def _score_factor(
     out_count = int(out_mask.sum())
     deviation_rate_pct = (out_count / n_observed) * 100.0
 
-    expected_yield = float(y_valid[in_mask].mean()) if in_mask.any() else None
-    outside_yield = float(y_valid[out_mask].mean()) if out_mask.any() else None
-    # Y1~Y5는 "불량률"(높을수록 나쁨, scatter.py 축 라벨 참고)이고 권장
-    # 구간은 평균 불량률이 낮은 쪽으로 선정된다(recommendations.py) --
-    # 따라서 "실익"은 구간 밖(out)이 구간 안(in)보다 얼마나 더 나쁜지로
-    # 잰다. 반대로(in - out) 재면 실제로 유의한 인자일수록 항상 음수가
-    # 나와(구간 안이 항상 더 낮으므로) 실익 필터가 유의미한 인자를 전부
-    # 걸러내 버린다 -- 실제 train.CSV로 검증(16개 후보 전부 음수로 배제).
-    yield_deviation = (
-        outside_yield - expected_yield if expected_yield is not None and outside_yield is not None else None
+    # KA-1: 이 둘은 "타깃 컬럼"(Y1~Y5) 기준 -- 진짜 수율이 아니라 그
+    # 타깃의 불량률이다(scatter.py 축 라벨 "{target} 불량률 (%)" 참고).
+    expected_defect_rate_pct = float(y_valid[in_mask].mean()) if in_mask.any() else None
+    outside_defect_rate_pct = float(y_valid[out_mask].mean()) if out_mask.any() else None
+    # 권장 구간은 평균 불량률이 낮은 쪽으로 선정된다(recommendations.py)
+    # -- 따라서 "실익"은 구간 밖(out)이 구간 안(in)보다 얼마나 더
+    # 나쁜지로 잰다. 반대로(in - out) 재면 실제로 유의한 인자일수록
+    # 항상 음수가 나와(구간 안이 항상 더 낮으므로) 실익 필터가 유의미한
+    # 인자를 전부 걸러내 버린다 -- 실제 train.CSV로 검증(16개 후보 전부
+    # 음수로 배제). 실익 필터(build_fmea_table의 MIN_DEFECT_RATE_DEVIATION_PP)
+    # 는 이 값(불량률 기준)을 그대로 쓴다 -- 방향도 기준도 바꾸지 않는다
+    # (지시서 KA-1 "하지 말 것").
+    defect_rate_deviation_pct = (
+        outside_defect_rate_pct - expected_defect_rate_pct
+        if expected_defect_rate_pct is not None and outside_defect_rate_pct is not None
+        else None
     )
+
+    # KA-1: 진짜 수율(최종 Y 컬럼) 기준 -- "이 인자를 권장 구간 안으로
+    # 관리하면 최종 수율이 얼마가 되는가"에 대한 답. 위 불량률 값과는
+    # 다른 질문이라 별도 열로 낸다(합치지 않는다).
+    expected_yield_pct: float | None = None
+    if FINAL_YIELD_COLUMN in eval_df.columns:
+        final_y = pd.to_numeric(eval_df[FINAL_YIELD_COLUMN], errors="coerce")
+        in_range_final_y = final_y.loc[x_valid.index[in_mask]].dropna()
+        if len(in_range_final_y) > 0:
+            expected_yield_pct = float(in_range_final_y.mean())
 
     severity = _clamp_ceil(loss_share_pct / 5.0)
     occurrence = _clamp_ceil(deviation_rate_pct / 10.0)
@@ -170,8 +201,9 @@ def _score_factor(
         deviation_rate_pct=deviation_rate_pct,
         detection_method=DETECTION_METHOD_LABELS.get(factor.kind, factor.kind),
         detection_kind=factor.kind,
-        expected_yield=expected_yield,
-        yield_deviation=yield_deviation,
+        expected_defect_rate_pct=expected_defect_rate_pct,
+        defect_rate_deviation_pct=defect_rate_deviation_pct,
+        expected_yield_pct=expected_yield_pct,
         severity_score=severity,
         occurrence_score=occurrence,
         detection_score=detection,
@@ -205,7 +237,8 @@ def build_fmea_table(
        기준)를 후보로 모은다.
     2. 인자명 기준 중복 제거 -- 같은 인자가 여러 타깃 상위에 있으면 eps2가
        가장 큰 타깃만 남긴다.
-    3. 수율 편차 실익 필터(< 0.3%p 또는 음수 제외) 적용.
+    3. 불량률 편차 실익 필터(defect_rate_deviation_pct < 0.3%p 또는 음수
+       제외) 적용 -- 진짜 수율이 아니라 불량률 기준이다(지시서 KA-1).
     4. RPN 내림차순 정렬 후 top_n_final개.
     """
     total_wafers = len(eval_df)
@@ -229,8 +262,8 @@ def build_fmea_table(
     excluded_negative_count = 0
     kept: list[FmeaFactor] = []
     for scored in candidates.values():
-        deviation = scored.yield_deviation
-        if deviation is None or deviation < MIN_YIELD_DEVIATION_PP:
+        deviation = scored.defect_rate_deviation_pct
+        if deviation is None or deviation < MIN_DEFECT_RATE_DEVIATION_PP:
             excluded_count += 1
             if deviation is not None and deviation < 0:
                 excluded_negative_count += 1

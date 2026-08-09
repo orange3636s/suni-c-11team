@@ -30,10 +30,13 @@ export function formatNumber(value: number | null, digits = 1): string {
   return value.toFixed(digits);
 }
 
+// 지시서 KA-2: 구분자를 en dash(–)에서 물결(~)로 바꾼다 -- en dash는
+// 음수 부호와 시각적으로 혼동된다("50.7–69.4"가 스크롤/줄바꿈 등으로
+// 하한이 가려지면 "–69.4"처럼 음수로 보인다).
 export function rangeText(item: FmeaFactorItem): string {
   if (item.range_lo == null && item.range_hi == null) return "-";
   if (item.range_lo != null && item.range_hi != null) {
-    return `${item.range_lo.toFixed(1)}–${item.range_hi.toFixed(1)}`;
+    return `${item.range_lo.toFixed(1)} ~ ${item.range_hi.toFixed(1)}`;
   }
   if (item.range_hi != null) return `≤ ${item.range_hi.toFixed(1)}`;
   return `≥ ${item.range_lo!.toFixed(1)}`;

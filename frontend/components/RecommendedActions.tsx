@@ -1,16 +1,10 @@
 "use client";
 
-import { buildRecommendedActions } from "@/lib/fmeaActions";
+import { BADGE_TOOLTIP, badgeClass, buildRecommendedActions } from "@/lib/fmeaActions";
 import type { FmeaTablePayload } from "@/types/data";
 
-function badgeClass(strength: string): string {
-  if (strength === "확정") return "badge badge-green";
-  if (strength === "실험 후보") return "badge badge-amber";
-  return "badge badge-neutral";
-}
-
 /** 권고 조치 표 (모니터링 홈, 지시서 IC) -- FMEA 표에서 자동 도출한다
- * (하드코딩 없음). 정렬은 RPN이 아니라 실익(수율 편차) 순 -- 두 순위가
+ * (하드코딩 없음). 정렬은 RPN이 아니라 실익(불량률 편차) 순 -- 두 순위가
  * 다를 때는 실익을 따른다. "제안하지 않음" 두 행은 조건과 무관하게
  * 항상 맨 끝에 붙는다. */
 export default function RecommendedActions({ data }: { data: FmeaTablePayload | null }) {
@@ -24,7 +18,7 @@ export default function RecommendedActions({ data }: { data: FmeaTablePayload | 
           <h2>권고 조치</h2>
         </div>
       </div>
-      <p className="sectionCaption">실익(수율 편차) 순 · FMEA 분석표에서 자동 도출</p>
+      <p className="sectionCaption">실익(불량률 편차) 순 · FMEA 분석표에서 자동 도출</p>
 
       <div className="tableWrap">
         <table>
@@ -46,7 +40,9 @@ export default function RecommendedActions({ data }: { data: FmeaTablePayload | 
                 <td>{row.target}</td>
                 <td>{row.expectedEffect}</td>
                 <td>
-                  <span className={badgeClass(row.strength)}>{row.strength}</span>
+                  <span className={badgeClass(row.strength)} title={BADGE_TOOLTIP[row.strength]}>
+                    {row.strength}
+                  </span>
                 </td>
                 <td className="fmeaActionNote">{row.note}</td>
               </tr>
