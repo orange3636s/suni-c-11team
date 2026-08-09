@@ -1,6 +1,6 @@
 # SUNI 11팀 — 반도체 공정 원인 분석 & 사전 알람
 
-반도체 제조 공정 데이터에서 **Y1~Y5 불량률과 통계적으로 연관된 공정 인자를 특정하고, SPC 관리한계로 이탈 wafer를 탐지하며, 권장 구간으로 개선 방향을 제시하는** FastAPI + Next.js 애플리케이션입니다. Upstage Solar LLM 연동으로 이 분석 결과를 자연어 보고서·대화형 답변으로 변환하는 SUNI 챗봇을 포함합니다.
+반도체 제조 공정 데이터에서 **Y1~Y5 불량률과 통계적으로 연관된 공정 인자를 특정하고, 인자별 SPC 관리한계로 개별 이탈을 표시하며, 권장 구간으로 개선 방향을 제시하는** FastAPI + Next.js 애플리케이션입니다. 이와 별개로, wafer 최종 수율(Y)이 목표에 미달할지를 GBDT 부트스트랩 앙상블 + conformal 예측 구간으로 직접 판정하는 사전 알람 파이프라인을 포함합니다(민감도 조절로 심각/위험/주의/정상/미분류 5단계 판정). Upstage Solar LLM 연동으로 이 분석 결과를 자연어 보고서·대화형 답변으로 변환하는 SUNI 챗봇을 포함합니다.
 
 **이 프로젝트의 산출물은 수율 예측 정확도가 아니라 "어떤 step의 어떤 인자가 어떤 불량과 관계있는가"의 통계적 특정입니다.** Y1~Y5를 학습하는 회귀 모델이 포함되어 있지만, 이는 스크리닝 결과의 구현 정확성을 확인하는 회귀 테스트 기준값이지 제품 기능(수율 예측 서비스)이 아닙니다.
 
@@ -76,9 +76,9 @@ train.CSV 기준 타깃별 1위 인자:
 
 전처리 선택이 알고리즘 선택보다 성능에 크게 기여합니다. `src/ml/ensemble.py`(GroupKFold 기반 후보 앙상블 선택)와 `src/ml/hybrid.py`의 `train_hybrid_multi_y`(HGBR-vs-RandomForest 비교), `src/ml/training.py`는 저장소에 남아 있지만 **`/api/train`에서는 호출되지 않고 테스트에서만 실행되는 미사용 모듈**입니다. LightGBM/XGBoost/CatBoost 등 다른 부스팅 라이브러리는 `requirements.txt`에 없어 이 저장소 안에서는 비교 자체가 재현되지 않습니다.
 
-### 3. SPC 관리한계와 사전 알람
+### 3. SPC 관리한계 (인자별 이탈 판정)
 
-인자별로 **X 자신의 산포**에서 관리한계를 산출합니다(train.CSV 기준). Y를 참조하지 않습니다.
+인자별로 **X 자신의 산포**에서 관리한계를 산출합니다(train.CSV 기준). Y를 참조하지 않습니다. 이 관리한계는 산점도 참조선, JSON 보고서/SUNI 챗봇의 `control_limits`·`alarms`(개별 인자가 정상 범위를 벗어난 wafer 목록)에 쓰입니다 — 아래 "5. 웨이퍼 수율 예측 알람"이 쓰는 알림 기록 탭의 판정 기준과는 다른, 별개의 파이프라인입니다.
 
 ```
 UCL(LCL) = Q3(Q1) ± 1.5 × IQR   ← 알람 기준(IQR×1.5)
@@ -115,16 +115,29 @@ test.CSV(1,000장)에 적용한 결과: **알람 wafer 19장(1.9%), 알람군 �
 
 test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 이미 알람에 잡힌 건은 중복 집계하지 않음), 등급이 강함·보통인 인자만 담습니다.
 
+### 5. 웨이퍼 수율 예측 알람 (GBDT + conformal)
+
+위 1~4는 인자 단위 통계 분석입니다. 이와 별개로 `GET /api/alarms`·`GET /api/alarms/predictions`(알림 기록 탭)가 쓰는 독립된 파이프라인이 있습니다(`src/analysis/alarm_gbdt.py`) — "이 인자 값이 평소와 다른가"(SPC)가 아니라 **"이 wafer의 최종 수율(Y)이 목표에 미달할 것 같은가"를 직접 예측**합니다.
+
+- **모델**: 선정 인자가 아니라 전체 R+D 인자(88개)를 특징으로 쓰는 `HistGradientBoostingRegressor` 부트스트랩 앙상블(30회). 점추정(`pred_mean`)은 이 앙상블 평균만 씁니다.
+- **예측 구간(conformal)**: train을 랏 단위 `GroupKFold(5)`로 나눈 out-of-fold 잔차의 90분위를 여유(`q`)로 써서 `pred_mean ± q`를 냅니다. 웨이퍼 한 장 단위 여유는 test.CSV 기준 약 **±5.6%p**(구간 폭 약 11%p)입니다.
+- **집계 여유는 따로 냅니다.** SUMMARY처럼 여러 웨이퍼의 예측을 평균할 때 웨이퍼 단위 `q`를 그대로 쓰면(또는 `q/√n`으로 나누면) 랏 내부 상관 때문에 평균의 불확실성을 30배 가까이 잘못 추정합니다. 대신 OOF 잔차를 랏 단위로 묶어 랏을 복원추출로 리샘플링하는 **랏 블록 부트스트랩**(2,000회)으로 별도 산출합니다 — test.CSV(1,000장/40랏) 기준 약 **±0.2%p**로 웨이퍼 단위 여유보다 훨씬 좁습니다. 실측 포함률은 목표(90%) 근처(약 91%)로 확인했습니다.
+- **판정은 점추정 기준**입니다. 컷 = 목표 수율 − (1 − 민감도) × 4.0%p, 등급(심각/위험/주의) 간 간격은 0.8%p입니다. 민감도(기본 0.20, 0=오경보 최소~1=미탐 최소)를 올리면 컷이 목표에 가까워져 알람이 단조 비감소합니다. **"정상"만 예외적으로 구간 하한(`pred_lo`) 기준**입니다 — 점추정만으로 정상을 단정하면 실제 미달 wafer를 놓치기 때문입니다.
+- **미분류(판별불가)는 두 사유로 나뉩니다.** 상관성 부족(선정 인자는 계측됐지만 예측 구간이 목표를 걸쳐 판정 불가 — 계측을 늘려도 해소되지 않음)과 계측 부족(선정 인자가 아예 미계측 — 계측을 늘리면 해소됨)입니다.
+- **신뢰도 게이트**: train→eval 전이 AUC 하한이 0.65(`AUC_GATE`) 미만이면 알람을 아예 내지 않습니다(실측 AUC 분포의 빈 구간 가운데를 잡은 경험값).
+
 ## 화면 구성
 
-4개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다. 모델 학습은 더 이상 별도 탭이 아니라 사이드바 하단(`모델 학습·자동화 / 알림 설정 / 화면 모드` 순) 버튼으로 여는 팝업입니다 — 최근 학습 정보 3줄, SQL 호스트·포트, Refresh 주기, 파일 첨부·수동 학습 실행을 담습니다. 재학습(수동·자동 공통)은 기존 모델보다 홀드아웃 R²가 뚜렷이 나쁘면 승격되지 않는 게이트를 거치며, 게이트 미달로 교체되지 않았을 때는 그 사실이 팝업에 표시됩니다. `AUTO_INGEST_DIR`을 설정하면 그 디렉터리에 놓인 새 CSV를 주기적으로(Refresh 주기) 폴링해 Y 컬럼 유무로 갈라 처리합니다 — Y가 있으면 학습, 없으면 평가 데이터셋으로 등록해 원인 분석·알림 이력·모니터링 스냅샷을 갱신합니다(`src/automation/ingest.py`). SQL 커넥터는 아직 구현되지 않았습니다.
+4개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다. 모델 학습은 더 이상 별도 탭이 아니라 사이드바 하단(`모델 학습·자동화 / 알림 설정 / 화면 모드` 순) 버튼으로 여는 팝업입니다 — 최근 학습 정보 3줄, SQL 호스트·포트, Refresh 주기, 파일 첨부·수동 학습 실행을 담습니다. 재학습(수동·자동 공통)은 기존 모델보다 홀드아웃 R²가 `PROMOTION_TOLERANCE`(0.005)보다 크게 나쁘면 승격되지 않는 게이트를 거치며, 게이트 미달로 교체되지 않았을 때는 그 사실이 팝업에 표시됩니다.
 
-- **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록, 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
+**자동화.** `AUTO_INGEST_DIR`을 설정하면 그 디렉터리에 놓인 새 CSV를 주기적으로(Refresh 주기) 폴링해 Y 컬럼 유무로 갈라 처리합니다 — Y가 있으면 학습, 없으면 평가 데이터셋으로 등록해 원인 분석·알림 기록·모니터링 스냅샷을 갱신합니다(`src/automation/ingest.py`). 이와 별개로 리프레시 파이프라인(`src/automation/refresh.py`)이 같은 주기로 데이터 취득 → (신규 데이터일 때만) 재학습+승격 게이트 → 예측 → 원인분석 → 알람 판정 → 모니터링 스냅샷 저장을 한 번에 수행합니다. **SQL 연동은 구현되어 있습니다** — 모델 학습 팝업에 저장한 접속 정보(host/port/db/user)와 서버 환경변수(`AUTO_INGEST_DB_DRIVER`, `DB_PASSWORD`, `AUTO_INGEST_QUERY`, 선택적으로 `AUTO_INGEST_CURSOR_COLUMN`)가 모두 갖춰지고 실제 접속·조회에 성공해야 SQL 모드로 동작하며, 하나라도 빠지거나 접속·조회가 실패하면(10초 타임아웃 포함) 예외 없이 곧장 내장 폴백(train.CSV/test.CSV)으로 전환합니다(`src/automation/sql_source.py`). DB 엔진은 코드에 고정하지 않고 SQLAlchemy dialect+driver 문자열을 그대로 씁니다. 알림 발송은 매일 09:00·13:00(KST, APScheduler `CronTrigger`)과 "분석 실행 직후" 중 저장된 발송 시점에 해당할 때만 나가며, 알람 신뢰도가 "낮음"이면 통째로 스킵하고, 자동 갱신 경로는 추가로 시간당 발송 예산(6건)과 이전 스냅샷 대비 신규 알람만 보내는 필터를 거칩니다. 수동 업로드 모드는 연속 업로드가 연속 발송이 되지 않도록 10분 최소 간격을 둡니다.
+
+- **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대, 웨이퍼가 아니라 집계 conformal 여유 기준), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록(빈 레일에는 이유와 근거 숫자를 함께 표시), 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
 - **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형 ρ/ε² · 범주형 ε², `보기` 토글로 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
-- **알림 이력**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 알림 이력 목록(세로 스크롤 영역에 전체를 렌더링 — 초기 노출 행 수만 7행이며 더 볼 방법이 없던 문제를 고쳤다, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기. 알람 신뢰도 게이트를 통과하지 못하면 심각/위험/주의 카드는 "0장"이 아니라 "게이트 미달"로 표시됩니다 — 숫자만 보고 "알람 없음"으로 오독하지 않도록 판정 불가 상태를 명시합니다
+- **알림 기록**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 알림 기록 목록(세로 스크롤 영역에 전체를 렌더링 — 초기 노출 행 수만 7행이며 더 볼 방법이 없던 문제를 고쳤다, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기. 알람 신뢰도 게이트를 통과하지 못하면 심각/위험/주의 카드는 "0장"이 아니라 "게이트 미달"로 표시되고, 게이트는 통과했지만 알람이 0건이면 "왜 0건인지"(전 wafer 목표 이상 / 미분류 다수 / 민감도가 낮음) 사유를 함께 보여줍니다 — 숫자만 보고 "알람 없음 = 안전"으로 오독하지 않도록 판정 불가 상태를 명시합니다
 - **즐겨찾기**(`/favorites`) — 원인 분석에서 저장한 그래프를 최신순 카드 그리드로 모아 보여줍니다. 점 데이터는 저장하지 않고 저장된 조건(데이터셋·타깃·인자·뷰 종류)으로 다시 조회해 썸네일을 그립니다. 카드 클릭 시 해당 인자의 원인 분석 화면으로 이동합니다
 
-원인 분석·모니터링·알림 이력 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
+원인 분석·모니터링·알림 기록 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
 
 데이터셋은 각 탭의 선택 UI에서 CSV를 업로드해 추가할 수 있고(`POST /api/datasets`), 내장 2종(train/test)과 함께 목록에 표시됩니다.
 
@@ -134,8 +147,8 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 - Upstage Solar API(OpenAI 호환 스펙)를 스트리밍(SSE)으로 호출합니다(`api/routes/chat.py`)
 - `report` 모드(예시: "분석 보고서 생성" 버튼, 메시지에 "보고서" 등 키워드 포함): 6개 섹션(요약/불량 유형별 소견/장비 구성 소견/관리 대역 제안/한계/확인 필요 사항)으로 구성된 공정 보고서를 생성합니다
-- `chat` 모드(그 외 자유 입력): 3~5문장으로 답합니다. 알람·개선 권장 개별 건(예: 특정 wafer의 알람)에 대한 질문에도 해당 레코드를 근거로 답합니다
-- 두 모드 모두 `/api/analysis/context`가 만드는 동일한 분석 결과 JSON(타깃별 1위 인자, 관리한계, 권장 구간, 챔버 교호작용, 알람·개선 권장 레코드, config 스크리닝, 한계)을 근거로 답하며, 시스템 프롬프트(`prompts/report_system.md`, `prompts/chat_system.md`)가 **숫자 생성 금지, 인과 표현 금지, "값을 조정하라" 같은 설정값 표현 금지**를 명시적으로 규정합니다
+- `chat` 모드(그 외 자유 입력): 3~5문장으로 답합니다. 알람 개별 건(예: 특정 wafer의 알람)에 대한 질문에도 해당 레코드를 근거로 답하고, 알림 기록 탭의 conformal 예측 구간·판정 체계(점추정+민감도 컷, 5분류, 미분류 2사유)·대시보드 기능처럼 이번 분석 JSON에는 없는 시스템 동작 지식도 프롬프트에 실린 배경 지식으로 답합니다(`recommendations` 필드는 존재하지 않습니다 -- 권장 구간은 각 인자의 `window`에만 있습니다)
+- 두 모드 모두 `/api/analysis/context`가 만드는 동일한 분석 결과 JSON(타깃별 1위 인자, 관리한계, 권장 구간, 챔버 교호작용, 알람 레코드, config 스크리닝, 한계)을 근거로 답하며, 시스템 프롬프트(`prompts/report_system.md`, `prompts/chat_system.md`)가 **숫자 생성 금지, 인과 표현 금지, "값을 조정하라" 같은 설정값 표현 금지**를 명시적으로 규정합니다
 - `confidence`(신뢰도)는 LLM이 아니라 코드가 판정한 값을 그대로 따르게 합니다 — 판정 근거가 부족한 인자에 LLM이 임의로 관리 대역을 만들어내지 못하게 하는 장치입니다
 - 원인 분석이 아직 실행되지 않은 상태의 질문은 LLM을 호출하지 않고 백엔드가 즉시 안내 메시지로 응답합니다
 - 화면과 챗봇의 역할 분담 원칙(I-1): **서사적 해석·배경 설명은 챗봇, 판정 기준·게이트 상태·표본 한계는 화면.** 예전 원칙("화면 내 해석 설명은 전부 챗봇으로 이관")은 챗봇이 opt-in이라는 점을 놓쳤다 — "이 삼각형은 목표 85.0 기준이고 알림 기록의 91.0과 다르다" 같은 정보를 챗봇을 열어야만 알 수 있게 하면, 챗봇을 클릭하지 않은 사용자가 잘못된 판단을 내린다. 이 원칙에 따라 다음은 화면에 유지한다(삭제 대상 아님): 알람 마커 판정 기준 표기, 신뢰도 게이트 배너, "예측 수율 절대값은 정확도가 낮아 구간으로 표시합니다" 안내, 계측률·표본 수 표기. 그 외 배경 설명·정성적 소견(계측률 한계, 인과 아님, 근거 부족 등급의 의미, 정밀도·재현율이 추정치라는 점 등)은 `LIMITATIONS`(`src/analysis/report.py`)로 옮겨 챗봇 컨텍스트에 실리며, "이 분석의 한계는?" 프리셋 질문으로 확인할 수 있습니다
@@ -160,16 +173,18 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 4. 관리한계는 "평소와 다른가"를 판정하며 "수율이 좋은가"를 보장하지 않습니다.
 5. `POST /api/train`의 성능 지표는 업로드 파일 내부 15% 홀드아웃 기준이며, 별도의 test.CSV로 일반화 성능을 확인한 것이 아닙니다.
 6. 계측된 wafer와 미계측 wafer의 최종 수율 차이는 이 데이터셋에서 통계적으로 유의하지 않았습니다(R/D 계측이 하나도 없는 wafer 기준 t-검정 p=0.74). 계측 편향이 관측되지 않았다는 뜻이지, 다른 데이터셋에도 성립한다는 보장은 아닙니다.
+7. 웨이퍼 수율 예측 알람의 conformal 구간이 넓은 것(웨이퍼 단위 약 ±5.6%p)은 모델 결함이 아니라 데이터의 설명력 한계입니다 — 전체 R+D 인자를 다 써도 test.CSV 기준 R²는 약 0.26입니다. 이 여유를 SUMMARY 등 여러 웨이퍼의 평균에 그대로 적용하면 평균의 불확실성을 개별값 수준으로 과대평가하므로, 집계에는 랏 블록 부트스트랩으로 별도 산출한 여유(약 ±0.2%p)를 씁니다.
+8. 관리한계(mean±3σ/6σ, Q1/Q3 기반 IQR×1.5)는 인자별 SPC 참조·보고서 표기에는 그대로 쓰이지만, 웨이퍼 수율 알람 판정 기준에서는 더 이상 쓰이지 않습니다 — 판정은 위 "5. 웨이퍼 수율 예측 알람"의 점추정+민감도 컷을 씁니다. 두 "관리한계"는 대상이 다르므로(하나는 인자 값 하나, 하나는 웨이퍼 최종 수율) 혼동하지 않아야 합니다.
 
 ## 구조
 
 ```text
 api/            FastAPI 라우트(data/datasets/analysis/chat/state/notify/favorites/monitoring)·스키마·설정
-src/analysis/   인자 스크리닝(ε², BH-FDR), 히트맵, SPC 관리한계, 권장 구간, 챗봇 컨텍스트용 통계, JSON 보고서
+src/analysis/   인자 스크리닝(ε², BH-FDR), 히트맵, SPC 관리한계, 권장 구간, 웨이퍼 수율 예측 알람(GBDT+conformal, alarm_gbdt.py), 챗봇 컨텍스트용 통계, JSON 보고서
 src/ml/         학습 파이프라인(HistGradientBoostingRegressor), 추론 메타데이터, 모델 저장
 src/runtime/    데이터셋 레지스트리, 학습 Job, SQLite 이력 저장(즐겨찾기·모델 승격 이력 포함)
-src/notifications/ Slack/Telegram/Gmail 발송, 채널 설정 영속화(대기 상태 TTL 포함)
-src/automation/ 감시 디렉터리 폴링 자동 수집 잡(ingest.py) -- Y 컬럼 유무로 학습/평가 데이터셋을 갈라 등록
+src/notifications/ Slack/Telegram/Gmail 발송(senders.py), 발송 오케스트레이션·dedupe·재시도(dispatch.py), Telegram 인증 코드 흐름(telegram_bot.py), 채널 설정 영속화(대기 상태 TTL 포함)
+src/automation/ 감시 디렉터리 폴링 자동 수집 잡(ingest.py) -- Y 컬럼 유무로 학습/평가 데이터셋을 갈라 등록. 리프레시 파이프라인(refresh.py, refresh_dispatch.py)과 SQL 데이터 소스 판단·증분 수집(sql_source.py)도 이 아래에 있음
 frontend/       Next.js UI (app/monitoring, app/root-cause, app/alerts, app/favorites, components/ai-panel)
 prompts/        SUNI 챗봇 시스템 프롬프트(report_system.md, chat_system.md)
 tests/          Python 테스트(pytest)
@@ -212,7 +227,7 @@ UPSTAGE_MODEL=solar-pro3
 
 기본 주소는 Next.js `http://localhost:3000`, FastAPI `http://127.0.0.1:8000`, Swagger `http://127.0.0.1:8000/docs`입니다.
 
-알림 연동(Slack/Telegram/Gmail)을 쓰려면 아래 환경변수도 추가합니다(`.env.example` 참고, 전부 선택값입니다). 설정하지 않으면 해당 채널은 UI에서 "연결하기"를 눌러도 실제 발송은 되지 않습니다.
+알림 연동(Slack/Telegram/Gmail)을 쓰려면 아래 환경변수도 추가합니다(`.env.example` 참고, 전부 선택값입니다). 설정하지 않으면 해당 채널은 UI에서 "연결하기"를 눌러도 실제 발송은 되지 않습니다. Slack은 env var가 필요 없습니다 -- Webhook URL을 설정 패널에서 직접 입력해 `RuntimeStore`에 저장합니다.
 
 ```env
 TELEGRAM_BOT_TOKEN=
@@ -225,7 +240,9 @@ SMTP_FROM_EMAIL=
 NOTIFY_VERIFY_BASE_URL=
 ```
 
-Gmail 연결은 인증 메일을 보낸 뒤 링크를 눌러야 완료됩니다(대기 상태, `pending`). **이 대기 상태는 5분이 지나면 서버에서 자동으로 만료되어 미연결로 돌아갑니다** — 5분 안에 메일의 링크를 눌러야 합니다. 만료 판정은 조회 시점에 이루어지며(`src/notifications/settings_store.py`의 `PENDING_TTL_SECONDS`), 이미 연결 완료(`verified: true`)된 채널은 만료 대상이 아니라 재시작·재접속 후에도 계속 유지됩니다.
+**Telegram 연결 절차**: ① BotFather에서 봇을 만들어 토큰과 username을 발급받습니다. ② `TELEGRAM_BOT_TOKEN`(그대로)과 `TELEGRAM_BOT_USERNAME`(맨 앞 `@` 제외)을 서버 환경변수로 설정합니다 -- **두 값 모두 서버를 재시작해야 반영됩니다**(long-polling 루프가 기동 시점에만 뜹니다). ③ 대시보드가 안내하는 봇 링크를 열어 `/start`를 보냅니다. ④ 봇이 6자리 인증 코드를 답장으로 보내면 대시보드 알림 설정 패널에 그 코드를 입력합니다 — **코드는 10분 안에 입력해야 하며(`CODE_TTL_MINUTES`), 유효 시간을 넘기면 다시 `/start`부터 반복**합니다(코드는 메모리에만 보관하므로 서버 재시작 시에도 사라집니다).
+
+**Gmail 연결 절차**: ① Google 계정에 2단계 인증을 켭니다(앱 비밀번호는 2단계 인증이 켜져 있어야 발급됩니다). ② Google 계정 설정에서 앱 비밀번호(16자)를 발급받아 **공백을 제거하고** `SMTP_PASSWORD`에 넣습니다. ③ `SMTP_HOST`(`smtp.gmail.com`)·`SMTP_PORT`(587)·`SMTP_USER`·`SMTP_PASSWORD`·`SMTP_FROM_EMAIL` 5개를 채웁니다 -- **`SMTP_FROM_EMAIL`은 `SMTP_USER`와 같은 주소여야 합니다**(Gmail SMTP는 인증 계정과 다른 발신 주소를 거부합니다). ④ 대시보드에서 "연결하기"를 누르면 인증 메일이 발송되고, 메일의 확인 링크를 눌러야 연결이 완료됩니다(대기 상태, `pending`). **이 대기 상태는 5분이 지나면 서버에서 자동으로 만료되어 미연결로 돌아갑니다** — 5분 안에 메일의 링크를 눌러야 합니다. 만료 판정은 조회 시점에 이루어지며(`src/notifications/settings_store.py`의 `PENDING_TTL_SECONDS`), 이미 연결 완료(`verified: true`)된 채널은 만료 대상이 아니라 재시작·재접속 후에도 계속 유지됩니다.
 
 인증 메일의 확인 링크는 기본적으로 **그 요청을 받은 API 서버 자신의 주소**(`request.base_url`)를 가리킵니다 — 프런트엔드(Next.js) 오리진을 기본값으로 쓰면 `/api/notify/gmail/verify`에 대응하는 Next 페이지가 없어 링크가 404로 갑니다. API 서버가 리버스 프록시·로드밸런서 뒤에 있어 `request.base_url`이 실제 공개 주소와 다르면 `NOTIFY_VERIFY_BASE_URL`을 명시적으로 설정합니다.
 
@@ -234,6 +251,15 @@ Gmail 연결은 인증 메일을 보낸 뒤 링크를 눌러야 완료됩니다(
 ```env
 AUTO_INGEST_DIR=
 AUTO_INGEST_ENABLED=false
+```
+
+리프레시 파이프라인(위 "자동화" 참고)에서 SQL 데이터 소스를 쓰려면 아래 환경변수도 추가합니다 -- 접속 정보(host/port/db/user) 자체는 모델 학습·자동화 팝업에서 저장하며, 비밀번호만 서버 환경변수로 둡니다. 하나라도 비어 있으면 SQL 시도 없이 곧장 폴백(train.CSV/test.CSV)으로 동작합니다.
+
+```env
+AUTO_INGEST_DB_DRIVER=
+DB_PASSWORD=
+AUTO_INGEST_QUERY=
+AUTO_INGEST_CURSOR_COLUMN=
 ```
 
 ## 비밀값 취급
@@ -264,7 +290,7 @@ AUTO_INGEST_ENABLED=false
 - 학습: `POST /api/train`(동기), `POST /api/train/jobs`(비동기) + `GET /api/train/jobs/{job_id}`
 - 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/models/promotion-history`(승격 게이트 통과 여부와 무관한 학습 시도 이력), `GET /api/model/latest`
 - 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical`, `config_level: model|eq|chamber` 파라미터로 수치형/범주형 보기 전환), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
-- SPC/알람: `GET /api/control-ranges`, `GET /api/alarms`(`target`·`sensitivity` 선택 파라미터 -- 원인 분석 탭의 알람 삼각형이 알림 기록 탭에서 저장한 값을 그대로 넘겨 두 화면의 판정 기준을 일치시킨다. 생략하면 기본값 85.0/0.5), `GET /api/alarms/predictions`(응답에서 `holdout`/`factor_bands`/`measurement_bias` 필드는 삭제됨 -- 렌더하는 화면이 없으면서 요청마다 GroupKFold 5회 GBDT 적합을 다시 돌려 알림 이력 탭을 열 때마다 수십 초가 걸렸다)
+- SPC 참조·웨이퍼 알람: `GET /api/control-ranges`(인자별 SPC 관리한계, 산점도 참조선·보고서 `control_limits`에 씀), `GET /api/alarms`(`target`·`sensitivity` 선택 파라미터 -- 원인 분석 탭의 알람 삼각형이 알림 기록 탭에서 저장한 값을 그대로 넘겨 두 화면의 판정 기준을 일치시킨다. 생략하면 기본값 85.0/0.20), `GET /api/alarms/predictions`(응답에서 `holdout`/`factor_bands`/`measurement_bias` 필드는 삭제됨 -- 렌더하는 화면이 없으면서 요청마다 GroupKFold 5회 GBDT 적합을 다시 돌려 알림 기록 탭을 열 때마다 수십 초가 걸렸다. `interval_conformal_q`(웨이퍼 단위 conformal 여유)와 별개로 `interval_conformal_q_agg`(집계 여유, 랏 블록 부트스트랩 산출)를 함께 내려준다 -- SUMMARY 등 평균을 낼 때는 반드시 이 값을 쓴다)
 - 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/measurement-expansion`, `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`
 - SUNI 챗봇: `POST /api/chat`(SSE 스트리밍, `mode: "report" | "chat"`)
 - 탭 상태 저장(재접속 시 최근 결과 복원): `GET /api/state/latest`, `POST /api/state/training`, `POST /api/state/analysis`, `POST /api/state/alarms`
