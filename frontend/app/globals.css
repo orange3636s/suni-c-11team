@@ -10579,6 +10579,9 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
   background: transparent; border: 1px solid var(--sig-amber); color: var(--sig-amber);
 }
 .notifyChannelNote{ margin: 0; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
+/* EA-3: 봇 username 미설정 안내 -- 설정 누락이지 오류가 아니므로
+   경고/오류 색을 쓰지 않는다. */
+.notifyChannelMuted{ margin: 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; }
 .notifyChannelPendingNote{
   margin: 8px 0 0; padding: 8px 10px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.5;
   background: transparent; border: 1px solid var(--sig-amber); color: var(--sig-amber);

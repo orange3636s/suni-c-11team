@@ -236,7 +236,11 @@ function TelegramCard({ summary, onUpdate }: ChannelProps) {
   const [busy, setBusy] = useState<"test" | "verify" | null>(null);
   const [error, setError] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
-  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "suni_alarm_bot";
+  // EA그룹: 봇 username은 백엔드가 단일 소스다 -- 프런트 환경변수나
+  // 하드코딩 폴백을 두지 않는다. 서버가 TELEGRAM_BOT_USERNAME을 설정하지
+  // 않았으면 그대로 null이고, 그 사실을 화면에 드러낸다(죽은 링크를
+  // 보여주지 않는다).
+  const botUsername = summary.telegram_bot_username;
 
   async function handleVerify() {
     if (!code.trim()) {
@@ -297,7 +301,15 @@ function TelegramCard({ summary, onUpdate }: ChannelProps) {
         </div>
       )}
       {telegram.connected && <TestResultNote result={testResult} />}
-      {!telegram.connected && expanded && (
+      {!telegram.connected && expanded && botUsername === null && (
+        // EA-3: 봇 username이 서버에 설정돼 있지 않다 -- 존재하지 않는
+        // 봇으로 향하는 죽은 링크를 보여주는 대신, 설정 누락임을 알리고
+        // 코드 입력도 막는다(보낼 곳이 없다). 오류색은 쓰지 않는다.
+        <p className="notifyChannelMuted">
+          텔레그램 봇이 설정되지 않았습니다. 서버 환경변수 TELEGRAM_BOT_USERNAME을 확인하세요.
+        </p>
+      )}
+      {!telegram.connected && expanded && botUsername !== null && (
         <div className="notifyConnectForm">
           <p className="notifyChannelWarning">
             ⚠ 사용자 이름으로는 발송할 수 없습니다.
@@ -335,6 +347,10 @@ function TelegramCard({ summary, onUpdate }: ChannelProps) {
               maxLength={6}
             />
           </div>
+          {/* EA-6: 코드는 메모리에 10분만 보관되고 서버 재시작 시
+              사라진다 -- 사용자가 시간을 넘기거나 재시작 직후 재도전하는
+              이유를 알 수 있게 미리 알린다. */}
+          <p className="notifyChannelNote">봇이 보낸 6자리 코드를 10분 이내에 입력하세요.</p>
           {error && <p className="notifyFieldError">{error}</p>}
           <button type="button" className="notifyPrimaryButton" onClick={handleVerify} disabled={busy !== null}>
             {busy === "verify" ? "확인 중…" : "연결"}

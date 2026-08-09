@@ -218,8 +218,15 @@ async def lifespan(app: FastAPI):
     if settings.telegram_bot_token:
         telegram_task = asyncio.create_task(run_polling_loop(settings.telegram_bot_token, telegram_stop_event))
         logger.info("Telegram 봇 polling 시작")
+        # EA-5: 토큰만 있고 username이 없으면 폴링은 도는데 화면에는 봇
+        # 링크가 안 보이는 어중간한 상태가 된다 -- 조용히 넘어가지 않고
+        # 기동 로그에 남긴다.
+        if not settings.telegram_bot_username:
+            logger.warning("Telegram 알림 비활성: TELEGRAM_BOT_USERNAME 미설정")
     else:
         logger.info("TELEGRAM_BOT_TOKEN이 설정되지 않아 Telegram 알림 연동을 건너뜁니다.")
+        if settings.telegram_bot_username:
+            logger.warning("Telegram 알림 비활성: TELEGRAM_BOT_TOKEN 미설정")
 
     # 알람 알림 연동 §C-4 "매일 오전 9시" (지시서 N-2: 8시 -> 9시) -- n8n
     # 대신 APScheduler로 처리한다 (spec: "서비스가 늘면 메모리와 요금이

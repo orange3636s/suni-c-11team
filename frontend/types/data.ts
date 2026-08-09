@@ -311,6 +311,9 @@ export type NotificationSettingsSummary = {
   telegram: TelegramChannelSummary;
   gmail: GmailChannelSummary;
   conditions: NotificationConditions;
+  // EA그룹: 텔레그램 봇 username -- 백엔드가 단일 소스다. 프런트는 자체
+  // 환경변수나 하드코딩 폴백을 두지 않는다. 미설정이면 null.
+  telegram_bot_username: string | null;
 };
 
 export type SendTestResponse = { ok: boolean; error: string | null };

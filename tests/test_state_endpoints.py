@@ -37,6 +37,7 @@ DEFAULT_NOTIFICATIONS = {
     "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
     "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
     "conditions": {"grades": ["심각"], "timing": ["on_analysis"]},
+    "telegram_bot_username": None,
 }
 
 

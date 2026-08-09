@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from api.settings import settings
 from src.runtime.store import RuntimeStore
 
 STATE_KEYS = {
@@ -286,4 +287,10 @@ def get_settings_summary(store: RuntimeStore) -> dict[str, Any]:
             )
         ),
         "conditions": conditions,
+        # EA그룹: 봇 username을 백엔드 단일 소스로 -- 프런트가 자기
+        # 환경변수를 따로 읽고 없으면 존재하지 않는 봇 이름으로 링크를
+        # 만들던 문제(하드코딩 폴백)를 없앤다. 가공하지 않고 그대로
+        # 내려보낸다 -- 미설정(None)이면 그대로 null. 토큰은 여기 절대
+        # 포함하지 않는다.
+        "telegram_bot_username": settings.telegram_bot_username,
     }

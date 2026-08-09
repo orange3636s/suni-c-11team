@@ -72,7 +72,7 @@ def verify_telegram(body: TelegramVerifyRequest) -> dict[str, Any]:
     if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="인증 코드가 올바르지 않거나 만료되었습니다. 봇에게 /start를 다시 보내 새 코드를 받으세요.",
+            detail="코드가 만료되었거나 올바르지 않습니다. 봇에게 /start를 다시 보내주세요.",
         )
     store = _store()
     settings_store.save_telegram(store, chat_id=resolved["chat_id"], username=resolved["username"])

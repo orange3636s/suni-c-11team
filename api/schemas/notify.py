@@ -36,6 +36,9 @@ class NotificationSettingsSummary(BaseModel):
     telegram: TelegramChannelSummary
     gmail: GmailChannelSummary
     conditions: NotificationConditions
+    # EA그룹: 텔레그램 봇 username 단일 소스 -- 토큰은 절대 포함하지 않는다.
+    # 미설정이면 null.
+    telegram_bot_username: str | None = None
 
 
 class SlackConnectRequest(BaseModel):

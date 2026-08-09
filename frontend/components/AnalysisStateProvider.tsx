@@ -43,6 +43,7 @@ const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
   telegram: { connected: false, target: null, chat_id_masked: null, verified_at: null },
   gmail: { connected: false, pending: false, email: null, verified_at: null },
   conditions: { grades: ["심각"], timing: ["on_analysis"] },
+  telegram_bot_username: null,
 };
 
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------

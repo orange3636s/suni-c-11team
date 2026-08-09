@@ -5,6 +5,7 @@ shape consumed by both GET /api/state/latest and the settings panel.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -270,6 +271,47 @@ def test_save_conditions_rejects_unknown_timing():
     try:
         with pytest.raises(ValueError):
             settings_store.save_conditions(store, grades=["심각"], timing=["some_unknown_value"])
+    finally:
+        _cleanup(path)
+
+
+def test_settings_summary_includes_telegram_bot_username(monkeypatch):
+    """EA그룹: 봇 username은 백엔드가 단일 소스다 -- 설정돼 있으면 가공
+    없이 그대로 내려간다."""
+    store, path = _store()
+    try:
+        monkeypatch.setattr(
+            settings_store, "settings", dataclasses.replace(settings_store.settings, telegram_bot_username="suni_11team_alert_bot")
+        )
+        summary = settings_store.get_settings_summary(store)
+        assert summary["telegram_bot_username"] == "suni_11team_alert_bot"
+    finally:
+        _cleanup(path)
+
+
+def test_settings_summary_telegram_bot_username_is_none_when_unset(monkeypatch):
+    """EA그룹: 미설정이면 서버가 기본값을 만들지 않고 그대로 null을
+    내린다 -- 화면에 미설정 상태가 드러나야 한다."""
+    store, path = _store()
+    try:
+        monkeypatch.setattr(settings_store, "settings", dataclasses.replace(settings_store.settings, telegram_bot_username=None))
+        summary = settings_store.get_settings_summary(store)
+        assert summary["telegram_bot_username"] is None
+    finally:
+        _cleanup(path)
+
+
+def test_settings_summary_never_includes_telegram_bot_token(monkeypatch):
+    """EA그룹: username은 내려도 토큰은 절대 내려보내지 않는다."""
+    store, path = _store()
+    try:
+        monkeypatch.setattr(
+            settings_store,
+            "settings",
+            dataclasses.replace(settings_store.settings, telegram_bot_username="suni_11team_alert_bot", telegram_bot_token="super-secret-token"),
+        )
+        summary = settings_store.get_settings_summary(store)
+        assert "super-secret-token" not in str(summary)
     finally:
         _cleanup(path)
 
