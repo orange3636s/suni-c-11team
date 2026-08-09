@@ -58,6 +58,18 @@ function colorForMean(mean: number, overallMean: number, theme: "light" | "dark"
   return t < 0.5 ? lerpColor(red, center, t / 0.5) : lerpColor(center, green, (t - 0.5) / 0.5);
 }
 
+// Z-3: 타일이 채색되면(FDR 통과 시에만, 현재 데이터에서는 없음) 배경이
+// 빨강~중립~초록 그라디언트를 오간다 -- 고정 텍스트색으로는 중앙(다크
+// 중립 #2C2C2E) 근처에서 대비가 무너진다. 셀 배경의 실제 밝기를 보고
+// 매 타일마다 어두운/밝은 글자를 고른다(YIQ luma, 관용적 임계값 0.5).
+function lumaOf(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+function textColorForTile(backgroundHex: string): string {
+  return lumaOf(backgroundHex) > 0.5 ? "var(--ink)" : "#fff";
+}
+
 type HoverState = { group: ParsedGroup; x: number; y: number } | null;
 
 export default function ConfigTreemap({
@@ -193,6 +205,7 @@ export default function ConfigTreemap({
                           // 검출한계 이하 차이가 적/녹으로 과장되지
                           // 않도록 전량 중립색 + 텍스트만 보여준다.
                           const shouldColor = !insufficientN && data.significant;
+                          const tileBackground = shouldColor ? colorForMean(chamber.mean, data.overall_mean, theme) : undefined;
                           return (
                             <button
                               type="button"
@@ -201,7 +214,11 @@ export default function ConfigTreemap({
                               style={{
                                 flexGrow: chamber.n,
                                 flexBasis: 0,
-                                background: shouldColor ? colorForMean(chamber.mean, data.overall_mean, theme) : undefined,
+                                background: tileBackground,
+                                // 중립 타일(항상 var(--text), 현재 데이터의
+                                // 전량)은 CSS 기본값을 그대로 쓴다 -- 채색된
+                                // 타일만 셀 밝기에 맞춰 글자색을 정한다.
+                                color: tileBackground ? textColorForTile(tileBackground) : undefined,
                               }}
                               onClick={() => handleTileClick(chamber)}
                               onMouseEnter={(event) => setHover({ group: chamber, x: event.clientX, y: event.clientY })}

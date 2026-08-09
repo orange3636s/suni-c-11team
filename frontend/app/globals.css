@@ -3285,6 +3285,11 @@ html[data-theme="dark"] .savedModelList > button.active{
   --surface: #ffffff;
   --surface-secondary: #f8f9fb;
   --surface-tertiary: #eff1f4;
+  /* Z-2: --surface-subtle는 라이트·다크 어디에도 정의가 없어(레거시
+     :root의 --surface-muted만 있고 이 이름 자체는 없었다) 7곳 이상에서
+     transparent로 렌더되고 있었다 -- 새 색을 만들지 않고 기존 --surface-muted
+     별칭으로 연결한다. */
+  --surface-subtle: var(--surface-muted);
   --text-primary: #141a22;
   --text-secondary: #59636f;
   --text-muted: #8a929c;
@@ -5569,6 +5574,10 @@ html[data-theme="dark"]{
   --surface: #252527;
   --surface-secondary: #2c2c2e;
   --surface-tertiary: #343437;
+  /* Z-2: 다크에서는 밝을수록 "떠 있는 면"으로 읽히므로(패널이 #252527일
+     때 #343437처럼 한 단계 밝은 톤이 "낮은 배경"이 아니라 "얹힌 카드"가
+     된다) --surface-muted가 아니라 --surface-tertiary를 쓴다. */
+  --surface-subtle: var(--surface-tertiary);
   --text-primary: #f5f5f7;
   --text-secondary: #b5b7bc;
   --text-muted: #8f9299;
@@ -5631,7 +5640,16 @@ html[data-theme="dark"]{
   --line: var(--border-strong);
   --line-soft: var(--border);
   --measured: #7ba3e8;
-  --inferred: #97a3b8;
+  /* Z-1: 이전 값(#97a3b8)은 measured와 상대휘도가 완전히 같아(대비
+     1.00:1) 계측값/추정치 구분이 다크에서 사라져 있었다. measured
+     대비·panel(#252527) 대비를 각각 3.0:1 이상으로 동시에 만족시키는
+     값은 수학적으로 존재하지 않는다 -- measured 자체가 panel 대비
+     6.0:1뿐이라, 그 사이에 양쪽으로 3:1씩 떨어진 세 번째 값이 들어갈
+     여유가 없다(두 경계에서 같은 대비가 되는 지점의 대비는 최대
+     2.45:1). 그 최적점(minimax)에 가장 가까운 값을 채택했다 --
+     measured 대비 2.44:1, panel 대비 2.46:1로 이전(1.00:1)보다 확실히
+     구분되면서 "확정값보다 조용한" 방향(더 어둡고 채도 낮게)을 유지한다. */
+  --inferred: #556272;
   --sig-red: var(--danger);
   --sig-amber: var(--warning);
   --sig-green: var(--success);
@@ -10592,15 +10610,13 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 .monitoringTreemapTile{
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 1px; min-width: 34px; border: none; border-radius: 4px; cursor: pointer;
-  font-size: var(--fs-micro); line-height: 1.35; color: #0B0B0B; padding: 2px;
+  font-size: var(--fs-micro); line-height: 1.35; color: var(--text); padding: 2px;
 }
 .monitoringTreemapTile:hover{ outline: 2px solid var(--accent, #0072C6); outline-offset: -2px; }
 .monitoringTreemapTile.insufficientN{
   background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
 }
 .monitoringTreemapTileTitle{ font-weight: 600; }
-html[data-theme="dark"] .monitoringTreemapTile{ color: #0B0B0B; }
-html[data-theme="dark"] .monitoringTreemapTile.insufficientN{ color: var(--text-secondary); }
 .monitoringTreemapUnknown{ margin-top: 8px; font-size: var(--fs-sm); }
 .monitoringTreemapCaption{ margin: 10px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); }
 @media (max-width: 767px){
