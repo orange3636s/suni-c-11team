@@ -275,7 +275,7 @@ export type ReliabilityResponse = {
 
 // -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
 
-export type NotificationTiming = "on_analysis" | "daily_9am";
+export type NotificationTiming = "on_analysis" | "daily_9am" | "daily_13";
 export type NotificationGrade = "심각" | "위험" | "주의";
 
 export type SlackChannelSummary = {
@@ -301,7 +301,9 @@ export type GmailChannelSummary = {
 
 export type NotificationConditions = {
   grades: NotificationGrade[];
-  timing: NotificationTiming;
+  // DF그룹: 다중 선택 -- 하나도 선택하지 않으면(빈 배열) 어떤 트리거로도
+  // 발송되지 않는다.
+  timing: NotificationTiming[];
 };
 
 export type NotificationSettingsSummary = {

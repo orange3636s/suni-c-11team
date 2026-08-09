@@ -19,6 +19,16 @@ import type { NotificationGrade, NotificationSettingsSummary, NotificationTiming
 
 const GRADE_OPTIONS: NotificationGrade[] = ["심각", "위험", "주의"];
 
+// DF그룹: 발송 시점 다중 선택 -- 옵션이 2개("분석 실행 직후"/"매일 오전
+// 9시")에서 3개(오후 1시 추가)로 늘고, 단일 선택에서 다중 선택으로
+// 바뀐다. 오후 1시는 "신규분만" 발송하지만(서버 dedupe 재사용) 그 정책은
+// 화면에는 드러나지 않는다.
+const TIMING_OPTIONS: { value: NotificationTiming; label: string }[] = [
+  { value: "on_analysis", label: "분석 실행 직후" },
+  { value: "daily_9am", label: "매일 오전 9시" },
+  { value: "daily_13", label: "매일 오후 1시" },
+];
+
 export default function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { notifications, setNotifications } = useAnalysisState();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -463,7 +473,7 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  async function persist(grades: NotificationGrade[], timing: NotificationTiming) {
+  async function persist(grades: NotificationGrade[], timing: NotificationTiming[]) {
     setSaving(true);
     setError("");
     try {
@@ -482,6 +492,14 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
     const has = conditions.grades.includes(grade);
     const next = has ? conditions.grades.filter((g) => g !== grade) : [...conditions.grades, grade];
     void persist(next, conditions.timing);
+  }
+
+  // DF그룹: 단일 선택(교체)에서 다중 선택(토글)으로 -- 하나도 선택하지
+  // 않은 상태(빈 배열)도 유효한 사용자 선택이라 그대로 저장한다.
+  function toggleTiming(timing: NotificationTiming) {
+    const has = conditions.timing.includes(timing);
+    const next = has ? conditions.timing.filter((t) => t !== timing) : [...conditions.timing, timing];
+    void persist(conditions.grades, next);
   }
 
   return (
@@ -510,24 +528,29 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
       <div className="notifyConditionsRow">
         <span className="notifyConditionsLabel">발송 시점</span>
         <div className="scatterViewToggle" role="group" aria-label="발송 시점">
-          <button
-            type="button"
-            className={`scatterViewToggleBtn ${conditions.timing === "on_analysis" ? "active" : ""}`}
-            onClick={() => void persist(conditions.grades, "on_analysis")}
-            disabled={saving}
-          >
-            분석 실행 직후
-          </button>
-          <button
-            type="button"
-            className={`scatterViewToggleBtn ${conditions.timing === "daily_9am" ? "active" : ""}`}
-            onClick={() => void persist(conditions.grades, "daily_9am")}
-            disabled={saving}
-          >
-            매일 오전 9시
-          </button>
+          {TIMING_OPTIONS.map((option) => {
+            const active = conditions.timing.includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={`scatterViewToggleBtn ${active ? "active" : ""}`}
+                onClick={() => toggleTiming(option.value)}
+                disabled={saving}
+                aria-pressed={active}
+              >
+                {active ? "☑ " : "☐ "}
+                {option.label}
+              </button>
+            );
+          })}
         </div>
       </div>
+      {/* DF그룹: 발송 시점을 전부 해제하면 어떤 트리거로도 발송되지
+          않는다 -- 조용히 무발송 상태로 두지 않고 경고로 알린다. */}
+      {conditions.timing.length === 0 && (
+        <p className="notifyFieldError">발송 시점이 선택되지 않아 알림이 전송되지 않습니다</p>
+      )}
       {error && <p className="notifyFieldError">{error}</p>}
       <p className="notifyReliabilityGateNote">
         신뢰도 낮은 데이터셋은 발송하지 않습니다

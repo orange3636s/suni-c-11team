@@ -28,7 +28,7 @@ class GmailChannelSummary(BaseModel):
 
 class NotificationConditions(BaseModel):
     grades: list[str]
-    timing: str
+    timing: list[str]
 
 
 class NotificationSettingsSummary(BaseModel):
@@ -60,7 +60,7 @@ class GmailConnectRequest(BaseModel):
 
 class ConditionsSaveRequest(BaseModel):
     grades: list[str]
-    timing: str
+    timing: list[str]
 
 
 class SendTestResponse(BaseModel):

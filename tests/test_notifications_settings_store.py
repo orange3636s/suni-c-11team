@@ -206,7 +206,7 @@ def test_conditions_default_is_severe_only():
         assert set(conditions["grades"]) == {"심각"}
         assert "위험" not in conditions["grades"]
         assert "주의" not in conditions["grades"]
-        assert conditions["timing"] == settings_store.TIMING_ON_ANALYSIS
+        assert conditions["timing"] == [settings_store.TIMING_ON_ANALYSIS]
     finally:
         _cleanup(path)
 
@@ -216,9 +216,60 @@ def test_conditions_migrates_legacy_daily_8am_timing():
     try:
         # 지시서 N-2: 예전에 "daily_8am"으로 저장된 설정을 읽으면 새 값
         # "daily_9am"으로 변환되어야 한다 -- 깨진 값으로 남으면 안 된다.
+        # DF그룹: 구버전은 timing을 단일 문자열로 저장했다 -- 배열로도
+        # 감싸져야 한다.
         store.set_app_state(settings_store.STATE_KEYS["conditions"], {"grades": ["심각"], "timing": "daily_8am"})
         conditions = settings_store.get_conditions(store)
-        assert conditions["timing"] == settings_store.TIMING_DAILY_9AM
+        assert conditions["timing"] == [settings_store.TIMING_DAILY_9AM]
+    finally:
+        _cleanup(path)
+
+
+def test_conditions_migrates_legacy_string_timing_to_list():
+    """DF그룹: 구버전은 timing이 배열이 아니라 단일 문자열이었다 --
+    이미 유효한 값("on_analysis" 등)이었어도 읽을 때 배열로 감싸져야
+    화면/발송 로직이 깨지지 않는다."""
+    store, path = _store()
+    try:
+        store.set_app_state(settings_store.STATE_KEYS["conditions"], {"grades": ["심각"], "timing": "on_analysis"})
+        conditions = settings_store.get_conditions(store)
+        assert conditions["timing"] == [settings_store.TIMING_ON_ANALYSIS]
+    finally:
+        _cleanup(path)
+
+
+def test_conditions_supports_multi_select_timing():
+    store, path = _store()
+    try:
+        saved = settings_store.save_conditions(
+            store, grades=["심각"], timing=[settings_store.TIMING_ON_ANALYSIS, settings_store.TIMING_DAILY_13]
+        )
+        assert saved["timing"] == [settings_store.TIMING_ON_ANALYSIS, settings_store.TIMING_DAILY_13]
+        conditions = settings_store.get_conditions(store)
+        assert conditions["timing"] == [settings_store.TIMING_ON_ANALYSIS, settings_store.TIMING_DAILY_13]
+    finally:
+        _cleanup(path)
+
+
+def test_conditions_allows_saving_empty_timing_selection():
+    """DF그룹: 발송 시점을 전부 해제하면(빈 배열) 그 선택을 그대로
+    존중한다 -- 기본값으로 조용히 되돌리면 "발송 안 함"을 고를 방법이
+    없다."""
+    store, path = _store()
+    try:
+        saved = settings_store.save_conditions(store, grades=["심각"], timing=[])
+        assert saved["timing"] == []
+        conditions = settings_store.get_conditions(store)
+        assert conditions["timing"] == []
+    finally:
+        _cleanup(path)
+
+
+def test_save_conditions_rejects_unknown_timing():
+    store, path = _store()
+    try:
+        with pytest.raises(ValueError):
+            settings_store.save_conditions(store, grades=["심각"], timing=["some_unknown_value"])
     finally:
         _cleanup(path)
 

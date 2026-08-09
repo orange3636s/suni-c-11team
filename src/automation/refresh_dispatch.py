@@ -134,7 +134,7 @@ def dispatch_new_alarms(
         return
 
     conditions = settings_store.get_conditions(store)
-    if conditions.get("timing") != settings_store.TIMING_ON_ANALYSIS:
+    if settings_store.TIMING_ON_ANALYSIS not in (conditions.get("timing") or []):
         _record(store, new_alarm_count=0, blocked_reason="발송 시점 설정에 on_analysis 없음", summarized=False, channels={})
         return
 

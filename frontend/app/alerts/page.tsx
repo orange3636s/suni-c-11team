@@ -244,6 +244,9 @@ function AlertsContent() {
   const [loading, setLoading] = useState(false);
   const [reliability, setReliability] = useState<ReliabilityResponse | null>(null);
   const [reliabilityPanelOpen, setReliabilityPanelOpen] = useState(false);
+  // DG그룹: 목표 수율·민감도의 서버 저장이 실패해도 조용히 넘어가지
+  // 않는다 -- 발송 판정이 화면과 다른 기준을 쓰게 될 수 있다.
+  const [settingsSaveError, setSettingsSaveError] = useState(false);
   const data = alarmsState?.data ?? null;
   const datasetMismatch = Boolean(
     alarmsState && (alarmsState.trainDataset !== trainDataset || alarmsState.evalDataset !== evalDataset),
@@ -311,7 +314,13 @@ function AlertsContent() {
   useEffect(() => {
     if (!alarmsState) return;
     const timer = window.setTimeout(() => {
-      void saveAlarmsState(alarmsState.trainDataset, alarmsState.evalDataset, { targetYield, sensitivity }).catch(() => {});
+      setSettingsSaveError(false);
+      void saveAlarmsState(alarmsState.trainDataset, alarmsState.evalDataset, { targetYield, sensitivity }).catch(() => {
+        // DG그룹: 저장 실패를 화면에 드러낸다 -- 조용히 넘어가면 사용자는
+        // 목표·민감도가 다음 접속에서도 유지되는 줄 알지만, 실제로는
+        // 기본값으로 되돌아가고 자동 발송 판정 기준도 화면과 어긋난다.
+        setSettingsSaveError(true);
+      });
     }, 800);
     return () => window.clearTimeout(timer);
   }, [targetYield, sensitivity, alarmsState]);
@@ -446,7 +455,7 @@ function AlertsContent() {
               <DatasetSelector label="예측 대상" value={evalDataset} onChange={setEvalDataset} onUploaded={handleDatasetUploaded} />
               <p className="sectionCaption alertsDatasetCaption">정상범위 기준: {trainDatasetLabel}</p>
             </div>
-            <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} />
+            <TargetYieldField value={targetYield} onChange={handleTargetYieldChange} disabled={!hydrated} />
             <button type="button" className="button primary alertsQueryButton" disabled={loading} onClick={() => void load()}>
               {loading ? "조회 중…" : data ? "다시 조회" : "조회"}
             </button>
@@ -458,9 +467,17 @@ function AlertsContent() {
               onApplyPreset={applyPreset}
               onChange={handleSensitivityChange}
               estimate={precisionRecallEstimate}
+              disabled={!hydrated}
             />
           </div>
         </div>
+        {/* DG그룹: 서버에 저장된 목표·민감도를 복원하기 전에는 값을 만질
+            수 없게 막는다 -- 기본값이 잠깐 보였다가 저장값으로 튀는
+            혼란을 막는다. */}
+        {!hydrated && <p className="sectionCaption">이전 설정을 불러오는 중…</p>}
+        {settingsSaveError && (
+          <p className="notifyFieldError">목표 수율·민감도 저장에 실패했습니다. 네트워크를 확인해 주세요.</p>
+        )}
         <DatasetMismatchWarning mismatch={datasetMismatch} />
         {activateError && <p className="notifyFieldError">{activateError}</p>}
         {/* AG-2: Y 계열이 감지돼도 자동 학습은 걸지 않는다 -- 안내 +
@@ -791,7 +808,16 @@ function ExplainButton({ onClick, disabled }: { onClick: () => void; disabled?: 
    재계산되고, API를 다시 부르지 않는다.
    =================================================================== */
 
-function TargetYieldField({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+function TargetYieldField({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  // DG그룹: 서버에 저장된 값을 복원하기 전에는 조작을 막는다.
+  disabled?: boolean;
+}) {
   return (
     <div className="alertsSettingField alertsTargetField">
       <span className="alertsSettingLabel">목표 수율</span>
@@ -804,6 +830,7 @@ function TargetYieldField({ value, onChange }: { value: number; onChange: (value
           onKeyDown={(event) => {
             if (event.key === "Enter") onChange(Number((event.target as HTMLInputElement).value));
           }}
+          disabled={disabled}
         />
         <span>%</span>
       </div>
@@ -821,12 +848,15 @@ function SensitivityField({
   onApplyPreset,
   onChange,
   estimate,
+  disabled,
 }: {
   value: number;
   activePreset: PresetKey | null;
   onApplyPreset: (preset: (typeof SENSITIVITY_PRESETS)[number]) => void;
   onChange: (value: number) => void;
   estimate: PrecisionRecallEstimate | null;
+  // DG그룹: 서버에 저장된 값을 복원하기 전에는 조작을 막는다.
+  disabled?: boolean;
 }) {
   return (
     <div className="alertsSensitivityField">
@@ -838,6 +868,7 @@ function SensitivityField({
             type="button"
             className={`alertsPresetButton ${activePreset === preset.key ? "active" : ""}`}
             onClick={() => onApplyPreset(preset)}
+            disabled={disabled}
           >
             {preset.label}
           </button>
@@ -854,6 +885,7 @@ function SensitivityField({
             onChange={(event) => onChange(Number(event.target.value))}
             className="alertsGaugeSlider"
             aria-label="민감도 직접 조절"
+            disabled={disabled}
           />
           <div className="alertsGaugeEnds"><span>0</span><span>1</span></div>
         </div>
@@ -867,6 +899,7 @@ function SensitivityField({
           }}
           className="alertsSensitivityNumber"
           title="직접 입력"
+          disabled={disabled}
         />
       </div>
       <SensitivityTradeoffLine estimate={estimate} />

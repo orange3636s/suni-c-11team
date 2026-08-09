@@ -38,13 +38,36 @@ AlarmGrade = Literal["심각", "위험", "주의"]
 DEFAULT_GRADES: list[AlarmGrade] = ["심각"]  # 지시서 N-3: 기본값은 심각만, 위험·주의는 기본 해제
 TIMING_ON_ANALYSIS = "on_analysis"
 TIMING_DAILY_9AM = "daily_9am"
-VALID_TIMINGS = {TIMING_ON_ANALYSIS, TIMING_DAILY_9AM}
-DEFAULT_CONDITIONS = {"grades": list(DEFAULT_GRADES), "timing": TIMING_ON_ANALYSIS}
+TIMING_DAILY_13 = "daily_13"
+VALID_TIMINGS = {TIMING_ON_ANALYSIS, TIMING_DAILY_9AM, TIMING_DAILY_13}
+DEFAULT_TIMINGS: list[str] = [TIMING_ON_ANALYSIS]
+DEFAULT_CONDITIONS = {"grades": list(DEFAULT_GRADES), "timing": list(DEFAULT_TIMINGS)}
 
 # 지시서 N-2: 발송 시각을 오전 8시 -> 9시로 옮기며 타이밍 값 이름도
 # daily_8am -> daily_9am으로 바꿨다. 이미 "daily_8am"으로 저장된 기존
 # 사용자 설정을 읽을 때 깨진 값으로 남기지 않도록 여기서 변환한다.
 _LEGACY_TIMING_MIGRATIONS = {"daily_8am": TIMING_DAILY_9AM}
+
+
+def _normalize_timings(raw: Any) -> list[str]:
+    """DF그룹: 발송 시점이 단일 문자열(구버전 저장값)이든 배열(신규)이든
+    항상 배열로 정규화한다. 값이 아예 없던 적이 없으면(레코드 자체가
+    없음) 기본값으로 폴백하지만, 사용자가 명시적으로 빈 배열을
+    저장했다면(전부 해제) 그 선택을 그대로 존중한다 -- 조용히 기본값으로
+    되돌리면 "발송 안 함"을 선택할 방법이 없어진다."""
+    if raw is None:
+        return list(DEFAULT_TIMINGS)
+    if isinstance(raw, str):
+        migrated = _LEGACY_TIMING_MIGRATIONS.get(raw, raw)
+        return [migrated] if migrated in VALID_TIMINGS else list(DEFAULT_TIMINGS)
+    if isinstance(raw, list):
+        result: list[str] = []
+        for value in raw:
+            migrated = _LEGACY_TIMING_MIGRATIONS.get(value, value)
+            if migrated in VALID_TIMINGS and migrated not in result:
+                result.append(migrated)
+        return result
+    return list(DEFAULT_TIMINGS)
 
 SLACK_WEBHOOK_DOMAIN = "hooks.slack.com"
 
@@ -191,22 +214,16 @@ def get_conditions(store: RuntimeStore) -> dict[str, Any]:
     record = store.get_app_state(STATE_KEYS["conditions"])
     if not record:
         return dict(DEFAULT_CONDITIONS)
-    timing = record.get("timing")
-    migrated = _LEGACY_TIMING_MIGRATIONS.get(timing)
-    if migrated:
-        record = {**record, "timing": migrated}
-    elif timing not in VALID_TIMINGS:
-        # 알 수 없는 값이면(과거 스키마 변경 등) 기본값으로 폴백한다 --
-        # 깨진 값을 그대로 화면에 흘려보내지 않는다.
-        record = {**record, "timing": TIMING_ON_ANALYSIS}
-    return record
+    return {**record, "timing": _normalize_timings(record.get("timing"))}
 
 
-def save_conditions(store: RuntimeStore, *, grades: list[str], timing: str) -> dict[str, Any]:
-    if timing not in VALID_TIMINGS:
-        raise ValueError(f"알 수 없는 발송 시점입니다: {timing}")
+def save_conditions(store: RuntimeStore, *, grades: list[str], timing: list[str]) -> dict[str, Any]:
+    invalid = [t for t in timing if t not in VALID_TIMINGS]
+    if invalid:
+        raise ValueError(f"알 수 없는 발송 시점입니다: {invalid[0]}")
     valid_grades = [g for g in grades if g in ("심각", "위험", "주의")]
-    record = {"grades": valid_grades, "timing": timing}
+    # dict.fromkeys로 순서를 유지한 채 중복만 제거한다.
+    record = {"grades": valid_grades, "timing": list(dict.fromkeys(timing))}
     store.set_app_state(STATE_KEYS["conditions"], record)
     return record
 

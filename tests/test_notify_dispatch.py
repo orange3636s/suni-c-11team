@@ -125,7 +125,7 @@ def test_escalated_grade_resends_within_24h(monkeypatch):
         # 테스트는 등급 승격(위험 -> 심각) 시 24시간 내에도 재발송되는지를
         # 보는 것이 목적이므로, 기본값에 기대지 않고 두 등급 모두 대상으로
         # 명시적으로 설정한다.
-        settings_store.save_conditions(store, grades=["위험", "심각"], timing=settings_store.TIMING_ON_ANALYSIS)
+        settings_store.save_conditions(store, grades=["위험", "심각"], timing=[settings_store.TIMING_ON_ANALYSIS])
 
         first = dispatch.dispatch_alarm_notifications(
             store, trigger=settings_store.TIMING_ON_ANALYSIS,
@@ -163,7 +163,7 @@ def test_alarm_outside_configured_grades_is_not_sent(monkeypatch):
     store, path = _store()
     try:
         _connect_slack(store)
-        settings_store.save_conditions(store, grades=["심각"], timing=settings_store.TIMING_ON_ANALYSIS)
+        settings_store.save_conditions(store, grades=["심각"], timing=[settings_store.TIMING_ON_ANALYSIS])
         monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: (True, None))
 
         result = dispatch.dispatch_alarm_notifications(
@@ -183,7 +183,7 @@ def test_on_analysis_trigger_is_skipped_when_daily_only_is_selected(monkeypatch)
     store, path = _store()
     try:
         _connect_slack(store)
-        settings_store.save_conditions(store, grades=["심각"], timing=settings_store.TIMING_DAILY_9AM)
+        settings_store.save_conditions(store, grades=["심각"], timing=[settings_store.TIMING_DAILY_9AM])
         called = {"sent": False}
         monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: called.update(sent=True) or (True, None))
 
@@ -213,6 +213,64 @@ def test_daily_trigger_is_skipped_when_on_analysis_only_is_selected(monkeypatch)
         )
         assert result["skipped"] is True
         assert result["reason"] == "발송 시점 설정과 일치하지 않음"
+    finally:
+        _cleanup(path)
+
+
+def test_multi_select_timing_allows_both_daily_triggers(monkeypatch):
+    """DF그룹: 오전 9시·오후 1시를 함께 선택하면 두 트리거 모두 발송된다."""
+    store, path = _store()
+    try:
+        _connect_slack(store)
+        settings_store.save_conditions(
+            store, grades=["심각"], timing=[settings_store.TIMING_DAILY_9AM, settings_store.TIMING_DAILY_13]
+        )
+        monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: (True, None))
+
+        morning = dispatch.dispatch_alarm_notifications(
+            store, trigger=settings_store.TIMING_DAILY_9AM,
+            dataset_id="train", dataset_label="train.CSV", alarms=[_alarm()],
+            reliability_grade="높음", reliability_score=85,
+        )
+        assert morning["skipped"] is False
+
+        # DF그룹: 오후 1시는 "신규분만" -- 같은 (wafer, grade)가 오전에
+        # 이미 발송됐다면(24시간 dedupe) 새로 보낼 게 없어 스킵돼야 한다.
+        afternoon_same = dispatch.dispatch_alarm_notifications(
+            store, trigger=settings_store.TIMING_DAILY_13,
+            dataset_id="train", dataset_label="train.CSV", alarms=[_alarm()],
+            reliability_grade="높음", reliability_score=85,
+        )
+        assert afternoon_same["skipped"] is True
+
+        # 오후에 등급이 악화된 새 wafer는 여전히 발송돼야 한다.
+        afternoon_new = dispatch.dispatch_alarm_notifications(
+            store, trigger=settings_store.TIMING_DAILY_13,
+            dataset_id="train", dataset_label="train.CSV", alarms=[_alarm(wafer="L002W02")],
+            reliability_grade="높음", reliability_score=85,
+        )
+        assert afternoon_new["skipped"] is False
+        assert afternoon_new["sent_count"] == 1
+    finally:
+        _cleanup(path)
+
+
+def test_empty_timing_selection_skips_every_trigger(monkeypatch):
+    """DF그룹: 발송 시점을 전부 해제하면 어떤 트리거로도 발송되지 않는다."""
+    store, path = _store()
+    try:
+        _connect_slack(store)
+        settings_store.save_conditions(store, grades=["심각"], timing=[])
+        called = {"sent": False}
+        monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: called.update(sent=True) or (True, None))
+
+        result = dispatch.dispatch_alarm_notifications(
+            store, trigger=settings_store.TIMING_ON_ANALYSIS,
+            dataset_id="train", dataset_label="train.CSV", alarms=[_alarm()],
+            reliability_grade="높음", reliability_score=85,
+        )
+        assert result["skipped"] is True
+        assert called["sent"] is False
     finally:
         _cleanup(path)
 

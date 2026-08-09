@@ -215,19 +215,25 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
     return result
 
 
-def run_daily_dispatch_job() -> None:
-    """APScheduler가 매일 09:00에 호출한다 (지시서 N-2: 8시 -> 9시).
-    n8n 같은 별도 서비스 없이 FastAPI 프로세스 안에서 도는 잡이다. 가장
-    최근에 저장된 알람 조회(사전 알람 로그 탭에서 마지막으로 조회한
-    train/eval 데이터셋 쌍)를 기준으로 재계산해 발송한다 -- 저장된 조회가
-    없으면(한 번도 조회한 적이 없으면) 조용히 건너뛴다.
+def _run_scheduled_dispatch_job(trigger: str, *, label: str) -> None:
+    """APScheduler가 매일 정해진 시각에 호출하는 정기 발송 잡의 공통
+    본문 -- 09:00/13:00 둘 다 이 함수를 쓴다(DF그룹). 가장 최근에 저장된
+    알람 조회(사전 알람 로그 탭에서 마지막으로 조회한 train/eval
+    데이터셋 쌍)를 기준으로 재계산해 발송한다 -- 저장된 조회가 없으면
+    (한 번도 조회한 적이 없으면) 조용히 건너뛴다.
+
+    "신규분만" 정책(DF그룹)은 여기서 별도로 구현하지 않는다 --
+    `dispatch.dispatch_alarm_notifications`가 이미 채널별 24시간 dedupe로
+    "직전 발송에서 이미 보낸(등급도 그대로인) 항목"을 걸러내므로, 전체
+    후보를 그대로 넘기기만 하면 자연히 신규분만 나간다. 09:00과 13:00이
+    4~20시간 간격이라 이 dedupe 창(24시간) 안에 항상 들어온다.
     """
     store = _store()
     try:
         latest = get_latest_state(store)
         alarms_state = latest.get("alarms")
         if not alarms_state:
-            logger.info("일일 알림 발송 스킵: 저장된 알람 조회 없음")
+            logger.info("%s 알림 발송 스킵: 저장된 알람 조회 없음", label)
             return
         train_dataset = alarms_state.get("train_dataset")
         eval_dataset = alarms_state.get("eval_dataset")
@@ -248,7 +254,7 @@ def run_daily_dispatch_job() -> None:
 
         dispatch.dispatch_alarm_notifications(
             store,
-            trigger=settings_store.TIMING_DAILY_9AM,
+            trigger=trigger,
             dataset_id=train_dataset,
             dataset_label=dataset_label,
             alarms=items,
@@ -256,7 +262,19 @@ def run_daily_dispatch_job() -> None:
             reliability_score=reliability["total_score"],
         )
     except Exception:
-        logger.exception("일일 알림 발송 잡 실행 실패")
+        logger.exception("%s 알림 발송 잡 실행 실패", label)
+
+
+def run_daily_dispatch_job() -> None:
+    """APScheduler가 매일 09:00에 호출한다 (지시서 N-2: 8시 -> 9시)."""
+    _run_scheduled_dispatch_job(settings_store.TIMING_DAILY_9AM, label="09:00")
+
+
+def run_daily_13_dispatch_job() -> None:
+    """DF그룹: APScheduler가 매일 13:00에 호출한다. 발송 조건(등급/신뢰도
+    게이트)과 신규분 판정(24시간 dedupe 재사용)은 09:00 잡과 완전히
+    같다 -- trigger만 다르다."""
+    _run_scheduled_dispatch_job(settings_store.TIMING_DAILY_13, label="13:00")
 
 
 # H-3②: notify_sent_log는 24시간 재발송 방지 조회에만 쓰이므로 그보다 훨씬

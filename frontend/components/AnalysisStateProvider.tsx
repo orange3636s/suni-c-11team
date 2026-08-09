@@ -42,7 +42,7 @@ const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
   slack: { connected: false, target: null, webhook_masked: null, verified_at: null },
   telegram: { connected: false, target: null, chat_id_masked: null, verified_at: null },
   gmail: { connected: false, pending: false, email: null, verified_at: null },
-  conditions: { grades: ["심각"], timing: "on_analysis" },
+  conditions: { grades: ["심각"], timing: ["on_analysis"] },
 };
 
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------

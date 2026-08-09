@@ -22,7 +22,12 @@ from api.routes.chat import router as chat_router
 from api.routes.datasets import get_dataset_registry, router as datasets_router
 from api.routes.favorites import router as favorites_router
 from api.routes.monitoring import router as monitoring_router
-from api.routes.notify import router as notify_router, run_daily_dispatch_job, run_notify_log_cleanup_job
+from api.routes.notify import (
+    router as notify_router,
+    run_daily_13_dispatch_job,
+    run_daily_dispatch_job,
+    run_notify_log_cleanup_job,
+)
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
 from src.automation.ingest import AUTO_INGEST_JOB_ID, DEFAULT_INGEST_MINUTES, run_auto_ingest_job
@@ -227,6 +232,17 @@ async def lifespan(app: FastAPI):
         run_daily_dispatch_job,
         CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),
         id="daily_alarm_notification",
+        misfire_grace_time=3600,
+    )
+    # DF그룹: 발송 시점 다중 선택에 "매일 오후 1시"가 추가됐다 -- 09:00 잡과
+    # 별개 id로 등록한다. 실제로 보낼지는 run_daily_13_dispatch_job ->
+    # dispatch_alarm_notifications가 저장된 conditions.timing에
+    # TIMING_DAILY_13이 포함돼 있는지로 판단하므로, 이 잡 자체는 항상
+    # 등록해 두고 조건 필터는 그쪽에 맡긴다(09:00 잡과 같은 패턴).
+    scheduler.add_job(
+        run_daily_13_dispatch_job,
+        CronTrigger(hour=13, minute=0, timezone="Asia/Seoul"),
+        id="daily_alarm_notification_13",
         misfire_grace_time=3600,
     )
     # H-3②: notify_sent_log 정리 -- 발송 잡과 겹치지 않도록 별도 id·시각으로

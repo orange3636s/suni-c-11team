@@ -60,7 +60,7 @@ def test_blocked_in_fallback_mode() -> None:
 def test_blocked_when_timing_not_on_analysis() -> None:
     store, path = _store()
     try:
-        settings_store.save_conditions(store, grades=["심각"], timing=settings_store.TIMING_DAILY_9AM)
+        settings_store.save_conditions(store, grades=["심각"], timing=[settings_store.TIMING_DAILY_9AM])
         refresh_dispatch.dispatch_new_alarms(
             store, mode="sql", train_dataset_id="train", eval_dataset_id="test",
             alarm_items=[_item("W1", "심각")], gate_passed=True, snapshot_created_at="2026-01-01T00:00:00+00:00",
