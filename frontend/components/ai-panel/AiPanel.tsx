@@ -25,31 +25,43 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   { id: WELCOME_ID, from: "suni", text: "무엇을 도와드릴까요?", status: "done" },
 ];
 
-type ChipIconKind = "bell" | "chart" | "help" | "warning";
+type ChipIconKind = "chart" | "help" | "alert" | "info";
 type ExampleChip = { icon: ChipIconKind; text: string };
 
-// Every chip here must be answerable from the context JSON alone
-// (targets[]/alarms.records/recommendations.records/config_screening/
-// limitations) -- never a question that needs physical-mechanism or
-// corrective-action knowledge the data can't provide (the system prompt
-// forbids causal/action phrasing, so a chip that invites it would just
-// produce a refusal). Row 1 asks about results (bell/chart icons), row 2
-// asks about method and limits (help/warning icons) -- kept as two
-// semantically distinct rows so their opposite scroll directions read as
-// two different kinds of question, not an arbitrary split.
+// HC그룹: 프리셋을 네 갈래(해석/기준/한계/기능)로 나눈다 -- 이전에는
+// 데이터 해석 질문만 있어서 판정 기준·한계·기능을 물어봐도 되는지
+// 사용자가 몰랐다. 카테고리마다 아이콘을 고정 배정한다(해석 chart,
+// 기준 help, 한계 alert, 기능 info) -- 두 마퀴 행에 두 카테고리씩
+// 묶어 방향(좌/우)이 서로 다른 질문 성격을 나타내게 한다. 마퀴는
+// 뷰포트 폭만큼만 동시에 보이므로(320px 패널 기준 한 행에 2~3개) 총
+// 16개를 다 넣어도 "한 번에 6~8개만 보이게" 조건을 자연히 만족한다.
+// 여기 있는 모든 문항은 SUNI 시스템 프롬프트(prompts/chat_system.md)가
+// 실제로 답할 수 있는 근거(입력 JSON 또는 GC그룹에서 추가한 배경
+// 지식/기능 안내 절)를 갖고 있다 -- 답할 수 없는 프리셋은 넣지 않는다.
 const MARQUEE_ROW_1: ExampleChip[] = [
-  { icon: "bell", text: "알람이 가장 많은 인자는?" },
-  { icon: "chart", text: "Y2에 영향이 큰 인자는?" },
-  { icon: "chart", text: "개선 여지가 가장 큰 인자는?" },
-  { icon: "bell", text: "알람 wafer의 수율은 얼마나 낮나요?" },
+  // 데이터 해석
   { icon: "chart", text: "가장 신뢰도 높은 인자는?" },
+  { icon: "chart", text: "권장 구간은 무엇인가요?" },
+  { icon: "chart", text: "Step16_R1을 어느 쪽으로 조정해야 하나요?" },
+  { icon: "chart", text: "지금 가장 위험한 wafer는?" },
+  { icon: "chart", text: "Y1~Y5 중 어디에 집중해야 하나요?" },
+  // 판정 기준
+  { icon: "help", text: "심각·위험·주의는 어떻게 나뉘나요?" },
+  { icon: "help", text: "민감도를 올리면 무엇이 달라지나요?" },
+  { icon: "help", text: "상관성 강함·보통 기준이 뭔가요?" },
+  { icon: "help", text: "미분류는 왜 생기나요?" },
 ];
 const MARQUEE_ROW_2: ExampleChip[] = [
-  { icon: "help", text: "관리한계는 어떻게 정했나요?" },
-  { icon: "help", text: "권장 구간은 무엇인가요?" },
-  { icon: "help", text: "Step16_R1을 어느 범위로 관리해야 하나요?" },
-  { icon: "warning", text: "판정불가 wafer가 왜 많나요?" },
-  { icon: "warning", text: "이 분석의 한계는?" },
+  // 한계·신뢰도
+  { icon: "alert", text: "이 분석의 한계는?" },
+  { icon: "alert", text: "예측 구간이 왜 이렇게 넓나요?" },
+  { icon: "alert", text: "계측률이 낮으면 어떤 문제가 있나요?" },
+  { icon: "alert", text: "왜 알람이 없나요?" },
+  // 기능 안내 (GC그룹에서 챗봇 프롬프트에 기능 안내 절을 추가한 뒤에만
+  // 넣는다 -- prompts/chat_system.md "## 대시보드 기능 안내" 참고)
+  { icon: "info", text: "이 화면은 무엇을 보여주나요?" },
+  { icon: "info", text: "자동 갱신은 어떻게 동작하나요?" },
+  { icon: "info", text: "알림은 언제 발송되나요?" },
 ];
 const REPORT_KEYWORD_PATTERN = /보고서|리포트|report|요약해줘|정리해줘/i;
 // Reveals streamed text one character per tick regardless of how large the
@@ -145,21 +157,34 @@ export default function AiPanel({
     messagesStateRef.current = messages;
   }, [messages]);
 
+  // HC-2: 대화가 시작되면 프리셋 영역을 접는다 -- 이미 질문한 뒤에는
+  // 그 자리를 차지할 이유가 없다. welcome 메시지 하나만 있는 상태를
+  // "아직 대화를 시작하지 않음"으로 본다.
+  const conversationStarted = messages.some((message) => message.id !== WELCOME_ID);
+
   // Measures the floating chip block's real rendered height so the message
   // list can reserve exactly that much room (spec: "하드코딩하지 마라") --
   // a fixed guess would drift the moment the block's own content wraps
   // differently (font scaling, browser zoom, translation-length changes).
+  // 대화가 시작돼 이 블록이 언마운트되면 관찰할 대상이 없다 -- 이전에
+  // 측정된 높이를 그대로 CSS 변수에 남겨두면 메시지 목록이 더 이상
+  // 존재하지 않는 프리셋 블록만큼 여백을 계속 예약해 공간을 낭비한다.
   useEffect(() => {
-    const el = chipFloatRef.current;
     const body = bodyRef.current;
-    if (!el || !body) return;
+    if (!body) return;
+    if (conversationStarted) {
+      body.style.setProperty("--chip-float-height", "0px");
+      return;
+    }
+    const el = chipFloatRef.current;
+    if (!el) return;
     const observer = new ResizeObserver((entries) => {
       const height = entries[0]?.contentRect.height;
       if (height != null) body.style.setProperty("--chip-float-height", `${height}px`);
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [conversationStarted]);
 
   useEffect(() => {
     return () => {
@@ -477,25 +502,28 @@ export default function AiPanel({
 
               {/* Floating block: marquee rows only -- "분석 보고서 생성" stays
                   attached to the welcome bubble above and scrolls with the
-                  conversation (spec A-1/A-2). Rendered unconditionally
-                  (never tied to message count or a collapse toggle) so it
-                  can never disappear as the conversation grows. */}
-              <div className="aiPanelChipFloat" ref={chipFloatRef}>
-                <MarqueeRow
-                  chips={MARQUEE_ROW_1}
-                  direction="left"
-                  disabled={streaming}
-                  reducedMotion={reducedMotion}
-                  onSend={(text) => send(text)}
-                />
-                <MarqueeRow
-                  chips={MARQUEE_ROW_2}
-                  direction="right"
-                  disabled={streaming}
-                  reducedMotion={reducedMotion}
-                  onSend={(text) => send(text)}
-                />
-              </div>
+                  conversation (spec A-1/A-2). HC-2: 대화가 시작되면(사용자가
+                  한 번이라도 메시지를 보내면) 이 블록은 더 이상 그리지
+                  않는다 -- 이미 질문한 뒤에는 프리셋이 자리를 차지할
+                  이유가 없다. */}
+              {!conversationStarted && (
+                <div className="aiPanelChipFloat" ref={chipFloatRef}>
+                  <MarqueeRow
+                    chips={MARQUEE_ROW_1}
+                    direction="left"
+                    disabled={streaming}
+                    reducedMotion={reducedMotion}
+                    onSend={(text) => send(text)}
+                  />
+                  <MarqueeRow
+                    chips={MARQUEE_ROW_2}
+                    direction="right"
+                    disabled={streaming}
+                    reducedMotion={reducedMotion}
+                    onSend={(text) => send(text)}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="aiPanelInputArea">
@@ -599,13 +627,7 @@ function MarqueeRow({
 
 function ChipIcon({ kind }: { kind: ChipIconKind }) {
   switch (kind) {
-    case "bell":
-      return (
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-        </svg>
-      );
+    // 해석
     case "chart":
       return (
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -615,6 +637,7 @@ function ChipIcon({ kind }: { kind: ChipIconKind }) {
           <path d="M8 17v-3" />
         </svg>
       );
+    // 기준
     case "help":
       return (
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -623,12 +646,22 @@ function ChipIcon({ kind }: { kind: ChipIconKind }) {
           <path d="M12 17h.01" />
         </svg>
       );
-    case "warning":
+    // 한계·신뢰도
+    case "alert":
       return (
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
+        </svg>
+      );
+    // 기능 안내
+    case "info":
+      return (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-5" />
+          <path d="M12 8h.01" />
         </svg>
       );
   }
