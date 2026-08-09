@@ -12,7 +12,7 @@ import DatasetSelector from "@/components/DatasetSelector";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
-import ParetoChart from "@/components/ParetoChart";
+import ParetoChart, { buildParetoSummaryText } from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
@@ -127,13 +127,20 @@ function classifyAnalysisFailure(error: unknown): { kind: AnalysisFailureKind; d
 
 /** `보통` 등급 인자의 설명력이 낮은 편임을 알리는 한 줄 캡션 (spec §C-4).
  * train.CSV의 Step24_R1 → Y4(ε² 0.073)가 여기 해당한다. */
+/** DE그룹: 즐겨찾기 스냅샷 저장 시 재사용하기 위해 텍스트 생성 로직을
+ * 분리했다 -- `보통` 등급이 아니면 해석 문구 자체가 없다(빈 문자열). */
+function buildModerateInterpretation(tier: ConfidenceTier, eps2: number): string {
+  if (tier !== "moderate") return "";
+  return `이 인자의 설명력은 ${(eps2 * 100).toFixed(1)}%로 낮은 편입니다. 다른 요인의 영향이 더 클 수 있습니다.`;
+}
+
 function ModerateTierCaption({ tier, eps2 }: { tier: ConfidenceTier; eps2: number }) {
-  if (tier !== "moderate") return null;
-  return (
-    <p className="moderateTierCaption">
-      이 인자의 설명력은 {(eps2 * 100).toFixed(1)}%로 낮은 편입니다. 다른 요인의 영향이 더 클 수 있습니다.
-    </p>
-  );
+  const text = buildModerateInterpretation(tier, eps2);
+  if (!text) return null;
+  // DC그룹: 해석 문구를 옅은 카드(.interpretCard)에 담는다 -- 메타 줄
+  // 바로 아래 텍스트로 붙어 겹쳐 보이던 것을 시각적으로 분리한다.
+  // Pareto·Scatter·Box 세 뷰가 전부 이 컴포넌트/클래스를 공유한다.
+  return <p className="interpretCard">{text}</p>;
 }
 
 
@@ -202,8 +209,12 @@ function RootCauseContent() {
   // GET /api/state/latest.
   const {
     analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice, alarms,
-    snapshot: automationSnapshot, refreshSnapshotNow,
+    snapshot: automationSnapshot, refreshSnapshotNow, training,
   } = useAnalysisState();
+  // DE그룹: 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언)을 함께
+  // 담는다 -- 이후 재학습/재승격으로 model_id가 바뀌면 "이전 분석 기준"
+  // 배지를 붙일 수 있다. 학습 기록이 아직 없으면 null.
+  const championVersion = training?.performance.model_id ?? null;
   // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
@@ -690,6 +701,7 @@ function RootCauseContent() {
           isFavorited={isFavorited}
           isFavoritePending={isFavoritePending}
           onToggleFavorite={toggleFavorite}
+          championVersion={championVersion}
         />
       );
     }
@@ -700,6 +712,7 @@ function RootCauseContent() {
         index={index}
         dataset={datasetId}
         activeTarget={target}
+        championVersion={championVersion}
         categoricalData={categoricalByKey[key]}
         chartHeight={chartHeight}
         isFavorited={isFavorited("box")}
@@ -993,9 +1006,11 @@ function RootCauseContent() {
                 <div className="factorChartHeaderRow meta">
                   <span className="sectionLabel">선택한 인자</span>
                   {quickLookNumeric && (
-                    <div className="factorChartMetaTwoLine">
-                      <span>n={quickLookNumeric.n.toLocaleString()} · ε²={quickLookNumeric.eps2.toFixed(3)}</span>
-                      <span>p-value {formatPValue(quickLookNumeric.p_value)} · 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}</span>
+                    <div className="factorChartMetaLine">
+                      <span className="metaItem">n={quickLookNumeric.n.toLocaleString()}</span>
+                      <span className="metaItem">ε²={quickLookNumeric.eps2.toFixed(3)}</span>
+                      <span className="metaItem">p-value {formatPValue(quickLookNumeric.p_value)}</span>
+                      <span className="metaItem">등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}</span>
                     </div>
                   )}
                 </div>
@@ -1371,6 +1386,7 @@ function NumericFactorCard({
   isFavorited,
   isFavoritePending,
   onToggleFavorite,
+  championVersion,
 }: {
   item: ParetoRankingItem;
   index: number;
@@ -1395,6 +1411,9 @@ function NumericFactorCard({
   isFavorited: (viewType: string) => boolean;
   isFavoritePending: (viewType: string) => boolean;
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
+  // DE그룹: 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언) id를 함께
+  // 담는다.
+  championVersion: string | null;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
@@ -1435,6 +1454,14 @@ function NumericFactorCard({
                   colorBy: colorMode,
                   method,
                   isConfig: false,
+                  // DE그룹: 해석 문구는 저장 시점 값을 문자열로 스냅샷한다
+                  // -- Pareto 보기는 종합 문구, Scatter/Box는 "보통" 등급
+                  // 설명력 캡션(둘 다 없으면 빈 문자열).
+                  interpretation:
+                    view === "pareto"
+                      ? buildParetoSummaryText(paretoItems, paretoN80)
+                      : buildModerateInterpretation(item.confidence_tier, item.eps2),
+                  championVersion,
                 })
               }
             />
@@ -1453,9 +1480,12 @@ function NumericFactorCard({
         <div className="factorChartHeaderRow meta">
           <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
           {numericData && (
-            <div className="factorChartMetaTwoLine">
-              <span>n={numericData.n.toLocaleString()} · 기여율 {item.contribution_pct.toFixed(1)}% · <span className="metaCumulative">누적 {item.cumulative_pct.toFixed(1)}%</span></span>
-              <span>p-value {formatPValue(item.p_value)} · 등급 {TIER_LABEL[item.confidence_tier]}</span>
+            <div className="factorChartMetaLine">
+              <span className="metaItem">n={numericData.n.toLocaleString()}</span>
+              <span className="metaItem">기여율 {item.contribution_pct.toFixed(1)}%</span>
+              <span className="metaItem metaCumulative">누적 {item.cumulative_pct.toFixed(1)}%</span>
+              <span className="metaItem">p-value {formatPValue(item.p_value)}</span>
+              <span className="metaItem">등급 {TIER_LABEL[item.confidence_tier]}</span>
             </div>
           )}
         </div>
@@ -1513,6 +1543,7 @@ function CategoricalFactorCard({
   isFavorited,
   isFavoritePending,
   onToggleFavorite,
+  championVersion,
 }: {
   item: ParetoRankingItem;
   index: number;
@@ -1523,6 +1554,7 @@ function CategoricalFactorCard({
   isFavorited: boolean;
   isFavoritePending: boolean;
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
+  championVersion: string | null;
 }) {
   return (
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
@@ -1536,7 +1568,15 @@ function CategoricalFactorCard({
               favorited={isFavorited}
               disabled={isFavoritePending}
               onClick={() =>
-                onToggleFavorite({ dataset, target: activeTarget, feature: item.feature, viewType: "box", isConfig: true })
+                onToggleFavorite({
+                  dataset,
+                  target: activeTarget,
+                  feature: item.feature,
+                  viewType: "box",
+                  isConfig: true,
+                  interpretation: buildModerateInterpretation(item.confidence_tier, item.eps2),
+                  championVersion,
+                })
               }
             />
           </div>

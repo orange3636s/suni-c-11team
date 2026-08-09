@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import ParetoChart from "@/components/ParetoChart";
@@ -24,6 +25,11 @@ function noop() {}
 
 export default function FavoritesPage() {
   const router = useRouter();
+  const { training } = useAnalysisState();
+  // DE그룹: 카드에 저장된 championVersion과 비교할 "현재" 챔피언 -- 학습
+  // 기록이 아직 없으면 null이라, 저장된 값이 있어도 비교 대상이 없으므로
+  // 배지를 붙이지 않는다(둘 다 모르는 상태와 "달라졌다"는 다르다).
+  const currentChampionVersion = training?.performance.model_id ?? null;
   const [items, setItems] = useState<FavoriteRecord[] | null>(null);
   const [error, setError] = useState("");
 
@@ -80,7 +86,13 @@ export default function FavoritesPage() {
       {items && items.length > 0 && (
         <div className="favoritesGrid">
           {items.map((item) => (
-            <FavoriteCard key={item.favorite_id} item={item} onOpen={() => openInRootCause(item)} onDelete={() => handleDelete(item.favorite_id)} />
+            <FavoriteCard
+              key={item.favorite_id}
+              item={item}
+              currentChampionVersion={currentChampionVersion}
+              onOpen={() => openInRootCause(item)}
+              onDelete={() => handleDelete(item.favorite_id)}
+            />
           ))}
         </div>
       )}
@@ -88,8 +100,24 @@ export default function FavoritesPage() {
   );
 }
 
-function FavoriteCard({ item, onOpen, onDelete }: { item: FavoriteRecord; onOpen: () => void; onDelete: () => void }) {
+function FavoriteCard({
+  item,
+  currentChampionVersion,
+  onOpen,
+  onDelete,
+}: {
+  item: FavoriteRecord;
+  currentChampionVersion: string | null;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
   const { snapshot } = item;
+  // DE그룹: 저장 시점 챔피언이 있고(즐겨찾기가 이 필드를 지원하기 전에
+  // 만들어졌으면 null), 현재 챔피언도 알고 있는데, 둘이 다르면 저장된
+  // 해석이 최신 모델과 어긋날 수 있다는 뜻이다.
+  const isStale = Boolean(
+    snapshot.championVersion && currentChampionVersion && snapshot.championVersion !== currentChampionVersion,
+  );
   // G-3: 카드 전체(썸네일+본문)를 하나의 키보드 조작 대상으로 합친다 --
   // 삭제 버튼과 형제로 두어야 하므로(버튼 중첩 불가) <button>이 아니라
   // div + role="button"을 쓴다. Enter/Space 둘 다 처리한다.
@@ -114,12 +142,13 @@ function FavoriteCard({ item, onOpen, onDelete }: { item: FavoriteRecord; onOpen
         <div className="favoriteCardThumb">
           <FavoriteThumbnail snapshot={snapshot} />
         </div>
+        {/* DE-1: 카드에 남기는 정보는 썸네일·제목·시각·해석 넷뿐이다 --
+            인자 메타(n·기여율·p-value 등)는 넣지 않는다. */}
         <div className="favoriteCardBody">
-          <h3>{snapshot.feature} vs {snapshot.target}</h3>
-          <div className="favoriteCardMeta">
-            <span className="favoriteCardBadge">{VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}</span>
-            <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
-          </div>
+          <h3>{snapshot.feature} vs {snapshot.target} · {VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}</h3>
+          <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
+          {snapshot.interpretation && <p className="favoriteCardInterpretation">{snapshot.interpretation}</p>}
+          {isStale && <span className="favoriteCardStaleBadge">이전 분석 기준</span>}
         </div>
       </div>
     </article>
@@ -166,6 +195,7 @@ function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] 
         onBarClick={noop}
         embedded
         height={THUMBNAIL_HEIGHT}
+        thumbnail
       />
     );
   }

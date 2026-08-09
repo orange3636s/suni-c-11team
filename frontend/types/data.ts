@@ -649,6 +649,14 @@ export type FavoriteSnapshot = {
   colorBy?: string;
   method?: string | null;
   isConfig: boolean;
+  // DE그룹: 해석 문구는 저장 시점 값을 문자열로 그대로 보관한다 -- 카드를
+  // 열 때마다 재계산하지 않는다(목록이 느려진다). 해당 인자가 "보통"
+  // 등급이 아니어서 해석 문구 자체가 없었으면 빈 문자열.
+  interpretation: string;
+  // 저장 시점의 활성 모델 id(챔피언) -- 이후 재학습/재승격으로 현재
+  // 챔피언과 달라지면 카드에 "이전 분석 기준" 배지를 붙인다. 학습된
+  // 모델이 아예 없던 시점에 저장됐으면 null.
+  championVersion: string | null;
 };
 
 export type FavoriteRecord = {

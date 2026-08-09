@@ -583,15 +583,15 @@ function AlertsContent() {
               <>
                 <div className="tableHideOnMobile">
                   <HScrollTableBody minWidth={760} rows={ALARM_VISIBLE_ROWS}>
-                    <table>
+                    <table className="alarmListTable">
                       <thead>
                         <tr>
                           <th className="col-wafer colNoTruncate">LOT_WF_ID</th>
-                          <th>예측 수율 구간</th>
+                          <th className="col-lot colNoTruncate">LOT</th>
+                          <th className="col-yield numCol">예측 수율 구간</th>
                           <th className="col-severity colNoTruncate">등급</th>
-                          <th>사유</th>
-                          <th>LOT</th>
-                          <th aria-label="해설" />
+                          <th className="col-reason">사유</th>
+                          <th className="col-explain" aria-label="해설" />
                         </tr>
                       </thead>
                       <tbody>
@@ -674,6 +674,15 @@ const ALARM_SORT_OPTIONS: SortOption<ClassifiedWafer>[] = [
   { value: "yield_desc", label: "예측 수율 내림차순", compare: (a, b) => b.pred_mean - a.pred_mean },
   { value: "lot_asc", label: "LOT 오름차순", compare: (a, b) => lotCompare(a.lot_id, b.lot_id) },
   { value: "lot_desc", label: "LOT 내림차순", compare: (a, b) => lotCompare(b.lot_id, a.lot_id) },
+  // DA그룹: LOT 1차 오름차순, 같은 LOT 안에서는 2차로 등급 순 -- 컬럼
+  // 순서가 LOT_WF_ID·LOT 우선으로 바뀌어도 기본 정렬은 등급 순 그대로
+  // 유지하고(위험한 wafer가 먼저 보여야 한다), 이 옵션은 LOT별로 묶어
+  // 보고 싶을 때만 선택한다.
+  {
+    value: "lot_grouped", label: "LOT별",
+    compare: (a, b) =>
+      lotCompare(a.lot_id, b.lot_id) || (GRADE_RANK[b.grade ?? ""] ?? 0) - (GRADE_RANK[a.grade ?? ""] ?? 0) || a.pred_mean - b.pred_mean,
+  },
 ];
 
 function AlarmRow({
@@ -692,7 +701,8 @@ function AlarmRow({
   return (
     <tr>
       <td className="col-wafer colNoTruncate">{item.lot_wafer_id}</td>
-      <td className="numCol">
+      <td className="col-lot colNoTruncate">{item.lot_id ?? "-"}</td>
+      <td className="col-yield numCol">
         {item.pred_lo.toFixed(1)} ~ {item.pred_hi.toFixed(1)}
         {/* 보정 §I-1: 근거 밴드 위치 2 -- 진짜 lo/hi가 있는 이 표로
             옮겼다. SUMMARY와 동일한 컴포넌트(EvidenceBand), 전 행이 같은
@@ -710,9 +720,8 @@ function AlarmRow({
         />
       </td>
       <td className="col-severity colNoTruncate">{item.grade && <GradeBadge grade={item.grade} unreasoned={!item.measured} />}</td>
-      <td className="alarmReasonCell">{reasonFor(item)}</td>
-      <td>{item.lot_id ?? "-"}</td>
-      <td><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
+      <td className="alarmReasonCell col-reason">{reasonFor(item)}</td>
+      <td className="col-explain"><ExplainButton onClick={onExplain} disabled={explainDisabled} /></td>
     </tr>
   );
 }

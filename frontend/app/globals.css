@@ -8331,12 +8331,20 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .favoriteCardThumb{ background: var(--surface-muted); padding: 6px; }
 .favoriteCardBody{ padding: 12px 14px; }
 .favoriteCardBody h3{ margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; }
-.favoriteCardMeta{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.favoriteCardBadge{
-  font-size: var(--fs-xs); font-weight: 600; padding: 2px 9px; border-radius: 999px;
-  background: var(--surface-secondary); color: var(--text-secondary);
+.favoriteCardTime{ font-size: var(--fs-xs); color: var(--text-secondary); display: block; margin-bottom: 6px; }
+/* DE-1: 해석 문구는 2줄로 말줄임한다 -- 문구 길이가 들쭉날쭉해도 카드
+   높이가 흔들리지 않는다. */
+.favoriteCardInterpretation{
+  margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.favoriteCardTime{ font-size: var(--fs-xs); color: var(--text-secondary); }
+/* DE-1: 저장된 해석이 저장 시점 모델 기준이고, 이후 재학습/재승격으로
+   현재 챔피언과 달라졌다는 신호 -- 등폭 9px, 눈에 띄되 카드를 어지럽히지
+   않는 옅은 색. */
+.favoriteCardStaleBadge{
+  display: inline-block; margin-top: 6px; font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px; color: var(--text-muted);
+}
 .favoriteCardDelete{
   position: absolute; top: 8px; right: 8px; z-index: 2;
   width: 24px; height: 24px; border-radius: 50%; border: none;
@@ -8372,22 +8380,30 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .factorChartHeader{ display: flex; flex-direction: column; gap: 4px; }
 .factorChartHeaderRow{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .factorChartHeaderRow.meta{ align-items: flex-start; }
-.factorChartMetaTwoLine{
-  display: flex; flex-direction: column; gap: 0; line-height: 1.3; text-align: right;
+/* DB그룹: 예전에는 이 블록이 2줄(<span> 두 개, flex-direction:column)로
+   렌더됐다 -- 한 줄로 합치고, 좁은 화면에서만 자연스럽게 줄바꿈되도록
+   flex-wrap을 쓴다. 항목 하나(예: "p-value 0.0145")는 각자
+   white-space:nowrap이라 항목 중간이 끊기지 않고, 줄바꿈은 항목과 항목
+   사이에서만 일어난다. */
+.factorChartMetaLine{
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end;
+  row-gap: 2px; line-height: 1.3; text-align: right;
   font-size: var(--fs-micro); color: var(--text-secondary); flex: 0 0 auto; min-width: 0; max-width: 100%;
 }
-.factorChartMetaTwoLine span{ white-space: nowrap; }
+.factorChartMetaLine .metaItem{ white-space: nowrap; }
+/* DD-2: 구분자 좌우 여백 -- 항목이 붙어 보이지 않게 0.4em씩 확보한다. */
+.factorChartMetaLine .metaItem:not(:first-child)::before{ content: "·"; margin: 0 0.4em; opacity: .6; }
 /* Never overflow the card (spec §1-5): shrink first, then let the
    least-critical figure (누적) wrap rather than push the card wider. */
 @container factorCard (max-width: 640px){
-  .factorChartMetaTwoLine{ font-size: var(--fs-nano); }
+  .factorChartMetaLine{ font-size: var(--fs-nano); }
 }
 @container factorCard (max-width: 480px){
-  .factorChartMetaTwoLine .metaCumulative{ display: none; }
+  .factorChartMetaLine .metaCumulative{ display: none; }
 }
 @container factorCard (max-width: 380px){
   .factorChartHeaderRow.meta{ flex-direction: column; align-items: flex-start; gap: 2px; }
-  .factorChartMetaTwoLine{ text-align: left; }
+  .factorChartMetaLine{ text-align: left; justify-content: flex-start; }
 }
 
 .waferDetailPopover{
@@ -8602,7 +8618,6 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    flat-label case's actual text height, so this margin is the whole gap
    -- not fighting a tall fixed box sized for the rotated case. */
 .paretoAxisTitle{ margin: 12px 0 0; text-align: center; font-size: var(--fs-xs); color: var(--text-secondary); }
-.paretoCaption{ margin: 16px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); text-align: center; }
 .paretoLegend{ display: flex; gap: 16px; font-size: var(--fs-xs); color: var(--text-secondary); flex-wrap: wrap; }
 .paretoLegend span{ display: inline-flex; align-items: center; gap: 6px; }
 .paretoLegendInline{ margin-top: 2px; }
@@ -9417,6 +9432,18 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
    키워 다음 칸과 거리를 둔다. */
 .col-severity{ width: 1%; min-width: 76px; white-space: nowrap; padding-right: 22px; }
 
+/* DA그룹: 알림 기록 표 -- LOT_WF_ID·LOT이 식별자끼리 붙어 스캔되도록
+   앞쪽에 두고, 나머지 칸은 내용에 맞춘 고정 폭, "사유"만 가변으로 남는
+   공간을 전부 흡수한다(그래야 빈 여백이 사유란으로 몰린다). */
+.alarmListTable th,
+.alarmListTable td{ padding: 8px 9px; }
+.alarmListTable .col-wafer{ min-width: 96px; }
+.alarmListTable .col-lot{ min-width: 64px; }
+.alarmListTable .col-yield{ min-width: 150px; }
+.alarmListTable .col-severity{ min-width: 78px; }
+.alarmListTable .col-reason{ width: 100%; }
+.alarmListTable .col-explain{ min-width: 56px; }
+
 /* 지시서 H-3: 판정 원리·인자별 불량률 카드를 없애면서 이 구간 색상
    변수/트랙/스탯 CSS 전체를 삭제했다 (사용처가 그 두 카드뿐이었음).
    .yieldBandCardTitle만 판정 결과 카드 헤더가 계속 쓴다. */
@@ -9492,30 +9519,21 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
   display: flex; justify-content: space-between;
   font-size: var(--fs-micro); color: var(--text-secondary); margin-bottom: 1px;
 }
+/* DA-3 버그 수정: 이 규칙이 예전에는 accent-color(브라우저 네이티브
+   채움·썸 렌더링)와 ::-webkit-slider-runnable-track/-moz-range-track의
+   커스텀 background를 동시에 걸고 있었다 -- 트랙 pseudo-element가 전체
+   트랙을 단색(var(--line))으로 덮어써 accent-color의 채움 표시가
+   지워지고, 채워진 부분과 미채움 부분 사이가 회색으로 끊겨 보이는
+   원인이었다. accent-color 하나만 쓰고 커스텀 트랙/썸은 전부 제거한다
+   -- 두 방식을 섞지 않는다(지시서: "섞으면 지금 증상이 그것이다").
+   .scatterScrubSlider(그룹 스크럽 슬라이더)도 이 클래스를 공유하므로
+   여기 한 곳만 고치면 두 슬라이더 모두 통일된다. */
 .alertsGaugeSlider{
-  width: 100%; margin: 0; accent-color: var(--accent);
+  width: 100%; margin: 0; height: 18px;
+  accent-color: var(--accent);
+  background: transparent;
 }
-/* Y-4: 민감도 슬라이더와 그룹 강조 슬라이더(scatterScrubSlider)가 이
-   클래스를 공유한다 -- 이미 같은 스타일이므로 여기 한 곳만 고치면 둘 다
-   해결된다. --accent는 다크에서도 남색(#0e306d) 그대로라 어두운 트랙
-   위에서 채움이 거의 안 보였다 -- 다크 토큰과 같은 계열인 밝은 파랑으로
-   오버라이드한다. 트랙 배경도 명시하고(브라우저 기본 트랙은 다크에서
-   잘 안 보인다), 썸에 테두리를 줘 트랙에서 분리되어 보이게 한다. */
 html[data-theme="dark"] .alertsGaugeSlider{ accent-color: #7ba3e8; }
-.alertsGaugeSlider::-webkit-slider-runnable-track{
-  height: 4px; border-radius: 999px; background: var(--line);
-}
-.alertsGaugeSlider::-moz-range-track{
-  height: 4px; border-radius: 999px; background: var(--line);
-}
-.alertsGaugeSlider::-webkit-slider-thumb{
-  margin-top: -6px; width: 16px; height: 16px; border-radius: 50%;
-  border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line);
-}
-.alertsGaugeSlider::-moz-range-thumb{
-  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--surface);
-  box-shadow: 0 0 0 1px var(--line);
-}
 .alertsGaugeSlider:focus-visible{
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
@@ -10206,8 +10224,19 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .noChartMessage h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
 .noChartStats{ margin: 0; font-size: var(--fs-body); line-height: 1.6; color: var(--text-secondary); }
 
-/* `보통` 등급 인자의 설명력 캡션 (spec §C-4). */
-.moderateTierCaption{ margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); }
+/* DC그룹: 해석 문구 카드 -- `보통` 등급 인자의 설명력 캡션(구
+   .moderateTierCaption)과 Pareto 종합 문구가 함께 쓰는 옅은 정보 카드.
+   신호색(위험/경고 등급 색)은 쓰지 않는다 -- 판정이 아니라 정보다.
+   Pareto·Scatter·Box 세 뷰가 전부 이 클래스 하나만 쓴다. */
+.interpretCard{
+  background: var(--accent-soft);
+  border-radius: var(--radius-control);
+  padding: 9px 13px;
+  margin: 12px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--measured);
+  line-height: 1.65;
+}
 
 /* -- 알람 판정 GBDT 전환 -------------------------------------------------- */
 
@@ -10230,7 +10259,10 @@ html[data-theme="dark"] .severityBadge-grade-caution{ color: #FACC15; }
    배지 안의 "*" 접미사와 함께 쓴다. */
 .severityBadge-unreasoned{ border: 1px dashed currentColor; opacity: .82; }
 
-.alarmReasonCell{ color: var(--text-secondary); font-size: var(--fs-sm); max-width: 360px; }
+/* DA-2: max-width가 사유 칸을 360px로 눌러 표 안에 빈 여백이 남던
+   원인이었다 -- .col-reason(width:100%)와 함께 남는 공간을 전부
+   흡수하도록 auto로 바꾼다. */
+.alarmReasonCell{ color: var(--text-secondary); font-size: var(--fs-sm); width: auto; }
 .alarmShareWarning{
   margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
   background: var(--warning-soft); color: var(--warning);

@@ -22,6 +22,10 @@ const LABEL_MIN_GAP = 4; // px of breathing room required between adjacent horiz
 // axis columns always take up and that computeBarLayout must not offer to
 // the plot, or the plot claims width the flex row can't actually give it.
 const AXIS_RESERVED_WIDTH = 44 * 2 + 6 * 2;
+// DE-2: Pareto 썸네일은 막대가 위에서 시작하고 하단 x축 라벨이 생략돼,
+// 본 차트와 같은 여백 비율을 쓰면 상단이 붙어 보인다. 썸네일 전용
+// 상수로 상단에 여유를 확보한다(본 차트와 공유하지 않는다).
+const THUMBNAIL_TOP_PADDING_RATIO = 0.12;
 const LEFT_TICKS = [0, 25, 50, 75, 100];
 const RIGHT_TICKS = [0, 20, 40, 60, 80, 100];
 const LABEL_FONT = "10px var(--font-ui, system-ui, sans-serif)";
@@ -30,6 +34,24 @@ type TooltipState = { x: number; y: number; index: number } | null;
 
 function shortenFeatureName(feature: string, maxLength = 11): string {
   return feature.length > maxLength ? `${feature.slice(0, maxLength - 1)}…` : feature;
+}
+
+/** DC-3/DE그룹: Pareto 종합 문구의 순수 텍스트 버전 -- 차트 본문
+ * (summaryCaption)과 즐겨찾기 스냅샷 저장(root-cause/page.tsx)이 같은
+ * 문구를 쓴다. 로직이 두 곳에 따로 있으면 나중에 서로 어긋난다. */
+export function buildParetoSummaryText(items: ParetoRankingItem[], n80: number | null): string {
+  const n = items.length;
+  if (n === 0) return "";
+  const lastPct = items[n - 1].cumulative_pct;
+  const reached80 = lastPct >= 80;
+  if (n === 1) {
+    return reached80
+      ? `1개 인자가 전체 기여도의 ${lastPct.toFixed(1)}%`
+      : `1개 인자가 전체 기여도의 ${lastPct.toFixed(1)}% — 80% 도달에 ${n80 ?? "?"}개 필요`;
+  }
+  return reached80
+    ? `상위 ${n}개 인자가 전체 기여도의 ${lastPct.toFixed(1)}%`
+    : `상위 ${n}개 인자가 전체 기여도의 ${lastPct.toFixed(1)}% — 80%에 도달하지 못했습니다`;
 }
 
 let measureCanvas: HTMLCanvasElement | null = null;
@@ -80,6 +102,7 @@ export default function ParetoChart({
   activeFeature,
   embedded = false,
   height,
+  thumbnail = false,
 }: {
   target: string;
   items: ParetoRankingItem[];
@@ -94,16 +117,20 @@ export default function ParetoChart({
   // embedded일 때만 사용 -- 카드의 chartHeight(데스크톱/모바일)에 맞춘다.
   // 생략 시 기존 PLOT_HEIGHT 상수로 대체한다.
   height?: number;
+  // DE그룹: 즐겨찾기 카드의 미리보기 -- 해석 문구(종합 캡션)를 그리지
+  // 않고(그 문구는 카드 본문이 저장 시점 스냅샷으로 따로 보여준다),
+  // 상단에 여유 패딩을 둬 Scatter/Box 썸네일과 같은 높이로 보이게 한다.
+  thumbnail?: boolean;
 }) {
   const theme = useResolvedTheme();
   const [containerRef, containerWidth] = useContainerWidth();
   const [tooltip, setTooltip] = useState<TooltipState>(null);
   const plotRef = useRef<HTMLDivElement>(null);
-  const plotHeight = embedded && height ? height : PLOT_HEIGHT;
+  const baseHeight = embedded && height ? height : PLOT_HEIGHT;
+  const topPadding = thumbnail ? baseHeight * THUMBNAIL_TOP_PADDING_RATIO : 0;
+  const plotHeight = baseHeight - topPadding;
 
   const n = items.length;
-  const reached80 = items.length > 0 && items[items.length - 1].cumulative_pct >= 80;
-  const lastPct = items.length > 0 ? items[items.length - 1].cumulative_pct : 0;
 
   const plotAvailableWidth = Math.max(containerWidth - AXIS_RESERVED_WIDTH, MIN_BAR);
   const layout = useMemo(() => computeBarLayout(Math.max(n, 1), plotAvailableWidth), [n, plotAvailableWidth]);
@@ -142,12 +169,19 @@ export default function ParetoChart({
 
   const tooltipItem = tooltip ? items[tooltip.index] : null;
 
+  // DC-3: Pareto의 종합 문구(해석 카드) -- 예전에는 차트 하단에 있었다.
+  // 메타 줄 바로 아래·차트 위로 옮기고, DC-1과 같은 .interpretCard
+  // 스타일을 쓴다. 썸네일(즐겨찾기 카드 미리보기)에서는 그리지 않는다 --
+  // 그 문구는 저장 시점 스냅샷으로 카드 본문이 따로 보여준다(DE-1).
+  const summaryCaption = <p className="interpretCard">{buildParetoSummaryText(items, n80)}</p>;
+
   // Chart body -- shared as-is between the standalone card (non-embedded)
   // and the embedded-in-a-factor-card mode; only the wrapper around it
   // (resultCard section + title/legend header) differs (see `embedded`
   // below).
   const body = (
     <>
+      {!thumbnail && summaryCaption}
       <div className="paretoChartBody" ref={containerRef}>
         <div className="paretoAxisCol paretoAxisCol-left" style={{ height: plotHeight }}>
           <span className="paretoAxisLabel"><span className="paretoAxisLabelText">기여율 (%)</span></span>
@@ -276,22 +310,6 @@ export default function ParetoChart({
         </div>
       </div>
 
-      {n === 1 ? (
-        reached80 ? (
-          <p className="paretoCaption">1개 인자가 전체 기여도의 {lastPct.toFixed(1)}%</p>
-        ) : (
-          <p className="paretoCaption">
-            1개 인자가 전체 기여도의 {lastPct.toFixed(1)}% — 80% 도달에 {n80 ?? "?"}개 필요
-          </p>
-        )
-      ) : reached80 ? (
-        <p className="paretoCaption">상위 {n}개 인자가 전체 기여도의 {lastPct.toFixed(1)}%</p>
-      ) : (
-        <p className="paretoCaption">
-          상위 {n}개 인자가 전체 기여도의 {lastPct.toFixed(1)}% — 80%에 도달하지 못했습니다
-        </p>
-      )}
-
       {tooltipItem && tooltip && (
         <div className="heatmapTooltip" style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
           <strong>{tooltipItem.feature}</strong>
@@ -308,7 +326,12 @@ export default function ParetoChart({
     </>
   );
 
-  if (embedded) return body;
+  if (embedded) {
+    // DE-2: 썸네일 컨테이너에 상단 여유 패딩을 줘 Scatter/Box 썸네일과
+    // 나란히 놓아도 위쪽이 붙어 보이지 않게 한다.
+    if (thumbnail) return <div style={{ paddingTop: topPadding }}>{body}</div>;
+    return body;
+  }
 
   return (
     <section className="resultCard paretoChartCard">
