@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 // HP-HMI 디자인의 시그니처 컴포넌트 -- 모델이 낸 모든 수치 아래에 같은
 // 형태의 구간 트랙을 깔아 "점이 아니라 범위"임을 화면 문법으로 반복한다
 // (지시서 §E, 보정 지시서 §I-1). 원래 모니터링 SUMMARY 전용
@@ -14,6 +16,16 @@
 // "90.791.0"처럼 붙어 보인다 -- 실측(스크린샷)한 겹침 사례가 2%p
 // 간격이었으므로, 4~5자 라벨 폭을 감안해 여유 있게 잡는다.
 const TICK_OVERLAP_THRESHOLD_PCT = 7;
+// HE-2: GA그룹 이후 집계 구간(SUMMARY)은 폭이 밴드 전체의 몇 % 수준으로
+// 좁아질 수 있다 -- 이 미만이면 양끝 숫자를 따로 찍는 게 의미가 없다
+// (거의 같은 자리에 찍혀 겹친다). "88.9 – 89.3" 대신 "88.9~89.3" 하나로
+// 합친다.
+const MERGE_INTERVAL_THRESHOLD_PCT = 2;
+// 등폭(--font-data) 9px(--fs-nano) 기준 대략적인 문자 폭 근사치(px) --
+// 실측(getBoundingClientRect)은 렌더 이후에나 가능해 최초 레이아웃
+// 판단에는 쓸 수 없으므로 문자 수 × 이 값으로 근사한다.
+const CHAR_WIDTH_PX = 5.5;
+const LABEL_PADDING_PX = 6; // 라벨 사이 최소 여백
 
 export type EvidenceBandProps = {
   /** 구간 하한/상한 (모델 추정치 -- 스케일과 같은 단위). */
@@ -38,10 +50,88 @@ export type EvidenceBandProps = {
   judgmentLabel?: string;
 };
 
+// HE-1: 라벨 우선순위 -- 겹치면 이 순서대로 지킨다(숫자가 클수록 우선).
+// 목표선은 항상 보여야 하는 고정 기준, 판정선은 사용자가 방금 조절한
+// 값이라 그다음, 구간 양끝은 실측/추정값, 축 눈금(스케일 경계)이 가장
+// 덜 중요하다(스케일 자체는 화면에 고정 표기돼 있어 다른 곳에서도 읽힌다).
+const PRIORITY = { target: 4, judgment: 3, interval: 2, axis: 1 } as const;
+
+type BelowTrackLabel = {
+  key: string;
+  text: string;
+  pct: number;
+  priority: number;
+  outOfRange: "low" | "high" | null;
+  variant: "judgment" | "tick";
+};
+
+type PlacedLabel = BelowTrackLabel & { row: 0 | 1 };
+
+function useTrackWidth() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setWidth(w);
+    });
+    observer.observe(el);
+    setWidth(el.getBoundingClientRect().width);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
+
+function labelWidthPx(text: string): number {
+  return text.length * CHAR_WIDTH_PX;
+}
+
+/** HE-1: 트랙 아래쪽에 놓이는 모든 라벨(판정선 + 눈금)을 한 좌표계에서
+ * 함께 배치한다 -- 이전에는 판정선(절대 위치 span)과 눈금(별도 겹침
+ * 회피 로직)이 서로의 존재를 모른 채 따로 그려져 "판정선89.2"처럼
+ * 붙어 보였다. 우선순위가 낮은 라벨부터 접어 처리한다: ① 2단 배치로
+ * 분리 시도 → ② 그래도 겹치면 우선순위 낮은 쪽을 생략(제목 속성으로
+ * 값은 유지). */
+function layoutBelowTrackLabels(labels: BelowTrackLabel[], trackWidthPx: number): { placed: PlacedLabel[]; dropped: BelowTrackLabel[] } {
+  if (trackWidthPx <= 0) return { placed: labels.map((l) => ({ ...l, row: 0 })), dropped: [] };
+  // 우선순위 높은 라벨부터 자리를 먼저 잡는다 -- 낮은 우선순위가 밀려나야
+  // 하므로.
+  const ordered = [...labels].sort((a, b) => b.priority - a.priority || a.pct - b.pct);
+  const rows: PlacedLabel[][] = [[], []];
+  const dropped: BelowTrackLabel[] = [];
+
+  function fitsRow(row: PlacedLabel[], candidate: BelowTrackLabel): boolean {
+    const candidateLeftPx = (candidate.pct / 100) * trackWidthPx - labelWidthPx(candidate.text) / 2;
+    const candidateRightPx = (candidate.pct / 100) * trackWidthPx + labelWidthPx(candidate.text) / 2;
+    return row.every((placed) => {
+      const placedLeftPx = (placed.pct / 100) * trackWidthPx - labelWidthPx(placed.text) / 2;
+      const placedRightPx = (placed.pct / 100) * trackWidthPx + labelWidthPx(placed.text) / 2;
+      return candidateLeftPx >= placedRightPx + LABEL_PADDING_PX || candidateRightPx <= placedLeftPx - LABEL_PADDING_PX;
+    });
+  }
+
+  for (const label of ordered) {
+    if (fitsRow(rows[0], label)) {
+      rows[0].push({ ...label, row: 0 });
+    } else if (fitsRow(rows[1], label)) {
+      rows[1].push({ ...label, row: 1 });
+    } else {
+      // HE-1 3순위: 두 줄로도 못 넣으면 우선순위가 낮은 라벨을 생략한다
+      // (추측이 아니라 실제로 자리가 없을 때만 -- title 속성으로 값은
+      // 그대로 남긴다, 호버로 확인 가능).
+      dropped.push(label);
+    }
+  }
+  return { placed: [...rows[0], ...rows[1]], dropped };
+}
+
 export default function EvidenceBand({
   lo, hi, target = null, judgmentLine = null, scaleMin, scaleMax, mini = false,
   targetLabel = "목표", judgmentLabel = "판정선",
 }: EvidenceBandProps) {
+  const [trackRef, trackWidthPx] = useTrackWidth();
   const span = scaleMax - scaleMin;
   // 범위 밖 값은 경계에 클램프하되, 라벨에 화살표(←/→)를 붙여 "표시
   // 위치 ≠ 실제 값"임을 알린다 (mini에는 라벨이 없어 해당 없음).
@@ -66,54 +156,119 @@ export default function EvidenceBand({
     );
   }
 
-  const rawValues = [scaleMin, lo, hi, scaleMax];
-  if (target != null) rawValues.push(target);
-  const rawTicks = Array.from(new Set(rawValues.map((v) => Math.round(v * 10) / 10))).sort((a, b) => a - b);
+  // HE-2: 구간이 스케일 전체 폭의 MERGE_INTERVAL_THRESHOLD_PCT% 미만이면
+  // 양끝을 "lo~hi" 하나로 합친다 -- 따로 찍어도 거의 같은 자리라 못 읽는다.
+  const intervalWidthPct = bandHiPct - bandLoPct;
+  const mergeInterval = intervalWidthPct < MERGE_INTERVAL_THRESHOLD_PCT && Math.min(lo, hi) !== Math.max(lo, hi);
 
-  // 인접한 라벨이 임계 미만으로 가까우면 두 줄로 번갈아 배치한다(생략하지
-  // 않는다 -- 전부 실제 값이라 하나를 지우면 정보 손실이다).
-  const lastRowPct: [number, number] = [-Infinity, -Infinity];
-  const ticks = rawTicks.map((value) => {
-    const pct = pctOf(value);
-    const row = pct - lastRowPct[0] >= TICK_OVERLAP_THRESHOLD_PCT ? 0 : pct - lastRowPct[1] >= TICK_OVERLAP_THRESHOLD_PCT ? 1 : 0;
-    lastRowPct[row] = pct;
-    const outOfRange = value < scaleMin ? "low" : value > scaleMax ? "high" : null;
-    return { value, pct, row, outOfRange };
-  });
+  const belowTrackLabels: BelowTrackLabel[] = [];
+  if (mergeInterval) {
+    const loVal = Math.round(Math.min(lo, hi) * 10) / 10;
+    const hiVal = Math.round(Math.max(lo, hi) * 10) / 10;
+    belowTrackLabels.push({
+      key: "interval-merged",
+      text: `${loVal.toFixed(1)}~${hiVal.toFixed(1)}`,
+      pct: (bandLoPct + bandHiPct) / 2,
+      priority: PRIORITY.interval,
+      outOfRange: null,
+      variant: "tick",
+    });
+  } else {
+    for (const raw of [Math.min(lo, hi), Math.max(lo, hi)]) {
+      const value = Math.round(raw * 10) / 10;
+      belowTrackLabels.push({
+        key: `interval-${value}`,
+        text: value.toFixed(1),
+        pct: pctOf(value),
+        priority: PRIORITY.interval,
+        outOfRange: value < scaleMin ? "low" : value > scaleMax ? "high" : null,
+        variant: "tick",
+      });
+    }
+  }
+  for (const raw of [scaleMin, scaleMax]) {
+    const value = Math.round(raw * 10) / 10;
+    belowTrackLabels.push({
+      key: `axis-${value}`,
+      text: value.toFixed(1),
+      pct: pctOf(value),
+      priority: PRIORITY.axis,
+      outOfRange: null,
+      variant: "tick",
+    });
+  }
+  if (target != null) {
+    const value = Math.round(target * 10) / 10;
+    belowTrackLabels.push({
+      key: `target-tick-${value}`,
+      text: value.toFixed(1),
+      pct: pctOf(value),
+      priority: PRIORITY.target,
+      outOfRange: value < scaleMin ? "low" : value > scaleMax ? "high" : null,
+      variant: "tick",
+    });
+  }
+  if (judgmentPct != null && judgmentLine != null) {
+    // HE-3: "판정선"만 있으면 근처 눈금 숫자와 붙었을 때 "판정선89.2"로
+    // 읽힌다 -- 값을 라벨 자체에 함께 적어 하나의 완결된 문자열로 만든다.
+    belowTrackLabels.push({
+      key: "judgment",
+      text: `${judgmentLabel} ${judgmentLine.toFixed(1)}`,
+      pct: judgmentPct,
+      priority: PRIORITY.judgment,
+      outOfRange: null,
+      variant: "judgment",
+    });
+  }
+  // 중복 좌표(예: 목표와 구간 상한이 같은 값)는 하나만 남긴다.
+  const dedupedLabels = Array.from(new Map(belowTrackLabels.map((l) => [`${l.pct.toFixed(2)}|${l.variant}`, l])).values());
+  const { placed, dropped } = layoutBelowTrackLabels(dedupedLabels, trackWidthPx);
 
   return (
     <div className="evidenceBand">
-      <div className="evidenceBandTrack">
+      <div className="evidenceBandTrack" ref={trackRef}>
         <div
           className="evidenceBandFill"
           style={{ left: `${bandLoPct}%`, width: `${Math.max(bandHiPct - bandLoPct, 0.6)}%` }}
         />
         <div className="evidenceBandBoundary" style={{ left: `${bandLoPct}%` }} />
         <div className="evidenceBandBoundary" style={{ left: `${bandHiPct}%` }} />
-        {judgmentPct != null && (
-          <>
-            <div className="evidenceBandJudgmentTick" style={{ left: `${judgmentPct}%` }} />
-            <span className="evidenceBandJudgmentLabel" style={{ left: `${judgmentPct}%` }}>{judgmentLabel}</span>
-          </>
-        )}
-        {targetPct != null && (
+        {judgmentPct != null && <div className="evidenceBandJudgmentTick" style={{ left: `${judgmentPct}%` }} />}
+        {targetPct != null && target != null && (
           <>
             <div className="evidenceBandTargetTick" style={{ left: `${targetPct}%` }} />
-            <span className="evidenceBandTargetLabel" style={{ left: `${targetPct}%` }}>{targetLabel}</span>
+            {/* HE-3: 목표선도 값을 함께 적는다("목표 91.0") -- 판정선과
+                같은 원칙, 트랙 위쪽에 있어 아래쪽 라벨 그룹과는 애초에
+                겹치지 않는다(디자인상 의도적 분리, 위 CSS 주석 참고). */}
+            <span className="evidenceBandTargetLabel" style={{ left: `${targetPct}%` }}>{targetLabel} {target.toFixed(1)}</span>
           </>
         )}
       </div>
       <div className="evidenceBandTicks">
-        {ticks.map((tick) => (
+        {placed.map((label) => (
           <span
-            key={tick.value}
-            className={tick.row === 1 ? "evidenceBandTick evidenceBandTickRow2" : "evidenceBandTick"}
-            style={{ left: `${tick.pct}%` }}
+            key={label.key}
+            className={[
+              label.variant === "judgment" ? "evidenceBandJudgmentLabel" : "evidenceBandTick",
+              label.row === 1 ? "evidenceBandTickRow2" : "",
+            ].filter(Boolean).join(" ")}
+            style={{ left: `${label.pct}%` }}
           >
-            {tick.outOfRange === "low" && "← "}
-            {tick.value.toFixed(1)}
-            {tick.outOfRange === "high" && " →"}
+            {label.outOfRange === "low" && "← "}
+            {label.text}
+            {label.outOfRange === "high" && " →"}
           </span>
+        ))}
+        {/* HE-1 3순위: 자리가 없어 생략된 라벨 -- 위치는 점으로 남기고
+            값은 title(네이티브 툴팁)로만 제공한다. */}
+        {dropped.map((label) => (
+          <span
+            key={`dropped-${label.key}`}
+            className="evidenceBandTickDropped"
+            style={{ left: `${label.pct}%` }}
+            title={label.text}
+            aria-label={label.text}
+          />
         ))}
       </div>
     </div>

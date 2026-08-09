@@ -339,7 +339,17 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
           <h2>공정 현황 요약</h2>
         </div>
       </div>
-      <DatasetMismatchWarning mismatch={datasetMismatch} />
+      <DatasetMismatchWarning
+        mismatch={datasetMismatch}
+        datasets={{
+          left: { label: "원인 분석", value: snapshot.dataset ?? "-" },
+          right: { label: "알람 판정", value: snapshot.alarmsRecord?.eval_dataset ?? "-" },
+        }}
+        actions={[
+          { label: "원인 분석 다시 실행", href: "/root-cause" },
+          { label: "알림 기록에서 변경", href: "/alerts" },
+        ]}
+      />
 
       {!queue.yieldSummary || targetYield == null ? (
         <p className="sectionCaption">예측 없음 — 알림 기록 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>

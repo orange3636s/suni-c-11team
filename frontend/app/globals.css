@@ -8244,6 +8244,13 @@ html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
   border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-card, rgba(0,0,0,.1)));
   background: var(--warning-soft); color: var(--warning);
 }
+/* HF그룹: 모니터링 SUMMARY처럼 두 데이터셋 이름과 이동 액션까지 보여주는
+   확장판 -- 배경·테두리는 기존 .datasetMismatchWarning을 그대로 물려받고
+   (위 규칙), 내부 레이아웃만 세로로 쌓는다. */
+.datasetMismatchWarningRich{ display: flex; flex-direction: column; gap: 6px; }
+.datasetMismatchWarningRich strong{ font-weight: 600; }
+.datasetMismatchWarningDetail{ margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.datasetMismatchWarningActions{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
 /* J-6: 폴백(SQL 미연결) 표기 -- 중립색이다(경고색 아님, 오류가 아니라
    상태다). 옵션으로 끄지 못한다(지시서). */
 .fallbackModeBadge{
@@ -10770,16 +10777,20 @@ html[data-theme="dark"] .evidenceBandBoundary{ border-left-color: var(--text-pri
   font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 500; color: var(--text-muted); white-space: nowrap;
 }
 /* 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-2) -- 판정선(현재
-   민감도의 "주의" 컷). 목표선(--sig-amber, 실선, 라벨 위쪽)과 시각적으로
-   구분되도록 강조색 점선 + 라벨을 트랙 아래쪽에 둔다 -- 둘이 가까운
-   위치에 와도 라벨이 겹치지 않는다. */
+   민감도의 "주의" 컷). 목표선(--sig-amber, 실선, 라벨 트랙 위쪽)과
+   시각적으로 구분되도록 강조색 점선을 트랙에 긋는다. HE그룹: 라벨
+   자체는 더 이상 트랙 바로 아래 독립 위치가 아니라, 눈금 라벨과 같은
+   충돌 회피 대열(.evidenceBandTicks, EvidenceBand.tsx의
+   layoutBelowTrackLabels)에 참여한다 -- 그래야 구간 폭이 좁아져
+   눈금과 가까워져도(GA그룹 이후 SUMMARY처럼) "판정선89.2"로 붙지
+   않는다. */
 .evidenceBandJudgmentTick{
   position: absolute; top: -3px; bottom: -3px; width: 0;
   border-left: 1px dashed var(--accent);
 }
 html[data-theme="dark"] .evidenceBandJudgmentTick{ border-left-color: #7ba3e8; }
 .evidenceBandJudgmentLabel{
-  position: absolute; top: 6px; transform: translateX(-50%);
+  position: absolute; top: 0; transform: translateX(-50%);
   font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 500; color: var(--accent); white-space: nowrap;
 }
 html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
@@ -10788,9 +10799,18 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
   position: absolute; top: 0; transform: translateX(-50%);
   font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-/* F-2: 인접 라벨이 겹칠 만큼 가까우면 둘째 줄로 내려 겹침("90.791.0")을
-   피한다 -- 전부 실제 값이므로 생략 대신 두 줄로 나눈다. */
+/* F-2/HE-1: 인접 라벨이 겹칠 만큼 가까우면 둘째 줄로 내려 겹침
+   ("90.791.0")을 피한다 -- 전부 실제 값이므로 생략보다 두 줄 분리를
+   우선한다. 판정선 라벨도 같은 규칙을 공유한다(위 클래스 병기). */
 .evidenceBandTickRow2{ top: 14px; }
+/* HE-1 3순위: 2단 배치로도 자리가 안 나면(극단적으로 좁은 구간) 라벨
+   텍스트 대신 작은 점만 남기고 값은 title 툴팁으로만 제공한다 -- 완전히
+   숨기지 않고(추측하지 않는다는 원칙과 같은 이유로 "존재"는 표시) 위치는
+   보존한다. */
+.evidenceBandTickDropped{
+  position: absolute; top: 4px; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--text-muted); transform: translateX(-50%); cursor: help;
+}
 /* 보정 §I-1: 알람 목록 행에 미니 근거 밴드가 붙으며 행 높이가 늘었다 --
    고정 --scroll-row-h(기본 42px)를 이 표에서만 늘려 ALARM_VISIBLE_ROWS(7)가
    여전히 잘리지 않고 보이게 한다. .tableHideOnMobile은 이 페이지의 알람
