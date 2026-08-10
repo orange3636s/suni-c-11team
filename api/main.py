@@ -152,10 +152,11 @@ async def _run_bootstrap(store: RuntimeStore) -> None:
         # 데이터 해시 비교(조건부 재학습)와 같은 원칙이다.
         if store.active_model() is None:
             store.set_bootstrap_status("running", "학습 중")
-            await asyncio.to_thread(run_refresh_pipeline)
+            # WK-5: 콜드 스타트 결과로는 알림을 보내지 않는다.
+            await asyncio.to_thread(run_refresh_pipeline, dispatch=False)
             await _await_first_champion(store)
         store.set_bootstrap_status("running", "평가 · 원인분석 중")
-        await asyncio.to_thread(run_refresh_pipeline)
+        await asyncio.to_thread(run_refresh_pipeline, dispatch=False)
         if not store.has_valid_snapshot():
             raise RuntimeError("첫 스냅샷 생성에 실패했습니다 (원인분석/알람 판정 단계를 확인하세요).")
         store.set_bootstrap_status("done", None)

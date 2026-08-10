@@ -67,14 +67,18 @@ def _dataset_registry(store: RuntimeStore) -> DatasetRegistry:
     return DatasetRegistry(store, settings.dataset_upload_dir, settings.bundled_dataset_dir)
 
 
-def run_refresh_pipeline() -> None:
+def run_refresh_pipeline(*, dispatch: bool = True) -> None:
+    """`dispatch=False`는 WK그룹(콜드 스타트) 전용 -- 서버 최초 기동 시
+    내장 test.csv로 돌리는 1회성 부트스트랩 분석 결과로는 알림을 보내지
+    않는다. 주기 잡·수동 "최신화" 버튼은 항상 기본값(True)을 쓴다 --
+    폴백/수동 모드도 발송 대상이라는 EB그룹 결정은 바뀌지 않는다."""
     if not _refresh_lock.acquire(blocking=False):
         logger.info("auto_refresh: 이미 다른 실행이 진행 중이라 이번 호출은 건너뜁니다.")
         return
     try:
         store = _runtime_store()
         try:
-            _run_refresh_pipeline_inner(store)
+            _run_refresh_pipeline_inner(store, dispatch=dispatch)
         except Exception:
             # 개별 단계는 각자 try/except하지만, 예상하지 못한 예외가 여기까지
             # 올라오면 스케줄러 자체가 죽지 않도록 마지막 방어선에서 삼킨다.
@@ -152,7 +156,7 @@ def _warmup_common_prerequisites_background(eval_dataset_id: str) -> None:
     threading.Thread(target=_run, daemon=True, name="refresh-warmup").start()
 
 
-def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
+def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -> None:
     errors: list[str] = []
     registry = _dataset_registry(store)
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -224,6 +228,12 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
         logger.exception("auto_refresh: immutable 알람 스냅샷 저장 실패")
         errors.append("알람 이력 스냅샷을 저장하지 못했습니다.")
     logger.info("auto_refresh: 스냅샷 저장 완료 mode=%s eval=%s", mode, eval_dataset_id)
+
+    if not dispatch:
+        # WK-5: 콜드 스타트 부트스트랩 -- 내장 test.csv 결과로는 알림을
+        # 보내지 않는다. 스냅샷 저장(위)까지는 정상 진행한다.
+        logger.info("auto_refresh: dispatch=False -- 발송 단계를 건너뜁니다 (콜드 스타트).")
+        return
 
     # -- 6. 신규 알람 자동 발송 (J-5) -- 별도 모듈, 게이트/발송 시점/
     # 수동 업로드 10분 간격 조건은 그쪽에서 판단한다. 임포트를 함수

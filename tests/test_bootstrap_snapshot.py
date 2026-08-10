@@ -132,8 +132,11 @@ def test_run_bootstrap_skips_retrain_when_champion_already_exists(monkeypatch: p
 
     store = _FakeRuntimeStore(champion_exists=True, snapshot_after_pipeline=True)
 
-    def tracked_pipeline() -> None:
+    dispatch_flags: list[bool] = []
+
+    def tracked_pipeline(*, dispatch: bool = True) -> None:
         store.pipeline_calls += 1
+        dispatch_flags.append(dispatch)
 
     monkeypatch.setattr(main_module, "run_refresh_pipeline", tracked_pipeline)
 
@@ -142,6 +145,8 @@ def test_run_bootstrap_skips_retrain_when_champion_already_exists(monkeypatch: p
     # 챔피언이 이미 있으므로 파이프라인은 "평가 · 원인분석"용으로 단
     # 한 번만 호출돼야 한다(학습 대기를 위한 추가 호출이 없어야 한다).
     assert store.pipeline_calls == 1
+    # WK-5: 콜드 스타트 결과로는 알림을 보내지 않는다.
+    assert dispatch_flags == [False]
     assert store.statuses[-1] == ("done", None)
 
 

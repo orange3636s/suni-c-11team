@@ -2,6 +2,14 @@
 
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 
+// 작업 지시서 WK-2: "N/M단계" 표시 -- api/main.py `_run_bootstrap`이
+// `store.set_bootstrap_status`에 싣는 stage 문자열과 순서가 같아야 한다.
+// 그 3개가 실제 파이프라인의 전부다(가짜 진행률을 만들지 않는다는 이
+// 코드베이스의 원칙과 정면으로 부딪히지 않도록, 실재하지 않는 4번째
+// 단계를 지어내 "N/4"로 표시하지 않는다 -- 진짜 단계 수(3)를 그대로
+// 쓴다).
+const BOOTSTRAP_STAGES = ["데이터 확인 중", "학습 중", "평가 · 원인분석 중"];
+
 /** W-4: 첫 기동 부트스트랩(스냅샷이 아직 없을 때 서버가 1회 학습+분석을
  * 돌리는 동안) 진행 상태 -- DashboardShell이 셸 레벨에서 한 번만
  * 렌더한다(위 .degradedStateBanner와 같은 원칙: 페이지마다 따로 넣으면
@@ -27,10 +35,12 @@ export default function BootstrapStatusBanner() {
     );
   }
 
-  // 진행 단계(stage)를 알면 붙이고, 모르면 지시서 원칙대로 가짜 진행률
-  // 없이 "첫 분석 진행 중"만 보여준다.
+  // 진행 단계(stage)를 알면 실제 단계 번호(N/M)를 붙이고, 모르면
+  // 지시서 원칙대로 가짜 진행률 없이 "첫 분석 진행 중"만 보여준다.
+  const stageIndex = bootstrapStatus.stage ? BOOTSTRAP_STAGES.indexOf(bootstrapStatus.stage) : -1;
+  const stagePrefix = stageIndex >= 0 ? `(${stageIndex + 1}/${BOOTSTRAP_STAGES.length}단계) ` : "";
   const label = bootstrapStatus.stage
-    ? `첫 분석 진행 중 · ${bootstrapStatus.stage} · 완료 후 자동으로 표시됩니다`
+    ? `첫 분석 진행 중 · ${stagePrefix}${bootstrapStatus.stage} · 완료 후 자동으로 표시됩니다`
     : "첫 분석 진행 중 · 완료 후 자동으로 표시됩니다";
 
   return (
