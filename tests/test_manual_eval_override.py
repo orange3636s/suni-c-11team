@@ -53,7 +53,7 @@ def test_resolve_source_prefers_manual_override_over_fallback(tmp_path: Path) ->
     if not (Path(__file__).resolve().parents[1] / "data" / "bundled" / "train.CSV").exists():
         pytest.skip("data/bundled/train.CSV not present")
     store, registry = _store_and_registry(tmp_path)
-    content = (registry.bundled_root / "test.CSV").read_bytes()
+    content = (registry.bundled_root / "test_remove_y.CSV").read_bytes()
     upload_result = registry.upload("uploaded_manual.csv", content)
     assert upload_result["success"]
     store.set_manual_eval_override(upload_result["dataset_id"], "uploaded_manual.csv")
@@ -77,7 +77,7 @@ def test_resolve_source_keeps_previous_train_dataset_in_manual_mode(tmp_path: Pa
         "created_at": "2026-01-01T00:00:00+00:00",
         "source": {"mode": "sql", "train_dataset": "sql_batch_1", "eval_dataset": "sql_batch_1", "row_count": 10},
     })
-    content = (registry.bundled_root / "test.CSV").read_bytes()
+    content = (registry.bundled_root / "test_remove_y.CSV").read_bytes()
     upload_result = registry.upload("uploaded_manual2.csv", content)
     store.set_manual_eval_override(upload_result["dataset_id"], "uploaded_manual2.csv")
 

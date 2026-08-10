@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache, wraps
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,7 @@ from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.fmea import build_fmea_table
-from src.analysis.screening.heatmap import HeatmapData, build_categorical_heatmap, build_heatmap
+from src.analysis.screening.heatmap import HeatmapData, build_heatmap
 from src.analysis.screening.schema import parse_schema
 from src.analysis.target_hydration import (
     TARGET_HYDRATION_VERSION,
@@ -202,7 +202,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         )
     t_factor = time.perf_counter()
 
-    reference_model = _cached_reference_model(dataset)
+    reference_model = _cached_reference_model(dataset, dataset_version)
     gbdt_features = list(_cached_gbdt_features(dataset, dataset_version))
     t_refmodel = time.perf_counter()
 
@@ -275,42 +275,32 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
 
 
 HEATMAP_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict older ones
-# TC-4/TC-3: numeric은 더 이상 metric 토글이 없다(ε²+rho를 한 응답에 함께
-# 낸다) -- numeric 1 + categorical 1 = 2.
-HEATMAP_VARIANTS = 2
 
-@lru_cache(maxsize=HEATMAP_CACHE_DATASETS * HEATMAP_VARIANTS)
+@lru_cache(maxsize=HEATMAP_CACHE_DATASETS)
 def _cached_heatmap(
     dataset_id: str,
-    kind: str,
     dataset_version: str,
     model_id: str,
     model_version: str,
     hydration_version: str,
 ) -> HeatmapData:
-    # 캐시 키에 kind까지 넣는다 (spec E) -- 빠뜨리면 같은 dataset_id로
-    # 수치형을 먼저 조회한 뒤 범주형을 조회했을 때 lru_cache가 수치형
-    # 결과를 그대로 돌려준다. 데이터셋 내용은 dataset_id가 존재하는 한
-    # 불변이므로(업로드는 매번 새 uuid, 번들 파일은 정적) 이 캐시는 최근
-    # 2개 데이터셋만 LRU로 유지해 무한정 커지지 않는다.
+    # 데이터셋 내용은 dataset_id가 존재하는 한 불변이므로(업로드는 매번 새
+    # uuid, 번들 파일은 정적) 이 캐시는 최근 2개 데이터셋만 LRU로 유지해
+    # 무한정 커지지 않는다. NG-1: categorical 보기를 제거해 kind 분기와
+    # 그만큼의 캐시 슬롯도 함께 없앴다.
     del model_id, model_version, hydration_version
     df = _hydrated_targets_or_409(dataset_id).dataframe
     schema = _cached_schema(dataset_id, dataset_version)
-    if kind == "categorical":
-        return build_categorical_heatmap(df, schema)
     return build_heatmap(df, schema)
 
 
 @router.get("/screening/heatmap", response_model=HeatmapResponse)
-def get_screening_heatmap(
-    dataset: str = "train",
-    kind: Literal["numeric", "categorical"] = "numeric",
-) -> dict[str, Any]:
+def get_screening_heatmap(dataset: str = "train") -> dict[str, Any]:
     """The correlation heatmap used identically by both the training tab
-    and the root-cause tab. Two independent views (spec E), never merged
-    into one grid or one FDR family: numeric (R+D x Y1~Y5, always both ε²
-    and rho -- TC-4) and categorical (Config x Y1~Y5, ε² only -- rho isn't
-    defined for an unordered category).
+    and the root-cause tab: R+D x Y1~Y5, always both ε² and rho (TC-4).
+    NG-1: the Config x Y1~Y5 categorical view was removed -- 600 tests
+    found 0 FDR-significant Config factors, and the per-Config treemap tab
+    already covers that ground better.
     """
     t0 = time.perf_counter()
     hydrated = _hydrated_targets_or_409(dataset)
@@ -318,7 +308,6 @@ def get_screening_heatmap(
     hits_before = _cached_heatmap.cache_info().hits
     heatmap = _cached_heatmap(
         dataset,
-        kind,
         provenance.dataset_version,
         provenance.model_id or "measured-only",
         provenance.model_version or "none",
@@ -326,13 +315,13 @@ def get_screening_heatmap(
     )
     cached = _cached_heatmap.cache_info().hits > hits_before
     logger.info(
-        "screening_heatmap %.1fms (cached=%s, dataset=%s, kind=%s)",
-        (time.perf_counter() - t0) * 1000, cached, dataset, kind,
+        "screening_heatmap %.1fms (cached=%s, dataset=%s)",
+        (time.perf_counter() - t0) * 1000, cached, dataset,
     )
     return {
         "dataset_id": dataset,
         "metric": "eps2",
-        "kind": kind,
+        "kind": "numeric",
         "features": heatmap.features,
         "targets": heatmap.targets,
         "values": heatmap.values,
@@ -394,12 +383,15 @@ REFERENCE_MODEL_CACHE_DATASETS = 2
 
 
 @lru_cache(maxsize=REFERENCE_MODEL_CACHE_DATASETS)
-def _cached_reference_model(dataset_id: str):
+def _cached_reference_model(dataset_id: str, dataset_version: str):
     """경고선(§C) 계산 전용 단일 GBDT -- 데이터셋당 한 번만 학습해(약 5~10초)
     이후 모든 인자의 산점도 요청이 재사용한다. 결측(Y가 전부 비어 있거나
     R+D 인자가 하나도 없는) 데이터셋에서는 None을 반환해 호출자가 경고선
-    없이 진행하게 한다.
+    없이 진행하게 한다. dataset_version은 캐시 키에만 쓰인다 -- 번들
+    데이터셋이 같은 dataset_id로 파일만 교체됐을 때(NC그룹) 옛 모델을
+    계속 돌려주지 않도록 한다.
     """
+    del dataset_version
     df = _dataframe_or_404(dataset_id)
     schema = parse_schema(df)
     features = alarm_gbdt.feature_columns(schema)
@@ -415,11 +407,11 @@ def _cached_reference_model(dataset_id: str):
 
 
 @lru_cache(maxsize=REFERENCE_MODEL_CACHE_DATASETS)
-def _cached_all_warning_lines(dataset_id: str):
+def _cached_all_warning_lines(dataset_id: str, dataset_version: str):
     """§A-3 알람 사유용 -- 전체 R+D 인자의 경고선을 데이터셋당 한 번만
     계산해 캐시한다 (인자 58개 기준 반복 호출 시 수십 초가 걸린다).
     """
-    model = _cached_reference_model(dataset_id)
+    model = _cached_reference_model(dataset_id, dataset_version)
     if model is None:
         return {}
     df = _dataframe_or_404(dataset_id)
@@ -1026,7 +1018,7 @@ def get_alarms(
     )
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
-    warning_lines = _cached_all_warning_lines(train)
+    warning_lines = _cached_all_warning_lines(train, get_dataset_registry().content_version(train))
     id_column = "Lot_Wafer_ID"
     eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
 
@@ -1110,7 +1102,7 @@ def compute_alarm_notification_items(
         return []
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의") and s.measured]
 
-    warning_lines = _cached_all_warning_lines(train)
+    warning_lines = _cached_all_warning_lines(train, get_dataset_registry().content_version(train))
     id_column = "Lot_Wafer_ID"
     eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
 
@@ -1255,7 +1247,7 @@ def get_alarms_predictions(
     # 않는다.
     measured_id_set = _measured_ids_for_alarm_factors(train, eval)
 
-    warning_lines = _cached_all_warning_lines(train)
+    warning_lines = _cached_all_warning_lines(train, get_dataset_registry().content_version(train))
     id_column = "Lot_Wafer_ID"
     eval_by_id = eval_df.set_index(id_column, drop=False) if id_column in eval_df.columns else None
 

@@ -154,7 +154,7 @@ def test_adjustable_recommendation_includes_current_value_and_range():
 
 
 TRAIN_PATH = Path(__file__).resolve().parents[1] / "data" / "bundled" / "train.CSV"
-TEST_PATH = Path(__file__).resolve().parents[1] / "data" / "bundled" / "test.CSV"
+TEST_PATH = Path(__file__).resolve().parents[1] / "data" / "bundled" / "test_remove_y.CSV"
 
 
 @pytest.mark.skipif(not (TRAIN_PATH.exists() and TEST_PATH.exists()), reason="bundled train/test CSV not present")

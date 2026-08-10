@@ -45,7 +45,7 @@ LOT_COLUMN = "Lot_ID"
 # 형식이라 현재 파이프라인의 스키마 가정과 맞지 않는다.
 BUNDLED_DATASET_FILES = {
     "train": "train.CSV",
-    "test": "test.CSV",
+    "test": "test_remove_y.CSV",
 }
 
 

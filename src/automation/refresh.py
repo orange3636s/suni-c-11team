@@ -125,7 +125,7 @@ def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
     dataset_version = hydrated.provenance.dataset_version
     _cached_schema(eval_dataset_id, dataset_version)
     _cached_gbdt_features(eval_dataset_id, dataset_version)
-    _cached_reference_model(eval_dataset_id)
+    _cached_reference_model(eval_dataset_id, dataset_version)
 
 
 def _warmup_common_prerequisites_background(eval_dataset_id: str) -> None:
