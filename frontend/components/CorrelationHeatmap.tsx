@@ -7,7 +7,11 @@ import { formatEps2, formatQValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfidenceTier, HeatmapKind, HeatmapResponse } from "@/types/data";
 
-const DEFAULT_ROW_LIMIT = 20;
+// 작업 지시서 WJ-1: 기본 7행만 보여주고 "전체 N행 보기"로 펼친다 --
+// 스크롤 상자와 자르기를 함께 쓰지 않는다(펼치면 전체가 그대로 자라난다,
+// WJ-1 "하지 말 것"). 정렬을 바꾸면 다시 7행으로 접힌다(아래 sortMode/
+// significantOnly onChange가 setExpanded(false)를 함께 호출).
+const DEFAULT_ROW_LIMIT = 7;
 const VIEW_KIND_LABEL: Record<HeatmapKind, string> = { numeric: "수치형", categorical: "범주형" };
 // TC-1: 뷰마다 다른 제목 -- 하나의 제목에 토글만 두지 않고, 지금 보고
 // 있는 게 뭔지 제목이 직접 말하게 한다.
@@ -145,6 +149,8 @@ export default function CorrelationHeatmap({
   function triggerRowSettle() {
     setSorting(true);
     window.setTimeout(() => setSorting(false), 220);
+    // WJ-1: 정렬/필터를 바꾸면 다시 7행으로 접힌다.
+    setExpanded(false);
   }
 
   useEffect(() => {
