@@ -459,38 +459,59 @@ export type AlertCellColor = {
   optimal_center: number | null;
 };
 
-export type AlertCandidate = {
+// VA-3/VA-4: 웨이퍼·타깃별로 실제 쓰인(폴백 포함) 핵심 인자. rank_used가
+// 1보다 크면 폴백이 일어났다는 뜻이고, contribution_pct는 그 폴백된
+// 인자 자신의 기여율이다(1위보다 낮게 표시돼 근거 강도가 바로 드러난다).
+export type YieldCoreFactorCell = {
+  feature: string | null;
+  contribution_pct: number | null;
+  rank_used: number | null;
+  factor_value: number | null;
+};
+
+// VC-1/VC-2: n/5 신뢰도와 툴팁용 계측/미계측 타깃 상세.
+export type YieldReliabilityDetailItem = { target: string; feature: string };
+
+export type YieldReliabilityInfo = {
+  count: number;
+  measured: YieldReliabilityDetailItem[];
+  unmeasured: YieldReliabilityDetailItem[];
+};
+
+// VD-2: 두 갈래(구간 조정/계측 추가)로 조립된 권장사항 문장.
+export type YieldRecommendation = {
+  text: string;
+  adjustable_targets: string[];
+  measurement_gap_targets: string[];
+};
+
+export type YieldCandidate = {
   lot_wafer_id: string;
   lot_id: string | null;
   y: number;
   y_components: Record<string, number>;
-  // RC-4: 0~100 정수. 실측 모드는 1.0, 예측 모드는 핵심 인자 파레토
-  // 기여율만큼만 인정해 합산 x 20 한 값 -- 정렬·필터에는 쓰지 않는다
-  // (판단 재료로 표시만 한다).
-  reliability: number;
-  primary_target: string;
-  primary_feature: string;
-  factor_value: number | null;
-  range_lo: number | null;
-  range_hi: number | null;
-  reason: string;
   cells: Record<string, AlertCellColor>;
+  core_factors: Record<string, YieldCoreFactorCell>;
+  reliability: YieldReliabilityInfo;
+  recommendation: YieldRecommendation;
 };
 
-export type AlertRankingSummary = {
-  mean_reliability: number;
-  min_reliability: number;
-  below_threshold_count: number;
-  zero_reliability_count: number;
+// VA-3: 폴백 순위 분포("58%가 전부 미계측이다" 같은 통계). rank_counts의
+// 키는 "1".."5"(JSON은 정수 키를 지원하지 않는다).
+export type YieldFallbackSummary = {
+  rank_counts: Record<string, number>;
+  none_count: number;
+  total_combinations: number;
 };
 
-export type AlertRankingResponse = {
+export type YieldPredictionResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
   total_wafers: number;
-  top_n: number;
-  candidates: AlertCandidate[];
-  summary: AlertRankingSummary;
+  candidates: YieldCandidate[];
+  unmeasured_wafer_ids: string[];
+  unmeasured_count: number;
+  fallback_summary: YieldFallbackSummary;
   target_provenance: TargetProvenance | null;
 };
 

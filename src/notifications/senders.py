@@ -218,14 +218,17 @@ def build_telegram_text(payload: AlarmNotificationPayload) -> str:
     return "\n".join(lines)
 
 
-def send_telegram_message(bot_token: str, chat_id: str, text: str) -> tuple[bool, str | None]:
+def send_telegram_message(bot_token: str, chat_id: str, text: str, *, parse_mode: str | None = "MarkdownV2") -> tuple[bool, str | None]:
+    """`parse_mode=None` sends plain text -- VE-4: 수율 예측 갱신 발송은
+    Telegram에서 MarkdownV2 이스케이프 없이 고정폭 정렬 텍스트로 보낸다
+    (알람 발송의 `build_telegram_text`는 계속 MarkdownV2를 쓴다, 기본값
+    유지)."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
-        response = httpx.post(
-            url,
-            json={"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2", "disable_web_page_preview": True},
-            timeout=SEND_TIMEOUT_SECONDS,
-        )
+        response = httpx.post(url, json=payload, timeout=SEND_TIMEOUT_SECONDS)
         body = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
         if response.status_code == 200 and body.get("ok"):
             return True, None

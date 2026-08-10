@@ -15,7 +15,6 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from api.routes.datasets import get_dataset_registry
 from api.schemas.analysis import (
     AlarmListResponse,
-    AlertRankingResponse,
     AlertsDataResponse,
     AnalysisContextResponse,
     AnalysisReportResponse,
@@ -28,6 +27,7 @@ from api.schemas.analysis import (
     PreprocessingComparisonResponse,
     ReliabilityResponse,
     ScreeningScatterResponse,
+    YieldPredictionResponse,
 )
 from api.settings import APP_VERSION, settings
 from src.analysis import alarm_gbdt, distribution_shift, preprocessing_compare, reliability, target_fallback, warning_line
@@ -1080,51 +1080,61 @@ def compute_alarm_notification_items(
     return items
 
 
-@router.get("/alerts/ranking", response_model=AlertRankingResponse)
-def get_alerts_ranking(
-    train: str = "train",
-    eval: str = "test",
-    top_n: int = Query(10, ge=1, le=100),
-) -> dict[str, Any]:
-    """RE-1: y(=100 − Σ Y1~Y5, RC-3 실측 우선 규칙으로 채운 뒤 재계산)
-    오름차순 상위 top_n건. 신뢰도(RC-4)·y1~y5 셀 색상(RC-4b)을 함께
-    내려보낸다. `/alarms/predictions`(구 5분류·목표 수율 체계)를 대체한다
-    -- 수율 예측 화면은 이제 이 엔드포인트만 부른다.
+@router.get("/alerts/ranking", response_model=YieldPredictionResponse)
+def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, Any]:
+    """VA~VD: 수율 예측 순위 목록 -- y(=100 − Σ Y1~Y5, RC-3 실측 우선
+    규칙으로 채운 뒤 재계산) 오름차순 전체(신뢰도==0 웨이퍼는 제외)를
+    내려보낸다. 상위 10/전체 보기·검색·정렬 9종은 프런트가 이 목록
+    위에서 수행한다(VB그룹) -- `top_n`으로 서버가 미리 자르면 검색이
+    상위 10 밖의 웨이퍼를 찾지 못한다(VB-4: "검색 중에는 상위 10 제한을
+    해제한다").
     """
-    from src.analysis.alerts_ranking import build_alert_ranking
+    from src.analysis.yield_prediction import build_yield_prediction_table
 
     train_df = _dataframe_or_404(train)
     eval_view = _hydrated_targets_or_409(eval)
     eval_df = _dataframe_or_404(eval)
 
-    table = build_alert_ranking(train_df, eval_df, eval_view.dataframe, top_n=top_n)
+    table = build_yield_prediction_table(train_df, eval_df, eval_view.dataframe, dataset_id=eval)
     return {
         "train_dataset_id": train,
         "eval_dataset_id": eval,
         "total_wafers": table.total_wafers,
-        "top_n": top_n,
         "candidates": [
             {
                 "lot_wafer_id": c.lot_wafer_id,
                 "lot_id": c.lot_id,
                 "y": c.y,
                 "y_components": c.y_components,
-                "reliability": c.reliability,
-                "primary_target": c.primary_target,
-                "primary_feature": c.primary_feature,
-                "factor_value": c.factor_value,
-                "range_lo": c.range_lo,
-                "range_hi": c.range_hi,
-                "reason": c.reason,
                 "cells": c.cells,
+                "core_factors": {
+                    target: {
+                        "feature": cell.feature,
+                        "contribution_pct": cell.contribution_pct,
+                        "rank_used": cell.rank_used,
+                        "factor_value": cell.factor_value,
+                    }
+                    for target, cell in c.core_factors.items()
+                },
+                "reliability": {
+                    "count": c.reliability.count,
+                    "measured": [{"target": t, "feature": f} for t, f in c.reliability.measured],
+                    "unmeasured": [{"target": t, "feature": f} for t, f in c.reliability.unmeasured],
+                },
+                "recommendation": {
+                    "text": c.recommendation.text,
+                    "adjustable_targets": list(c.recommendation.adjustable_targets),
+                    "measurement_gap_targets": list(c.recommendation.measurement_gap_targets),
+                },
             }
             for c in table.candidates
         ],
-        "summary": {
-            "mean_reliability": table.summary.mean_reliability,
-            "min_reliability": table.summary.min_reliability,
-            "below_threshold_count": table.summary.below_threshold_count,
-            "zero_reliability_count": table.summary.zero_reliability_count,
+        "unmeasured_wafer_ids": table.unmeasured_wafer_ids,
+        "unmeasured_count": len(table.unmeasured_wafer_ids),
+        "fallback_summary": {
+            "rank_counts": {str(rank): count for rank, count in table.fallback_summary.rank_counts.items()},
+            "none_count": table.fallback_summary.none_count,
+            "total_combinations": table.fallback_summary.total_combinations,
         },
         "target_provenance": eval_view.provenance.as_dict(),
     }

@@ -325,38 +325,69 @@ class AlertCellColorSchema(BaseModel):
     optimal_center: float | None
 
 
-class AlertCandidateSchema(BaseModel):
+class YieldCoreFactorCellSchema(BaseModel):
+    """VA-3/VA-4: 웨이퍼·타깃별로 실제 쓰인(폴백 포함) 핵심 인자."""
+
+    feature: str | None
+    contribution_pct: float | None
+    rank_used: int | None
+    factor_value: float | None
+
+
+class YieldReliabilityDetailItemSchema(BaseModel):
+    target: str
+    feature: str
+
+
+class YieldReliabilityInfoSchema(BaseModel):
+    """VC-1/VC-2: n/5 신뢰도와 툴팁용 계측/미계측 타깃 상세."""
+
+    count: int
+    measured: list[YieldReliabilityDetailItemSchema]
+    unmeasured: list[YieldReliabilityDetailItemSchema]
+
+
+class YieldRecommendationSchema(BaseModel):
+    """VD-2: 두 갈래(구간 조정/계측 추가)로 조립된 권장사항 문장."""
+
+    text: str
+    adjustable_targets: list[str]
+    measurement_gap_targets: list[str]
+
+
+class YieldCandidateSchema(BaseModel):
     lot_wafer_id: str
     lot_id: str | None
     y: float
     y_components: dict[str, float]
-    reliability: int
-    primary_target: str
-    primary_feature: str
-    factor_value: float | None
-    range_lo: float | None
-    range_hi: float | None
-    reason: str
     cells: dict[str, AlertCellColorSchema]
+    core_factors: dict[str, YieldCoreFactorCellSchema]
+    reliability: YieldReliabilityInfoSchema
+    recommendation: YieldRecommendationSchema
 
 
-class AlertRankingSummarySchema(BaseModel):
-    mean_reliability: float
-    min_reliability: int
-    below_threshold_count: int
-    zero_reliability_count: int
+class YieldFallbackSummarySchema(BaseModel):
+    """VA-3: 폴백 순위 분포 -- "58%가 전부 미계측이다" 같은 통계를 화면에
+    드러내는 데 쓴다. `rank_counts`의 키는 "1".."5"(JSON은 정수 키를
+    지원하지 않는다)."""
+
+    rank_counts: dict[str, int]
+    none_count: int
+    total_combinations: int
 
 
-class AlertRankingResponse(BaseModel):
-    """RE-1: y(=100 − Σ Y1~Y5) 오름차순 상위 N건. 정렬 기준은 y 하나뿐
-    -- 신뢰도는 표시 재료일 뿐 정렬·필터에 쓰지 않는다."""
+class YieldPredictionResponse(BaseModel):
+    """VA~VD: 수율 예측 순위 목록. 정렬 기본값은 y(=100 − Σ Y1~Y5)
+    오름차순이며, 그 밖의 정렬·검색·상위 10/전체 보기 전환은 프런트가
+    이 전체 목록(신뢰도==0인 웨이퍼는 제외, `unmeasured_*`로 별도 제공) 위에서 수행한다."""
 
     train_dataset_id: str
     eval_dataset_id: str
     total_wafers: int
-    top_n: int
-    candidates: list[AlertCandidateSchema]
-    summary: AlertRankingSummarySchema
+    candidates: list[YieldCandidateSchema]
+    unmeasured_wafer_ids: list[str]
+    unmeasured_count: int
+    fallback_summary: YieldFallbackSummarySchema
     target_provenance: dict[str, Any] | None = None
 
 

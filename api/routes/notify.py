@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
-from api.routes.analysis import _auc_gate, _cached_reliability, compute_alarm_notification_items
+from api.routes.analysis import _auc_gate, _cached_reliability, _dataframe_or_404, _hydrated_targets_or_409, compute_alarm_notification_items
 from api.routes.datasets import get_dataset_registry
 from api.schemas.notify import (
     ConditionsSaveRequest,
@@ -227,7 +227,53 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
         model_version=active.get("active_model_id") or "",
         criteria_version=alarm_gbdt.ALARM_DECISION_VERSION,
     )
+    _dispatch_yield_update_for_manual_analysis(
+        store,
+        train_dataset=body.train_dataset,
+        eval_dataset=body.eval_dataset,
+        dataset_label=dataset_label,
+        model_label=active.get("active_model_id"),
+        dashboard_url=body.dashboard_url,
+    )
     return result
+
+
+def _dispatch_yield_update_for_manual_analysis(
+    store: RuntimeStore,
+    *,
+    train_dataset: str,
+    eval_dataset: str,
+    dataset_label: str,
+    model_label: str | None,
+    dashboard_url: str | None,
+) -> None:
+    """VE-1: "분석 실행 직후" 발송 트리거 -- 알람과 별개로 수율 예측
+    갱신도 같은 시점에 발송한다(conditions["timing"]에 on_analysis가
+    없으면 yield_update_dispatch가 스킵한다). 실패해도 알람 발송 결과
+    응답에는 영향을 주지 않는다(best-effort)."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from src.analysis.yield_prediction import build_yield_prediction_table
+        from src.notifications.yield_update_dispatch import TRIGGER_MANUAL, dispatch_yield_update
+        from src.notifications.yield_update_senders import build_yield_update_payload
+
+        train_df = _dataframe_or_404(train_dataset)
+        eval_df = _dataframe_or_404(eval_dataset)
+        hydrated = _hydrated_targets_or_409(eval_dataset)
+        table = build_yield_prediction_table(train_df, eval_df, hydrated.dataframe, dataset_id=eval_dataset)
+        timestamp_label = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M")
+        payload = build_yield_update_payload(
+            table,
+            dataset_label=dataset_label,
+            timestamp_label=timestamp_label,
+            model_label=model_label,
+            dashboard_url=dashboard_url,
+        )
+        dispatch_yield_update(store, payload, trigger=TRIGGER_MANUAL)
+    except Exception:
+        logger.exception("수율 예측 갱신(분석 실행 직후) 발송 처리 실패")
 
 
 def _run_scheduled_dispatch_job(trigger: str, *, label: str) -> None:

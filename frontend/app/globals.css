@@ -10990,14 +10990,72 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 .alertCell.blue.medium{ background: #93C5FD; color: #1E3A8A; }
 .alertCell.blue.light{ background: #DBEAFE; color: #1E3A8A; }
 
-/* RC-4: 신뢰도 열 -- 등폭 정수, 40 미만만 주황. 색 구간 이외(70 이상 ·
-   40~69)는 기본 텍스트색이라 별도 클래스가 필요 없다. */
-.alertReliabilityCell{ font-variant-numeric: tabular-nums; text-align: center; color: var(--text-secondary); }
-.alertReliabilityCell.low{ color: var(--sig-amber); font-weight: 600; }
-.alertReasonCell{ color: var(--text-secondary); font-size: var(--fs-sm); white-space: nowrap; }
-.alertsSummaryCard{ font-size: var(--fs-sm); color: var(--text-secondary); }
-.alertsSummaryCard p{ margin: 0 0 4px; }
-.alertsSummaryCard p:last-child{ margin-bottom: 0; }
+/* ===================================================================
+   VB그룹: 수율 예측 표 -- 16열 + 가로 스크롤 + 순위·LOT_WF_ID 2열 sticky.
+   .tableScroll.hScroll의 첫 열 sticky 규칙(위 "알람 테이블 가로 스크롤"
+   섹션)은 열 1개 기준이라 재사용하지 않고, 이 표 전용으로 두 열을
+   각자 고정한다 -- 순위 열 폭을 고정해야 LOT_WF_ID 열의 left 오프셋이
+   어긋나지 않는다.
+   =================================================================== */
+.ypColRank{ width: 52px; min-width: 52px; max-width: 52px; text-align: center; white-space: nowrap; }
+.ypColWafer{ min-width: 112px; white-space: nowrap; }
+.ypColCoreFactor{ min-width: 148px; white-space: nowrap; }
+/* VB-1: "권장사항"은 마지막, white-space:normal, 최소 폭 260px. */
+.ypColRecommendation{ min-width: 260px; white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* sticky 좌측 2열. z-index 우선순위(지시서 VB-1): 헤더+sticky 교차점 >
+   헤더 > sticky열 > 일반셀 -- 위에서 정의한 --z-sticky-seg 스케일을
+   그대로 쓴다(헤더행은 이미 .tableWrap th에서 top:0 sticky). */
+.ypTable td.ypColRank,
+.ypTable td.ypColWafer{
+  position: sticky;
+  z-index: 1;
+  background: var(--surface-card, var(--surface));
+}
+.ypTable td.ypColRank{ left: 0; }
+.ypTable td.ypColWafer{ left: 52px; box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.18); }
+.ypTable th.ypColRank,
+.ypTable th.ypColWafer{
+  position: sticky;
+  /* 헤더는 top(.tableWrap th의 기본 sticky) + left(여기) 둘 다 고정되는
+     교차점이라, 일반 sticky 열(z-index:1)과 일반 sticky 헤더
+     (--z-sticky-seg)보다 모두 높아야 한다. */
+  z-index: calc(var(--z-sticky-seg) + 1);
+  background: var(--table-header-bg);
+}
+.ypTable th.ypColRank{ left: 0; }
+.ypTable th.ypColWafer{ left: 52px; box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.18); }
+html[data-theme="dark"] .ypTable td.ypColWafer,
+html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.5); }
+
+/* VA-4: 핵심 인자 표시("Step18_R1 (82.5%)") -- 괄호 안 기여율은 부차
+   정보라 옅게, 인자 없음은 --text-muted. */
+.ypCoreFactorPct{ color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.ypCoreFactorEmpty{ color: var(--text-muted); }
+
+/* VC-1: 신뢰도 n/5 -- 0/5는 위험색, 1/5는 주의색, 2/5 이상은 기본색. */
+.ypReliabilityCell{ font-variant-numeric: tabular-nums; text-align: center; color: var(--text-secondary); }
+.ypReliabilityCell.zero{ color: var(--sig-red); font-weight: 600; }
+.ypReliabilityCell.low{ color: var(--sig-amber); font-weight: 600; }
+
+/* VD-5: 권장사항 2줄 말줄임 -- 전체 문장은 title 툴팁으로. 문장 내
+   줄바꿈(\n)을 그대로 보여주기 위해 white-space:pre-line을 쓰고, 그
+   위에 2줄로 클램프한다. */
+.ypRecommendationText{
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: pre-line;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.ypTableFooter{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.ypTableFooter .tableCaption{ margin: 0; }
+
+.ypUnmeasuredList{ margin: 8px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); word-break: break-word; }
 
 /* 계측 확대 제안(계측 큐) 권고 배지 -- "+N%p"는 게이트 미달(계측 부족)이라
    신호색을 유지하고, "유지"는 정상 분류라 무채색. */

@@ -23,6 +23,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -39,6 +40,7 @@ REFRESH_JOB_ID = "auto_refresh"
 FALLBACK_TRAIN_DATASET = "train"
 FALLBACK_EVAL_DATASET = "test"
 TARGETS = ("Y1", "Y2", "Y3", "Y4", "Y5")
+_KST = ZoneInfo("Asia/Seoul")
 
 # AF/AG: 주기 잡(APScheduler)과 수동 최신화 버튼·업로드 연동이 전부 이
 # 함수 하나를 호출한다 -- 두 경로가 동시에 들어와도 파이프라인이 두 번
@@ -253,6 +255,22 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
         )
     except Exception:
         logger.exception("auto_refresh: 신규 알람 발송 처리 실패")
+
+    # -- 7. 수율 예측 갱신 발송 (VE-1) -- 자동 갱신마다 발송 후보다(수동
+    # 분석 실행과 달리 timing 설정 게이트가 없다). 억제 규칙(신규분만/
+    # 시간당 예산)은 yield_update_dispatch 안에서 판단한다.
+    try:
+        _dispatch_yield_update_for_refresh(
+            store,
+            mode=mode,
+            train_dataset_id=train_dataset_for_alarms,
+            eval_dataset_id=eval_dataset_id,
+            eval_dataset_filename=eval_dataset_filename,
+            model_label=model_meta.get("champion_version"),
+            now_iso=now_iso,
+        )
+    except Exception:
+        logger.exception("auto_refresh: 수율 예측 갱신 발송 처리 실패")
 
 
 def _resolve_source(
@@ -520,3 +538,44 @@ def _build_monitoring_block(
         # 아니다") -- 스냅샷에는 담지 않는다.
         "treemap": None,
     }
+
+
+def _dispatch_yield_update_for_refresh(
+    store: RuntimeStore,
+    *,
+    mode: str,
+    train_dataset_id: str,
+    eval_dataset_id: str,
+    eval_dataset_filename: str | None,
+    model_label: str | None,
+    now_iso: str,
+) -> None:
+    """VE-1: 자동 갱신 스냅샷 저장 직후 수율 예측 갱신을 발송한다. 알람
+    발송(`dispatch_new_alarms`)과 달리 AUC 게이트나 발송 시점(timing)
+    조건이 없다 -- "자동 갱신마다 발송"이다. 억제는
+    `yield_update_dispatch`의 신규분만/시간당 예산 두 규칙만 적용된다.
+    지연 임포트는 순환 임포트 회피 목적이다(다른 신규 알람 발송 블록과
+    같은 이유).
+    """
+    from api.routes.analysis import _hydrated_targets_or_409
+    from src.analysis.yield_prediction import build_yield_prediction_table
+    from src.automation.refresh_dispatch import _source_note_for
+    from src.notifications.yield_update_dispatch import TRIGGER_REFRESH, dispatch_yield_update
+    from src.notifications.yield_update_senders import build_yield_update_payload
+
+    registry = _dataset_registry(store)
+    train_df = registry.get_dataframe(train_dataset_id)
+    eval_df = registry.get_dataframe(eval_dataset_id)
+    hydrated = _hydrated_targets_or_409(eval_dataset_id)
+
+    table = build_yield_prediction_table(train_df, eval_df, hydrated.dataframe, dataset_id=eval_dataset_id)
+
+    timestamp_label = datetime.fromisoformat(now_iso).astimezone(_KST).strftime("%H:%M")
+    payload = build_yield_update_payload(
+        table,
+        dataset_label=eval_dataset_filename or eval_dataset_id,
+        timestamp_label=timestamp_label,
+        source_note=_source_note_for(mode, eval_dataset_id),
+        model_label=model_label,
+    )
+    dispatch_yield_update(store, payload, trigger=TRIGGER_REFRESH)
