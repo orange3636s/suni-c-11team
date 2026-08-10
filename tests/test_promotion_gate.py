@@ -1,6 +1,10 @@
-"""Tests for RuntimeStore.promote_if_better -- the shared gate manual
-training, the async training-job path, and the auto-ingest pipeline all
-go through (자동 수집 파이프라인 §2-1).
+"""Tests for RuntimeStore.promote_if_better -- RB-4: the promotion gate
+(R² threshold rejection) was removed. Every candidate is now promoted
+unconditionally; this file verifies (a) that unconditional promotion
+holds even for a much-worse challenger, and (b) that the performance
+change is still recorded/reported, including a per-target regression
+warning when any Y1~Y5 R² drops by >= REGRESSION_WARNING_RATIO
+("교체는 하되 침묵하지 마라").
 """
 
 from __future__ import annotations
@@ -8,9 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
-from src.runtime.store import PROMOTION_TOLERANCE, RuntimeStore
+from src.runtime.store import RuntimeStore
 
 
 def _store() -> tuple[RuntimeStore, Path]:
@@ -26,8 +28,11 @@ def _cleanup(path: Path) -> None:
         path.parent.rmdir()
 
 
-def _metadata(r2: float, model_id: str) -> dict:
-    return {"model_id": model_id, "metrics": {"test": {"r2": r2}}}
+def _metadata(r2: float, model_id: str, target_metrics: dict | None = None) -> dict:
+    metadata = {"model_id": model_id, "metrics": {"test": {"r2": r2}}}
+    if target_metrics is not None:
+        metadata["target_metrics"] = target_metrics
+    return metadata
 
 
 def test_first_model_promotes_without_gate():
@@ -55,32 +60,19 @@ def test_better_challenger_is_promoted():
         _cleanup(path)
 
 
-def test_challenger_within_tolerance_is_promoted():
-    # 지시서 §2-1: 작은 노이즈(TOLERANCE 이내 하락)로는 승격이 막히지 않는다.
+def test_much_worse_challenger_is_still_promoted_unconditionally():
+    """RB-4: 게이트가 제거됐으므로 훨씬 나쁜 챌린저도 그대로 교체된다."""
     store, path = _store()
     try:
         store.promote_if_better(model_id="m1", pipeline_version="v1", dataset_version=0, metadata=_metadata(0.20, "m1"))
-        slightly_worse = 0.20 - (PROMOTION_TOLERANCE / 2)
-        result = store.promote_if_better(model_id="m2", pipeline_version="v1", dataset_version=0, metadata=_metadata(slightly_worse, "m2"))
+        result = store.promote_if_better(model_id="m2", pipeline_version="v1", dataset_version=0, metadata=_metadata(0.01, "m2"))
         assert result["active_model_id"] == "m2"
-    finally:
-        _cleanup(path)
-
-
-def test_challenger_beyond_tolerance_is_rejected():
-    store, path = _store()
-    try:
-        store.promote_if_better(model_id="m1", pipeline_version="v1", dataset_version=0, metadata=_metadata(0.20, "m1"))
-        much_worse = 0.20 - (PROMOTION_TOLERANCE * 4)
-        result = store.promote_if_better(model_id="m2", pipeline_version="v1", dataset_version=0, metadata=_metadata(much_worse, "m2"))
-        # 챔피언 유지 -- 챌린저로 교체되지 않는다.
-        assert result["active_model_id"] == "m1"
         active = store.active_model()
-        assert active["active_model_id"] == "m1"
+        assert active["active_model_id"] == "m2"
 
         events = store.list_promotion_events()
-        assert events[0]["promoted"] == 0
-        assert "저하" in events[0]["reason"]
+        assert events[0]["promoted"] == 1
+        assert "0.2000" in events[0]["reason"] or "0.0100" in events[0]["reason"]
     finally:
         _cleanup(path)
 
@@ -95,7 +87,9 @@ def test_incomparable_metric_promotes_by_default():
         _cleanup(path)
 
 
-def test_rejected_challenger_is_not_discarded_from_history_but_not_active():
+def test_no_challenger_is_ever_rejected_from_history():
+    """RB-4: 이전에는 게이트 미달 챌린저가 promoted=0으로 이력에만 남고
+    활성화되지 않았다 -- 이제는 모든 챌린저가 promoted=1로 활성화된다."""
     store, path = _store()
     try:
         store.promote_if_better(model_id="m1", pipeline_version="v1", dataset_version=0, metadata=_metadata(0.20, "m1"))
@@ -103,7 +97,47 @@ def test_rejected_challenger_is_not_discarded_from_history_but_not_active():
         events = store.list_promotion_events()
         assert len(events) == 2
         assert events[0]["candidate_model_id"] == "m2"
-        assert events[0]["promoted"] == 0
-        assert store.active_model()["active_model_id"] == "m1"
+        assert events[0]["promoted"] == 1
+        assert store.active_model()["active_model_id"] == "m2"
+    finally:
+        _cleanup(path)
+
+
+def test_per_target_regression_is_flagged_in_reason():
+    """RB-4: 어느 모드든 R²가 50% 이상 떨어지면 교체는 하되 reason에
+    "(저하)"로 남긴다 -- TrainingPanel이 이 문자열로 경고 스타일을
+    고른다."""
+    store, path = _store()
+    try:
+        store.promote_if_better(
+            model_id="m1", pipeline_version="v1", dataset_version=0,
+            metadata=_metadata(0.20, "m1", target_metrics={"Y2": {"r2": 0.35}, "Y1": {"r2": 0.24}}),
+        )
+        result = store.promote_if_better(
+            model_id="m2", pipeline_version="v1", dataset_version=0,
+            metadata=_metadata(0.20, "m2", target_metrics={"Y2": {"r2": 0.12}, "Y1": {"r2": 0.22}}),
+        )
+        assert result["active_model_id"] == "m2"  # 여전히 교체된다
+        events = store.list_promotion_events()
+        assert "Y2" in events[0]["reason"]
+        assert "저하" in events[0]["reason"]
+        assert "Y1" not in events[0]["reason"].split("Y2")[0]  # Y1은 50% 미만 하락이라 언급되지 않음
+    finally:
+        _cleanup(path)
+
+
+def test_small_target_regression_is_not_flagged():
+    store, path = _store()
+    try:
+        store.promote_if_better(
+            model_id="m1", pipeline_version="v1", dataset_version=0,
+            metadata=_metadata(0.20, "m1", target_metrics={"Y2": {"r2": 0.35}}),
+        )
+        store.promote_if_better(
+            model_id="m2", pipeline_version="v1", dataset_version=0,
+            metadata=_metadata(0.20, "m2", target_metrics={"Y2": {"r2": 0.30}}),
+        )
+        events = store.list_promotion_events()
+        assert "저하" not in events[0]["reason"]
     finally:
         _cleanup(path)

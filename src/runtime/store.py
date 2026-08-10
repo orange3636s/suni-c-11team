@@ -17,9 +17,37 @@ from api.settings import settings
 logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 
-# 자동 수집 파이프라인 §2-1: 홀드아웃 R²가 이만큼 이내로 떨어지는 건
-# 노이즈로 보고 승격을 막지 않는다. 이보다 크게 떨어지면 게이트 미달.
-PROMOTION_TOLERANCE = 0.005
+# RB-4: 승격 게이트(R² 임계 판정)는 제거됐다 -- 학습이 성공하면 무조건
+# 교체한다. 이 값은 "막는" 기준이 아니라 "경고하는" 기준으로만 남는다:
+# 모드별(Y1~Y5) R²가 활성 모델 대비 이 비율 이상 떨어지면 교체는 그대로
+# 하되 reason에 저하 사실을 남긴다("교체는 하되 침묵하지 마라").
+REGRESSION_WARNING_RATIO = 0.5
+
+
+def _per_target_r2_regressions(
+    candidate: dict[str, Any] | None,
+    active: dict[str, Any] | None,
+    *,
+    warning_ratio: float,
+) -> list[str]:
+    """RB-4: 모드별(Y1~Y5) R² 저하 목록 -- 활성 모델 대비 `warning_ratio`
+    이상 떨어진 타깃만 문자열로 반환한다(정상 범위 변동은 조용히
+    넘어간다). 활성 R²가 0 이하이면 비율 계산이 무의미해 건너뛴다."""
+    if not candidate or not active:
+        return []
+    regressions: list[str] = []
+    for target, candidate_detail in candidate.items():
+        if not isinstance(candidate_detail, dict):
+            continue
+        candidate_r2 = candidate_detail.get("r2")
+        active_detail = active.get(target)
+        active_r2 = active_detail.get("r2") if isinstance(active_detail, dict) else None
+        if not isinstance(candidate_r2, (int, float)) or not isinstance(active_r2, (int, float)) or active_r2 <= 0:
+            continue
+        drop_ratio = (active_r2 - candidate_r2) / active_r2
+        if drop_ratio >= warning_ratio:
+            regressions.append(f"{target} R² {active_r2:.2f} → {candidate_r2:.2f} (저하)")
+    return regressions
 
 # J-3: 자동 갱신 스냅샷 스키마 버전 -- 필드 모양이 호환되지 않게 바뀌면
 # 올린다. 복원 시 이 값이 다르면 옛 스냅샷을 쓰지 않는다(그대로 쓰면
@@ -278,23 +306,18 @@ class RuntimeStore:
         dataset_version: int,
         metadata: dict[str, Any],
         metric_path: tuple[str, ...] = ("metrics", "test", "r2"),
-        higher_is_better: bool = True,
-        tolerance: float = PROMOTION_TOLERANCE,
+        regression_warning_ratio: float = REGRESSION_WARNING_RATIO,
     ) -> dict[str, Any]:
-        """승격 게이트 (지시서 I-4, 자동 수집 파이프라인 §2-1) -- 후보
-        모델이 현재 활성 모델의 `metric_path` 지표(기본: 최종 수율 테스트
-        R², 높을수록 좋음)보다 `tolerance` 이상 나쁘지 않을 때만
-        `promote_model`을 호출한다. 작은 노이즈로 승격이 막히지 않도록
-        완전히 같거나 나은 경우만 요구하지 않고 `tolerance`만큼의 하락은
-        허용한다. 활성 모델이 없거나 지표를 비교할 수 없으면(둘 중
-        하나라도 None) 비교 불가로 보고 승격시킨다 -- 게이트가 첫 학습
-        자체를 막아서는 안 된다.
+        """RB-4: 승격 게이트를 제거했다 -- 학습이 성공하면 무조건 교체한다
+        (기존 R² 임계 판정과 GATING 상태 전이는 없다). 다만 "교체는 하되
+        침묵하지 마라" -- 활성 모델 대비 전체 지표 변화를 reason에 남기고,
+        모드별(Y1~Y5) R²가 어느 하나라도 `regression_warning_ratio`
+        (기본 50%) 이상 떨어졌으면 그 사실을 reason에 "(저하)"로 덧붙여
+        경고로 구분한다. `TrainingPanel`은 reason에 "저하"가 있으면 경고
+        스타일로 보여준다 -- 별도 배지 필드를 새로 만들지 않는다.
 
         수동 학습("수동 학습 실행")과 자동 재학습이 이 메서드 하나를
-        공유하므로 두 경로 모두 같은 게이트를 통과한다. 매 학습이 자신의
-        85/15 분할에서 계산한 테스트 지표를 비교하는 것이라 완전히
-        고정된 단일 홀드아웃은 아니지만, 동일한 random_state로 분할하므로
-        데이터셋이 그대로면 분할도 그대로다.
+        공유하므로 두 경로 모두 같은 방식으로 교체·기록된다.
         """
         def _dig(source: dict[str, Any] | None) -> float | None:
             node: Any = source
@@ -311,39 +334,34 @@ class RuntimeStore:
         active_metric = _dig(active_metadata)
 
         if active is None:
-            promoted, reason = True, "최초 모델 -- 게이트 없이 승격"
+            reason = "최초 모델 -- 교체됨"
         elif candidate_metric is None or active_metric is None:
-            promoted, reason = True, f"지표 비교 불가({metric_name} 없음) -- 비교할 수 없어 승격"
+            reason = f"지표 비교 불가({metric_name} 없음) -- 교체됨"
         else:
-            regressed = (
-                candidate_metric < active_metric - tolerance
-                if higher_is_better
-                else candidate_metric > active_metric + tolerance
-            )
-            if not regressed:
-                promoted, reason = True, "게이트 통과"
-            else:
-                promoted, reason = (
-                    False,
-                    f"홀드아웃 {metric_name} 저하 ({active_metric:.4f} → {candidate_metric:.4f})",
-                )
+            reason = f"{metric_name} {active_metric:.4f} → {candidate_metric:.4f}"
+
+        regressions = _per_target_r2_regressions(
+            candidate=metadata.get("target_metrics"),
+            active=(active_metadata or {}).get("target_metrics"),
+            warning_ratio=regression_warning_ratio,
+        )
+        if regressions:
+            reason = reason + " · " + " · ".join(regressions)
 
         self.record_promotion_event(
             candidate_model_id=model_id,
-            promoted=promoted,
+            promoted=True,
             reason=reason,
             candidate_metric=candidate_metric,
             active_metric=active_metric,
             previous_model_id=(active or {}).get("active_model_id"),
         )
-        if promoted:
-            return self.promote_model(
-                model_id=model_id,
-                pipeline_version=pipeline_version,
-                dataset_version=dataset_version,
-                metadata=metadata,
-            )
-        return active or {}
+        return self.promote_model(
+            model_id=model_id,
+            pipeline_version=pipeline_version,
+            dataset_version=dataset_version,
+            metadata=metadata,
+        )
 
     def record_promotion_event(
         self,
