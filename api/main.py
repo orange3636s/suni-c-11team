@@ -115,33 +115,52 @@ async def _warmup_datasets_background() -> None:
 
 # W-2: 첫 기동 스냅샷 부트스트랩 -- `run_refresh_pipeline`(기존 자동화
 # 파이프라인)을 그대로 재사용한다. 새 파이프라인을 만들지 않는다.
-BOOTSTRAP_TRAINING_TIMEOUT_SECONDS = 3600
-BOOTSTRAP_TRAINING_POLL_SECONDS = 5
 
 
 def _bootstrap_runtime_store() -> RuntimeStore:
     return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
 
 
-async def _await_first_champion(store: RuntimeStore) -> None:
-    """`run_refresh_pipeline`이 학습 대상이 없어(챔피언 없음) 백그라운드
-    학습 Job을 제출하면, 그 파이프라인 호출 자체는 제출만 하고 곧바로
-    반환한다(J-2 설계: 주기 갱신에서는 다음 사이클에 결과가 따라온다).
-    부트스트랩은 "접속하면 이미 다 채워져 있다"가 목표이므로, 여기서는
-    그 학습 Job이 끝날 때까지 기다린다 -- 서버 기동 자체는 이미
-    끝났으므로(lifespan을 블록하지 않음) 이 대기는 헬스체크에 영향을
-    주지 않는다."""
-    deadline = time.monotonic() + BOOTSTRAP_TRAINING_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if store.active_model() is not None:
-            return
-        job = store.latest_training_job()
-        if job is not None and job.get("status") == "failed":
-            raise RuntimeError(job.get("error_message") or "자동 학습이 실패했습니다.")
-        if job is not None and job.get("status") == "running" and job.get("stage"):
-            store.set_bootstrap_status("running", job["stage"])
-        await asyncio.sleep(BOOTSTRAP_TRAINING_POLL_SECONDS)
-    raise RuntimeError("학습이 제한 시간 내에 끝나지 않았습니다.")
+def _has_usable_champion(store: RuntimeStore) -> bool:
+    """NE-4: `store.active_model()`은 DB의 `model_slots` 행이 있는지만
+    보고, 그 `active_model_id`가 가리키는 아티팩트가 `models/`에 실제로
+    있는지는 확인하지 않는다. 레지스트리 행만 남고 파일이 없는 상태(예:
+    로컬 테스트로 생성된 모델을 커밋하지 않은 채 배포한 경우)에서는
+    `active_model()`이 여전히 값을 반환해 `_run_bootstrap`이 재학습을
+    건너뛰고, 이후 `run_refresh_pipeline`의 모델 로드가 조용히 실패해
+    스냅샷이 저장되지 않는다 -- 그 결과가 "첫 스냅샷 생성 실패" 배너다.
+    여기서 실제로 로드를 시도해 그 간극을 메운다."""
+    active = store.active_model()
+    model_id = str((active or {}).get("active_model_id") or "").strip()
+    if not model_id:
+        return False
+    from src.ml.inference import InferenceInputError, ModelLoadError, load_prediction_model
+
+    try:
+        load_prediction_model(model_id, settings.model_dir)
+    except (InferenceInputError, ModelLoadError):
+        logger.warning("bootstrap: 챔피언 모델 ID는 있으나 로드할 수 없습니다 (%s) -- 재학습합니다.", model_id)
+        return False
+    return True
+
+
+async def _train_bootstrap_champion() -> None:
+    """NE-4 근본 원인: `run_refresh_pipeline`은 더 이상 학습을 트리거하지
+    않는다(RB-4: 승격 게이트 제거 이후 학습은 "모델 학습" 팝업의 수동
+    업로드 경로 하나뿐이다). 콜드 스타트가 옛 주석(W-2)대로 `run_refresh_
+    pipeline`이 학습 Job을 제출하길 기다리기만 하면 챔피언이 전혀 없는
+    환경(신규 배포, 또는 챔피언 포인터는 있으나 아티팩트가 없는 경우)에서
+    영원히 끝나지 않는다 -- 실제로 재현했다. 수동 업로드와 같은 코드
+    경로(`train_model`)를 내장 train.CSV로 그대로 재사용해 새 학습
+    파이프라인을 만들지 않는다."""
+    from fastapi import UploadFile
+
+    from api.routes.data import train_model
+
+    train_path = settings.bundled_dataset_dir / BUNDLED_DATASET_FILES["train"]
+    with train_path.open("rb") as source:
+        upload = UploadFile(file=source, filename=BUNDLED_DATASET_FILES["train"])
+        await train_model(upload)
 
 
 async def _run_bootstrap(store: RuntimeStore) -> None:
@@ -150,11 +169,10 @@ async def _run_bootstrap(store: RuntimeStore) -> None:
         # W-3: 챔피언 모델이 이미 있으면(볼륨은 살아있는데 스냅샷만
         # 없는 경우 등) 재학습하지 않는다 -- `run_refresh_pipeline` 내부의
         # 데이터 해시 비교(조건부 재학습)와 같은 원칙이다.
-        if store.active_model() is None:
+        if not _has_usable_champion(store):
             store.set_bootstrap_status("running", "학습 중")
             # WK-5: 콜드 스타트 결과로는 알림을 보내지 않는다.
-            await asyncio.to_thread(run_refresh_pipeline, dispatch=False)
-            await _await_first_champion(store)
+            await _train_bootstrap_champion()
         store.set_bootstrap_status("running", "평가 · 원인분석 중")
         await asyncio.to_thread(run_refresh_pipeline, dispatch=False)
         if not store.has_valid_snapshot():
@@ -169,10 +187,12 @@ async def _run_bootstrap(store: RuntimeStore) -> None:
 async def _bootstrap_snapshot_background() -> None:
     """유효 스냅샷이 없을 때만, 단 한 번 실행한다. 기동을 블록하지 않도록
     `_spawn_background_task`로 fire-and-forget한다(89행 주석과 동일한
-    이유 -- 헬스체크가 실패하면 배포가 롤백된다)."""
+    이유 -- 헬스체크가 실패하면 배포가 롤백된다). NE-6: 수동 override로
+    활성화된 평가 데이터셋이 있으면 그 자체가 사용자의 최근 작업이므로
+    내장 데이터로 부트스트랩을 돌려 덮어쓰지 않는다."""
     store = _bootstrap_runtime_store()
     try:
-        if store.has_valid_snapshot():
+        if store.has_valid_snapshot() or store.get_manual_eval_override() is not None:
             return
         if not store.acquire_bootstrap_lock():
             logger.info("bootstrap: 다른 인스턴스가 이미 진행 중이라 건너뜁니다.")

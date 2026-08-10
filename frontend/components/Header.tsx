@@ -118,26 +118,25 @@ export default function Header() {
         {!isMobileLayout && (
           <>
             <div className="headerContextStrip" aria-label="현재 데이터 컨텍스트">
-              {snapshot && (
-                <>
-                  {/* 모바일 반응형 패치 S-1: 768~1023px(태블릿) 구간에서는
-                      SOURCE/LAST RUN만 남기고 EVAL/WAFERS를 줄인다 -- 이
-                      두 항목만 새 클래스로 구분해 globals.css의
-                      1023px 티어에서 숨긴다. */}
-                  <div className="headerContextItem headerContextEval">
-                    <span className="headerContextKey">EVAL</span>
-                    <span className="headerContextValue">{snapshot.source.eval_dataset}</span>
-                  </div>
-                  <div className="headerContextItem headerContextWafers">
-                    <span className="headerContextKey">WAFERS</span>
-                    <span className="headerContextValue">{snapshot.source.row_count.toLocaleString()}</span>
-                  </div>
-                  <div className="headerContextItem headerContextLastRun">
-                    <span className="headerContextKey">LAST RUN</span>
-                    <span className="headerContextValue">{formatHeaderClock(snapshot.created_at) ?? "-"}</span>
-                  </div>
-                </>
-              )}
+              {/* 모바일 반응형 패치 S-1: 768~1023px(태블릿) 구간에서는
+                  SOURCE/LAST RUN만 남기고 EVAL/WAFERS를 줄인다 -- 이
+                  두 항목만 새 클래스로 구분해 globals.css의
+                  1023px 티어에서 숨긴다.
+                  NE-5: snapshot이 아직 없을 때(콜드 스타트 진행 중) 항목
+                  자체를 없애면 헤더가 SOURCE 하나만 남아 흔들린다 -- 항목은
+                  항상 그리고 값만 "—"로 채운다. */}
+              <div className="headerContextItem headerContextEval">
+                <span className="headerContextKey">EVAL</span>
+                <span className="headerContextValue">{snapshot ? snapshot.source.eval_dataset : "—"}</span>
+              </div>
+              <div className="headerContextItem headerContextWafers">
+                <span className="headerContextKey">WAFERS</span>
+                <span className="headerContextValue">{snapshot ? snapshot.source.row_count.toLocaleString() : "—"}</span>
+              </div>
+              <div className="headerContextItem headerContextLastRun">
+                <span className="headerContextKey">LAST RUN</span>
+                <span className="headerContextValue">{snapshot ? (formatHeaderClock(snapshot.created_at) ?? "-") : "—"}</span>
+              </div>
               <div
                 className="headerContextItem headerContextSource"
                 title={

@@ -18,19 +18,17 @@ const BOOTSTRAP_STAGES = ["데이터 확인 중", "학습 중", "평가 · 원�
  * 기존 카드들의 빈 상태 문구가 그 자리를 대신한다.
  */
 export default function BootstrapStatusBanner() {
-  const { bootstrapStatus, refreshSnapshotNow } = useAnalysisState();
+  const { bootstrapStatus } = useAnalysisState();
   if (!bootstrapStatus || bootstrapStatus.status === "done") return null;
 
+  // NE-3: SQL 미연결로 내장 데이터를 쓰는 것은 정상 경로이므로 그 자체를
+  // 실패로 취급하지 않는다 -- 여기 도달하는 "failed"는 내장 데이터
+  // 분석 자체가 깨진, 사용자가 조치할 수 없는 데이터·코드 문제다. 재시도
+  // 버튼을 두지 않는다(눌러도 같은 이유로 다시 실패한다).
   if (bootstrapStatus.status === "failed") {
     return (
       <div className="bootstrapStateBanner error" role="alert">
-        <span>
-          첫 분석에 실패했습니다{bootstrapStatus.error ? ` — ${bootstrapStatus.error}` : ""}. 원인 분석 화면의
-          &lsquo;다시 분석&rsquo;으로 다시 시도할 수 있습니다.
-        </span>
-        <button type="button" className="button" onClick={refreshSnapshotNow}>
-          다시 확인
-        </button>
+        <span>내장 데이터 분석에 실패했습니다. 서버 로그를 확인하세요.</span>
       </div>
     );
   }
