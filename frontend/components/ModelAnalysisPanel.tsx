@@ -44,8 +44,29 @@ function measuredStatusLabel(provenance: { measured_rows: number; predicted_rows
   return `일부 실측 (실측 ${measured_rows.toLocaleString()}장 · 혼재 ${mixed_rows.toLocaleString()}장 · 전부 예측 ${predicted_rows.toLocaleString()}장)`;
 }
 
+// ZA-5: 업로드 성공 메시지("반영했습니다")는 즉시 뜨는데 바로 위
+// "현재 분석 데이터" 블록은 폴링 주기(최대 60초)가 돌아야 갱신됐다 --
+// 파이프라인이 끝나기 전까지 보여줄 최종 분석 결과는 당연히 없지만,
+// 업로드 응답 자체가 이미 들고 있는 정보(파일명·행수·타깃 실측 상태)는
+// 기다릴 이유가 없다. 이 상태가 있는 동안은 그 정보로 블록을 즉시
+// 덮어 보여주고, 실제 스냅샷이 이 dataset_id로 갱신되면(성공이든 다른
+// 파일로 대체되든) 지운다.
+type PendingUpload = {
+  datasetId: string;
+  filename: string;
+  rowCount: number | null;
+  targetMessage: string | null;
+  // 업로드 시점에 이미 반영돼 있던 스냅샷의 created_at -- 이 값이
+  // 바뀌는 순간이 "새 파이프라인 결과가 도착했다"는 신호다. eval_dataset만
+  // 비교하면, 아직 도착하지도 않은 업로드 직후 첫 렌더에서 곧바로
+  // 지워버린다(그때는 값이 여전히 옛 스냅샷 것이라 "다르다"고 오판하기
+  // 쉽다 -- created_at은 매 스냅샷마다 유일해 안전하다).
+  baselineCreatedAt: string | null;
+};
+
 export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { training, setTraining, snapshot } = useAnalysisState();
+  const { training, setTraining, snapshot, refreshSnapshotNow } = useAnalysisState();
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, open);
   const [sqlHost, setSqlHost] = useState(training?.sqlHost ?? "");
@@ -64,6 +85,17 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
   const [uploadError, setUploadError] = useState("");
   const [uploadMessage, setUploadMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 새 스냅샷이 도착하면(성공적으로 이 파일을 반영했든, 그 사이 다른
+  // 파일이 활성화됐든) pending 표시를 접는다 -- 진짜 결과가 있는데
+  // "분석 중…"을 계속 보여주면 안 된다.
+  useEffect(() => {
+    if (!pendingUpload) return;
+    if (snapshot?.created_at && snapshot.created_at !== pendingUpload.baselineCreatedAt) {
+      setPendingUpload(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot?.created_at]);
 
   useEffect(() => {
     if (!open) return;
@@ -153,9 +185,24 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
         return;
       }
       if (result.dataset_id) {
+        // ZA-5: 파이프라인 완료(수십 초~수 분)를 기다리지 않고, 업로드
+        // 응답이 이미 들고 있는 정보로 "현재 분석 데이터" 블록을 즉시
+        // 갱신한다 -- baselineCreatedAt은 "아직 새 스냅샷이 아니다"를
+        // 판정하는 기준으로, activateDataset 호출 *전* 값을 써야 한다
+        // (그 사이 다른 갱신이 끼어들 여지를 최소화한다).
+        setPendingUpload({
+          datasetId: result.dataset_id,
+          filename: file.name,
+          rowCount: result.row_count ?? null,
+          targetMessage: result.target_status?.message ?? null,
+          baselineCreatedAt: snapshot?.created_at ?? null,
+        });
         await activateDataset(result.dataset_id);
-        setUploadMessage("업로드한 파일을 분석 데이터로 반영했습니다.");
+        setUploadMessage("업로드한 파일을 분석 데이터로 반영했습니다. 분석이 완료되면 자동으로 반영됩니다.");
         setFile(null);
+        // 60초 폴링을 기다리지 않고 즉시 한 번 meta를 확인해
+        // refresh_running/manual_eval_override를 앞당겨 반영한다.
+        refreshSnapshotNow();
       }
     } catch (failure) {
       setUploadError(failure instanceof Error ? failure.message : "모델 분석을 시작하지 못했습니다.");
@@ -254,26 +301,34 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
             <dl className="trainingInfoList">
               <div>
                 <dt>출처</dt>
-                <dd>{sourceLabel(source?.mode)}</dd>
+                <dd>{pendingUpload ? "수동 업로드" : sourceLabel(source?.mode)}</dd>
               </div>
               <div>
                 <dt>소스 파일</dt>
-                <dd>{source?.eval_dataset_filename ?? source?.eval_dataset ?? "-"}</dd>
+                <dd>{pendingUpload ? pendingUpload.filename : (source?.eval_dataset_filename ?? source?.eval_dataset ?? "-")}</dd>
               </div>
               <div>
                 <dt>분석 시각</dt>
-                <dd>{snapshot ? formatLastRun(snapshot.created_at) : "-"}</dd>
-                {formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes) && (
+                <dd>{pendingUpload ? "분석 중…" : snapshot ? formatLastRun(snapshot.created_at) : "-"}</dd>
+                {!pendingUpload && formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes) && (
                   <dd className="settingsSectionDesc">다음 갱신 {formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes)}</dd>
                 )}
               </div>
               <div>
                 <dt>데이터 크기</dt>
-                <dd>{source?.row_count != null ? `${source.row_count.toLocaleString()}행` : "-"}</dd>
+                <dd>
+                  {pendingUpload
+                    ? pendingUpload.rowCount != null
+                      ? `${pendingUpload.rowCount.toLocaleString()}행`
+                      : "-"
+                    : source?.row_count != null
+                      ? `${source.row_count.toLocaleString()}행`
+                      : "-"}
+                </dd>
               </div>
               <div>
                 <dt>실측 상태</dt>
-                <dd>{measuredStatusLabel(provenance)}</dd>
+                <dd>{pendingUpload ? (pendingUpload.targetMessage ?? "확인 중…") : measuredStatusLabel(provenance)}</dd>
               </div>
               <div>
                 <dt>사용 모델</dt>
@@ -282,6 +337,7 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
                 </dd>
               </div>
             </dl>
+            {pendingUpload && <p className="settingsSectionDesc">분석이 백그라운드에서 진행 중입니다 · 팝업을 닫아도 계속됩니다.</p>}
             {snapshot && snapshot.errors.length > 0 && (
               <p className="notifyFieldError">최근 갱신 오류: {snapshot.errors.join(" · ")}</p>
             )}

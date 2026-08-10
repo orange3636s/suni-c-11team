@@ -214,6 +214,19 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
     }
     store.save_refresh_snapshot(snapshot)
     _warmup_common_prerequisites_background(eval_dataset_id)
+    # ZB-2: 콜드 스타트 부트스트랩(`_run_bootstrap`)이 한 번 실패하면
+    # `bootstrap_status`가 store에 "failed"로 영구히 남는다 -- 그 이후의
+    # 주기 잡·수동 "최신화"가 스냅샷 저장에 성공해도 아무도 그 상태를
+    # 지우지 않아 "첫 분석에 실패했습니다" 배너가 계속 뜬다(실제로 재현
+    # 확인함). dispatch=True는 콜드 스타트 자신의 내부 호출(dispatch=False)과
+    # 구분되는, 진짜 이후의 정상 갱신이라는 뜻이므로 여기서 안전하게
+    # 지운다 -- "failed"일 때만 건드리고, 지금 다른 콜드 스타트가
+    # "running" 중이면(이론상 dispatch=True로는 오지 않지만 방어적으로)
+    # 건드리지 않는다.
+    if dispatch:
+        current_bootstrap = store.get_bootstrap_status()
+        if current_bootstrap is not None and current_bootstrap.get("status") == "failed":
+            store.set_bootstrap_status("done", None)
     try:
         alarm_provenance = alarms_block.get("target_provenance") or {}
         store.save_alert_snapshot(
@@ -578,7 +591,14 @@ def _dispatch_yield_update_for_refresh(
     eval_df = registry.get_dataframe(eval_dataset_id)
     hydrated = _hydrated_targets_or_409(eval_dataset_id)
 
-    table = build_yield_prediction_table(train_df, eval_df, hydrated.dataframe, dataset_id=eval_dataset_id)
+    table = build_yield_prediction_table(
+        train_df,
+        eval_df,
+        hydrated.dataframe,
+        dataset_id=eval_dataset_id,
+        train_dataset_id=train_dataset_id,
+        train_dataset_version=registry.content_version(train_dataset_id),
+    )
 
     timestamp_label = datetime.fromisoformat(now_iso).astimezone(_KST).strftime("%H:%M")
     payload = build_yield_update_payload(

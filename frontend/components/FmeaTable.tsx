@@ -86,7 +86,7 @@ function EmptyState({ data, error }: { data: FmeaTablePayload | null; error?: st
   if (data.no_qualifying_factor.length > 0) {
     return (
       <p className="emptyMessage">
-        기여율 20% 이상 인자가 있는 타깃이 없습니다 ({data.no_qualifying_factor
+        기여율 10% 이상 인자가 있는 타깃이 없습니다 ({data.no_qualifying_factor
           .map((n) => `${n.target}는 최대 ${n.max_contribution_pct.toFixed(1)}%`)
           .join(", ")}).
       </p>
@@ -115,10 +115,10 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
       ) : (
         <>
           <p className="sectionCaption">
-            불량률 편차 내림차순 · 타깃별 기여율 20% 이상 · {data.items.length}행 · {(data.dataset_id || "-").toUpperCase()} · {data.total_wafers.toLocaleString()} wf
+            불량률 편차 내림차순 · 타깃별 기여율 10% 이상 · {data.items.length}행 · {(data.dataset_id || "-").toUpperCase()} · {data.total_wafers.toLocaleString()} wf
           </p>
           <p className="fmeaDescription">
-            각 타깃에서 파레토 기여율 20% 이상인 인자를 전부 표시합니다.
+            각 타깃에서 파레토 기여율 10% 이상인 인자를 전부 표시합니다.
           </p>
 
           <div className="tableWrap fmeaScrollTable">
@@ -154,7 +154,7 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
             <div className="fmeaNotice fmeaNoticeInfo">
               <p>
                 {data.no_qualifying_factor
-                  .map((n) => `${n.target}는 기여율 20% 이상 인자가 없습니다 (최대 ${n.max_contribution_pct.toFixed(1)}%)`)
+                  .map((n) => `${n.target}는 기여율 10% 이상 인자가 없습니다 (최대 ${n.max_contribution_pct.toFixed(1)}%)`)
                   .join(" · ")}
               </p>
             </div>

@@ -403,6 +403,23 @@ export function dispatchAlarmNotifications(trainDataset: string, evalDataset: st
   return postJson("/api/notify/dispatch", { train_dataset: trainDataset, eval_dataset: evalDataset, dashboard_url: null });
 }
 
+// YD: 수율 예측 화면 "알림 전송" 버튼 -- 확인 다이얼로그에서 연결된
+// 채널을 보여주려면 먼저 현재 설정을 읽어야 한다.
+export function getNotificationSettings(): Promise<NotificationSettingsSummary> {
+  return getJson("/api/notify/settings");
+}
+
+// YD: 버튼을 눌러 지금 바로 발송한다 -- `/dispatch`(옛 알람)와 별도
+// 엔드포인트라 AUC 게이트·목표 수율 설정과 무관하게 동작하지만,
+// 억제 규칙(신규분만·시간당 예산·최소 간격 10분)은 그대로 적용된다.
+export function dispatchYieldUpdateNotification(trainDataset: string, evalDataset: string): Promise<DispatchResponse> {
+  return postJson("/api/notify/yield-update/dispatch", {
+    train_dataset: trainDataset,
+    eval_dataset: evalDataset,
+    dashboard_url: null,
+  });
+}
+
 // -- 학습·분석 결과 상태 유지 (탭 이동·재접속) --------------------------
 // Called once on app mount by AnalysisStateProvider (spec §4-2/§6) --
 // never per tab-switch. A short timeout keeps a slow/unreachable API from

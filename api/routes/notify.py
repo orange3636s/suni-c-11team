@@ -238,6 +238,52 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
     return result
 
 
+@router.post("/yield-update/dispatch", response_model=DispatchResponse)
+def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
+    """YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러
+    지금 보낸다. `/dispatch`(옛 알람 발송)와 달리 AUC 게이트·목표
+    수율/민감도와 무관하다 -- 억제 규칙(신규분만·시간당 예산·수동
+    최소 간격 10분)은 `dispatch_yield_update`가 그대로 적용한다."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from src.analysis.yield_prediction import build_yield_prediction_table
+    from src.notifications.yield_update_dispatch import TRIGGER_MANUAL_BUTTON, dispatch_yield_update
+    from src.notifications.yield_update_senders import build_yield_update_payload
+
+    store = _store()
+    train_df = _dataframe_or_404(body.train_dataset)
+    eval_df = _dataframe_or_404(body.eval_dataset)
+    hydrated = _hydrated_targets_or_409(body.eval_dataset)
+    registry = get_dataset_registry()
+    table = build_yield_prediction_table(
+        train_df,
+        eval_df,
+        hydrated.dataframe,
+        dataset_id=body.eval_dataset,
+        train_dataset_id=body.train_dataset,
+        train_dataset_version=registry.content_version(body.train_dataset),
+    )
+
+    summary = registry.get_summary(body.eval_dataset)
+    dataset_label = summary["original_filename"] if summary else body.eval_dataset
+    active = store.active_model() or {}
+    timestamp_label = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M")
+    payload = build_yield_update_payload(
+        table,
+        dataset_label=dataset_label,
+        timestamp_label=timestamp_label,
+        model_label=active.get("active_model_id"),
+        dashboard_url=body.dashboard_url,
+    )
+    result = dispatch_yield_update(store, payload, trigger=TRIGGER_MANUAL_BUTTON)
+    if result.get("skipped"):
+        return {"skipped": True, "reason": result.get("reason"), "sent_count": None, "results": None}
+    channel_results = result.get("results") or {}
+    sent_count = sum(1 for item in channel_results.values() if item.get("ok"))
+    return {"skipped": False, "reason": None, "sent_count": sent_count, "results": channel_results}
+
+
 def _dispatch_yield_update_for_manual_analysis(
     store: RuntimeStore,
     *,
@@ -262,7 +308,14 @@ def _dispatch_yield_update_for_manual_analysis(
         train_df = _dataframe_or_404(train_dataset)
         eval_df = _dataframe_or_404(eval_dataset)
         hydrated = _hydrated_targets_or_409(eval_dataset)
-        table = build_yield_prediction_table(train_df, eval_df, hydrated.dataframe, dataset_id=eval_dataset)
+        table = build_yield_prediction_table(
+            train_df,
+            eval_df,
+            hydrated.dataframe,
+            dataset_id=eval_dataset,
+            train_dataset_id=train_dataset,
+            train_dataset_version=get_dataset_registry().content_version(train_dataset),
+        )
         timestamp_label = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M")
         payload = build_yield_update_payload(
             table,

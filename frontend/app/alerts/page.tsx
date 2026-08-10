@@ -8,8 +8,15 @@ import DashboardShell from "@/components/DashboardShell";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
-import { getYieldPrediction } from "@/lib/api";
-import type { AlertCellColor, YieldCandidate, YieldPredictionResponse, YieldReliabilityInfo } from "@/types/data";
+import { dispatchYieldUpdateNotification, getNotificationSettings, getYieldPrediction } from "@/lib/api";
+import type {
+  AlertCellColor,
+  DispatchResponse,
+  NotificationSettingsSummary,
+  YieldCandidate,
+  YieldPredictionResponse,
+  YieldReliabilityInfo,
+} from "@/types/data";
 
 // VA~VE: 수율 예측 -- 이 모델은 순위는 맞지만 값은 못 맞춘다(R² 0.12,
 // 상위 20장 적중 95%). 그래서 이 화면은 "순위 도구"이지 예측값 표시
@@ -36,8 +43,10 @@ function directionText(cell: AlertCellColor): string | null {
 
 function cellTooltip(target: string, valuePct: number | undefined, cell: AlertCellColor | undefined): string {
   if (!cell) return target;
-  if (cell.shade === "measured") return `${target}  실측 ${valuePct != null ? valuePct.toFixed(2) : "-"}%p`;
-  const lines = [`${target}  예측 ${valuePct != null ? valuePct.toFixed(2) : "-"}%p`];
+  // YB-1: Y1~Y5는 비율(불량률) 값이지 편차가 아니므로 %가 맞다 --
+  // %p는 편차·기대효과·감소량 같은 "차이" 값에만 쓴다.
+  if (cell.shade === "measured") return `${target}  실측 ${valuePct != null ? valuePct.toFixed(2) : "-"}%`;
+  const lines = [`${target}  예측 ${valuePct != null ? valuePct.toFixed(2) : "-"}%`];
   if (cell.feature) {
     lines.push(`인자 ${cell.feature}${cell.factor_value != null ? ` = ${cell.factor_value.toFixed(1)} (계측)` : " (미계측)"}`);
   }
@@ -63,7 +72,7 @@ function coreFactorCell(candidate: YieldCandidate, target: string) {
   );
 }
 
-// VC-1: 신뢰도 = (기여율 20% 이상 인자가 계측된 타깃 수) / 5.
+// VC-1/YG: 신뢰도 = (기여율 10% 이상 인자가 계측된 타깃 수) / 5.
 function reliabilityClassName(count: number): string {
   if (count === 0) return "ypReliabilityCell zero";
   if (count === 1) return "ypReliabilityCell low";
@@ -134,9 +143,43 @@ function AlertsContent() {
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [showUnmeasured, setShowUnmeasured] = useState(false);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+  const [notifySettings, setNotifySettings] = useState<NotificationSettingsSummary | null>(null);
+  const [notifySending, setNotifySending] = useState(false);
+  const [notifyResult, setNotifyResult] = useState<DispatchResponse | null>(null);
+  const [notifyError, setNotifyError] = useState("");
 
   const trainDataset = snapshot?.source.train_dataset ?? alarms?.trainDataset ?? "train";
   const evalDataset = snapshot?.source.eval_dataset ?? alarms?.evalDataset ?? "test";
+
+  // YD-2: 다이얼로그를 열 때마다 연결 상태를 새로 읽는다 -- 설정 패널에서
+  // 방금 채널을 끊었을 수도 있으니 캐시된 값을 재사용하지 않는다.
+  function openNotifyDialog() {
+    setNotifyDialogOpen(true);
+    setNotifyResult(null);
+    setNotifyError("");
+    setNotifySettings(null);
+    getNotificationSettings()
+      .then(setNotifySettings)
+      .catch(() => setNotifyError("채널 연결 상태를 불러오지 못했습니다."));
+  }
+
+  function closeNotifyDialog() {
+    setNotifyDialogOpen(false);
+  }
+
+  function confirmNotifySend() {
+    setNotifySending(true);
+    setNotifyError("");
+    dispatchYieldUpdateNotification(trainDataset, evalDataset)
+      .then(setNotifyResult)
+      .catch((failure) => setNotifyError(failure instanceof Error ? failure.message : "발송 요청에 실패했습니다."))
+      .finally(() => setNotifySending(false));
+  }
+
+  const notifyChannelsConnected = Boolean(
+    notifySettings && (notifySettings.slack.connected || notifySettings.telegram.connected || notifySettings.gmail.connected),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +238,9 @@ function AlertsContent() {
           <button type="button" className="button secondary" onClick={() => data && downloadCsv(data, sorted)} disabled={!data}>
             CSV 내보내기
           </button>
+          <button type="button" className="button secondary" onClick={openNotifyDialog} disabled={!data}>
+            알림 전송
+          </button>
         </div>
       </section>
 
@@ -240,7 +286,7 @@ function AlertsContent() {
                       <th key={t}>{t}</th>
                     ))}
                     <th title="합산 예측 수율 -- 절대값 정확도가 낮습니다(R² 0.12)">Y</th>
-                    <th title="기여율 20% 이상 인자가 계측된 타깃 수 / 5">신뢰도</th>
+                    <th title="기여율 10% 이상 인자가 계측된 타깃 수 / 5">신뢰도</th>
                     <th className="ypColRecommendation">권장사항</th>
                   </tr>
                 </thead>
@@ -271,7 +317,7 @@ function AlertsContent() {
                         ))}
                         {FAIL_TARGETS.map((t) => (
                           <td key={t} className={cellClassName(c.cells[t])} title={cellTooltip(t, c.y_components[t], c.cells[t])}>
-                            {c.y_components[t] != null ? `${c.y_components[t].toFixed(2)}%p` : "-"}
+                            {c.y_components[t] != null ? `${c.y_components[t].toFixed(2)}%` : "-"}
                           </td>
                         ))}
                         {/* VB-3: Y(합산값)에는 색을 쓰지 않는다. */}
@@ -323,6 +369,67 @@ function AlertsContent() {
             </section>
           )}
         </>
+      )}
+
+      {notifyDialogOpen && (
+        <div className="notifyDialogBackdrop" onClick={closeNotifyDialog}>
+          <div className="notifyDialogCard" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="notifyDialogHeader">
+              <h2>알림 전송</h2>
+              <button type="button" className="compareModalClose" onClick={closeNotifyDialog} aria-label="닫기">
+                ×
+              </button>
+            </div>
+            {notifyResult ? (
+              notifyResult.skipped ? (
+                <p className="analysisErrorMessage">발송하지 않았습니다 — {notifyResult.reason}</p>
+              ) : (
+                <div className="notifyDialogResult">
+                  <p>발송 완료 ({notifyResult.sent_count ?? 0}건)</p>
+                  <ul className="notifyDialogResultList">
+                    {Object.entries(notifyResult.results ?? {}).map(([channel, item]) => (
+                      <li key={channel}>
+                        {channel}: {item.ok ? "성공" : `실패 — ${item.error ?? "알 수 없는 오류"}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            ) : !notifySettings ? (
+              <p className="emptyMessage">{notifyError || "채널 연결 상태를 불러오는 중…"}</p>
+            ) : (
+              <>
+                <p className="notifyDialogChannels">
+                  연결된 채널:{" "}
+                  {[
+                    notifySettings.slack.connected ? "Slack" : null,
+                    notifySettings.telegram.connected ? "Telegram" : null,
+                    notifySettings.gmail.connected ? "Gmail" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "없음"}
+                </p>
+                <p className="notifyDialogChannels">내용: 수율 하위 10건 + 타깃별 상위 3건</p>
+                <p className="notifyDialogChannels">대상: {evalDataset}</p>
+                {!notifyChannelsConnected && <p className="analysisErrorMessage">연결된 채널이 없어 보낼 수 없습니다.</p>}
+                {notifyError && <p className="analysisErrorMessage">{notifyError}</p>}
+                <div className="notifyDialogActions">
+                  <button type="button" className="button secondary" onClick={closeNotifyDialog}>
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={confirmNotifySend}
+                    disabled={notifySending || !notifyChannelsConnected}
+                  >
+                    {notifySending ? "전송 중…" : "전송"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

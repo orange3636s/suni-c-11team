@@ -42,6 +42,12 @@ _MANUAL_INTERVAL_STATE_KEY = "yield_update:manual_last_sent_at"
 
 TRIGGER_REFRESH = "refresh"  # 자동 갱신 -- 항상 발송 후보(VE-1)
 TRIGGER_MANUAL = "manual_analysis"  # 수동 분석 실행 -- timing에 on_analysis 포함 시만
+# YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러 지금
+# 보내라는 명시적 의도이므로 TRIGGER_MANUAL과 달리 "분석 실행 직후"
+# 타이밍 설정 여부와 무관하게 시도한다. 그래도 최소 간격(10분)·시간당
+# 예산·신규분 dedupe는 TRIGGER_MANUAL과 동일하게 적용한다("하지 말
+# 것": dedupe를 우회하는 옵션을 만들지 마라).
+TRIGGER_MANUAL_BUTTON = "manual_button"
 
 
 def _fingerprint(payload: YieldUpdatePayload) -> str:
@@ -107,6 +113,7 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
             conditions = settings_store.get_conditions(store)
             if settings_store.TIMING_ON_ANALYSIS not in (conditions.get("timing") or []):
                 return {"skipped": True, "reason": "발송 시점 설정에 '분석 실행 직후'가 없음"}
+        if trigger in (TRIGGER_MANUAL, TRIGGER_MANUAL_BUTTON):
             blocked_until = _manual_interval_blocked_until(store)
             if blocked_until is not None:
                 return {
@@ -163,7 +170,7 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
             results["gmail"] = {"ok": ok, "error": error}
 
         store.set_app_state(_FINGERPRINT_STATE_KEY, {"fingerprint": fingerprint, "sent_at": datetime.now(timezone.utc).isoformat()})
-        if trigger == TRIGGER_MANUAL:
+        if trigger in (TRIGGER_MANUAL, TRIGGER_MANUAL_BUTTON):
             _mark_manual_dispatch_sent(store)
 
         return {"skipped": False, "results": results}

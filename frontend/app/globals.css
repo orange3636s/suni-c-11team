@@ -3601,52 +3601,8 @@ select,
   gap: 16px;
 }
 
-.headerStatusGroup{
-  display: flex;
-  min-width: 92px;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.headerStatusLabel{
-  color: var(--text-muted);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  line-height: 1;
-}
-
-.headerStatusGroup .statusBadge{
-  min-width: 86px;
-  min-height: 29px;
-  justify-content: flex-start;
-}
-
-.currentTimeGroup{
-  min-width: 96px;
-  padding-left: 18px;
-  border-left: 1px solid var(--border);
-}
-
-.currentTimeGroup time{
-  display: flex;
-  min-height: 29px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-}
-
-.currentTimeGroup time span{
-  font-size: var(--fs-micro);
-}
-
-.currentTimeGroup time strong{
-  color: var(--text-primary);
-  font-size: var(--fs-sm);
-  font-weight: 600;
+.headerContextTime{
+  white-space: nowrap;
 }
 
 .statusBadge{
@@ -4672,10 +4628,6 @@ select,
     gap: 12px;
   }
 
-  .currentTimeGroup{
-    padding-left: 12px;
-  }
-
   .dashboardAnalysisGrid{
     grid-template-columns: 1fr;
   }
@@ -4806,19 +4758,6 @@ select,
 
   .headerMeta{
     gap: 12px;
-  }
-
-  .headerStatusGroup{
-    min-width: 82px;
-  }
-
-  .headerStatusGroup .statusBadge{
-    min-width: 78px;
-  }
-
-  .currentTimeGroup{
-    min-width: 92px;
-    padding-left: 12px;
   }
 
   .intro h1,
@@ -9033,6 +8972,24 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
    드러낸다 (지시서 "n 부족 처리"). */
 .compareMiniChart.insufficientN{ opacity: 0.55; }
 
+/* YD: 수율 예측 화면 "알림 전송" 확인 다이얼로그 -- compareModal과
+   같은 오버레이 톤을 쓰되, 내용이 짧은 폼이라 훨씬 작은 고정 폭. */
+.notifyDialogBackdrop{
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: var(--z-modal); padding: 24px;
+}
+.notifyDialogCard{
+  width: 100%; max-width: 420px;
+  background: var(--surface); border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+  padding: 18px 22px 22px;
+}
+.notifyDialogHeader{ display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.notifyDialogHeader h2{ margin: 0; font-size: var(--fs-title); font-weight: 600; }
+.notifyDialogChannels{ margin: 6px 0; font-size: var(--fs-sm); color: var(--text-secondary); }
+.notifyDialogActions{ display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.notifyDialogResult{ font-size: var(--fs-sm); }
+.notifyDialogResultList{ margin: 8px 0 0; padding-left: 18px; }
+
 /* ===================================================================
    Table sits inside the card's own padding (spec 재지시: 다른 카드와
    여백 통일 -- full-bleed 지시를 철회) + outer border restored (spec
@@ -11014,8 +10971,10 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 .ypColRank{ width: 52px; min-width: 52px; max-width: 52px; text-align: center; white-space: nowrap; }
 .ypColWafer{ min-width: 112px; white-space: nowrap; }
 .ypColCoreFactor{ min-width: 148px; white-space: nowrap; }
-/* VB-1: "권장사항"은 마지막, white-space:normal, 최소 폭 260px. */
-.ypColRecommendation{ min-width: 260px; white-space: normal; overflow: visible; text-overflow: clip; }
+/* VB-1/YC-1: "권장사항"은 마지막, white-space:normal, 최소 폭 320px --
+   다른 열을 좁히지 않고 가로 스크롤로 확보한다(표는 이미 hScroll
+   래퍼 안에 있어 폭을 넓히면 자동으로 스크롤이 생긴다). */
+.ypColRecommendation{ min-width: 320px; white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* sticky 좌측 2열. z-index 우선순위(지시서 VB-1): 헤더+sticky 교차점 >
    헤더 > sticky열 > 일반셀 -- 위에서 정의한 --z-sticky-seg 스케일을
@@ -11052,13 +11011,14 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
 .ypReliabilityCell.zero{ color: var(--sig-red); font-weight: 600; }
 .ypReliabilityCell.low{ color: var(--sig-amber); font-weight: 600; }
 
-/* VD-5: 권장사항 2줄 말줄임 -- 전체 문장은 title 툴팁으로. 문장 내
-   줄바꿈(\n)을 그대로 보여주기 위해 white-space:pre-line을 쓰고, 그
-   위에 2줄로 클램프한다. */
+/* VD-5/YC-3: 권장사항 최대 3줄 말줄임(조정 인자 최대 2줄 + 미계측
+   요약 1줄 = 정확히 3줄이 가장 흔한 경우) -- 전체 문장은 title
+   툴팁으로. 문장 내 줄바꿈(\n)을 그대로 보여주기 위해
+   white-space:pre-line을 쓰고, 그 위에 3줄로 클램프한다. */
 .ypRecommendationText{
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   overflow: hidden;
   white-space: pre-line;
   color: var(--text-primary);

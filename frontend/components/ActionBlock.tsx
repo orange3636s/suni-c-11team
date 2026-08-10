@@ -42,7 +42,7 @@ function RecommendedActionsTable({ data }: { data: FmeaTablePayload | null }) {
   return (
     <div className="actionBlockSection">
       <h3 className="actionBlockSubheading">권고 조치</h3>
-      <p className="sectionCaption">실익(불량률 편차) 순 · 기여율 20% 이상 핵심인자가 계측된 wafer 대상</p>
+      <p className="sectionCaption">실익(불량률 편차) 순 · 기여율 10% 이상 핵심인자가 계측된 wafer 대상</p>
 
       {rows.length === 0 ? (
         <p className="emptyMessage">권고할 조치가 없습니다.</p>

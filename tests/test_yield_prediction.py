@@ -147,7 +147,10 @@ def test_adjustable_recommendation_includes_current_value_and_range():
     assert with_adjustment
     sample = with_adjustment[0]
     assert "Step1_R1" in sample.recommendation.text or "Step2_R1" in sample.recommendation.text
-    assert "%p 감소할 것으로 추정됩니다" in sample.recommendation.text
+    # YC-3: 화살표 축약형("Step1_R1 12.3 → 4.0~10.0 · Y1 −2.1%p")으로
+    # 바뀌었다 -- 화살표와 %p 부호가 문구에 있는지로 형식을 확인한다.
+    assert "→" in sample.recommendation.text
+    assert "%p" in sample.recommendation.text
 
 
 TRAIN_PATH = Path(__file__).resolve().parents[1] / "data" / "bundled" / "train.CSV"

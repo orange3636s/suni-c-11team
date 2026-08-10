@@ -574,16 +574,16 @@ function RootCauseContent() {
     () => activeParetoResponse?.items ?? [],
     [activeParetoResponse],
   );
-  // 지시서 WI-2: 표시 기준은 파레토 기여율 20% 이상 고정(토글 없음) --
+  // 지시서 WI-2/YG: 표시 기준은 파레토 기여율 10% 이상 고정(토글 없음) --
   // selectDisplayFactors가 그 필터를 적용한다.
   const displayFactors = useMemo(() => selectDisplayFactors(activeParetoItems), [activeParetoItems]);
   const activeTargetIsEmpty = Boolean(
     analysisVisible && activeParetoResponse && activeParetoResponse.items.length === 0,
   );
   // 이 타깃에서 그릴 차트가 0개인지 -- 순위 자체는 있지만(activeParetoItems
-  // 비어있지 않음) 그중 기여율 20% 이상인 인자가 하나도 없는 경우.
+  // 비어있지 않음) 그중 기여율 10% 이상인 인자가 하나도 없는 경우.
   const activeTargetHasNoChart = activeParetoItems.length > 0 && displayFactors.length === 0;
-  // WI-2 안내 문구("Y4는 기여율 20% 이상 인자가 없습니다 (최대 18.3%)")의
+  // WI-2 안내 문구("Y4는 기여율 10% 이상 인자가 없습니다 (최대 8.3%)")의
   // 최대값 -- items는 이미 ε² 내림차순이라 기여율도 같은 순서이지만,
   // 그 가정에 기대지 않고 직접 최댓값을 구한다.
   const maxContributionPct = useMemo(
@@ -1022,10 +1022,10 @@ function RootCauseContent() {
             <>
               {/* 지시서 WI-1: 파레토는 타깃당 1개, 화면 상단에 고정 -- 인자
                   카드마다 반복해 그리던 것을 걷어냈다. 인자 카드는 그
-                  아래에 나열된다. 표시 기준(WI-2, 기여율 20% 이상)과
+                  아래에 나열된다. 표시 기준(WI-2/YG, 기여율 10% 이상)과
                   무관하게 이 타깃에 순위가 있는 한(activeParetoItems가
                   비어있지 않은 한) 항상 보인다 -- "이 타깃의 인자 순위"
-                  전체를 보여주는 차트라 20% 미만 인자도 막대로는 남는다. */}
+                  전체를 보여주는 차트라 10% 미만 인자도 막대로는 남는다. */}
               {activeParetoResponse && activeParetoItems.length > 0 && (
                 <PinnedParetoCard
                   target={activeTarget}
@@ -1037,10 +1037,10 @@ function RootCauseContent() {
               )}
 
               {activeTargetHasNoChart ? (
-                // 지시서 WI-2: 기여율 20% 이상 인자가 하나도 없으면 카드
-                // 대신 이 안내를 띄운다(문구 형식은 지시서 예시 그대로).
+                // 지시서 WI-2/YG: 기여율 10% 이상 인자가 하나도 없으면
+                // 카드 대신 이 안내를 띄운다(문구 형식은 지시서 예시 그대로).
                 <section className="resultCard noChartMessage">
-                  <h2>{activeTarget}는 기여율 20% 이상 인자가 없습니다 (최대 {maxContributionPct.toFixed(1)}%)</h2>
+                  <h2>{activeTarget}는 기여율 10% 이상 인자가 없습니다 (최대 {maxContributionPct.toFixed(1)}%)</h2>
                 </section>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>

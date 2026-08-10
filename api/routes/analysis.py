@@ -582,7 +582,7 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
 
 def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
     """FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 타깃별 파레토 기여율
-    20% 이상인 인자를 전부 스냅샷에 담는다. 온디맨드 REST 엔드포인트는
+    10% 이상인 인자를 전부 스냅샷에 담는다(YG). 온디맨드 REST 엔드포인트는
     두지 않는다(지시서 IA-5: "자동 갱신 파이프라인에서 함께 계산되게
     하라, 별도 조회 금지") -- `src/automation/refresh.py`가 이 함수를
     직접 호출해 다른 분석 결과와 같은 스냅샷 저장 시점에 함께 계산한다.
@@ -1127,7 +1127,14 @@ def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, An
     eval_view = _hydrated_targets_or_409(eval)
     eval_df = _dataframe_or_404(eval)
 
-    table = build_yield_prediction_table(train_df, eval_df, eval_view.dataframe, dataset_id=eval)
+    table = build_yield_prediction_table(
+        train_df,
+        eval_df,
+        eval_view.dataframe,
+        dataset_id=eval,
+        train_dataset_id=train,
+        train_dataset_version=get_dataset_registry().content_version(train),
+    )
     return {
         "train_dataset_id": train,
         "eval_dataset_id": eval,

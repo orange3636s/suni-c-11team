@@ -523,7 +523,7 @@ export type ModeLoss = {
 };
 
 // WB 상단 요약 카드 4개 + WC/WD가 함께 쓰는 서버 계산 결과. "판정
-// 가능"은 핵심 인자(기여율 20% 이상)가 실제로 계측된 wafer -- 타깃 값
+// 가능"은 핵심 인자(기여율 10% 이상, YG)가 실제로 계측된 wafer -- 타깃 값
 // 자체가 알려져 있어도(번들 test.CSV처럼 완전 라벨된 평가셋) 그 사실은
 // 세지 않는다(운영 환경의 미계측 평가 데이터를 가정한 기준).
 export type YieldSummary = {
@@ -584,7 +584,7 @@ export type ParetoRankingResponse = {
 };
 
 // FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 백엔드가 타깃별 파레토
-// 기여율 20% 이상인 인자를 전부 골라(개수 상한 없음) 스냅샷에 담아
+// 기여율 10% 이상인 인자를 전부 골라(개수 상한 없음) 스냅샷에 담아
 // 보낸다. S·O·D·RPN은 더 이상 계산·표시하지 않는다. 프런트는 표시만
 // 한다(구간 내/외 평균 Y는 원본 데이터가 있어야 계산할 수 있어 여기서
 // 다시 계산하지 않는다). `dataset_id`가 없는 스냅샷(자동 갱신이 아직
@@ -619,7 +619,7 @@ export type FmeaFactorItem = {
   mnar_gap_pp: number | null; // 계측군-미계측군 최종 수율 평균 차, 표본 부족 시 null
 };
 
-// WE-2: 타깃별 20% 이상 인자가 하나도 없을 때의 사유.
+// WE-2/YG: 타깃별 10% 이상 인자가 하나도 없을 때의 사유.
 export type FmeaNoQualifyingFactor = {
   target: string;
   max_contribution_pct: number;

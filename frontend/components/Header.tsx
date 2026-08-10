@@ -62,24 +62,21 @@ export default function Header() {
     }
 
     updateCurrentTime();
-    const intervalId = window.setInterval(updateCurrentTime, 1000);
+    // ZC: 분 단위 표시로 바뀌어(초 없음) 매초 갱신할 이유가 없다.
+    const intervalId = window.setInterval(updateCurrentTime, 15_000);
     return () => window.clearInterval(intervalId);
   }, []);
 
+  // ZC: EVAL/WAFERS/LAST RUN 등 다른 헤더 항목은 분 단위(HH:MM)까지만
+  // 보여준다 -- Current Time만 초 단위였던 게 다른 항목과 다른 폭·리듬을
+  // 만들었다. 분 단위로 맞추고, 날짜도 연도 없이 월-일만 남겨 한 줄에
+  // 들어가게 한다("08-11 00:17").
   const currentDate = currentTime
-    ? [
-        currentTime.getFullYear(),
-        String(currentTime.getMonth() + 1).padStart(2, "0"),
-        String(currentTime.getDate()).padStart(2, "0"),
-      ].join("-")
-    : "---- -- --";
+    ? [String(currentTime.getMonth() + 1).padStart(2, "0"), String(currentTime.getDate()).padStart(2, "0")].join("-")
+    : "-- --";
   const currentClock = currentTime
-    ? [
-        String(currentTime.getHours()).padStart(2, "0"),
-        String(currentTime.getMinutes()).padStart(2, "0"),
-        String(currentTime.getSeconds()).padStart(2, "0"),
-      ].join(":")
-    : "--:--:--";
+    ? [String(currentTime.getHours()).padStart(2, "0"), String(currentTime.getMinutes()).padStart(2, "0")].join(":")
+    : "--:--";
 
   return (
     <>
@@ -166,11 +163,14 @@ export default function Header() {
                 </span>
               </div>
             </div>
-            <div className="headerStatusGroup currentTimeGroup">
-              <span className="headerStatusLabel">Current Time</span>
-              <time dateTime={currentTime?.toISOString()}>
-                <span>{currentDate}</span>
-                <strong>{currentClock}</strong>
+            {/* ZC: EVAL/WAFERS/LAST RUN/SOURCE와 같은 .headerContextItem
+                모양을 그대로 써서 폰트(모노스페이스)·크기·대문자 표기를
+                통일한다 -- 이 항목만 다른 서체·크기를 쓰던 게 헤더 안에서
+                눈에 띄게 어긋나 보였다. */}
+            <div className="headerContextItem headerContextTime" title="현재 시각">
+              <span className="headerContextKey">CURRENT TIME</span>
+              <time className="headerContextValue" dateTime={currentTime?.toISOString()}>
+                {currentDate} {currentClock}
               </time>
             </div>
           </>

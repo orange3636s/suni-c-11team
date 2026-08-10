@@ -6,20 +6,25 @@ VA-1/VA-3: 타깃별 핵심 인자는 파레토 차트가 이미 쓰는 기여�
 (selector.py의 contribution_pct)을 그대로 재사용하고, 웨이퍼·타깃마다
 계측된 가장 높은 순위(최대 5위까지)의 인자로 폴백한다.
 
-VC-1: 신뢰도 = (기여율 20% 이상 인자가 계측된 타깃 수) / 5. 실측이 있는
-타깃은 계측으로 센다(예측이 아니므로 근거가 확실하다). VA-2 실측상
-20% 이상은 타깃당 1위 인자뿐이라 사실상 "1위 계측 수"와 같지만, 판정은
-기여율로 한다 -- 다른 데이터셋에서 2위가 20%를 넘으면 자동으로
-반영되어야 하기 때문이다("하지 말 것: 20% 임계를 낮추지 마라").
+VC-1: 신뢰도 = (기여율 CORE_FACTOR_CONTRIBUTION_MIN 이상 인자가 계측된
+타깃 수) / 5. 실측이 있는 타깃은 계측으로 센다(예측이 아니므로 근거가
+확실하다). VA-2 실측상 이 임계 이상은 대체로 타깃당 1위 인자뿐이라
+사실상 "1위 계측 수"와 같지만, 판정은 기여율로 한다 -- 다른
+데이터셋에서 2위가 임계를 넘으면 자동으로 반영되어야 하기 때문이다.
+YG: 이전에는 20%였다("하지 말 것: 20% 임계를 낮추지 마라"는 주석이
+있었다) -- 작업 지시서가 명시적으로 10%로 낮추라고 요구해 그 결정을
+대체했다. 폐기 배경은 docs/decisions.md 참고.
 
-VD-1: 같은 20% 임계로 권장사항이 두 갈래로 갈린다 -- 이상 계측된
-타깃은 구간 조정 제안(SPC/ML 권장 구간 재사용 + 2차 곡선 감소량),
-미만인 타깃은 계측 추가 제안(1위 인자명).
+VD-1: 같은 임계로 권장사항이 두 갈래로 갈린다 -- 이상 계측된 타깃은
+구간 조정 제안(SPC/ML 권장 구간 재사용 + 2차 곡선 감소량), 미만인
+타깃은 계측 추가 제안(1위 인자명).
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from threading import RLock
 
 import numpy as np
 import pandas as pd
@@ -30,17 +35,18 @@ from src.analysis.recommendations import FactorRecommendation, compute_factor_re
 from src.analysis.reliability_score import FAIL_RATE_TARGETS, cell_color
 from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import ParetoFactor, select_top_factors
+from src.analysis.thresholds import CORE_FACTOR_CONTRIBUTION_MIN
 
 ID_COLUMN = "Lot_Wafer_ID"
 LOT_COLUMN = "Lot_ID"
 
 # VA-3: 5위까지만 본다 -- 그 아래는 기여율 1% 미만이라 의미가 없다.
 MAX_FALLBACK_RANK = 5
-# VA-2/VC-1/VD-1이 공유하는 단일 임계 -- "하지 말 것: 기여율 20% 임계를
-# 낮추지 마라". reliability_score.SHADE_MEDIUM_MIN과 같은 값(20.0)이다
-# (셀 농도의 "medium" 경계와 "핵심 인자로 인정" 경계가 우연히 같지 않고,
-# 둘 다 "파레토 기여율 20%"라는 같은 개념의 다른 쓰임이다).
-CONTRIBUTION_THRESHOLD = 20.0
+# VA-2/VC-1/VD-1이 공유하는 단일 임계 -- src/analysis/thresholds.py가
+# 유일한 소스다(YG/ZF-1). reliability_score.SHADE_MEDIUM_MIN은 값이
+# 우연히 같았을 뿐인 별개 개념(셀 농도 구간)이라 여기에 맞춰 바꾸지
+# 않는다 -- 그 상수를 건드리지 마라.
+CONTRIBUTION_THRESHOLD = CORE_FACTOR_CONTRIBUTION_MIN
 # VD-3: 실익 없는 조치를 권하지 않는다.
 MIN_MEANINGFUL_DECREASE_PCT = 0.05
 # VD-2: 여러 타깃이 조정 가능해도 최대 2개까지만 나열한다.
@@ -250,19 +256,61 @@ def _rank5_factors(train_df: pd.DataFrame, schema: Schema) -> dict[str, list[Par
     return {target: select_top_factors(train_df, schema, target, limit=MAX_FALLBACK_RANK) for target in FAIL_RATE_TARGETS}
 
 
+# YF/ZD (성능): 라이브 프로파일 결과 `_rank5_factors`(파레토 스코어링 5회,
+# 매번 eps2/quantile-bin/pearsonr 반복)가 요청마다 ~3.5초를 먹었다 --
+# train_df/schema에만 의존하고 eval 데이터셋과는 무관한데도 캐시가 전혀
+# 없어 같은 train 데이터셋으로 반복 조회해도 매번 다시 계산됐다(측정:
+# 콜드 6.4s, 웜(하이드레이션·compare_methods 캐시만 적용) 3.5s -- 그 3.5s가
+# 전부 이 함수였다). dataset_id는 재업로드로 내용이 바뀌어도 그대로일 수
+# 있어(YE가 test.CSV를 그대로 갈아 끼운 것처럼) 버전 문자열을 키에 함께
+# 넣는다 -- src/analysis/target_hydration.py, window_methods.py의
+# (dataset_id, dataset_version)/문자열 키 관례를 그대로 따른다.
+_FACTOR_CACHE_MAXSIZE = 4
+_factor_cache: "OrderedDict[tuple[str, str], dict[str, list[ParetoFactor]]]" = OrderedDict()
+_factor_cache_lock = RLock()
+
+
+def _rank5_factors_cached(
+    train_df: pd.DataFrame, schema: Schema, *, train_dataset_id: str | None, train_dataset_version: str | None
+) -> dict[str, list[ParetoFactor]]:
+    if train_dataset_id is None or train_dataset_version is None:
+        return _rank5_factors(train_df, schema)
+    key = (train_dataset_id, train_dataset_version)
+    with _factor_cache_lock:
+        cached = _factor_cache.get(key)
+        if cached is not None:
+            _factor_cache.move_to_end(key)
+            return cached
+    result = _rank5_factors(train_df, schema)
+    with _factor_cache_lock:
+        _factor_cache[key] = result
+        _factor_cache.move_to_end(key)
+        while len(_factor_cache) > _FACTOR_CACHE_MAXSIZE:
+            _factor_cache.popitem(last=False)
+    return result
+
+
 def build_yield_prediction_table(
     train_df: pd.DataFrame,
     eval_df: pd.DataFrame,
     hydrated_df: pd.DataFrame,
     *,
     dataset_id: str = "eval",
+    train_dataset_id: str | None = None,
+    train_dataset_version: str | None = None,
 ) -> YieldPredictionTable:
     """`hydrated_df`는 `target_hydration.hydrate_targets`가 반환한, 실측
     우선으로 Y1~Y5(및 Y)를 채운 프레임이다 -- 순위/표시값은 여기서
     읽는다. `eval_df`는 실측/예측 판정(신뢰도·폴백·색상)에 쓰는 원본
-    (하이드레이션 전) 프레임이다."""
+    (하이드레이션 전) 프레임이다.
+
+    `train_dataset_id`/`train_dataset_version`은 선택값이다 -- 둘 다
+    있으면 파레토 랭킹(가장 비싼 단계, 위 주석 참고)을 요청 간에
+    캐시한다. 호출부가 못 넘기면(예: 단위 테스트) 그냥 매번 계산한다."""
     schema = parse_schema(train_df)
-    ranked_factors = _rank5_factors(train_df, schema)
+    ranked_factors = _rank5_factors_cached(
+        train_df, schema, train_dataset_id=train_dataset_id, train_dataset_version=train_dataset_version
+    )
     primary_factors: dict[str, ParetoFactor | None] = {
         target: (factors[0] if factors else None) for target, factors in ranked_factors.items()
     }
@@ -386,7 +434,7 @@ def build_yield_prediction_table(
             )
             cells[target] = cell_color(target, target_value, target_measured[target], primary_factors)
 
-        # VD: 권장사항 -- 기여율 20% 이상 인자가 계측된 타깃만 구간 조정 후보.
+        # VD/YG: 권장사항 -- 기여율 10% 이상 인자가 계측된 타깃만 구간 조정 후보.
         adjustable: list[tuple[str, str, float, float, float, float]] = []
         for target in FAIL_RATE_TARGETS:
             core = core_factors[target]
@@ -409,18 +457,21 @@ def build_yield_prediction_table(
         meaningful = [item for item in adjustable if item[5] >= MIN_MEANINGFUL_DECREASE_PCT]
         top_adjustments = meaningful[:MAX_ADJUSTMENT_ITEMS]
 
+        # YC-3: 화살표 축약형 한 줄 -- "Step16_R1 73.2 → 55.6~63.4 · Y2 −2.1%p".
+        # 감소량 큰 순으로 이미 정렬돼 있다(위 adjustable.sort).
         lines: list[str] = []
         for target, feature, current_value, lo, hi, decrease in top_adjustments:
-            lines.append(f"현재 {feature}이 {current_value:.1f}입니다.")
-            lines.append(f"{feature}이 {lo:.1f}~{hi:.1f} 사이로 이동하면 {target}가 {decrease:.1f}%p 감소할 것으로 추정됩니다.")
+            lines.append(f"{feature} {current_value:.1f} → {lo:.1f}~{hi:.1f} · {target} −{decrease:.1f}%p")
         if adjustable and not meaningful:
             # VD-3: 실익 0.05%p 미만 -- 실익 없는 조치를 권하지 않는다.
             lines.append("개선 여지가 거의 없습니다.")
 
         # VD-4: 폴백으로 하위 인자를 쓰고 있어도 1위가 미계측이면 제안 대상.
         # 이미 실측인 타깃은 "예측이 부정확하다"는 문구가 성립하지 않으므로
-        # 제외한다.
-        deficient_targets: list[tuple[str, str]] = []
+        # 제외한다. top1이 없는(그 타깃에 후보 인자 자체가 없는) 경우도
+        # "핵심 인자가 아예 없다"는 뜻이므로 YC-5 대상에 포함한다(이전에는
+        # 조용히 건너뛰어 행 전체가 "—"만 남았다).
+        deficient_targets: list[tuple[str, str | None]] = []
         for target in FAIL_RATE_TARGETS:
             if target_measured[target]:
                 continue
@@ -429,19 +480,15 @@ def build_yield_prediction_table(
             if eligible:
                 continue
             top1 = primary_factors.get(target)
-            if top1 is None:
-                continue
-            deficient_targets.append((target, top1.feature))
+            deficient_targets.append((target, top1.feature if top1 is not None else None))
 
+        # YC-2/YC-5: 타깃별로 자기 인자를 괄호로 묶어 한 줄로 -- 인자가
+        # 아예 없는 타깃은 괄호 없이 타깃명만(계측할 대상 자체가 없다는
+        # 뜻이라 인자를 지어내지 않는다).
         if deficient_targets:
-            target_names = ", ".join(t for t, _ in deficient_targets)
-            feature_names = ", ".join(dict.fromkeys(f for _, f in deficient_targets))
-            if lines:
-                lines.append(f"현재 {target_names}에 대한 예측이 부정확합니다.")
-                lines.append(f"{feature_names}에 대한 계측을 추가하세요.")
-            else:
-                # VD-5: 조정 제안이 없고 계측 제안만 있으면 한 줄로 줄인다.
-                lines.append(f"{feature_names}에 대한 계측을 추가하세요.")
+            pairs = " · ".join(f"{t}({f})" if f else t for t, f in deficient_targets)
+            prefix = "미계측" if lines else "핵심 인자 미계측"
+            lines.append(f"{prefix}: {pairs} 계측 추가")
 
         recommendation = Recommendation(
             text="\n".join(lines),

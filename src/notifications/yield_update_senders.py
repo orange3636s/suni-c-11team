@@ -106,7 +106,7 @@ def build_yield_update_payload(
 
     target_blocks: list[YieldUpdateTargetBlock] = []
     for target in FAIL_RATE_TARGETS:
-        # VE-2: "기여율 20% 이상 인자가 계측된 wafer만" -- VD의 구간 조정
+        # VE-2/YG: "기여율 10% 이상 인자가 계측된 wafer만" -- VD의 구간 조정
         # 자격(core_factors[target])과 같은 임계를 재사용한다.
         eligible = [
             c

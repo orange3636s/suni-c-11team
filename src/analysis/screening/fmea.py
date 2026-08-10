@@ -2,9 +2,13 @@
 실행 과제/실험 확인 대상/확인 필요 대상 3개 레일을 대체한다.
 
 작업 지시서 WE: 행 선정은 더 이상 RPN 상위 N개가 아니다 -- 타깃별 파레토
-기여율(selector.py의 contribution_pct) 20% 이상인 인자를 전부 남긴다
-(타깃당 0개일 수도, 2개 이상일 수도 있다 -- 지금 데이터에서는 타깃당
-1개씩 5행). S(심각도)·O(발생도)·D(검출도)·RPN은 더 이상 계산하지 않는다
+기여율(selector.py의 contribution_pct)이 CORE_FACTOR_CONTRIBUTION_MIN
+이상인 인자를 전부 남긴다(타깃당 0개일 수도, 2개 이상일 수도 있다 --
+지금 데이터에서는 타깃당 1개씩 5행). YG: 이 임계는 원래 20%였고 "하지
+말 것: 임계를 낮추지 마라"는 주석이 있었다 -- 작업 지시서가 명시적으로
+10%로 낮추고 화면 전체에 통일하라고 요구해 그 결정을 src/analysis/
+thresholds.py의 단일 상수로 대체했다(폐기 배경은 docs/decisions.md).
+S(심각도)·O(발생도)·D(검출도)·RPN은 더 이상 계산하지 않는다
 (선정에도 표시에도 안 쓴다). "구간 내/외 평균 Y"를 구하려면 원본 데이터가
 필요하므로 이 계산은 전부 여기(백엔드)에서 끝내고, 프런트는 표시만 한다
 (지시서 IA-5).
@@ -32,11 +36,12 @@ from src.analysis.measurement_expansion import _measured_any_mask
 from src.analysis.recommendations import compute_factor_recommendation
 from src.analysis.screening.schema import FINAL_YIELD_COLUMN
 from src.analysis.screening.selector import ParetoFactor, _row_to_factor
+from src.analysis.thresholds import CORE_FACTOR_CONTRIBUTION_MIN
 
 # WE-2: 선정 기준 -- 타깃별 파레토 기여율(contribution_pct)이 이 값
-# 이상인 인자를 전부 남긴다("하지 말 것: 임계를 낮추지 마라"). RPN 기반
-# top_n 선정을 대체한다.
-MIN_CONTRIBUTION_PCT = 20.0
+# 이상인 인자를 전부 남긴다. RPN 기반 top_n 선정을 대체한다. YG/ZF-1:
+# src/analysis/thresholds.py가 유일한 소스다.
+MIN_CONTRIBUTION_PCT = CORE_FACTOR_CONTRIBUTION_MIN
 MIN_MNAR_SAMPLE = 30  # 이보다 표본이 적은 쪽은 MNAR 갭을 신뢰할 수 없어 None 처리
 
 DETECTION_METHOD_LABELS: dict[str, str] = {
@@ -186,7 +191,7 @@ def _score_factor(
 
 @dataclass
 class NoQualifyingFactor:
-    """WE-2: 20% 이상 인자가 없는 타깃 -- 행을 만드는 대신 사유로 남긴다."""
+    """WE-2/YG: 임계(10%) 이상 인자가 없는 타깃 -- 행을 만드는 대신 사유로 남긴다."""
 
     target: str
     max_contribution_pct: float
@@ -212,7 +217,7 @@ def build_fmea_table(
     """작업 지시서 WE-2: 타깃별로 파레토 기여율(contribution_pct)이
     `min_contribution_pct` 이상인 인자를 전부 남긴다 -- 개수 상한이 없다
     (지금 데이터에서는 타깃당 1개씩 5행이지만, 2위가 임계를 넘으면
-    자동으로 6행·7행이 된다). 20% 이상이 하나도 없는 타깃은 행 대신
+    자동으로 6행·7행이 된다). 임계 이상이 하나도 없는 타깃은 행 대신
     `no_qualifying_factor`에 사유(최대 기여율)로 남는다. 정렬은
     defect_rate_deviation_pct(불량률 편차) 내림차순(WE-4).
     """
