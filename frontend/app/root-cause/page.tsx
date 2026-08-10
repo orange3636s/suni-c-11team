@@ -8,7 +8,7 @@ import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
-import DatasetSelector from "@/components/DatasetSelector";
+import CurrentDatasetLabel from "@/components/CurrentDatasetLabel";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
@@ -23,7 +23,6 @@ import { formatPValue } from "@/lib/numberFormat";
 import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
-  activateDataset,
   ApiNetworkError,
   ApiResponseError,
   ApiTimeoutError,
@@ -38,6 +37,7 @@ import {
   getScreeningScatter,
   getScreeningScatterCategorical,
   saveAnalysisState,
+  triggerRefresh,
 } from "@/lib/api";
 import type {
   CategoricalScatterResponse,
@@ -165,21 +165,9 @@ export default function RootCausePage() {
 function RootCauseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setAnalysisDataset, setTrainingPanelOpen } = usePanelState();
-  // AG-1/AG-2: 새 파일을 업로드하면 활성 평가 데이터셋으로 전환하고
-  // 스냅샷 파이프라인을 1회 실행한다(화면별 개별 재분석은 걸지 않는다).
-  // Y 계열이 감지되면 자동 학습은 절대 걸지 않고 안내만 띄운다.
-  const [showTrainingSuggestion, setShowTrainingSuggestion] = useState(false);
-  const [activateError, setActivateError] = useState("");
-  function handleDatasetUploaded(uploadedId: string, hasTargetColumns: boolean) {
-    setActivateError("");
-    void activateDataset(uploadedId)
-      .then(() => refreshSnapshotNow())
-      .catch((failure) => {
-        setActivateError(failure instanceof Error ? failure.message : "활성 평가 데이터셋 전환에 실패했습니다.");
-      });
-    setShowTrainingSuggestion(hasTargetColumns);
-  }
+  // RD-1: 원인분석 화면의 자체 업로드 경로를 제거했다 -- 데이터셋
+  // 전환은 이제 모델 분석 팝업에서만 일어난다.
+  const { setAnalysisDataset, setAnalysisPanelOpen } = usePanelState();
   // 원인 분석 결과 상태 유지 (spec: 학습·분석 결과 상태 유지) -- the actual
   // result (Pareto/스크리닝/산점도) lives in the shared AnalysisStateProvider
   // context, not local useState, so tab switching renders it from memory
@@ -188,7 +176,7 @@ function RootCauseContent() {
   // GET /api/state/latest.
   const {
     analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice,
-    snapshot: automationSnapshot, refreshSnapshotNow, training,
+    snapshot: automationSnapshot, training,
   } = useAnalysisState();
   // DE그룹: 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언)을 함께
   // 담는다 -- 이후 재학습/재승격으로 model_id가 바뀌면 "이전 분석 기준"
@@ -399,6 +387,17 @@ function RootCauseContent() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, analysis]);
+
+  // RD-2: 모델 분석 팝업에서 데이터셋을 바꾸면(activate-dataset ->
+  // 스냅샷 갱신 -> analysis.dataset 변경) 이 화면의 라벨도 따라간다 --
+  // 위 syncedFromRestore와 달리 최초 1회가 아니라 analysis.dataset이
+  // 바뀔 때마다 계속 동작한다. 즐겨찾기 딥링크(?dataset=)가 있으면
+  // 그 값을 유지한다(위와 같은 이유).
+  useEffect(() => {
+    if (!analysis || searchParams.get("dataset")) return;
+    setDatasetId(analysis.dataset);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis?.dataset]);
 
   // 복원된 결과는 산점도 좌표를 담고 있지 않다 (spec §3-1) -- 배경에서 한
   // 번 다시 채운다. 채우는 동안에도 스크리닝 표/Pareto/비교 카드 등 좌표가
@@ -827,20 +826,11 @@ function RootCauseContent() {
 
       <section className="uploadCard">
         <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr)" }}>
-          <DatasetSelector label="분석 대상" value={datasetId} onChange={setDatasetId} onUploaded={handleDatasetUploaded} />
+          {/* RD-2: 데이터는 모델 분석이 정한다 -- 이 화면에서 바꾸지
+              않는다. [변경]은 모델 분석 팝업을 연다. */}
+          <CurrentDatasetLabel label="분석 대상" datasetId={datasetId} onOpenAnalysisPanel={() => setAnalysisPanelOpen(true)} />
         </div>
         <DatasetMismatchWarning mismatch={datasetMismatch} />
-        {activateError && <p className="notifyFieldError">{activateError}</p>}
-        {/* AG-2: Y 계열이 감지돼도 자동 학습은 걸지 않는다 -- 안내 +
-            모델 학습·자동화 팝업을 여는 링크만 제공한다. */}
-        {showTrainingSuggestion && (
-          <p className="analysisFallbackNotice" role="status">
-            이 파일에는 Y 계열이 있습니다. 학습에 사용하려면 모델 학습·자동화에서 실행하세요.{" "}
-            <button type="button" className="linkButton" onClick={() => setTrainingPanelOpen(true)}>
-              열기
-            </button>
-          </p>
-        )}
       </section>
 
       <section className="uploadCard">

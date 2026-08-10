@@ -8189,6 +8189,11 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 
 /* Dataset selector dropdown */
 .datasetSelector{ position: relative; display: inline-block; min-width: 260px; }
+/* RD-2: 데이터셋 셀렉터를 대체하는 표시 라벨 -- 선택 컨트롤이 아니라
+   "지금 모델 분석이 정한 값"을 보여주기만 한다. */
+.currentDatasetLabel{ display: inline-flex; align-items: center; gap: 10px; min-width: 260px; }
+.currentDatasetLabelValue{ font-size: var(--fs-body); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.currentDatasetLabelHint{ color: var(--text-muted); font-size: var(--fs-xs); }
 .datasetSelectorButton{
   width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
   min-height: 40px; padding: 0 12px; border-radius: var(--radius-panel); border: 1px solid var(--border-card, rgba(0,0,0,.12));
@@ -9208,6 +9213,18 @@ html[data-theme="dark"] .degradedStateBanner{
   border-color: rgba(248, 113, 113, 0.4); background: rgba(127, 29, 29, 0.28); color: #FCA5A5;
 }
 .degradedStateBanner > .button{ flex: 0 0 auto; }
+
+/* RD-3: 스냅샷 갱신 알림 -- degradedStateBanner와 같은 레이아웃, 톤만
+   긍정(초록)으로. 몇 초 뒤 자동으로 사라진다(snapshotJustUpdated가
+   AnalysisStateProvider에서 타이머로 꺼진다). */
+.snapshotUpdatedBanner{
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 20px; font-size: var(--fs-body); line-height: 1.5;
+  border-bottom: 1px solid #BBF7D0; background: #F0FDF4; color: #15803D;
+}
+html[data-theme="dark"] .snapshotUpdatedBanner{
+  border-color: rgba(74, 222, 128, 0.35); background: rgba(20, 83, 45, 0.28); color: #86EFAC;
+}
 
 /* W-4: 첫 기동 부트스트랩 진행 배너 -- 같은 레이아웃을 쓰되(스켈레톤·
    무한 로딩이 아니라 한 줄 상태 표시) 톤은 중립(진행 중)/실패(경고)로

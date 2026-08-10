@@ -739,6 +739,10 @@ export type RefreshSnapshotMonitoring = {
 export type RefreshSnapshot = {
   schema_version: number;
   created_at: string;
+  // RC-6: 모니터링·원인분석·알림기록 3종이 같은 계산 결과에서 나왔음을
+  // 확인하는 공유 id -- created_at을 그대로 쓴다(스냅샷 자체가 이미
+  // 원자적으로 저장되므로 별도 채번이 필요 없다).
+  analysis_id: string;
   source: RefreshSnapshotSource;
   model: RefreshSnapshotModel;
   analysis: {

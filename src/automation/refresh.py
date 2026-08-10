@@ -118,6 +118,11 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
 
     snapshot = {
         "created_at": now_iso,
+        # RC-6: 모니터링·원인분석·알림기록 3종이 같은 계산 결과에서
+        # 나왔음을 확인할 수 있는 공유 id -- 이 스냅샷 하나(analysis_block
+        # +alarms_block+monitoring_block)가 이미 원자적으로 저장되므로
+        # created_at을 그대로 재사용한다(별도 채번이 필요 없다).
+        "analysis_id": now_iso,
         "source": {
             "mode": mode,
             "train_dataset": train_dataset_id,

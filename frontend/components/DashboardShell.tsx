@@ -48,7 +48,7 @@ export default function DashboardShell({
   const isMobileLayout = useIsMobileLayout();
   // D-2: 모든 페이지에서 보이도록 셸 레벨에서 한 번만 렌더한다 -- 각
   // 페이지가 개별적으로 처리하면 배너를 빠뜨리는 페이지가 생긴다.
-  const { degraded, retryHydration } = useAnalysisState();
+  const { degraded, retryHydration, snapshotJustUpdated } = useAnalysisState();
 
   // 태블릿 진입 시 기본 접힘 (지시서: "기존 접힘 기능이 있으므로 초기
   // 상태만 바꾼다") -- sidebarCollapsed는 이미 사용자가 직접 토글하는
@@ -119,6 +119,14 @@ export default function DashboardShell({
           <div className="degradedStateBanner" role="alert">
             <span>이전 결과 복원 실패 — 학습·원인 분석·알림 기록이 일시적으로 보이지 않을 수 있습니다.</span>
             <button type="button" className="button" onClick={retryHydration}>다시 시도</button>
+          </div>
+        )}
+        {/* RD-3: 스냅샷이 갱신되면 알린다 -- "새 결과 있음" 배너. 모든
+            화면이 공유하는 셸 레벨에서 한 번만 렌더한다(D-2와 같은
+            이유). */}
+        {snapshotJustUpdated && (
+          <div className="snapshotUpdatedBanner" role="status">
+            <span>새 결과 있음 — 모델 분석이 방금 갱신됐습니다.</span>
           </div>
         )}
         {isMobileLayout && <MobileTabBar activeItem={activeItem} />}
