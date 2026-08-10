@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -80,6 +81,75 @@ def run_refresh_pipeline() -> None:
         _refresh_lock.release()
 
 
+def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
+    """UC (perf): pre-populate the prerequisites every scatter/heatmap card
+    on the root-cause tab shares, right after a refresh snapshot is saved --
+    so the user's next click doesn't pay a cold-start it doesn't need to.
+
+    Deliberately narrow: only the SHARED prerequisites (target hydration,
+    parsed schema, the GBDT feature-column list, the warning-line reference
+    model). Individual scatter cards themselves are intentionally NOT
+    precomputed here -- "개별 산점도는 워밍업 대상에서 제외".
+
+    `hydrate_targets` for `eval_dataset_id` is very likely already warm by
+    the time this runs -- `_analyze_and_score` (called just above, in
+    `_run_refresh_pipeline_inner`) already calls into `_pareto_payload` (per
+    target) and `_fmea_payload`, both of which call
+    `_hydrated_targets_or_409(eval_dataset_id)` internally. Calling it again
+    here is cheap insurance for the case where every per-target Pareto call
+    failed but FMEA still populated it (or vice versa) -- after the UB fix,
+    a cache hit is a dict lookup + a frozen-dataclass rebuild, not a
+    dataframe copy, so re-touching it costs effectively nothing.
+
+    `_cached_schema` / `_cached_gbdt_features` / `_cached_reference_model`
+    are NOT touched by any of those functions -- `_pareto_payload` and
+    `_fmea_payload` call `parse_schema` directly (not through the new
+    per-request caches added for the scatter endpoint), and nothing in the
+    refresh pipeline computes the warning-line reference model at all. Those
+    three are the actual cold gap this warmup closes.
+    """
+    from api.routes.analysis import (
+        _cached_gbdt_features,
+        _cached_reference_model,
+        _cached_schema,
+        _hydrated_targets_or_409,
+    )
+
+    hydrated = _hydrated_targets_or_409(eval_dataset_id)
+    dataset_version = hydrated.provenance.dataset_version
+    _cached_schema(eval_dataset_id, dataset_version)
+    _cached_gbdt_features(eval_dataset_id, dataset_version)
+    _cached_reference_model(eval_dataset_id)
+
+
+def _warmup_common_prerequisites_background(eval_dataset_id: str) -> None:
+    """Fire-and-forget: must never raise into the pipeline and must never
+    delay `store.save_refresh_snapshot` (called just before this) -- a
+    daemon thread start is effectively instant, so placement right after
+    the snapshot save doesn't matter for that guarantee. A plain
+    `threading.Thread` (this module's own existing concurrency primitive --
+    see `_refresh_lock` above) rather than an asyncio task: this whole
+    module is synchronous and may run inside APScheduler's executor thread
+    pool rather than the event loop thread, so there is no guaranteed
+    running loop here to schedule an asyncio task onto.
+    """
+
+    def _run() -> None:
+        t0 = time.perf_counter()
+        try:
+            _warmup_common_prerequisites(eval_dataset_id)
+        except Exception:
+            logger.exception(
+                "auto_refresh: 워밍업 실패 -- 다음 조회가 콜드 스타트로 처리됩니다 (eval=%s)", eval_dataset_id
+            )
+            return
+        logger.info(
+            "auto_refresh: 워밍업 완료 %.1fms eval=%s", (time.perf_counter() - t0) * 1000, eval_dataset_id
+        )
+
+    threading.Thread(target=_run, daemon=True, name="refresh-warmup").start()
+
+
 def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
     errors: list[str] = []
     registry = _dataset_registry(store)
@@ -137,6 +207,7 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
         "errors": errors,
     }
     store.save_refresh_snapshot(snapshot)
+    _warmup_common_prerequisites_background(eval_dataset_id)
     try:
         alarm_provenance = alarms_block.get("target_provenance") or {}
         store.save_alert_snapshot(
