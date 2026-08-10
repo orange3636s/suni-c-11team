@@ -103,6 +103,39 @@ def _hydrated_targets_or_409(dataset_id: str) -> HydratedTargets:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+SCHEMA_CACHE_DATASETS = 2
+
+
+@lru_cache(maxsize=SCHEMA_CACHE_DATASETS)
+def _cached_schema(dataset_id: str, dataset_version: str) -> Any:
+    """UB-2 (perf): `parse_schema` re-walks every column of the dataframe
+    (regex match x ~90 columns) on every call -- individually cheap, but
+    `get_screening_scatter` alone calls it fresh 50 times in one 5-target x
+    10-factor analysis run (target_hydration.py's own cache fixed the much
+    bigger cost -- model load/predict -- but left this uncached).
+
+    `dataset_version` MUST stay in the cache key even though the function
+    body never reads it -- this project has hit the "cache key missing the
+    version" bug three times before (uploading a replacement dataset under
+    the same id must produce a fresh schema, not a stale one). Keying by
+    version alone is enough: content changes bump `dataset_version`, which
+    is itself a fresh key, so old entries just age out via `maxsize`
+    LRU eviction -- no explicit invalidation call is needed for this cache
+    (see the UB-3 invalidation-audit note in the perf commit message).
+    """
+    del dataset_version  # part of the cache key only, see docstring above
+    df = get_dataset_registry().get_dataframe(dataset_id)
+    return parse_schema(df)
+
+
+@lru_cache(maxsize=SCHEMA_CACHE_DATASETS)
+def _cached_gbdt_features(dataset_id: str, dataset_version: str) -> tuple[str, ...]:
+    """Depends only on `_cached_schema` (a list comprehension over its
+    r_cols/d_cols) -- cached and keyed the same way, for the same reason."""
+    schema = _cached_schema(dataset_id, dataset_version)
+    return tuple(alarm_gbdt.feature_columns(schema))
+
+
 def _single_flight(fn):
     """B-4: `lru_cache`만으로는 같은 키가 아직 캐시되지 않은 상태에서
     동시에 두 스레드가 들어오면(예: 일일 발송 스케줄러 잡과 사용자의
@@ -147,9 +180,17 @@ def _find_cached_factor(
 
 @router.get("/screening/scatter", response_model=ScreeningScatterResponse)
 def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, Any]:
+    # UA-1 (perf measurement): per-phase timing for a scatter request -- a
+    # single "분석 실행" fires 5 targets x 10 factors of these, so a slow
+    # phase here is a slow phase x50. See UB's commit message for the
+    # before/after numbers this instrumentation produced.
+    t_start = time.perf_counter()
     hydrated = _hydrated_targets_or_409(dataset)
     df = hydrated.dataframe
-    schema = parse_schema(df)
+    dataset_version = hydrated.provenance.dataset_version
+    t_hydrate = time.perf_counter()
+
+    schema = _cached_schema(dataset, dataset_version)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃 결과가 없습니다.")
     # Resolves any of the 88 factors regardless of Pareto rank -- a heatmap
@@ -162,10 +203,20 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"'{feature}'은(는) Config(범주형) 인자입니다. /api/screening/scatter/categorical을 사용하세요.",
         )
+    t_factor = time.perf_counter()
 
     reference_model = _cached_reference_model(dataset)
-    gbdt_features = alarm_gbdt.feature_columns(schema)
+    gbdt_features = list(_cached_gbdt_features(dataset, dataset_version))
+    t_refmodel = time.perf_counter()
+
     data = build_scatter_data(df, df, factor, dataset_id=dataset, reference_model=reference_model, gbdt_features=gbdt_features)
+    t_build = time.perf_counter()
+    logger.debug(
+        "scatter %s/%s hydrate=%.3f factor=%.3f refmodel=%.3f build=%.3f total=%.3f",
+        target, feature,
+        t_hydrate - t_start, t_factor - t_hydrate, t_refmodel - t_factor, t_build - t_refmodel,
+        t_build - t_start,
+    )
     # Only the bulky per-point/per-bin arrays are rounded -- they're what
     # actually drives payload size (108KB for 1,470 points); scalar stats
     # (p_value/q_value/eps2) keep full precision since a very small
@@ -202,7 +253,7 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
     """
     hydrated = _hydrated_targets_or_409(dataset)
     df = hydrated.dataframe
-    schema = parse_schema(df)
+    schema = _cached_schema(dataset, hydrated.provenance.dataset_version)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
     if feature not in schema.config_cols:
@@ -227,49 +278,42 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
 
 
 HEATMAP_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict older ones
-# numeric: spearman + eps2 (2) / categorical: model + eq + chamber (3)
-HEATMAP_VARIANTS = 5
+# TC-4/TC-3: numeric은 더 이상 metric 토글이 없다(ε²+rho를 한 응답에 함께
+# 낸다) -- numeric 1 + categorical 1 = 2.
+HEATMAP_VARIANTS = 2
 
 @lru_cache(maxsize=HEATMAP_CACHE_DATASETS * HEATMAP_VARIANTS)
 def _cached_heatmap(
     dataset_id: str,
     kind: str,
-    metric: str,
-    config_level: str,
     dataset_version: str,
     model_id: str,
     model_version: str,
     hydration_version: str,
 ) -> HeatmapData:
-    # 캐시 키에 kind/config_level까지 넣는다 (spec E) -- 빠뜨리면 같은
-    # dataset_id·metric으로 수치형을 먼저 조회한 뒤 범주형을 조회했을 때
-    # lru_cache가 수치형 결과를 그대로 돌려준다. config_level은
-    # kind="numeric"일 때, metric은 kind="categorical"일 때 각각 쓰이지
-    # 않지만(범주형은 항상 ε²), 캐시 키에는 남겨 시그니처를 하나로
-    # 유지한다. 데이터셋 내용은 dataset_id가 존재하는 한 불변이므로
-    # (업로드는 매번 새 uuid, 번들 파일은 정적) 이 캐시는 최근 2개
-    # 데이터셋만 LRU로 유지해 무한정 커지지 않는다.
-    del dataset_version, model_id, model_version, hydration_version
+    # 캐시 키에 kind까지 넣는다 (spec E) -- 빠뜨리면 같은 dataset_id로
+    # 수치형을 먼저 조회한 뒤 범주형을 조회했을 때 lru_cache가 수치형
+    # 결과를 그대로 돌려준다. 데이터셋 내용은 dataset_id가 존재하는 한
+    # 불변이므로(업로드는 매번 새 uuid, 번들 파일은 정적) 이 캐시는 최근
+    # 2개 데이터셋만 LRU로 유지해 무한정 커지지 않는다.
+    del model_id, model_version, hydration_version
     df = _hydrated_targets_or_409(dataset_id).dataframe
-    schema = parse_schema(df)
+    schema = _cached_schema(dataset_id, dataset_version)
     if kind == "categorical":
-        return build_categorical_heatmap(df, schema, level=config_level)  # type: ignore[arg-type]
-    return build_heatmap(df, schema, metric=metric)  # type: ignore[arg-type]
+        return build_categorical_heatmap(df, schema)
+    return build_heatmap(df, schema)
 
 
 @router.get("/screening/heatmap", response_model=HeatmapResponse)
 def get_screening_heatmap(
     dataset: str = "train",
-    metric: Literal["spearman", "eps2"] = "spearman",
     kind: Literal["numeric", "categorical"] = "numeric",
-    config_level: Literal["model", "eq", "chamber"] = "eq",
 ) -> dict[str, Any]:
     """The correlation heatmap used identically by both the training tab
     and the root-cause tab. Two independent views (spec E), never merged
-    into one grid or one FDR family: numeric (R+D x Y1~Y5, rho or eps2)
-    and categorical (Config x Y1~Y5, eps2 only -- rho isn't defined for
-    an unordered category). The numeric path's behavior/response shape
-    is unchanged from before this parameter existed.
+    into one grid or one FDR family: numeric (R+D x Y1~Y5, always both ε²
+    and rho -- TC-4) and categorical (Config x Y1~Y5, ε² only -- rho isn't
+    defined for an unordered category).
     """
     t0 = time.perf_counter()
     hydrated = _hydrated_targets_or_409(dataset)
@@ -278,8 +322,6 @@ def get_screening_heatmap(
     heatmap = _cached_heatmap(
         dataset,
         kind,
-        metric,
-        config_level,
         provenance.dataset_version,
         provenance.model_id or "measured-only",
         provenance.model_version or "none",
@@ -287,16 +329,17 @@ def get_screening_heatmap(
     )
     cached = _cached_heatmap.cache_info().hits > hits_before
     logger.info(
-        "screening_heatmap %.1fms (cached=%s, dataset=%s, kind=%s, metric=%s, config_level=%s)",
-        (time.perf_counter() - t0) * 1000, cached, dataset, kind, metric, config_level,
+        "screening_heatmap %.1fms (cached=%s, dataset=%s, kind=%s)",
+        (time.perf_counter() - t0) * 1000, cached, dataset, kind,
     )
     return {
         "dataset_id": dataset,
-        "metric": "eps2" if kind == "categorical" else metric,
+        "metric": "eps2",
         "kind": kind,
         "features": heatmap.features,
         "targets": heatmap.targets,
         "values": heatmap.values,
+        "rho": heatmap.rho,
         "n": heatmap.n,
         "q": heatmap.q,
         "significant": heatmap.significant,
@@ -904,7 +947,7 @@ def get_alarms(
     목표 수율 - 민감도 margin(%p) 아래인 wafer만 알람으로 낸다.
 
     `target`/`sensitivity`는 선택 파라미터다 -- 지시서: 원인 분석 탭의
-    알람 삼각형 마커가 알림 기록 탭에서 저장한 값을 그대로 넘겨 두
+    알람 삼각형 마커가 수율 예측 탭에서 저장한 값을 그대로 넘겨 두
     화면의 판정 기준을 일치시킨다. 생략하면(둘 다 또는 하나만) 그
     파라미터는 기본값(88.0/0.2)을 쓴다 -- 파라미터 없이 부르던 기존
     호출부(알림 발송 등)는 동작이 그대로다. 사전 알람 로그 화면 자체는
@@ -992,7 +1035,7 @@ def compute_alarm_notification_items(
 ) -> list[dict[str, Any]] | None:
     """알림 발송(src.notifications.dispatch)이 쓰는 알람 목록 -- `get_alarms`와
     같은 파이프라인(게이트)을 그대로 재사용한다. `target`/`sensitivity`는
-    호출부(notify.py)가 알림 기록 탭에 저장된 alarms_state.payload에서
+    호출부(notify.py)가 수율 예측 탭에 저장된 alarms_state.payload에서
     읽어 넘긴다 -- 생략하면(저장된 조회가 없을 때) 기본값(88.0/0.2)을
     쓴다. 데이터셋을 찾을 수 없으면 예외 대신 None을 반환한다 -- 알림
     발송은 best-effort라 404로 스케줄러 잡 전체를 죽이면 안 된다.
@@ -1046,7 +1089,7 @@ def get_alerts_ranking(
     """RE-1: y(=100 − Σ Y1~Y5, RC-3 실측 우선 규칙으로 채운 뒤 재계산)
     오름차순 상위 top_n건. 신뢰도(RC-4)·y1~y5 셀 색상(RC-4b)을 함께
     내려보낸다. `/alarms/predictions`(구 5분류·목표 수율 체계)를 대체한다
-    -- 알림 기록 화면은 이제 이 엔드포인트만 부른다.
+    -- 수율 예측 화면은 이제 이 엔드포인트만 부른다.
     """
     from src.analysis.alerts_ranking import build_alert_ranking
 

@@ -262,11 +262,44 @@ def _predict_targets(dataframe: pd.DataFrame, loaded: Any) -> tuple[dict[str, np
     }
 
 
-def _copy_result(result: HydratedTargets, *, cache_hit: bool) -> HydratedTargets:
+def _view_with_cache_flag(result: HydratedTargets, *, cache_hit: bool) -> HydratedTargets:
+    """UB-1 (perf): rebuilds only the provenance (a frozen dataclass, cheap
+    to reconstruct) with the correct `cache_hit` flag -- the dataframe
+    itself is never copied here anymore.
+
+    This used to be `_copy_result`, and it did `result.dataframe.copy(deep=True)`
+    on *every* call, including cache HITS. That is exactly the anti-pattern
+    this project's own review checklist warns against ("캐시 안에서 매번
+    copy()하지 마라 -- 캐시 효과가 절반으로 준다"): a 5-target x 10-factor
+    analysis run makes ~50 calls into `hydrate_targets` for the same
+    (dataset, model) pair, so 49 of those 50 calls paid a full deep copy of a
+    ~10k-row x ~90-col frame for nothing.
+
+    Safe to drop because no consumer downstream of `_hydrated_targets_or_409`
+    mutates `hydrated.dataframe` in place -- verified by inspecting every
+    call site (`api/routes/analysis.py`, `api/routes/monitoring.py`) and every
+    module that receives it transitively (`src/analysis/scatter.py`,
+    `control_range.py`, `screening/*.py`, `warning_line.py`,
+    `measurement_expansion.py`, `alarm_gbdt.py`, `report.py`,
+    `distribution_shift.py`, `recommendations.py`, `alarm_bands.py`): every
+    one of them either reads columns (`df[...]`, boolean-mask selection,
+    which always returns a new object in pandas) or builds a brand-new local
+    frame from the columns it needs (e.g. `scatter.py`'s `build_scatter_data`
+    does `frame = pd.DataFrame({...})` and assigns into *that*, never into
+    the frame it was handed). There is no `inplace=True`, no `df.loc[...] =`,
+    no `del df[...]` anywhere on the shared frame in this codebase.
+
+    The one dataframe copy that still matters -- `dataframe.copy(deep=True)`
+    at the top of `hydrate_targets` below, made once per cache MISS -- stays.
+    It protects the registry's own dataframe (which callers do not own) from
+    ever being mutated by the target-filling logic that follows it; that is
+    a real safety copy, not the redundant one this function used to add on
+    top of it.
+    """
     provenance = HydrationProvenance(
         **{**result.provenance.__dict__, "cache_hit": cache_hit}
     )
-    return HydratedTargets(result.dataframe.copy(deep=True), provenance)
+    return HydratedTargets(result.dataframe, provenance)
 
 
 def hydrate_targets(
@@ -317,7 +350,7 @@ def hydrate_targets(
         if cached is not None:
             _CACHE.move_to_end(cache_key)
             logger.info("target_hydration cache hit dataset=%s model=%s", dataset_id, model_id)
-            return _copy_result(cached, cache_hit=True)
+            return _view_with_cache_flag(cached, cache_hit=True)
     logger.info("target_hydration cache miss dataset=%s model=%s", dataset_id, model_id)
 
     hydrated = dataframe.copy(deep=True)
@@ -409,13 +442,17 @@ def hydrate_targets(
         warning_counts=warning_counts,
         source_status=status.as_dict(),
     )
+    # `provenance.cache_hit` already defaults to False, so the freshly
+    # computed `result` is stored and returned as-is -- no extra copy needed
+    # for either (see `_view_with_cache_flag`'s docstring for why sharing the
+    # same dataframe object between the cache and every caller is safe).
     result = HydratedTargets(hydrated, provenance)
     with _CACHE_LOCK:
-        _CACHE[cache_key] = _copy_result(result, cache_hit=False)
+        _CACHE[cache_key] = result
         _CACHE.move_to_end(cache_key)
         while len(_CACHE) > _CACHE_MAXSIZE:
             _CACHE.popitem(last=False)
-    return _copy_result(result, cache_hit=False)
+    return result
 
 
 def invalidate_target_hydration_cache(dataset_id: str | None = None) -> int:
