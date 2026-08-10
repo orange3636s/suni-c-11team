@@ -504,6 +504,40 @@ export type YieldFallbackSummary = {
   total_combinations: number;
 };
 
+// WD: 수율 분포 히스토그램 한 구간 -- 판정 가능/미계측 스택.
+export type YieldHistogramBin = {
+  label: string;
+  lo: number | null;
+  hi: number | null;
+  judgeable_count: number;
+  not_judgeable_count: number;
+};
+
+// WC: 타깃(불량 모드)별 평균 손실 막대 한 줄.
+export type ModeLoss = {
+  target: string;
+  feature: string | null;
+  avg_loss_pct: number;
+  train_avg_loss_pct: number | null;
+  contribution_pct: number;
+};
+
+// WB 상단 요약 카드 4개 + WC/WD가 함께 쓰는 서버 계산 결과. "판정
+// 가능"은 핵심 인자(기여율 20% 이상)가 실제로 계측된 wafer -- 타깃 값
+// 자체가 알려져 있어도(번들 test.CSV처럼 완전 라벨된 평가셋) 그 사실은
+// 세지 않는다(운영 환경의 미계측 평가 데이터를 가정한 기준).
+export type YieldSummary = {
+  predicted_mean: number;
+  predicted_min: number;
+  predicted_max: number;
+  bottom_n: number;
+  bottom_mean: number | null;
+  judgeable_count: number;
+  total_wafers: number;
+  histogram: YieldHistogramBin[];
+  mode_loss: ModeLoss[];
+};
+
 export type YieldPredictionResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
@@ -512,6 +546,7 @@ export type YieldPredictionResponse = {
   unmeasured_wafer_ids: string[];
   unmeasured_count: number;
   fallback_summary: YieldFallbackSummary;
+  yield_summary: YieldSummary;
   target_provenance: TargetProvenance | null;
 };
 
@@ -548,12 +583,13 @@ export type ParetoRankingResponse = {
   target_provenance: TargetProvenance | null;
 };
 
-// FMEA 분석표 (모니터링 홈, 지시서 IA) -- 백엔드가 이미 상위 7개로 걸러
-// S·O·D·RPN까지 산출해 스냅샷에 담아 보낸다. 프런트는 표시만 한다
-// (구간 내/외 평균 Y는 원본 데이터가 있어야 계산할 수 있어 여기서 다시
-// 계산하지 않는다). `dataset_id`가 없는 스냅샷(자동 갱신이 아직 한 번도
-// 돌지 않았거나 계산이 실패한 경우)에서는 undefined/null -- FmeaTable이
-// 그 상태를 별도로 안내한다.
+// FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 백엔드가 타깃별 파레토
+// 기여율 20% 이상인 인자를 전부 골라(개수 상한 없음) 스냅샷에 담아
+// 보낸다. S·O·D·RPN은 더 이상 계산·표시하지 않는다. 프런트는 표시만
+// 한다(구간 내/외 평균 Y는 원본 데이터가 있어야 계산할 수 있어 여기서
+// 다시 계산하지 않는다). `dataset_id`가 없는 스냅샷(자동 갱신이 아직
+// 한 번도 돌지 않았거나 계산이 실패한 경우)에서는 undefined/null --
+// FmeaTable이 그 상태를 별도로 안내한다.
 export type FmeaFactorItem = {
   target: string;
   feature: string;
@@ -565,32 +601,58 @@ export type FmeaFactorItem = {
   range_lo: number | null;
   range_hi: number | null;
   measurement_rate: number; // 0-100
-  deviation_rate_pct: number; // O의 근거 -- 권장 구간 밖 wafer 비율(계측된 wafer 기준), 0-100
+  deviation_rate_pct: number; // 권장 구간 밖 wafer 비율(계측된 wafer 기준), 0-100
   detection_method: string; // "In-line 샘플 계측" | "Defect 검사"
   detection_kind: "R" | "D";
   // 지시서 KA-1: 아래 둘은 타깃 컬럼(Y1~Y5) 기준 "불량률"이지 수율이
-  // 아니다 -- 실익 필터(백엔드)도 defect_rate_deviation_pct를 쓴다
-  // (항상 0.3 이상만 내려온다). 진짜 수율은 expected_yield_pct.
+  // 아니다. 진짜 수율은 expected_yield_pct.
   expected_defect_rate_pct: number | null;
-  defect_rate_deviation_pct: number | null; // %p, 불량률 기준 -- 실익 필터가 쓰는 값
+  defect_rate_deviation_pct: number | null; // %p, 불량률 기준 -- 정렬 기준(내림차순)
   // 최종 Y 컬럼 기준 진짜 수율 -- "이 인자를 구간 안으로 관리하면 수율이
   // 얼마가 되는가"에 대한 답. 위 불량률 값과는 다른 질문(합치지 않는다).
   expected_yield_pct: number | null;
-  severity_score: number; // S, 1-10
-  occurrence_score: number; // O, 1-10
-  detection_score: number; // D, 1-10
-  rpn: number; // S x O x D
+  // WE-2/WE-3: 이 행의 선정 근거(타깃 내 파레토 기여율)와, 최악 10%
+  // wafer(해당 타깃 손실 상위 10%)에서의 계측률 -- 전체 계측률보다 훨씬
+  // 높으면 "계측이 사후 확인에 가깝다"는 신호(WL의 MNAR 차트와 같은 지표).
+  contribution_pct: number;
+  worst_decile_measurement_rate_pct: number | null;
   mnar_gap_pp: number | null; // 계측군-미계측군 최종 수율 평균 차, 표본 부족 시 null
+};
+
+// WE-2: 타깃별 20% 이상 인자가 하나도 없을 때의 사유.
+export type FmeaNoQualifyingFactor = {
+  target: string;
+  max_contribution_pct: number;
+};
+
+// WL-1: (타깃, 인자)별 전체 계측률 vs 최악 10% wafer 계측률·배수.
+export type MnarRateRow = {
+  target: string;
+  feature: string;
+  overall_rate_pct: number;
+  worst_decile_rate_pct: number;
+  ratio: number;
+};
+
+// WL-2: 랏 간/랏 내 분산 분해 + 무효과 기대값(1/랏당wafer수).
+export type VarianceDecomposition = {
+  lot_count: number;
+  wafers_per_lot: number;
+  between_lot_pct: number;
+  within_lot_pct: number;
+  no_effect_expected_pct: number;
+  icc: number;
 };
 
 export type FmeaTablePayload = {
   dataset_id: string;
   total_wafers: number;
-  excluded_count: number;
-  excluded_negative_count: number;
   measurement_shortage_wafers: number;
   correlation_shortage_wafers: number;
+  no_qualifying_factor: FmeaNoQualifyingFactor[];
   items: FmeaFactorItem[];
+  mnar_rate_report: MnarRateRow[];
+  variance_decomposition: VarianceDecomposition | null;
   target_provenance: TargetProvenance | null;
 };
 

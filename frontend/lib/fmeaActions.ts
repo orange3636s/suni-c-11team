@@ -44,9 +44,10 @@ const MNAR_WARNING_THRESHOLD_PP = 3.0;
 // 결과로 답한다. 수치는 실제 분석 결과에서 가져온 상수다(README.md
 // "Config 30개는 어떤 타깃에서도 BH-FDR을 통과하지 못했습니다" 절,
 // prompts/chat_system.md의 데이터 한계 절) -- 재검정으로 값이 바뀌면
-// 여기만 갱신한다.
-const CONFIG_SCREENING_TEST_COUNT = 600;
-const CONFIG_SCREENING_PASS_COUNT = 0;
+// 여기만 갱신한다. WH(Config별 트리맵 탭)의 FDR 안내도 이 상수를 그대로
+// 쓴다 -- 앱 전체에서 "600건, 통과 0건"이 한 곳에서만 정의된다.
+export const CONFIG_SCREENING_TEST_COUNT = 600;
+export const CONFIG_SCREENING_PASS_COUNT = 0;
 const LOT_ICC = 0.005;
 
 function hasMnarWarning(item: FmeaFactorItem): boolean {
@@ -91,29 +92,16 @@ export type RecommendedActionRow = {
   note: string;
 };
 
-const NOT_PROPOSED_ROWS: Omit<RecommendedActionRow, "order">[] = [
-  {
-    key: "not-proposed-config",
-    action: "장비·챔버 조건 조정",
-    target: "근거 없음",
-    expectedEffect: "-",
-    strength: "제안하지 않음",
-    note: `제안하지 않음 — ${CONFIG_SCREENING_TEST_COUNT}건 검정 FDR 통과 ${CONFIG_SCREENING_PASS_COUNT}건`,
-  },
-  {
-    key: "not-proposed-lot",
-    action: "랏 단위 원인 귀속",
-    target: "근거 없음",
-    expectedEffect: "-",
-    strength: "제안하지 않음",
-    note: `제안하지 않음 — ICC(1,1) ${LOT_ICC.toFixed(3)}, 무효과 기대값 이하`,
-  },
-];
+// 작업 지시서 WF-2: "제안하지 않음" 행은 더 이상 표에 넣지 않는다 --
+// 표 아래 한 줄(NOT_PROPOSED_FOOTNOTE)로 대신한다.
+export const NOT_PROPOSED_FOOTNOTE =
+  `장비·챔버 조건 조정과 랏 단위 원인 귀속은 제안하지 않습니다 — ` +
+  `${CONFIG_SCREENING_TEST_COUNT}건 검정 FDR 통과 ${CONFIG_SCREENING_PASS_COUNT}건, ICC(1,1) ${LOT_ICC.toFixed(3)}`;
 
-/** 권고 조치 표 (지시서 IC) -- FMEA 표에서 규칙 기반으로 도출한다
- * (하드코딩 금지, IC-2). 정렬은 RPN이 아니라 실익(불량률 편차) 순이다 --
- * RPN 1위와 실익 1위가 다를 수 있고, 조치 우선순위는 실익을 따른다.
- * "제안하지 않음" 두 행은 조건과 무관하게 항상 맨 끝에 붙는다(IC-3). */
+/** 권고 조치 표 (지시서 IC/WF) -- FMEA 표에서 규칙 기반으로 도출한다
+ * (하드코딩 금지, IC-2). 정렬은 RPN이 아니라 실익(불량률 편차) 순이다.
+ * "제안하지 않음" 항목은 표에 행으로 넣지 않는다(WF-2) --
+ * NOT_PROPOSED_FOOTNOTE를 표 아래에 별도로 렌더링한다. */
 export function buildRecommendedActions(fmea: FmeaTablePayload | null): RecommendedActionRow[] {
   const derived: Array<Omit<RecommendedActionRow, "order"> & { sortValue: number }> = [];
 
@@ -177,16 +165,13 @@ export function buildRecommendedActions(fmea: FmeaTablePayload | null): Recommen
   }
 
   derived.sort((a, b) => b.sortValue - a.sortValue);
-  const ordered: Array<Omit<RecommendedActionRow, "order">> = [
-    ...derived.map((row) => ({
-      key: row.key,
-      action: row.action,
-      target: row.target,
-      expectedEffect: row.expectedEffect,
-      strength: row.strength,
-      note: row.note,
-    })),
-    ...NOT_PROPOSED_ROWS,
-  ];
-  return ordered.map((row, index) => ({ ...row, order: index + 1 }));
+  return derived.map((row, index) => ({
+    order: index + 1,
+    key: row.key,
+    action: row.action,
+    target: row.target,
+    expectedEffect: row.expectedEffect,
+    strength: row.strength,
+    note: row.note,
+  }));
 }

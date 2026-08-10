@@ -1,12 +1,12 @@
 // 모니터링 홈의 유일한 데이터 조회 경로 -- 페이지 컴포넌트는 이 3개
-// 함수(buildMonitoringSnapshot / getTreemapData / getMeasurementQueue)만
+// 함수(buildMonitoringSnapshot / getTreemapData / getYieldSummary)만
 // 호출하고 fetch를 직접 부르지 않는다. 지금은 세 함수 모두 기존 REST
 // API를 감쌀 뿐이지만, 나중에 팹 DB(SQL)가 붙으면 이 파일 안쪽만
 // 교체하면 되도록 인터페이스를 분리해 둔다 (SQL 관련 코드는 아직
 // 작성하지 않는다).
 "use client";
 
-import { getAlertsData, getConfigTreemap } from "@/lib/api";
+import { getConfigTreemap, getYieldPrediction } from "@/lib/api";
 // W-1: analysis/alarms는 항상 호출부(모니터링 페이지)가 공용
 // AnalysisStateProvider에서 이미 읽은 값을 그대로 넘긴다 -- 이 파일이
 // 따로 GET /api/state/latest를 다시 부르지 않는다(지시서: "화면별로
@@ -15,11 +15,13 @@ import { getAlertsData, getConfigTreemap } from "@/lib/api";
 // 이미 판단했으므로 여기서 다시 검사하지 않는다. 타입만 참조하므로(값은
 // 쓰지 않는다) 순환 임포트가 되지 않는다.
 import type { AlarmsState, AnalysisState } from "@/components/AnalysisStateProvider";
-import type { ConfigTreemapResponse, FmeaTablePayload, LatestAlarmsRecord, MeasurementExpansionResponse } from "@/types/data";
-
-function average(values: number[]): number {
-  return values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
-}
+import type {
+  ConfigTreemapResponse,
+  FmeaTablePayload,
+  LatestAlarmsRecord,
+  MeasurementExpansionResponse,
+  YieldSummary,
+} from "@/types/data";
 
 export type MonitoringSnapshot = {
   hasAnalysis: boolean;
@@ -90,40 +92,16 @@ export async function getTreemapData(dataset: string, step: number, target = "Y1
   }
 }
 
-export type MeasurementQueueData = {
-  yieldSummary: { predMean: number; predLo: number; predHi: number; totalWafers: number } | null;
-};
-
-/** SUMMARY의 예상 수율 구간을 계산한다 -- 기존 알람 API(getAlertsData)의
- * wafer별 원시 예측치를 평균해 점추정을 구한다. 지시서 K-5: 랏 단위
- * 집계(분산·사유·계측 권고 표)는 화면 높이만 과도하게 차지하고 홈의
- * 요약 성격에 맞지 않아 제거했다 -- 그 집계 로직도 함께 지운다(더 쓰는
- * 곳이 없다).
- *
- * 구간(predLo/predHi)은 wafer별 pred_lo/pred_hi를 평균하지 않는다 --
- * 그건 웨이퍼 한 장의 conformal 여유(interval_conformal_q)를 1,000장
- * 평균에 그대로 적용하는 셈이라 평균의 불확실성을 개별값 수준으로
- * 과대평가한다(spec GA). 서버가 랏 블록 부트스트랩으로 별도 산출한
- * 집계 여유(interval_conformal_q_agg)를 점추정 평균에 적용한다. 이
- * 값이 없으면(랏 수 부족) 구간을 내지 않는다 -- 웨이퍼 여유로 대체하면
- * 다시 같은 과대평가 버그가 된다. */
-export async function getMeasurementQueue(alarmsRecord: LatestAlarmsRecord | null): Promise<MeasurementQueueData> {
-  if (!alarmsRecord) return { yieldSummary: null };
-
-  let alerts;
+/** WB/WC/WD: 상단 요약 카드·모드별 손실 막대·수율 분포 히스토그램이
+ * 쓰는 서버 계산 결과 -- 수율 예측(y합산 순위) API가 이미 함께 계산해
+ * 내려보낸다(계산은 백엔드, 여기서는 그대로 통과만 시킨다). 조회 실패
+ * 시(아직 원인 분석을 한 번도 안 돌렸거나 데이터셋이 없으면) null. */
+export async function getYieldSummary(alarmsRecord: LatestAlarmsRecord | null): Promise<YieldSummary | null> {
+  if (!alarmsRecord) return null;
   try {
-    alerts = await getAlertsData(alarmsRecord.train_dataset, alarmsRecord.eval_dataset);
+    const response = await getYieldPrediction(alarmsRecord.train_dataset, alarmsRecord.eval_dataset);
+    return response.yield_summary;
   } catch {
-    return { yieldSummary: null };
+    return null;
   }
-  const preds = alerts.predictions;
-  if (preds.length === 0) return { yieldSummary: null };
-
-  const predMean = average(preds.map((p) => p.pred_mean));
-  const qAgg = alerts.interval_conformal_q_agg;
-  const { predLo, predHi } = qAgg != null ? { predLo: predMean - qAgg, predHi: predMean + qAgg } : { predLo: predMean, predHi: predMean };
-
-  return {
-    yieldSummary: { predMean, predLo, predHi, totalWafers: alerts.total_wafers },
-  };
 }

@@ -8345,6 +8345,18 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .favoriteStarButton.active{ color: #F59E0B; }
 .favoriteStarButton:hover{ color: #F59E0B; }
 
+/* 지시서 WI-4: 그래프 이미지 저장 버튼 -- 차트 카드 우상단, 즐겨찾기
+   별 옆에 붙는다. */
+.chartExportButton{
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border-card); background: var(--surface-card);
+  color: var(--text-secondary); border-radius: var(--radius-control);
+  padding: 3px 9px; font-size: var(--fs-sm); font-family: inherit; cursor: pointer;
+  white-space: nowrap;
+}
+.chartExportButton:hover:not(:disabled){ color: var(--text-primary); }
+.chartExportButton:disabled{ opacity: .55; cursor: default; }
+
 /* 지시서 J-3: 즐겨찾기 페이지 -- 흰 카드 그리드. */
 .favoritesGrid{
   display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -8458,8 +8470,10 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapControls .fieldGroup{ min-width: 140px; }
 .heatmapControls label{ display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-secondary); }
 
-.heatmapScrollArea{ overflow: auto; max-height: 620px; border-radius: var(--radius-panel); border: 1px solid var(--heatmap-cell-border); }
-.heatmapScrollArea.collapsed{ max-height: 462px; }
+/* 작업 지시서 WJ-1: 스크롤(세로 max-height)과 행 자르기를 함께 쓰지
+   않는다 -- 세로는 항상 내용만큼 자라고(7행 기본, 펼치면 전체), 가로만
+   좁은 화면에서 스크롤한다. */
+.heatmapScrollArea{ overflow-x: auto; overflow-y: visible; border-radius: var(--radius-panel); border: 1px solid var(--heatmap-cell-border); }
 .heatmapGrid{ display: grid; min-width: 480px; }
 @keyframes heatmapRowSettle{
   from{ opacity: .35; transform: translateY(-3px); }
@@ -11367,3 +11381,76 @@ html[data-theme="dark"] .fmeaMnarRow .fmeaSticky{ background: rgba(255, 170, 60,
 .fmeaMeasurementFootnotes{ display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
 .fmeaMetricDefinitions,
 .fmeaMeasurementAlignmentNote{ margin: 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
+
+/* ---- 작업 지시서 WB: 상단 요약 카드 4개 ------------------------------ */
+.summaryCardsGrid{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.summaryCard{ display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius-panel); border: 1px solid var(--border); background: var(--surface-secondary); min-width: 0; }
+.summaryCardLabel{ font-size: var(--fs-xs); color: var(--text-secondary); }
+.summaryCardValue{ font-variant-numeric: tabular-nums; font-size: var(--fs-display); font-weight: 600; line-height: 1.2; }
+.summaryCardValue-amber{ color: var(--sig-amber); }
+.summaryCardValue-muted{ color: var(--text-muted); }
+.summaryCardSub{ font-size: var(--fs-xs); color: var(--text-muted); }
+@media (max-width: 767px){ .summaryCardsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---- 작업 지시서 WC: 모드별 손실 막대 -------------------------------- */
+.modeLossList{ display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.modeLossRow{ display: grid; grid-template-columns: 140px 1fr 96px; align-items: center; gap: 10px; }
+.modeLossLabel{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.modeLossTarget{ font-weight: 600; }
+.modeLossFeature{ font-size: var(--fs-xs); color: var(--measured); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modeLossBarTrack{ height: 14px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
+.modeLossBarFill{ height: 100%; border-radius: 999px; background: var(--inferred); }
+.modeLossBarFill-top{ background: var(--measured); }
+.modeLossFigures{ display: flex; flex-direction: column; align-items: flex-end; gap: 0; font-variant-numeric: tabular-nums; }
+.modeLossPp{ font-weight: 600; }
+.modeLossContribution{ font-size: var(--fs-xs); color: var(--text-muted); }
+@media (max-width: 767px){ .modeLossRow{ grid-template-columns: 96px 1fr 72px; } }
+
+/* ---- 작업 지시서 WD: 수율 분포 히스토그램(판정 가능/미계측 스택) ----- */
+.yieldHistogram{ display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: end; gap: 8px; height: 160px; margin-top: 16px; padding: 0 2px; }
+.yieldHistogramCol{ display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; }
+.yieldHistogramBarStack{ display: flex; flex-direction: column-reverse; width: 100%; flex: 1 1 auto; border-radius: 4px 4px 0 0; overflow: hidden; background: var(--surface-muted); }
+.yieldHistogramSeg-judgeable{ background: var(--inferred); }
+.yieldHistogramSeg-notJudgeable{
+  background: repeating-linear-gradient(45deg, var(--line-soft), var(--line-soft) 3px, transparent 3px, transparent 7px);
+  border-bottom: 1px solid var(--line-soft);
+}
+.yieldHistogramSeg-empty{ height: 2px; background: var(--line-soft); align-self: flex-end; width: 100%; }
+.yieldHistogramCount{ font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.yieldHistogramLabel{ font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+@media (max-width: 767px){ .yieldHistogram{ height: 120px; gap: 4px; } .yieldHistogramLabel{ font-size: 9px; } }
+
+/* ---- 작업 지시서 WF: 조치 블록(한 카드, 권고 조치·계측 확대 두 표) --- */
+.actionBlockSection + .actionBlockSection{ margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-card, var(--border)); }
+.actionBlockSubheading{ margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
+.fmeaFootnote{ margin: 8px 2px 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
+
+/* ---- 작업 지시서 WL: 데이터 한계 진단(MNAR + 분산 분해) -------------- */
+.limitsGrid{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 12px; }
+@media (max-width: 1023px){ .limitsGrid{ grid-template-columns: 1fr; } }
+
+.mnarList{ display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.mnarRow{ display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 10px; }
+.mnarLabel{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mnarFeature{ color: var(--measured); font-size: var(--fs-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mnarBars{ display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mnarBarLine{ display: flex; align-items: center; gap: 6px; }
+.mnarBarTrack{ flex: 1 1 auto; height: 8px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
+.mnarBarFill{ height: 100%; border-radius: 999px; }
+.mnarBarFill-overall{ background: var(--text-muted); }
+.mnarBarFill-worst-amber{ background: var(--sig-amber); }
+.mnarBarFill-worst-red{ background: var(--sig-red); }
+.mnarBarValue{ flex: 0 0 auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mnarRatio{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.mnarRatio-red{ color: var(--sig-red); }
+
+.varianceDecompList{ display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.varianceDecompRow{ display: grid; grid-template-columns: 48px 1fr 56px; align-items: center; gap: 10px; }
+.varianceDecompLabel{ font-size: var(--fs-xs); color: var(--text-secondary); }
+.varianceDecompTrack{ position: relative; height: 16px; border-radius: 4px; background: var(--surface-muted); overflow: visible; }
+.varianceDecompFill{ position: absolute; inset: 0; border-radius: 4px; }
+.varianceDecompFill-between{ background: var(--text-muted); }
+.varianceDecompFill-within{ background: var(--inferred); }
+.varianceDecompExpectedLine{ position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 2px dashed var(--sig-amber); }
+.varianceDecompValue{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.varianceDecompExpectedLabel{ margin: 6px 2px 0; font-size: var(--fs-xs); color: var(--sig-amber); }

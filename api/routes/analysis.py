@@ -581,11 +581,13 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
 
 
 def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
-    """FMEA 분석표 (모니터링 홈, 지시서 IA) -- 전 타깃 인자 풀에서 RPN 상위
-    7개만 골라 스냅샷에 담는다. 온디맨드 REST 엔드포인트는 두지 않는다
-    (지시서 IA-5: "자동 갱신 파이프라인에서 함께 계산되게 하라, 별도 조회
-    금지") -- `src/automation/refresh.py`가 이 함수를 직접 호출해 다른
-    분석 결과와 같은 스냅샷 저장 시점에 함께 계산한다.
+    """FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 타깃별 파레토 기여율
+    20% 이상인 인자를 전부 스냅샷에 담는다. 온디맨드 REST 엔드포인트는
+    두지 않는다(지시서 IA-5: "자동 갱신 파이프라인에서 함께 계산되게
+    하라, 별도 조회 금지") -- `src/automation/refresh.py`가 이 함수를
+    직접 호출해 다른 분석 결과와 같은 스냅샷 저장 시점에 함께 계산한다.
+    같은 시점에 WL(데이터 한계 진단: MNAR 계측 편향 + 분산 분해)도 함께
+    계산해 담는다 -- 같은 eval 프레임을 재사용하므로 별도 조회가 없다.
     """
     hydrated = _hydrated_targets_or_409(dataset_id)
     df = hydrated.dataframe
@@ -595,14 +597,45 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
         t: list(_ranked_rows_for_provenance(dataset_id, t, hydrated.provenance)) for t in usable_targets
     }
     table = build_fmea_table(df, rows_by_target, usable_targets, dataset_id=dataset_id)
+
+    # WL: 데이터 한계 진단(계측 편향 + 분산 분해) -- FMEA와 같은 eval
+    # 프레임·같은 (타깃, 인자) 쌍을 재사용해 별도 조회 없이 함께 낸다.
+    from src.analysis.data_limitations import build_mnar_rate_report, compute_variance_decomposition
+
+    mnar_report = build_mnar_rate_report(df, [(f.target, f.feature) for f in table.items])
+    variance_decomposition = compute_variance_decomposition(df)
+
     return round_floats(
         {
             "dataset_id": dataset_id,
             "total_wafers": table.total_wafers,
-            "excluded_count": table.excluded_count,
-            "excluded_negative_count": table.excluded_negative_count,
             "measurement_shortage_wafers": table.measurement_shortage_wafers,
             "correlation_shortage_wafers": table.correlation_shortage_wafers,
+            "no_qualifying_factor": [
+                {"target": n.target, "max_contribution_pct": n.max_contribution_pct} for n in table.no_qualifying_factor
+            ],
+            "mnar_rate_report": [
+                {
+                    "target": r.target,
+                    "feature": r.feature,
+                    "overall_rate_pct": r.overall_rate_pct,
+                    "worst_decile_rate_pct": r.worst_decile_rate_pct,
+                    "ratio": r.ratio,
+                }
+                for r in mnar_report
+            ],
+            "variance_decomposition": (
+                {
+                    "lot_count": variance_decomposition.lot_count,
+                    "wafers_per_lot": variance_decomposition.wafers_per_lot,
+                    "between_lot_pct": variance_decomposition.between_lot_pct,
+                    "within_lot_pct": variance_decomposition.within_lot_pct,
+                    "no_effect_expected_pct": variance_decomposition.no_effect_expected_pct,
+                    "icc": variance_decomposition.icc,
+                }
+                if variance_decomposition is not None
+                else None
+            ),
             "items": [
                 {
                     "target": f.target,
@@ -619,16 +652,15 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
                     "detection_method": f.detection_method,
                     "detection_kind": f.detection_kind,
                     # 지시서 KA-1: 아래 둘은 타깃 컬럼(Y1~Y5) 기준 불량률이지
-                    # 수율이 아니다 -- 이름을 그렇게 정정했다. 실익 필터도
-                    # defect_rate_deviation_pct를 쓴다(기준 불변).
+                    # 수율이 아니다 -- 이름을 그렇게 정정했다.
                     "expected_defect_rate_pct": f.expected_defect_rate_pct,
                     "defect_rate_deviation_pct": f.defect_rate_deviation_pct,
                     # 진짜 수율(최종 Y 컬럼) 기준 -- 위 불량률과 다른 값이다.
                     "expected_yield_pct": f.expected_yield_pct,
-                    "severity_score": f.severity_score,
-                    "occurrence_score": f.occurrence_score,
-                    "detection_score": f.detection_score,
-                    "rpn": f.rpn,
+                    # WE-2/WE-3: 행 선정 근거(파레토 기여율)와, 최악 10%
+                    # wafer에서의 계측률(WL의 MNAR 계측 편향과 같은 지표).
+                    "contribution_pct": f.contribution_pct,
+                    "worst_decile_measurement_rate_pct": f.worst_decile_measurement_rate_pct,
                     "mnar_gap_pp": f.mnar_gap_pp,
                 }
                 for f in table.items
@@ -1135,6 +1167,37 @@ def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, An
             "rank_counts": {str(rank): count for rank, count in table.fallback_summary.rank_counts.items()},
             "none_count": table.fallback_summary.none_count,
             "total_combinations": table.fallback_summary.total_combinations,
+        },
+        # WB/WC/WD: 모니터링 홈 요약 카드·모드별 손실 막대·수율 분포
+        # 히스토그램이 그대로 쓰는 서버 계산 결과.
+        "yield_summary": {
+            "predicted_mean": table.summary.predicted_mean,
+            "predicted_min": table.summary.predicted_min,
+            "predicted_max": table.summary.predicted_max,
+            "bottom_n": table.summary.bottom_n,
+            "bottom_mean": table.summary.bottom_mean,
+            "judgeable_count": table.summary.judgeable_count,
+            "total_wafers": table.summary.total_wafers,
+            "histogram": [
+                {
+                    "label": b.label,
+                    "lo": None if b.lo == float("-inf") else b.lo,
+                    "hi": None if b.hi == float("inf") else b.hi,
+                    "judgeable_count": b.judgeable_count,
+                    "not_judgeable_count": b.not_judgeable_count,
+                }
+                for b in table.summary.histogram
+            ],
+            "mode_loss": [
+                {
+                    "target": m.target,
+                    "feature": m.feature,
+                    "avg_loss_pct": m.avg_loss_pct,
+                    "train_avg_loss_pct": m.train_avg_loss_pct,
+                    "contribution_pct": m.contribution_pct,
+                }
+                for m in table.summary.mode_loss
+            ],
         },
         "target_provenance": eval_view.provenance.as_dict(),
     }

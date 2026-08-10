@@ -376,6 +376,40 @@ class YieldFallbackSummarySchema(BaseModel):
     total_combinations: int
 
 
+class YieldHistogramBinSchema(BaseModel):
+    """WD: 수율 분포 히스토그램 한 구간 -- 판정 가능/미계측 스택."""
+
+    label: str
+    lo: float | None
+    hi: float | None
+    judgeable_count: int
+    not_judgeable_count: int
+
+
+class ModeLossSchema(BaseModel):
+    """WC: 타깃(불량 모드)별 평균 손실 막대 한 줄."""
+
+    target: str
+    feature: str | None
+    avg_loss_pct: float
+    train_avg_loss_pct: float | None
+    contribution_pct: float
+
+
+class YieldSummarySchema(BaseModel):
+    """WB 상단 요약 카드 4개 + WC/WD가 함께 쓰는 서버 계산 결과."""
+
+    predicted_mean: float
+    predicted_min: float
+    predicted_max: float
+    bottom_n: int
+    bottom_mean: float | None
+    judgeable_count: int
+    total_wafers: int
+    histogram: list[YieldHistogramBinSchema]
+    mode_loss: list[ModeLossSchema]
+
+
 class YieldPredictionResponse(BaseModel):
     """VA~VD: 수율 예측 순위 목록. 정렬 기본값은 y(=100 − Σ Y1~Y5)
     오름차순이며, 그 밖의 정렬·검색·상위 10/전체 보기 전환은 프런트가
@@ -388,6 +422,7 @@ class YieldPredictionResponse(BaseModel):
     unmeasured_wafer_ids: list[str]
     unmeasured_count: int
     fallback_summary: YieldFallbackSummarySchema
+    yield_summary: YieldSummarySchema
     target_provenance: dict[str, Any] | None = None
 
 

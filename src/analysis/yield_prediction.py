@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from src.analysis.control_range import ControlRange, compute_control_range
@@ -44,6 +45,21 @@ CONTRIBUTION_THRESHOLD = 20.0
 MIN_MEANINGFUL_DECREASE_PCT = 0.05
 # VD-2: 여러 타깃이 조정 가능해도 최대 2개까지만 나열한다.
 MAX_ADJUSTMENT_ITEMS = 2
+
+# WB/WD: 모니터링 홈 요약 카드·히스토그램 구간 -- 등간격이 아니라 관심
+# 구간(낮은 쪽 조치 대상, 89 근처 밀집 구간)을 좁게 잡는다. 첫/마지막
+# 구간은 그 바깥 전부를 흡수한다(작업 지시서 WD-3).
+YIELD_HISTOGRAM_BINS: tuple[tuple[float, float, str], ...] = (
+    (float("-inf"), 80.0, "70~80"),
+    (80.0, 84.0, "80~84"),
+    (84.0, 86.0, "84~86"),
+    (86.0, 88.0, "86~88"),
+    (88.0, 89.0, "88~89"),
+    (89.0, 89.5, "89~89.5"),
+    (89.5, 90.0, "89.5~90"),
+    (90.0, float("inf"), "90+"),
+)
+BOTTOM_N = 10  # WB "하위 10장 평균"
 
 
 @dataclass(frozen=True)
@@ -100,12 +116,134 @@ class FallbackSummary:
 
 
 @dataclass(frozen=True)
+class YieldHistogramBin:
+    """WD: 실측 분포를 판정 가능/미계측(신뢰도==0) 두 켜로 쌓는다 -- 미계측
+    wafer는 핵심 인자가 없어 대부분 같은 평균값으로 채워지므로, 쌓지 않고
+    합쳐 그리면 "89% 근처에 몰려 있다"가 공정 분포처럼 오독된다."""
+
+    label: str
+    lo: float
+    hi: float
+    judgeable_count: int
+    not_judgeable_count: int
+
+
+@dataclass(frozen=True)
+class ModeLoss:
+    """WC: 타깃(불량 모드)별 평균 손실과 그 타깃의 1위 인자 -- 손실_기여율
+    (target) = 평균(Y_target) / sum(평균(Y_i))로, 수율 예측 화면과 같은
+    하이드레이션 프레임(hydrated_df) 기준이라 그 화면의 y_components
+    평균과 항상 일치한다."""
+
+    target: str
+    feature: str | None
+    avg_loss_pct: float
+    train_avg_loss_pct: float | None
+    contribution_pct: float
+
+
+@dataclass(frozen=True)
+class YieldSummary:
+    """WB 상단 요약 카드 4개의 산출값 -- 전부 서버에서 한 번만 계산해
+    내려보낸다(계산은 백엔드, 프런트는 표시만 하는 이 코드베이스의
+    일관된 원칙)."""
+
+    predicted_mean: float
+    predicted_min: float
+    predicted_max: float
+    bottom_n: int
+    bottom_mean: float | None  # 표본이 bottom_n 미만이면 None
+    judgeable_count: int
+    total_wafers: int
+    histogram: list[YieldHistogramBin]
+    mode_loss: list[ModeLoss]  # 손실 큰 순(avg_loss_pct 내림차순)
+
+
+@dataclass(frozen=True)
 class YieldPredictionTable:
     candidates: list[YieldCandidate]  # 신뢰도>=1, y 오름차순(기본 정렬) -- VB-2
     unmeasured_wafer_ids: list[str]  # 신뢰도==0 -- VB-2/VE-1: 별도 블록
     total_wafers: int
     fallback_summary: FallbackSummary
+    summary: YieldSummary
     primary_factors: dict[str, ParetoFactor | None] = field(default_factory=dict)  # 타깃별 1위(참고/발송용)
+
+
+def _bin_label_for(value: float) -> str:
+    for lo, hi, label in YIELD_HISTOGRAM_BINS:
+        if lo <= value < hi:
+            return label
+    return YIELD_HISTOGRAM_BINS[-1][2]
+
+
+def _compute_yield_summary(
+    train_df: pd.DataFrame,
+    hydrated_df: pd.DataFrame,
+    all_wafer_y: list[tuple[float, bool]],  # (y, judgeable)
+    candidates_sorted: list[YieldCandidate],  # 이미 y 오름차순
+    primary_factors: dict[str, ParetoFactor | None],
+) -> YieldSummary:
+    all_y = [y for y, _judgeable in all_wafer_y]
+    judgeable_count = sum(1 for _y, judgeable in all_wafer_y if judgeable)
+
+    bottom = candidates_sorted[:BOTTOM_N]
+    bottom_mean = float(np.mean([c.y for c in bottom])) if len(bottom) == BOTTOM_N else None
+
+    counts_by_label: dict[str, dict[str, int]] = {
+        label: {"judgeable": 0, "not_judgeable": 0} for _lo, _hi, label in YIELD_HISTOGRAM_BINS
+    }
+    for y, judgeable in all_wafer_y:
+        label = _bin_label_for(y)
+        counts_by_label[label]["judgeable" if judgeable else "not_judgeable"] += 1
+    histogram = [
+        YieldHistogramBin(
+            label=label,
+            lo=lo,
+            hi=hi,
+            judgeable_count=counts_by_label[label]["judgeable"],
+            not_judgeable_count=counts_by_label[label]["not_judgeable"],
+        )
+        for lo, hi, label in YIELD_HISTOGRAM_BINS
+    ]
+
+    loss_means: dict[str, float] = {}
+    train_loss_means: dict[str, float | None] = {}
+    for target in FAIL_RATE_TARGETS:
+        if target in hydrated_df.columns:
+            series = pd.to_numeric(hydrated_df[target], errors="coerce").dropna()
+            loss_means[target] = float(series.mean()) if len(series) else 0.0
+        else:
+            loss_means[target] = 0.0
+        if target in train_df.columns:
+            train_series = pd.to_numeric(train_df[target], errors="coerce").dropna()
+            train_loss_means[target] = float(train_series.mean()) if len(train_series) else None
+        else:
+            train_loss_means[target] = None
+
+    total_loss = sum(loss_means.values())
+    mode_loss = [
+        ModeLoss(
+            target=target,
+            feature=(primary_factors.get(target).feature if primary_factors.get(target) else None),
+            avg_loss_pct=loss_means[target],
+            train_avg_loss_pct=train_loss_means[target],
+            contribution_pct=(loss_means[target] / total_loss * 100.0) if total_loss > 0 else 0.0,
+        )
+        for target in FAIL_RATE_TARGETS
+    ]
+    mode_loss.sort(key=lambda m: m.avg_loss_pct, reverse=True)
+
+    return YieldSummary(
+        predicted_mean=float(np.mean(all_y)) if all_y else 0.0,
+        predicted_min=float(np.min(all_y)) if all_y else 0.0,
+        predicted_max=float(np.max(all_y)) if all_y else 0.0,
+        bottom_n=BOTTOM_N,
+        bottom_mean=bottom_mean,
+        judgeable_count=judgeable_count,
+        total_wafers=len(all_wafer_y),
+        histogram=histogram,
+        mode_loss=mode_loss,
+    )
 
 
 def _rank5_factors(train_df: pd.DataFrame, schema: Schema) -> dict[str, list[ParetoFactor]]:
@@ -160,6 +298,10 @@ def build_yield_prediction_table(
     none_count = 0
     candidates: list[YieldCandidate] = []
     unmeasured_ids: list[str] = []
+    # WB/WD: 판정 가능 여부와 무관하게 모든 wafer의 y(하이드레이션으로 이미
+    # 채워져 있다)를 모아 둔다 -- 요약 카드 평균/최저/최고와 히스토그램
+    # 스택은 "판정 가능" 목록(candidates)만으로는 낼 수 없다.
+    all_wafer_y: list[tuple[float, bool]] = []
 
     for idx in hydrated_df.index:
         row = hydrated_df.loc[idx]
@@ -210,6 +352,19 @@ def build_yield_prediction_table(
                 unmeasured_detail.append((target, top1.feature if top1 else "-"))
 
         lot_wafer_id = str(row[ID_COLUMN]) if ID_COLUMN in hydrated_df.columns else str(idx)
+        # WB/WD "판정 가능" -- reliability_count(신뢰도, VC-1)는 타깃 실측
+        # 자체도 근거로 세지만(다른 화면이 그 정의를 그대로 쓴다), 모니터링
+        # 요약 카드는 "핵심 인자를 계측해서 설명 가능한가"만 묻는다 --
+        # 실측 eval(예: 번들 test.CSV)처럼 Y 자체가 이미 알려져 있어도,
+        # 그 정보 없이(운영 환경의 미계측 eval을 가정하고) 원인 인자만으로
+        # 설명 가능한지를 본다. 검증: 이 기준으로 test.CSV가 511/489로
+        # 갈린다(작업 지시서 WB의 참조값과 일치) -- reliability_count 기준은
+        # test.CSV가 이미 전량 실측이라 1000/0으로 무의미해진다.
+        judgeable = any(
+            core.contribution_pct is not None and core.contribution_pct >= CONTRIBUTION_THRESHOLD
+            for core in core_factors.values()
+        )
+        all_wafer_y.append((float(row["Y"]), judgeable))
 
         if reliability_count == 0:
             # VB-2/VE-1: 미계측 웨이퍼는 판정 목록에 넣지 않고 별도 블록으로.
@@ -315,10 +470,13 @@ def build_yield_prediction_table(
         total_combinations=sum(rank_counts.values()) + none_count,
     )
 
+    summary = _compute_yield_summary(train_df, hydrated_df, all_wafer_y, candidates, primary_factors)
+
     return YieldPredictionTable(
         candidates=candidates,
         unmeasured_wafer_ids=unmeasured_ids,
         total_wafers=len(hydrated_df),
         fallback_summary=fallback_summary,
+        summary=summary,
         primary_factors=primary_factors,
     )

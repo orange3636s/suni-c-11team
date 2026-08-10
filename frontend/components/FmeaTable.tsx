@@ -5,20 +5,10 @@ import { BADGE_TOOLTIP, badgeClass, inlineFactorAction } from "@/lib/fmeaActions
 import { formatNumber, formatPct, formatSignedPp, isOutOfRange, rangeText } from "@/lib/fmeaFormat";
 import type { FmeaFactorItem, FmeaTablePayload } from "@/types/data";
 
-const RPN_RED = 300;
-const RPN_AMBER = 100;
 const LOW_MEASUREMENT_RATE_PCT = 10;
-const MIN_DEFECT_RATE_DEVIATION_PP = 0.3;
-const MAX_DETECTION_SCORE = 10;
 // 지시서 KC-2: 목업(Step1_D1 행)과 같은 처리 -- MNAR 경고 임계는
 // fmeaActions.ts의 MNAR_WARNING_THRESHOLD_PP(3.0)와 같은 값이다.
 const MNAR_ROW_THRESHOLD_PP = 3.0;
-
-function rpnClass(rpn: number): string {
-  if (rpn >= RPN_RED) return "fmeaRpn-red";
-  if (rpn >= RPN_AMBER) return "fmeaRpn-amber";
-  return "";
-}
 
 // 지시서 KC-2: MNAR 경고에 해당하는 행이 여럿이어도 "한 행만" 강조한다
 // (여러 행이 깔리면 강조가 아니다) -- |mnar_gap_pp|가 가장 큰 행 하나만.
@@ -45,7 +35,6 @@ function FmeaRow({
   return (
     <tr className={mnarHighlighted ? "fmeaMnarRow" : undefined}>
       <td className="data fmeaSticky fmeaStickyTarget">{item.target}</td>
-      <td className="fmeaColScore">{item.severity_score}</td>
       <td className="data fmeaSticky fmeaStickyFeature">
         <Link
           className="fmeaFeatureLink"
@@ -54,31 +43,16 @@ function FmeaRow({
           {item.feature}
         </Link>
       </td>
+      <td className="numCol">{formatPct(item.contribution_pct, 1)}</td>
       <td className={outOfRange ? "fmeaOutOfRange" : undefined}>{formatNumber(item.factor_value)}</td>
       <td>{rangeText(item)}</td>
       <td className="numCol">{formatPct(item.deviation_rate_pct, 0)}</td>
-      <td className="fmeaColScore">{item.occurrence_score}</td>
-      <td>
-        <span className="fmeaDetectionKind">{item.detection_kind}</span> {item.detection_method}
-      </td>
-      <td className={`numCol${item.measurement_rate < LOW_MEASUREMENT_RATE_PCT ? " fmeaRateLow" : ""}`}>
-        {formatPct(item.measurement_rate, 1)}
-      </td>
-      <td className={`fmeaColScore${item.detection_score >= MAX_DETECTION_SCORE ? " fmeaScoreMax" : ""}`}>
-        {item.detection_score}
-      </td>
-      <td className={`numCol fmeaColRpn ${rpnClass(item.rpn)}`}>{item.rpn}</td>
-      <td
-        className={
-          item.defect_rate_deviation_pct != null && item.defect_rate_deviation_pct >= MIN_DEFECT_RATE_DEVIATION_PP
-            ? "fmeaDeviationPositive"
-            : "fmeaDeviationMuted"
-        }
-      >
+      <td className={item.defect_rate_deviation_pct != null && item.defect_rate_deviation_pct > 0 ? "fmeaDeviationPositive" : "fmeaDeviationMuted"}>
         {formatSignedPp(item.defect_rate_deviation_pct)}
       </td>
-      <td>{formatPct(item.expected_defect_rate_pct, 2)}</td>
-      <td>{formatPct(item.expected_yield_pct, 2)}</td>
+      <td className={`numCol${item.measurement_rate < LOW_MEASUREMENT_RATE_PCT ? " fmeaRateLow" : ""}`}>
+        {formatPct(item.measurement_rate, 1)} · 검출 {formatPct(item.worst_decile_measurement_rate_pct, 1)}
+      </td>
       <td className="fmeaColAction">
         {action.text}{" "}
         <span className={badgeClass(action.strength)} title={BADGE_TOOLTIP[action.strength]}>
@@ -109,20 +83,21 @@ function EmptyState({ data, error }: { data: FmeaTablePayload | null; error?: st
   if (!data) {
     return <p className="emptyMessage">분석을 실행하면 FMEA 분석표가 생성됩니다.</p>;
   }
-  if (data.excluded_count > 0) {
+  if (data.no_qualifying_factor.length > 0) {
     return (
       <p className="emptyMessage">
-        실익 기준(불량률 편차 ≥ 0.3%p)을 넘는 인자가 없습니다 ({data.excluded_count}개 검토, 전부 미달).
+        기여율 20% 이상 인자가 있는 타깃이 없습니다 ({data.no_qualifying_factor
+          .map((n) => `${n.target}는 최대 ${n.max_contribution_pct.toFixed(1)}%`)
+          .join(", ")}).
       </p>
     );
   }
-  return <p className="emptyMessage">FDR 보정 후 유의한 인자가 없습니다.</p>;
+  return <p className="emptyMessage">계측된 인자가 없어 계산할 수 없습니다.</p>;
 }
 
-/** FMEA 분석표 (모니터링 홈, 지시서 IB/JA/KA~KC) -- 유의 인자 표를
- * 대체한다. 계산은 전부 백엔드에서 끝났으므로(자동 갱신·수동 "다시
- * 분석" 저장 둘 다 같은 함수를 공유한다, JA-1) 이 컴포넌트는 표시만
- * 한다. */
+/** FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 유의 인자 표를 대체한다.
+ * 계산은 전부 백엔드에서 끝났으므로(자동 갱신·수동 "다시 분석" 저장
+ * 둘 다 같은 함수를 공유한다, JA-1) 이 컴포넌트는 표시만 한다. */
 export default function FmeaTable({ data, error }: { data: FmeaTablePayload | null; error?: string | null }) {
   const mnarFeature = data ? topMnarFeature(data.items) : null;
 
@@ -140,10 +115,10 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
       ) : (
         <>
           <p className="sectionCaption">
-            RPN 내림차순 · 상위 {data.items.length}개 · {(data.dataset_id || "-").toUpperCase()} · {data.total_wafers.toLocaleString()} wf
+            불량률 편차 내림차순 · 타깃별 기여율 20% 이상 · {data.items.length}행 · {(data.dataset_id || "-").toUpperCase()} · {data.total_wafers.toLocaleString()} wf
           </p>
           <p className="fmeaDescription">
-            타깃별 인자를 효과크기(ε²)로 선정하고, 검출 능력까지 반영한 위험 우선순위를 산출합니다.
+            각 타깃에서 파레토 기여율 20% 이상인 인자를 전부 표시합니다.
           </p>
 
           <div className="tableWrap fmeaScrollTable">
@@ -151,19 +126,13 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
               <thead>
                 <tr>
                   <th className="fmeaSticky fmeaStickyTarget">타깃</th>
-                  <th className="fmeaColScore">S</th>
                   <th className="fmeaSticky fmeaStickyFeature">잠재 원인</th>
+                  <th className="numCol">기여율</th>
                   <th>인자값</th>
                   <th>권장 구간</th>
                   <th className="numCol">이탈률</th>
-                  <th className="fmeaColScore">O</th>
-                  <th>검출 기법</th>
-                  <th className="numCol">계측률</th>
-                  <th className="fmeaColScore">D</th>
-                  <th className="numCol fmeaColRpn">RPN</th>
                   <th>불량률 편차</th>
-                  <th>구간 내 불량률</th>
-                  <th>예상 수율</th>
+                  <th className="numCol">계측률 · 검출률</th>
                   <th className="fmeaColAction">권고 조치</th>
                 </tr>
               </thead>
@@ -181,50 +150,15 @@ export default function FmeaTable({ data, error }: { data: FmeaTablePayload | nu
           </div>
           <p className="meScrollHint" aria-hidden="true">← 좌우 스크롤</p>
 
-          <div className="fmeaRuleGrid">
-            <div className="fmeaRuleCard">
-              <span className="fmeaRuleLabel">S · 심각도</span>
-              <span className="fmeaRuleWhat">불량 모드 손실 기여율</span>
-              <span className="fmeaRuleFormula">ceil(기여율% / 5)</span>
+          {data.no_qualifying_factor.length > 0 && (
+            <div className="fmeaNotice fmeaNoticeInfo">
+              <p>
+                {data.no_qualifying_factor
+                  .map((n) => `${n.target}는 기여율 20% 이상 인자가 없습니다 (최대 ${n.max_contribution_pct.toFixed(1)}%)`)
+                  .join(" · ")}
+              </p>
             </div>
-            <div className="fmeaRuleCard">
-              <span className="fmeaRuleLabel">O · 발생도</span>
-              <span className="fmeaRuleWhat">권장 구간 이탈 비율</span>
-              <span className="fmeaRuleFormula">ceil(이탈률% / 10)</span>
-            </div>
-            <div className="fmeaRuleCard">
-              <span className="fmeaRuleLabel">D · 검출도</span>
-              <span className="fmeaRuleWhat">계측률의 역수</span>
-              <span className="fmeaRuleFormula">ceil((100−계측률%) / 10)</span>
-            </div>
-            <div className="fmeaRuleCard">
-              <span className="fmeaRuleLabel">RPN</span>
-              <span className="fmeaRuleWhat">위험 우선순위</span>
-              <span className="fmeaRuleFormula">S × O × D</span>
-            </div>
-          </div>
-
-          <div className="fmeaNotice fmeaNoticeCaution">
-            <p>
-              RPN만 보고 판단하지 마세요 — 불량률 편차를 함께 봐야 합니다. RPN이 높은 이유는 발생도가 아니라
-              계측률이 낮아 D가 크기 때문일 수 있습니다.
-            </p>
-            <p>
-              실익 기준(불량률 편차 ≥ 0.3%p, 타깃 컬럼 기준) 미달 {data.excluded_count}개는 표에서 제외했습니다
-              {data.excluded_negative_count > 0 ? ` (그중 편차가 음수인 인자 ${data.excluded_negative_count}개 포함)` : ""}.
-              &ldquo;예상 수율&rdquo;(Y 컬럼)은 별도 표시용이며 이 필터에는 쓰이지 않습니다.
-            </p>
-          </div>
-          <div className="fmeaNotice fmeaNoticeInfo">
-            <p>R In-line 샘플 계측(약 15%) · D Defect 검사(약 5%, 사후 선별) · Config 장비/챔버 기록(전수, 결측 0%)</p>
-            <p>Config는 D=1로 유리하나 600건 검정 FDR 통과 0건이라 잠재 원인으로 등재하지 않았습니다.</p>
-          </div>
-          <div className="fmeaNotice fmeaNoticeInfo">
-            <p>
-              자동 생성 초안입니다. S·O·D는 관례상 엔지니어가 판단하는 값이나 여기서는 분석 결과로부터 규칙
-              기반으로 산출했습니다. 공정 지식에 따른 검토 없이 확정하지 마세요.
-            </p>
-          </div>
+          )}
         </>
       )}
     </section>

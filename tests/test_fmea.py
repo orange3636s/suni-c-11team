@@ -1,21 +1,17 @@
 """Tests for src/analysis/screening/fmea.py -- the FMEA(고장모드영향분석)
-분석표 (모니터링 홈, 지시서 IA). Synthetic frames only, so these always run
-in CI regardless of whether data/raw/*.CSV is present.
+분석표 (모니터링 홈, 작업 지시서 WE). Synthetic frames only, so these
+always run in CI regardless of whether data/raw/*.CSV is present.
 """
 
 from __future__ import annotations
-
-import math
 
 import numpy as np
 import pandas as pd
 
 from src.analysis.screening.fmea import (
-    MIN_DEFECT_RATE_DEVIATION_PP,
-    _clamp_ceil,
+    MIN_CONTRIBUTION_PCT,
     _mnar_gap_pp,
     _score_factor,
-    _target_loss_shares,
     build_fmea_table,
 )
 from src.analysis.screening.schema import parse_schema
@@ -29,11 +25,12 @@ def _synthetic_df(n: int = 2000, seed: int = 0) -> pd.DataFrame:
       values are mostly a tight "core" cluster (stays inside the recommended
       range) plus a small far-outlier "tail" (falls outside the range)
       whose Y1 is deliberately much higher (worse) -- so "out-of-range mean
-      Y1" is well above "in-range mean Y1", giving a large positive yield
-      deviation (benefit of staying in range) that should survive the
-      benefit filter.
-    - Step2_R1 -> Y2: well-measured (~90%) but pure noise -- near-zero
-      deviation, should be excluded by the benefit filter.
+      Y1" is well above "in-range mean Y1", giving a large positive
+      deviation.
+    - Step2_R1 -> Y2: well-measured (~90%) but pure noise -- since Y2 has no
+      other candidate, this still captures most of the contribution pool
+      under the new contribution-based selection rule (WE-2 doesn't gate on
+      significance, only on relative contribution share).
     - Step3_Config -> Y1: categorical, fully measured -- must never appear
       in the FMEA table regardless of its score (Config is out of scope).
 
@@ -86,54 +83,32 @@ def _rows_by_target(df: pd.DataFrame, targets: list[str]) -> dict[str, list[dict
     return {t: _ranked_rows_with_contribution(df, schema, t, 0.05, 100, 40, 20) for t in targets}
 
 
-def test_clamp_ceil_bounds():
-    assert _clamp_ceil(0.0) == 1
-    assert _clamp_ceil(4.1) == 5
-    assert _clamp_ceil(999) == 10
-    assert _clamp_ceil(float("nan")) == 1
-
-
-def test_target_loss_shares_matches_mean_ratio():
-    df = pd.DataFrame({"Y1": [10.0, 10.0], "Y2": [30.0, 30.0]})
-    shares = _target_loss_shares(df, ["Y1", "Y2"])
-    assert shares["Y1"] == 25.0
-    assert shares["Y2"] == 75.0
-
-
-def test_target_loss_shares_zero_total_is_safe():
-    df = pd.DataFrame({"Y1": [0.0, 0.0], "Y2": [0.0, 0.0]})
-    shares = _target_loss_shares(df, ["Y1", "Y2"])
-    assert shares == {"Y1": 0.0, "Y2": 0.0}
-
-
 def test_score_factor_excludes_config():
     df = _synthetic_df()
     schema = parse_schema(df)
     rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     config_row = next(r for r in rows if r["kind"] == "Config")
     factor = _row_to_factor(df, "Y1", config_row)
-    assert _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID) is None
+    assert _score_factor(df, factor, config_row["contribution_pct"], len(df), dataset_id=DATASET_ID) is None
 
 
-def test_score_factor_computes_rpn_and_deviation_for_real_signal():
+def test_score_factor_populates_contribution_and_deviation_for_real_signal():
     df = _synthetic_df()
     schema = parse_schema(df)
     rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     row = next(r for r in rows if r["feature"] == "Step1_R1")
     factor = _row_to_factor(df, "Y1", row)
-    scored = _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID)
+    scored = _score_factor(df, factor, row["contribution_pct"], len(df), dataset_id=DATASET_ID)
     assert scored is not None
-    assert scored.rpn == scored.severity_score * scored.occurrence_score * scored.detection_score
-    assert 1 <= scored.severity_score <= 10
-    assert 1 <= scored.occurrence_score <= 10
-    assert 1 <= scored.detection_score <= 10
+    assert scored.contribution_pct == row["contribution_pct"]
     assert 0.0 <= scored.deviation_rate_pct <= 100.0
-    assert scored.occurrence_score == min(10, max(1, math.ceil(scored.deviation_rate_pct / 10.0)))
-    # low measurement rate (~15%) -> detection is hard -> high D score
-    assert scored.detection_score >= 7
     # the recommended range genuinely separates Y1 -- expect a real positive gap
     assert scored.defect_rate_deviation_pct is not None
-    assert scored.defect_rate_deviation_pct > MIN_DEFECT_RATE_DEVIATION_PP
+    assert scored.defect_rate_deviation_pct > 0
+    # low measurement rate (~15%) -> worst-decile rate should differ from
+    # overall (MNAR-style signal), and be a valid percentage.
+    assert scored.worst_decile_measurement_rate_pct is not None
+    assert 0.0 <= scored.worst_decile_measurement_rate_pct <= 100.0
     # KA-1: expected_defect_rate_pct is target-column basis (~10, the core
     # cluster's Y1 mean) -- expected_yield_pct is a *different* question,
     # the final-Y-column basis (~80, since Y is independent of the x1
@@ -144,7 +119,7 @@ def test_score_factor_computes_rpn_and_deviation_for_real_signal():
     assert 75.0 <= scored.expected_yield_pct <= 85.0
 
 
-def test_build_fmea_table_filters_noise_and_excludes_config():
+def test_build_fmea_table_selects_by_contribution_threshold_and_excludes_config():
     df = _synthetic_df()
     targets = ["Y1", "Y2", "Y3", "Y4", "Y5"]
     rows_by_target = _rows_by_target(df, targets)
@@ -152,37 +127,31 @@ def test_build_fmea_table_filters_noise_and_excludes_config():
     table = build_fmea_table(df, rows_by_target, targets, dataset_id=DATASET_ID)
 
     features = [item.feature for item in table.items]
-    assert "Step1_R1" in features
-    assert "Step3_Config" not in features  # Config never appears
-    assert "Step2_R1" not in features  # pure noise -> filtered by benefit rule
-    assert table.excluded_count >= 1
-    assert len(table.items) <= 7
+    assert "Step1_R1" in features  # Y1's dominant factor (100% contribution)
+    assert "Step3_Config" not in features  # Config never appears regardless of score
 
-    # RPN descending
-    rpns = [item.rpn for item in table.items]
-    assert rpns == sorted(rpns, reverse=True)
-
-    # every surviving row cleared the benefit filter
+    # Every surviving row cleared the WE-2 contribution threshold for its own target.
     for item in table.items:
-        assert item.defect_rate_deviation_pct is not None
-        assert item.defect_rate_deviation_pct >= MIN_DEFECT_RATE_DEVIATION_PP
+        assert item.contribution_pct >= MIN_CONTRIBUTION_PCT
+
+    # Sorted by defect-rate deviation descending (WE-4), not by any RPN concept.
+    deviations = [item.defect_rate_deviation_pct for item in table.items]
+    assert deviations == sorted(deviations, reverse=True)
 
 
-def test_build_fmea_table_severity_is_a_target_attribute():
-    """S depends only on the target's loss share -- two factors on the same
-    target must get the same severity score regardless of their own eps2."""
+def test_build_fmea_table_records_no_qualifying_factor_reason():
+    """A target whose best candidate never clears the contribution
+    threshold gets a reason row instead of a table row."""
     df = _synthetic_df()
-    schema = parse_schema(df)
-    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
-    numeric_rows = [r for r in rows if r["kind"] in ("R", "D")]
-    assert len(numeric_rows) >= 1
-    loss_shares = _target_loss_shares(df, ["Y1", "Y2", "Y3", "Y4", "Y5"])
-    scored = [
-        _score_factor(df, _row_to_factor(df, "Y1", row), loss_shares["Y1"], len(df), dataset_id=DATASET_ID)
-        for row in numeric_rows
-    ]
-    severities = {s.severity_score for s in scored if s is not None}
-    assert len(severities) == 1
+    targets = ["Y1", "Y2", "Y3", "Y4", "Y5"]
+    rows_by_target = _rows_by_target(df, targets)
+    # Force Y3 to have no candidate at all -> its best contribution is 0.
+    rows_by_target["Y3"] = []
+
+    table = build_fmea_table(df, rows_by_target, targets, dataset_id=DATASET_ID)
+
+    assert any(n.target == "Y3" and n.max_contribution_pct == 0.0 for n in table.no_qualifying_factor)
+    assert all(item.target != "Y3" for item in table.items)
 
 
 def test_mnar_gap_pp_detects_shifted_final_yield():
@@ -212,7 +181,7 @@ def test_score_factor_expected_yield_pct_none_without_final_y_column():
     rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     row = next(r for r in rows if r["feature"] == "Step1_R1")
     factor = _row_to_factor(df, "Y1", row)
-    scored = _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID)
+    scored = _score_factor(df, factor, row["contribution_pct"], len(df), dataset_id=DATASET_ID)
     assert scored is not None
     assert scored.expected_yield_pct is None
     # defect-rate fields are unaffected by the missing final-Y column.
@@ -223,7 +192,7 @@ def test_build_fmea_table_empty_when_no_targets():
     df = _synthetic_df()
     table = build_fmea_table(df, {}, [], dataset_id=DATASET_ID)
     assert table.items == []
-    assert table.excluded_count == 0
+    assert table.no_qualifying_factor == []
     assert table.correlation_shortage_wafers == 0
     # No candidate factor at all -> nobody is measured on "the qualifying
     # set", so every wafer trivially counts as a measurement-shortage wafer.

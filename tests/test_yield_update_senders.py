@@ -16,6 +16,7 @@ from src.analysis.yield_prediction import (
     ReliabilityInfo,
     YieldCandidate,
     YieldPredictionTable,
+    YieldSummary,
 )
 from src.notifications.yield_update_senders import (
     build_slack_yield_update,
@@ -56,11 +57,24 @@ def _candidate(
 
 def _table(candidates: list[YieldCandidate]) -> YieldPredictionTable:
     primary_factors = {t: SimpleNamespace(feature=f"{t}PrimaryFactor") for t in FAIL_TARGETS}
+    ys = [c.y for c in candidates]
+    summary = YieldSummary(
+        predicted_mean=(sum(ys) / len(ys)) if ys else 0.0,
+        predicted_min=min(ys) if ys else 0.0,
+        predicted_max=max(ys) if ys else 0.0,
+        bottom_n=10,
+        bottom_mean=(sum(sorted(ys)[:10]) / 10) if len(ys) >= 10 else None,
+        judgeable_count=len(candidates),
+        total_wafers=len(candidates),
+        histogram=[],
+        mode_loss=[],
+    )
     return YieldPredictionTable(
         candidates=candidates,
         unmeasured_wafer_ids=[],
         total_wafers=len(candidates),
         fallback_summary=FallbackSummary(rank_counts={1: 0}, none_count=0, total_combinations=0),
+        summary=summary,
         primary_factors=primary_factors,
     )
 
