@@ -93,6 +93,9 @@ type TooltipState = {
   q: number | null;
   significant: boolean;
   tier: ConfidenceTier | null;
+  // QA-3: 상관계수는 그려지지만(n>=30) 종류별 표본 게이트 미달로 유의
+  // 인자 목록에는 없는 셀.
+  gateExcluded: boolean;
 };
 
 export default function CorrelationHeatmap({
@@ -413,7 +416,7 @@ export default function CorrelationHeatmap({
         {kind === "numeric" ? (
           <>
             {data.excluded_configs > 0 && `Eq. ${data.excluded_configs}개 제외. `}
-            표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다.
+            표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다. 색은 있지만 점선 테두리인 셀은 표본 게이트로 유의 인자 목록에서 빠진 셀입니다.
           </>
         ) : (
           <>
@@ -432,6 +435,9 @@ export default function CorrelationHeatmap({
           <div className="heatmapTooltipRow"><span>q</span><b>{formatQValue(tooltip.q)}</b></div>
           <div className="heatmapTooltipRow"><span>신뢰도</span><b>{tooltip.tier ? TIER_LABEL[tooltip.tier] : "-"}</b></div>
           <div className="heatmapTooltipRow"><span>FDR 통과</span><b>{tooltip.significant ? "예" : "아니오"}</b></div>
+          {tooltip.gateExcluded && (
+            <div className="heatmapTooltipRow"><span>유의 인자</span><b className="paretoUnderSampledLabel">표본 게이트 미달로 제외</b></div>
+          )}
         </div>
       )}
     </section>
@@ -475,60 +481,31 @@ function FragmentRow({
         // E "색 스케일 규칙" -- 자동 정규화 금지와 짝을 이루는 규칙. q가
         // 없거나(=미검정) 0.05 이상이면 값은 있어도 회색 고정).
         const gated = kind === "categorical" && !masked && !significant;
+        // QA-3: 상관계수는 그려지는데(n>=30) 종류별 표본 게이트(R>=100/
+        // D>=40) 미달로 유의 인자 목록에는 없는 셀 -- 히트맵과 유의 인자
+        // 판정이 어긋나 보이지 않도록 별도 표시한다.
+        const gateExcluded = kind === "numeric" && !masked && Boolean(data.gate_excluded?.[rowIndex]?.[colIndex]);
         const style: React.CSSProperties = {};
         if (!masked && !gated) {
           const { bg, light } = cellBackground(value, scaleMin, scaleMax, theme);
           style.background = bg;
           style.color = light ? "var(--heatmap-text-inverse)" : "var(--heatmap-text)";
         }
+        const hoverPayload = { feature, target, value, n, q, significant, tier, gateExcluded };
         return (
           <button
             key={target}
             type="button"
-            className={`heatmapCell ${significant ? "significant" : ""} ${masked ? "masked" : ""} ${gated ? "gated" : ""}`}
+            className={`heatmapCell ${significant ? "significant" : ""} ${masked ? "masked" : ""} ${gated ? "gated" : ""} ${gateExcluded ? "gate-excluded" : ""}`}
             style={style}
-            onMouseEnter={(event) =>
-              onHover({
-                x: event.clientX,
-                y: event.clientY,
-                feature,
-                target,
-                value,
-                n,
-                q,
-                significant,
-                tier,
-              })
-            }
-            onMouseMove={(event) =>
-              onHover({
-                x: event.clientX,
-                y: event.clientY,
-                feature,
-                target,
-                value,
-                n,
-                q,
-                significant,
-                tier,
-              })
-            }
+            onMouseEnter={(event) => onHover({ x: event.clientX, y: event.clientY, ...hoverPayload })}
+            onMouseMove={(event) => onHover({ x: event.clientX, y: event.clientY, ...hoverPayload })}
             onMouseLeave={() => onHover(null)}
             onTouchStart={(event) =>
-              onHover({
-                x: event.touches[0]?.clientX ?? 0,
-                y: event.touches[0]?.clientY ?? 0,
-                feature,
-                target,
-                value,
-                n,
-                q,
-                significant,
-                tier,
-              })
+              onHover({ x: event.touches[0]?.clientX ?? 0, y: event.touches[0]?.clientY ?? 0, ...hoverPayload })
             }
             onClick={() => onSelectCell({ target, feature, significant, qValue: q })}
-            aria-label={`${feature}, ${target}, ${metric === "spearman" ? "rho" : "eps2"} ${value != null ? formatEps2(value) : "표본 부족"}`}
+            aria-label={`${feature}, ${target}, ${metric === "spearman" ? "rho" : "eps2"} ${value != null ? formatEps2(value) : "표본 부족"}${gateExcluded ? ", 표본 게이트로 유의 인자 목록에서 제외" : ""}`}
           >
             {masked ? "" : formatEps2(value)}
           </button>

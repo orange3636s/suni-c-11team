@@ -83,7 +83,7 @@ DATASET_ID = "synthetic-test"
 
 def _rows_by_target(df: pd.DataFrame, targets: list[str]) -> dict[str, list[dict]]:
     schema = parse_schema(df)
-    return {t: _ranked_rows_with_contribution(df, schema, t, 0.05, 100, 20) for t in targets}
+    return {t: _ranked_rows_with_contribution(df, schema, t, 0.05, 100, 40, 20) for t in targets}
 
 
 def test_clamp_ceil_bounds():
@@ -109,7 +109,7 @@ def test_target_loss_shares_zero_total_is_safe():
 def test_score_factor_excludes_config():
     df = _synthetic_df()
     schema = parse_schema(df)
-    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     config_row = next(r for r in rows if r["kind"] == "Config")
     factor = _row_to_factor(df, "Y1", config_row)
     assert _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID) is None
@@ -118,7 +118,7 @@ def test_score_factor_excludes_config():
 def test_score_factor_computes_rpn_and_deviation_for_real_signal():
     df = _synthetic_df()
     schema = parse_schema(df)
-    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     row = next(r for r in rows if r["feature"] == "Step1_R1")
     factor = _row_to_factor(df, "Y1", row)
     scored = _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID)
@@ -173,7 +173,7 @@ def test_build_fmea_table_severity_is_a_target_attribute():
     target must get the same severity score regardless of their own eps2."""
     df = _synthetic_df()
     schema = parse_schema(df)
-    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     numeric_rows = [r for r in rows if r["kind"] in ("R", "D")]
     assert len(numeric_rows) >= 1
     loss_shares = _target_loss_shares(df, ["Y1", "Y2", "Y3", "Y4", "Y5"])
@@ -209,7 +209,7 @@ def test_score_factor_expected_yield_pct_none_without_final_y_column():
     df = _synthetic_df()
     df = df.drop(columns=["Y"])
     schema = parse_schema(df)
-    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 20)
+    rows = _ranked_rows_with_contribution(df, schema, "Y1", 0.05, 100, 40, 20)
     row = next(r for r in rows if r["feature"] == "Step1_R1")
     factor = _row_to_factor(df, "Y1", row)
     scored = _score_factor(df, factor, 50.0, len(df), dataset_id=DATASET_ID)

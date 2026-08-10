@@ -51,9 +51,12 @@ from src.analysis.target_hydration import (
     hydrate_targets,
 )
 from src.analysis.screening.selector import (
+    DEFAULT_MIN_N_CATEGORICAL,
+    DEFAULT_MIN_N_D,
+    DEFAULT_MIN_N_R,
     PARETO_TOP_N,
     ParetoFactor,
-    confidence_tier,
+    effective_confidence_tier,
     score_all_factors,
 )
 from src.analysis.screening.selector import _ranked_rows_with_contribution as _ranked_rows
@@ -180,6 +183,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "q_value": data.q_value,
         "significant": data.significant,
         "confidence_tier": data.confidence_tier,
+        "under_sampled": data.under_sampled,
         "relation_shape": data.relation_shape,
         "n": data.n,
         "axis": data.axis,
@@ -296,6 +300,7 @@ def get_screening_heatmap(
         "q": heatmap.q,
         "significant": heatmap.significant,
         "tier": heatmap.tier,
+        "gate_excluded": heatmap.gate_excluded,
         "scale": {"min": heatmap.scale["min"], "max": heatmap.scale["max"]},
         "excluded_configs": heatmap.excluded_configs,
         "target_provenance": provenance.as_dict(),
@@ -325,7 +330,7 @@ def _cached_ranked_rows_versioned(
     schema = parse_schema(df)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
-    return tuple(_ranked_rows(df, schema, target, 0.05, 100, 20))
+    return tuple(_ranked_rows(df, schema, target, 0.05, DEFAULT_MIN_N_R, DEFAULT_MIN_N_D, DEFAULT_MIN_N_CATEGORICAL))
 
 
 def _ranked_rows_for_provenance(dataset_id: str, target: str, provenance: Any) -> tuple[dict, ...]:
@@ -496,10 +501,13 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
             "p_value": row["p_value"],
             "q_value": row["q_value"],
             "significant": row["significant"],
-            "confidence_tier": confidence_tier(row["eps2"], row["p_value"]),
+            "confidence_tier": effective_confidence_tier(row["eps2"], row["p_value"], under_sampled=row.get("under_sampled", False)),
             "n_observed": row["n_observed"],
             "contribution_pct": row["contribution_pct"],
             "cumulative_pct": row["cumulative_pct"],
+            # QA-2: 배제 대신 "표본 부족" 배지로 표시 -- 하한(30) 이상이지만
+            # 종류별 정상 판정 임계 미만인 경우 True.
+            "under_sampled": row.get("under_sampled", False),
         }
         for row in top
     ]
@@ -508,7 +516,9 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
     # 화면에 노출되는 top-5만으로는 "58건 중 FDR 통과 0건"을 계산할 수 없어
     # 여기서 전체 ranked 풀을 기준으로 함께 내려보낸다.
     fdr_pass_count = sum(1 for row in ranked if row["significant"])
-    effect_size_pass_count = sum(1 for row in ranked if confidence_tier(row["eps2"], row["p_value"]) != "reference")
+    effect_size_pass_count = sum(
+        1 for row in ranked if effective_confidence_tier(row["eps2"], row["p_value"], under_sampled=row.get("under_sampled", False)) != "reference"
+    )
     max_eps2 = max((row["eps2"] for row in ranked), default=None)
     return {
         "dataset_id": dataset_id,

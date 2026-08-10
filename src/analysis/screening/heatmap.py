@@ -21,7 +21,13 @@ import pandas as pd
 
 from src.analysis.screening.effect_size import eps2_categorical
 from src.analysis.screening.schema import Schema
-from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, benjamini_hochberg, confidence_tier, score_all_factors
+from src.analysis.screening.selector import (
+    DEFAULT_FDR_ALPHA,
+    benjamini_hochberg,
+    confidence_tier,
+    effective_confidence_tier,
+    score_all_factors,
+)
 from src.config_parser import config_hierarchy_series
 
 MIN_CELL_N = 30
@@ -46,6 +52,9 @@ class HeatmapData:
     q: list[list[float | None]] = field(default_factory=list)
     significant: list[list[bool]] = field(default_factory=list)
     tier: list[list[str | None]] = field(default_factory=list)
+    # QA-3: 상관계수는 그려지는데(n>=MIN_CELL_N) 유의 인자 목록에서는 종류별
+    # 표본 게이트 미달로 빠지는 셀 -- 히트맵과 유의 인자 판정 정합용.
+    gate_excluded: list[list[bool]] = field(default_factory=list)
     scale: dict[str, float] = field(default_factory=dict)
     excluded_configs: int = 0
 
@@ -82,6 +91,7 @@ def build_heatmap(
     q_grid: list[list[float | None]] = []
     sig_grid: list[list[bool]] = []
     tier_grid: list[list[str | None]] = []
+    gate_grid: list[list[bool]] = []
     rho_for_sort: list[list[float | None]] = []
 
     for feature in features:
@@ -90,6 +100,7 @@ def build_heatmap(
         q_row: list[float | None] = []
         sig_row: list[bool] = []
         tier_row: list[str | None] = []
+        gate_row: list[bool] = []
         rho_row: list[float | None] = []
         for target in targets:
             n, rho = _pairwise_n_and_rho(df, feature, target)
@@ -104,13 +115,22 @@ def build_heatmap(
             n_row.append(n)
             q_row.append(scored["q_value"] if scored else None)
             sig_row.append(bool(scored["significant"]) if scored else False)
-            tier_row.append(confidence_tier(scored["eps2"], scored["p_value"]) if (scored and n >= MIN_CELL_N) else None)
+            tier_row.append(
+                effective_confidence_tier(scored["eps2"], scored["p_value"], under_sampled=scored.get("under_sampled", False))
+                if (scored and n >= MIN_CELL_N)
+                else None
+            )
+            # QA-3: 상관계수가 그려지는데(n>=MIN_CELL_N) 유의 인자 풀에는
+            # 없는(scored=None) 셀 -- 종류별 표본 게이트 미달 등으로 두
+            # 화면이 어긋나는 지점.
+            gate_row.append(bool(n >= MIN_CELL_N and scored is None))
             rho_row.append(rho if rho is not None else (scored["eps2"] if scored else None))
         values.append(value_row)
         n_grid.append(n_row)
         q_grid.append(q_row)
         sig_grid.append(sig_row)
         tier_grid.append(tier_row)
+        gate_grid.append(gate_row)
         rho_for_sort.append(rho_row)
 
     order = sorted(
@@ -128,6 +148,7 @@ def build_heatmap(
         q=[q_grid[i] for i in order],
         significant=[sig_grid[i] for i in order],
         tier=[tier_grid[i] for i in order],
+        gate_excluded=[gate_grid[i] for i in order],
         scale={"min": scale_min, "max": scale_max},
         excluded_configs=len(schema.config_cols),
     )
@@ -178,6 +199,7 @@ def build_categorical_heatmap(
     q_grid: list[list[float | None]] = []
     sig_grid: list[list[bool]] = []
     tier_grid: list[list[str | None]] = []
+    gate_grid: list[list[bool]] = []
 
     for feature in features:
         value_row: list[float | None] = []
@@ -185,6 +207,7 @@ def build_categorical_heatmap(
         q_row: list[float | None] = []
         sig_row: list[bool] = []
         tier_row: list[str | None] = []
+        gate_row: list[bool] = []
         for target in targets:
             result = results[(feature, target)]
             q = q_by_key.get((feature, target))
@@ -193,11 +216,16 @@ def build_categorical_heatmap(
             q_row.append(q)
             sig_row.append(bool(q is not None and q < fdr_alpha))
             tier_row.append(confidence_tier(result.eps2, result.p_value) if result else None)
+            # Config는 eps2_categorical의 min_n(20) 하나만 쓰고 QA-2의
+            # 표본 부족/게이트 불일치 개념이 없다 -- value/tier가 이미 같은
+            # `result`에서 나오므로 항상 정합한다.
+            gate_row.append(False)
         values.append(value_row)
         n_grid.append(n_row)
         q_grid.append(q_row)
         sig_grid.append(sig_row)
         tier_grid.append(tier_row)
+        gate_grid.append(gate_row)
 
     order = sorted(
         range(len(features)),
@@ -213,6 +241,7 @@ def build_categorical_heatmap(
         q=[q_grid[i] for i in order],
         significant=[sig_grid[i] for i in order],
         tier=[tier_grid[i] for i in order],
+        gate_excluded=[gate_grid[i] for i in order],
         scale={"min": EPS2_CATEGORICAL_SCALE[0], "max": EPS2_CATEGORICAL_SCALE[1]},
         excluded_configs=len(schema.r_cols) + len(schema.d_cols),
     )

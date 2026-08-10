@@ -17,6 +17,10 @@ class ParetoRankingItemSchema(BaseModel):
     n_observed: int
     contribution_pct: float
     cumulative_pct: float
+    # QA-2: 하한(30) 이상이지만 종류별 정상 판정 임계 미만 -- 배제 대신
+    # "표본 부족" 배지로 표시하고 confidence_tier는 이미 한 단계 낮춰
+    # 내려온다.
+    under_sampled: bool = False
 
 
 class ParetoRankingResponse(BaseModel):
@@ -119,6 +123,7 @@ class ScreeningScatterResponse(BaseModel):
     q_value: float
     significant: bool
     confidence_tier: str
+    under_sampled: bool = False
     relation_shape: str
     n: int
     axis: dict[str, str]
@@ -168,6 +173,10 @@ class HeatmapResponse(BaseModel):
     q: list[list[float | None]]
     significant: list[list[bool]]
     tier: list[list[str | None]]
+    # QA-3: 상관계수는 그려지지만(n>=30) 유의 인자 판정에서는 종류별
+    # 표본 게이트(R>=100/D>=40) 미달로 빠지는 셀 -- 히트맵과 유의 인자
+    # 목록이 어긋나 보이지 않도록 별도 표시(사선 등)에 쓴다.
+    gate_excluded: list[list[bool]] = Field(default_factory=list)
     scale: HeatmapScaleSchema
     excluded_configs: int
     target_provenance: dict[str, Any] | None = None

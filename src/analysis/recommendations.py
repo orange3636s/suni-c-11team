@@ -22,7 +22,7 @@ import pandas as pd
 
 from src.analysis.control_range import ControlRange, compute_control_range
 from src.analysis.screening.quantile_profile import quantile_bins, window_from_bins
-from src.analysis.screening.selector import ParetoFactor, confidence_tier
+from src.analysis.screening.selector import ParetoFactor, effective_confidence_tier
 from src.analysis.window_methods import MethodComparison, compare_methods
 
 GRADE_TAG = {
@@ -111,7 +111,7 @@ def compute_factor_recommendation(
     )
     ratio = in_range_mean / overall_mean if in_range_mean is not None and overall_mean != 0 else None
 
-    grade = confidence_tier(factor.eps2, factor.p_value)
+    grade = effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled)
     return FactorRecommendation(
         factor=factor,
         target=factor.target,

@@ -29,7 +29,7 @@ from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import (
     DEFAULT_FDR_ALPHA,
     ParetoFactor,
-    confidence_tier,
+    effective_confidence_tier,
     select_primary_factor,
 )
 
@@ -224,7 +224,7 @@ def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str
             "cumulative_pct": factor.cumulative_pct,
             "p_value": factor.p_value,
             "q_value": factor.q_value,
-            "confidence_tier": confidence_tier(factor.eps2, factor.p_value),
+            "confidence_tier": effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled),
             "r2": metrics["r2"],
             "rmse": metrics["rmse"],
             "mae": metrics["mae"],

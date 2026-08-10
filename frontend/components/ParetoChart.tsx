@@ -261,7 +261,7 @@ export default function ParetoChart({
                       onClick={() => onBarClick(item)}
                       style={{ cursor: "pointer" }}
                     >
-                      <title>{`${item.feature}, 기여율 ${item.contribution_pct.toFixed(1)}%, 신뢰도 ${TIER_LABEL[item.confidence_tier]}`}</title>
+                      <title>{`${item.feature}, 기여율 ${item.contribution_pct.toFixed(1)}%, 신뢰도 ${TIER_LABEL[item.confidence_tier]}${item.under_sampled ? " (표본 부족)" : ""}`}</title>
                     </rect>
                   );
                 })}
@@ -347,6 +347,9 @@ export default function ParetoChart({
           {/* 지시서 CD: 알람 등급(심각/위험/주의)과 겹치지 않게 -- 이 값은
               인자-타깃 연관의 세기(강함/보통/근거 부족/관계 없음)다. */}
           <div className="heatmapTooltipRow"><span>상관성</span><b>{TIER_LABEL[tooltipItem.confidence_tier]}</b></div>
+          {tooltipItem.under_sampled && (
+            <div className="heatmapTooltipRow"><span>표본</span><b className="paretoUnderSampledLabel">부족 (등급 하향 반영됨)</b></div>
+          )}
         </div>
       )}
     </>

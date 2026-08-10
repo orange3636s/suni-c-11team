@@ -17,7 +17,7 @@ import pandas as pd
 from src.analysis.control_range import ControlRange, compute_control_range
 from src.analysis.recommendations import compute_factor_recommendation
 from src.analysis.screening.quantile_profile import quantile_bins
-from src.analysis.screening.selector import ParetoFactor, confidence_tier
+from src.analysis.screening.selector import ParetoFactor, effective_confidence_tier
 from src.analysis.warning_line import compute_warning_line, observed_yield_gap
 from src.analysis.window_methods import compare_methods
 
@@ -184,6 +184,7 @@ class ScatterData:
     q_value: float
     significant: bool
     confidence_tier: str
+    under_sampled: bool
     relation_shape: str
     n: int
     axis: dict[str, str]
@@ -271,7 +272,8 @@ def build_scatter_data(
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,
-        confidence_tier=confidence_tier(factor.eps2, factor.p_value),
+        confidence_tier=effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled),
+        under_sampled=factor.under_sampled,
         relation_shape=factor.relation_shape,
         methods=methods,
         n=len(frame),
@@ -343,7 +345,7 @@ def build_categorical_data(eval_df: pd.DataFrame, factor: ParetoFactor) -> Categ
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,
-        confidence_tier=confidence_tier(factor.eps2, factor.p_value),
+        confidence_tier=effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled),
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · 장비 설정)",

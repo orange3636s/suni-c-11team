@@ -29,6 +29,10 @@ class EffectSizeResult:
     pearson_r: float | None
     spearman_r: float | None
     k_groups: int
+    # QA-2: n_observed가 hard_min_n(제외 하한) 이상이지만 min_n(종류별
+    # 정상 판정 임계) 미만일 때 True -- 결과는 그대로 쓰되 호출부가 등급을
+    # 한 단계 낮추고 "표본 부족" 배지를 붙이는 신호로 쓴다.
+    under_sampled: bool = False
 
 
 def _eps2_from_groups(groups: list[np.ndarray]) -> tuple[float, float]:
@@ -56,13 +60,25 @@ def _safe_corr(func, x: pd.Series, y: pd.Series) -> float | None:
     return float(value) if np.isfinite(value) else None
 
 
+HARD_MIN_N = 30  # 종류 불문 이 미만은 통계적으로 무의미해 완전히 제외 (QA-2)
+
+
 def eps2_numeric(
     x: pd.Series,
     y: pd.Series,
     bins: int = 8,
     min_n: int = 100,
+    hard_min_n: int = HARD_MIN_N,
 ) -> EffectSizeResult | None:
-    """Effect size for a continuous factor (R or D column) against a target."""
+    """Effect size for a continuous factor (R or D column) against a target.
+
+    `min_n`은 "정상 판정" 임계(R/D마다 다르다 -- selector.py의
+    DEFAULT_MIN_N_R/DEFAULT_MIN_N_D), `hard_min_n`은 종류 불문 완전 제외
+    하한이다. hard_min_n <= n < min_n 구간은 결과를 그대로 계산해
+    반환하되 `under_sampled=True`로 표시한다(QA-2) -- D 인자처럼 계측률이
+    낮은 종류가 min_n 미달이라는 이유만으로 화면에서 통째로 사라지는
+    것을 막는다.
+    """
     # Keep the exact pairwise-deletion/qcut/ANOVA definition, but avoid a
     # temporary two-column DataFrame plus a pandas groupby for every
     # feature-target pair. A 1,000 x 88 analysis evaluates this path 440
@@ -71,7 +87,7 @@ def eps2_numeric(
     x_valid = x.loc[valid]
     y_valid = y.loc[valid]
     n_observed = len(x_valid)
-    if n_observed < min_n:
+    if n_observed < hard_min_n:
         return None
 
     try:
@@ -93,6 +109,7 @@ def eps2_numeric(
         pearson_r=_safe_corr(stats.pearsonr, x_valid, y_valid),
         spearman_r=_safe_corr(stats.spearmanr, x_valid, y_valid),
         k_groups=len(groups),
+        under_sampled=n_observed < min_n,
     )
 
 

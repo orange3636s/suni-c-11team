@@ -8493,6 +8493,11 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    신호가 없다는 뜻이라, "표본 부족"(.masked, 사선 패턴)과는 다른
    단색 회색으로 구분한다 (지시서 E). */
 .heatmapCell.gated{ background: var(--surface-tertiary); color: var(--text-muted); font-weight: 500; }
+/* QA-3: 상관계수는 그려지지만(n>=30) 종류별 표본 게이트(R>=100/D>=40)
+   미달로 유의 인자 목록에는 없는 셀 -- 색은 그대로 두고(값 자체는
+   유효하다) 점선 테두리만 덧대 히트맵과 유의 인자 판정이 어긋나는
+   지점임을 표시한다. */
+.heatmapCell.gate-excluded{ box-shadow: inset 0 0 0 2px var(--sig-amber); border-style: dashed; }
 .heatmapEmptyBanner{
   margin: 0 0 12px; padding: 10px 14px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
   background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
@@ -10913,6 +10918,27 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
   background-image: repeating-linear-gradient(45deg, var(--line-soft) 0 4px, transparent 4px 8px);
 }
 .confidenceBadge.adopted{ border-color: var(--sig-green); color: var(--sig-green); background: transparent; }
+
+/* QA-2: "표본 부족" 배지 -- confidenceBadge와 형태를 맞추되(테두리+글자만)
+   사선 해치로 "판정은 하되 확실하진 않다"를 시각적으로 구분한다. 등급
+   배지 자체는 이미 한 단계 낮춰져 있으므로, 이 배지는 "왜 낮은지"를
+   보충 설명하는 역할이다. */
+.underSampledBadge{
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1.5px 8px;
+  border: 1px solid var(--sig-amber);
+  border-radius: var(--radius-control);
+  background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--sig-amber) 12%, transparent) 0 4px, transparent 4px 8px);
+  color: var(--sig-amber);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  vertical-align: middle;
+  line-height: 1.6;
+}
+
+.paretoUnderSampledLabel{ color: var(--sig-amber); }
 
 /* 계측 확대 제안(계측 큐) 권고 배지 -- "+N%p"는 게이트 미달(계측 부족)이라
    신호색을 유지하고, "유지"는 정상 분류라 무채색. */

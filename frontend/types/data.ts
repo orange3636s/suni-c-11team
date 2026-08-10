@@ -221,6 +221,10 @@ export type ScreeningScatterResponse = {
   q_value: number;
   significant: boolean;
   confidence_tier: ConfidenceTier;
+  /** QA-2: 하한(30) 이상이지만 종류별(R/D) 정상 판정 임계 미만 -- 배제
+   * 대신 confidence_tier를 이미 한 단계 낮춘 상태로 내려온다. 프론트는
+   * 이 값으로 "표본 부족" 배지만 덧붙이면 된다. */
+  under_sampled: boolean;
   relation_shape: RelationShape;
   n: number;
   axis: { x_label: string; y_label: string };
@@ -451,6 +455,8 @@ export type ParetoRankingItem = {
   q_value: number;
   significant: boolean;
   confidence_tier: ConfidenceTier;
+  /** QA-2 -- 표본 부족(하한 30 이상, 종류별 정상 판정 임계 미만) 배지용. */
+  under_sampled: boolean;
   n_observed: number;
   contribution_pct: number;
   cumulative_pct: number;
@@ -532,6 +538,10 @@ export type HeatmapResponse = {
   q: Array<Array<number | null>>;
   significant: boolean[][];
   tier: Array<Array<ConfidenceTier | null>>;
+  /** QA-3: 상관계수는 그려지지만(n>=30) 종류별 표본 게이트 미달로 유의
+   * 인자 목록에는 없는 셀 -- 히트맵과 유의 인자 판정이 어긋나는 지점을
+   * 표시한다. 응답에 없을 수 있으니(구버전 캐시 등) 항상 옵셔널로 읽는다. */
+  gate_excluded?: boolean[][];
   scale: { min: number; max: number };
   excluded_configs: number;
   target_provenance: TargetProvenance | null;

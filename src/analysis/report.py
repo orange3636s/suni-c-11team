@@ -51,7 +51,7 @@ from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import (
     ParetoFactor,
     benjamini_hochberg,
-    confidence_tier,
+    effective_confidence_tier,
     select_fdr_significant_factors,
     select_primary_factor,
 )
@@ -365,7 +365,7 @@ def build_analysis_report(
                     "p_value": factor.p_value,
                     "q_value": factor.q_value,
                     "grade": {"strong": "강함", "moderate": "보통", "weak": "약함", "reference": "참고"}[
-                        confidence_tier(factor.eps2, factor.p_value)
+                        effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled)
                     ],
                     "report_confidence": judge_confidence(
                         factor.eps2, factor.p_value, entry["band_stability"], entry["band_width"]

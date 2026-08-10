@@ -1439,6 +1439,15 @@ function NumericFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
+            {/* QA-2: 배제 대신 하한(30) 이상 표본을 그대로 판정하되, 종류별
+                (R/D) 정상 판정 임계 미만이면 등급을 낮추고(위 배지에 이미
+                반영됨) 이유를 별도로 밝힌다 -- 등급만 봐서는 "왜 낮은지"가
+                안 보인다. */}
+            {item.under_sampled && (
+              <span className="underSampledBadge" title={`계측 n=${item.n_observed} -- 표본이 정상 판정 임계에 못 미쳐 신뢰 등급을 한 단계 낮췄습니다.`}>
+                표본 부족
+              </span>
+            )}
             <FavoriteStarButton
               favorited={isFavorited(view)}
               disabled={isFavoritePending(view)}
