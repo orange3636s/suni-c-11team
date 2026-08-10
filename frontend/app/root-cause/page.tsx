@@ -12,14 +12,15 @@ import CurrentDatasetLabel from "@/components/CurrentDatasetLabel";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
-import ParetoChart, { buildParetoSummaryText } from "@/components/ParetoChart";
+import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
-import ScatterChart, { type QuickLookView, type ScatterColorMode, type ScatterView } from "@/components/ScatterChart";
+import ScatterChart, { type QuickLookView, type ScatterColorMode } from "@/components/ScatterChart";
+import { buildExportFilename, buildFactorCaptionText, buildParetoCaptionText, exportChartAsPng } from "@/lib/chartExport";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
-import { buildCategoricalSpec, noChartReason, noChartReasonText, TARGETS } from "@/lib/constants";
-import { formatPValue } from "@/lib/numberFormat";
+import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
+import { fitDefectRateCurve } from "@/lib/defectRateCurve";
 import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
@@ -67,7 +68,6 @@ const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
-type ChartCriterion = "significant" | "all";
 
 type AnalysisFailureKind = "network" | "timeout" | "server" | "model_not_ready" | "unknown";
 
@@ -210,10 +210,6 @@ function RootCauseContent() {
   const [compareFeature, setCompareFeature] = useState<string | null>(null);
   // Y1~Y5 비교 모달과 서로 배타적으로 열린다 (아래 openCompare/openTrellis).
   const [trellisFactor, setTrellisFactor] = useState<{ feature: string; step: number } | null>(null);
-  // 판정 기준 토글 (spec §B-6) -- 기본값은 "유의한 인자만" (§B-2 규칙 적용).
-  // 타깃 선택·데이터셋 변경 시 기본값으로 되돌아간다 (아래 selectTarget과
-  // datasetId 변경 이펙트에서 초기화).
-  const [chartCriterion, setChartCriterion] = useState<ChartCriterion>("significant");
 
   const [runState, setRunState] = useState<RunState>("idle");
   // Bumped once per "원인 분석 실행"/"다시 실행" -- folded into each factor
@@ -353,8 +349,6 @@ function RootCauseContent() {
     const timer = window.setTimeout(() => {
       setQuickLook(null);
       setQuickLookData(null);
-      // 데이터셋 변경 시 판정 기준 토글도 기본값으로 되돌린다 (spec §B-6).
-      setChartCriterion("significant");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [datasetId]);
@@ -580,51 +574,22 @@ function RootCauseContent() {
     () => activeParetoResponse?.items ?? [],
     [activeParetoResponse],
   );
-  // 차트 표시 규칙 (spec §A-2) -- "유의한 인자만"은 강함·보통만, 3개를
-  // 넘어도 전부 표시하고 약함으로 보충하지 않는다 (selectDisplayFactors).
-  // "전체 상위 3개"는 등급 무관 ε² 순위대로 정확히 3개다 (items는 이미
-  // 백엔드에서 ε² 내림차순 top-5로 내려온다).
-  const significantDisplayFactors = useMemo(() => selectDisplayFactors(activeParetoItems), [activeParetoItems]);
-  const displayFactors = chartCriterion === "significant" ? significantDisplayFactors : activeParetoItems.slice(0, 3);
+  // 지시서 WI-2: 표시 기준은 파레토 기여율 20% 이상 고정(토글 없음) --
+  // selectDisplayFactors가 그 필터를 적용한다.
+  const displayFactors = useMemo(() => selectDisplayFactors(activeParetoItems), [activeParetoItems]);
   const activeTargetIsEmpty = Boolean(
     analysisVisible && activeParetoResponse && activeParetoResponse.items.length === 0,
   );
-  // 이 타깃에서 그릴 차트가 0개인지 (spec §A-4) -- "유의한 인자만" 필터
-  // 결과 자체가 비어있는지로 판단한다 (약함만 있고 강함·보통이 0개인
-  // 경우도 포함해야 하므로, effect_size_pass_count처럼 약함까지 세는
-  // 값에 기대면 안 된다).
-  const activeTargetHasNoChart =
-    chartCriterion === "significant" && activeParetoItems.length > 0 && significantDisplayFactors.length === 0;
-  // 5개 타깃 전부 차트가 0개인지 (spec §A-4) -- killing_event처럼 전 타깃에서
-  // 계측된 인자로 불량률이 설명되지 않는 경우, 타깃별 안내 문구를 5번
-  // 반복하지 않고 통합 안내 하나만 보여준다.
-  const allTargetsHaveNoChart =
-    chartCriterion === "significant" &&
-    analysisVisible &&
-    TARGETS.every((t) => {
-      const items = paretoByTarget[t]?.items ?? [];
-      return items.length > 0 && selectDisplayFactors(items).length === 0;
-    });
-  // §B-5 통합 안내에 쓰는 5개 타깃 합산 통계 (검정 건수/효과 크기 통과/최대
-  // 설명력).
-  const datasetNoChartStats = useMemo(() => {
-    if (!allTargetsHaveNoChart) return null;
-    let totalTested = 0;
-    let effectSizePass = 0;
-    let fdrPass = 0;
-    let maxEps2 = 0;
-    const allItems: ParetoRankingItem[] = [];
-    for (const t of TARGETS) {
-      const response = paretoByTarget[t];
-      if (!response) continue;
-      totalTested += response.total_factor_count;
-      effectSizePass += response.effect_size_pass_count;
-      fdrPass += response.fdr_pass_count;
-      maxEps2 = Math.max(maxEps2, response.max_eps2 ?? 0);
-      allItems.push(...response.items);
-    }
-    return { totalTested, effectSizePass, maxEps2, reason: noChartReason(allItems, { totalTested, fdrPassCount: fdrPass, maxEps2 }) };
-  }, [allTargetsHaveNoChart, paretoByTarget]);
+  // 이 타깃에서 그릴 차트가 0개인지 -- 순위 자체는 있지만(activeParetoItems
+  // 비어있지 않음) 그중 기여율 20% 이상인 인자가 하나도 없는 경우.
+  const activeTargetHasNoChart = activeParetoItems.length > 0 && displayFactors.length === 0;
+  // WI-2 안내 문구("Y4는 기여율 20% 이상 인자가 없습니다 (최대 18.3%)")의
+  // 최대값 -- items는 이미 ε² 내림차순이라 기여율도 같은 순서이지만,
+  // 그 가정에 기대지 않고 직접 최댓값을 구한다.
+  const maxContributionPct = useMemo(
+    () => (activeParetoItems.length === 0 ? 0 : Math.max(...activeParetoItems.map((item) => item.contribution_pct))),
+    [activeParetoItems],
+  );
 
   /** 인자 카드 하나를 그린다 (numeric -> ScatterChart, Config -> Box Plot) --
    * 메인 그리드가 이 함수를 쓴다. `target`을 클로저의 activeTarget에 기대지
@@ -661,9 +626,6 @@ function RootCauseContent() {
           onCompare={openCompare}
           onTrellis={openTrellis}
           hasConfig={(analysisSchema?.config_columns.length ?? 0) > 0}
-          paretoItems={paretoByTarget[target]?.items ?? []}
-          paretoN80={paretoByTarget[target]?.n80 ?? null}
-          onParetoBarClick={handleParetoBarClick}
           isFavorited={isFavorited}
           isFavoritePending={isFavoritePending}
           onToggleFavorite={toggleFavorite}
@@ -699,8 +661,6 @@ function RootCauseContent() {
   function selectTarget(target: string) {
     setActiveTarget(target);
     updateUrl(target);
-    // 타깃 선택 시 판정 기준 토글도 기본값으로 되돌린다 (spec §B-6).
-    setChartCriterion("significant");
     // Keeps the persisted-for-restore activeTarget in sync with whatever
     // the user is actually looking at, not frozen at whatever it was
     // when the run/restore first completed.
@@ -800,6 +760,13 @@ function RootCauseContent() {
 
   const quickLookNumeric = quickLook && !quickLook.isConfig ? (quickLookData as ScreeningScatterResponse | null) : null;
   const quickLookCategorical = quickLook && quickLook.isConfig ? (quickLookData as CategoricalScatterResponse | null) : null;
+  // 지시서 WI-3: p-value 대신 표시할 R²(차수) -- Quick Look도 같은
+  // fitDefectRateCurve(ScatterChart가 추세선을 그릴 때 쓰는 것과 동일
+  // 함수)를 이 인자의 산점도 좌표 위에서 그대로 계산한다.
+  const quickLookCurveFit = useMemo(
+    () => (quickLookNumeric ? fitDefectRateCurve(quickLookNumeric.points) : null),
+    [quickLookNumeric],
+  );
   // 모니터링 트리맵 타일 클릭 딥링크 (`?feature=Step7_Config&config=...`).
   const configFromTreemap = searchParams.get("config");
 
@@ -952,7 +919,6 @@ function RootCauseContent() {
         activeTarget={activeTarget}
         onActiveTargetChange={selectTarget}
         onHeatmapCellSelect={handleHeatmapSelect}
-        criterionControl={<ChartCriterionToggle value={chartCriterion} onChange={setChartCriterion} />}
         heatmapInitialCache={analysis?.heatmap ?? EMPTY_HEATMAP_CACHE}
         onHeatmapCacheUpdate={(cache) => setAnalysis((previous) => (previous ? { ...previous, heatmap: cache } : previous))}
       />
@@ -992,8 +958,10 @@ function RootCauseContent() {
                   {quickLookNumeric && (
                     <div className="factorChartMetaLine">
                       <span className="metaItem">n={quickLookNumeric.n.toLocaleString()}</span>
-                      <span className="metaItem">ε²={quickLookNumeric.eps2.toFixed(3)}</span>
-                      <span className="metaItem">p-value {formatPValue(quickLookNumeric.p_value)}</span>
+                      <span className="metaItem">ε² {quickLookNumeric.eps2.toFixed(3)}</span>
+                      {quickLookCurveFit && (
+                        <span className="metaItem">R² {quickLookCurveFit.r2.toFixed(3)} ({quickLookCurveFit.degree}차)</span>
+                      )}
                       <span className="metaItem">등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}</span>
                     </div>
                   )}
@@ -1011,13 +979,13 @@ function RootCauseContent() {
               {quickLookCategorical && <ModerateTierCaption tier={quickLookCategorical.confidence_tier} eps2={quickLookCategorical.eps2} />}
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
-                  이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(quickLookNumeric.p_value)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
+                  이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (ε² = {quickLookNumeric.eps2.toFixed(3)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
                   원인으로 단정할 근거는 부족합니다.
                 </p>
               )}
               {!quickLookError && quickLookCategorical && !hasReliableEvidence(quickLookCategorical.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
-                  통계적 신뢰도가 낮습니다 (p = {formatPValue(quickLookCategorical.p_value)}, 등급 {TIER_LABEL[quickLookCategorical.confidence_tier]}).
+                  통계적 신뢰도가 낮습니다 (ε² = {quickLookCategorical.eps2.toFixed(3)}, 등급 {TIER_LABEL[quickLookCategorical.confidence_tier]}).
                 </p>
               )}
               {quickLookNumeric ? (
@@ -1050,52 +1018,36 @@ function RootCauseContent() {
               <p className="noChartStats">모델 상태와 데이터의 R/D/Config 계측값을 확인한 뒤 다시 분석해 주세요.</p>
               <button type="button" className="button" onClick={() => void runAnalysis()}>다시 분석</button>
             </section>
-          ) : allTargetsHaveNoChart && datasetNoChartStats ? (
-            // 전 타깃이 0개(spec §A-4) -- killing_event처럼 타깃별 안내를
-            // 5번 반복하지 않고 상단에 한 번만 표시한다.
-            <section className="resultCard noChartMessage">
-              <h2>강함·보통 등급 인자가 없습니다</h2>
-              <p className="noChartStats">
-                {/* GB-2: 계측 부족/FDR 미통과/효과크기 미달 중 가장 근본적인
-                    사유 하나를 우선 보여준다 -- 셋 다 판정 불가면(드묾)
-                    기존 통합 통계 문구로 폴백한다. */}
-                {datasetNoChartStats.reason
-                  ? noChartReasonText(datasetNoChartStats.reason)
-                  : `검정 ${datasetNoChartStats.totalTested.toLocaleString()}건 · 효과 크기 조건 통과 ${datasetNoChartStats.effectSizePass.toLocaleString()}건 · 최대 설명력 ${datasetNoChartStats.maxEps2.toFixed(4)}`}
-                <br />
-                불량률 변동의 대부분이 계측되지 않은 공정 변수로 설명됩니다. 안전율 예측 기반 알람은 계속 동작합니다.
-              </p>
-              <p className="noChartStats">전체 상위 3개로 전환하면 순위대로 확인할 수 있습니다.</p>
-              <button type="button" className="button" onClick={() => setChartCriterion("all")}>전체 상위 3개로 전환</button>
-            </section>
-          ) : activeTargetHasNoChart && activeParetoResponse ? (
-            <section className="resultCard noChartMessage">
-              <h2>{activeTarget} · 강함·보통 등급 인자가 없습니다</h2>
-              <p className="noChartStats">
-                {(() => {
-                  const reason = noChartReason(activeParetoResponse.items, {
-                    totalTested: activeParetoResponse.total_factor_count,
-                    fdrPassCount: activeParetoResponse.fdr_pass_count,
-                    maxEps2: activeParetoResponse.max_eps2,
-                  });
-                  return reason ? (
-                    noChartReasonText(reason)
-                  ) : (
-                    <>
-                      검정 {activeParetoResponse.total_factor_count.toLocaleString()}건 · 효과 크기 조건 통과 {activeParetoResponse.effect_size_pass_count.toLocaleString()}건
-                      <br />
-                      최대 설명력 {(activeParetoResponse.max_eps2 ?? 0).toFixed(4)}
-                    </>
-                  );
-                })()}
-              </p>
-              <p className="noChartStats">전체 상위 3개로 전환하면 순위대로 확인할 수 있습니다.</p>
-              <button type="button" className="button" onClick={() => setChartCriterion("all")}>전체 상위 3개로 전환</button>
-            </section>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-              {displayFactors.map((item, index) => renderFactorCard(activeTarget, item, index))}
-            </div>
+            <>
+              {/* 지시서 WI-1: 파레토는 타깃당 1개, 화면 상단에 고정 -- 인자
+                  카드마다 반복해 그리던 것을 걷어냈다. 인자 카드는 그
+                  아래에 나열된다. 표시 기준(WI-2, 기여율 20% 이상)과
+                  무관하게 이 타깃에 순위가 있는 한(activeParetoItems가
+                  비어있지 않은 한) 항상 보인다 -- "이 타깃의 인자 순위"
+                  전체를 보여주는 차트라 20% 미만 인자도 막대로는 남는다. */}
+              {activeParetoResponse && activeParetoItems.length > 0 && (
+                <PinnedParetoCard
+                  target={activeTarget}
+                  items={activeParetoItems}
+                  n80={activeParetoResponse.n80}
+                  datasetId={datasetId}
+                  onBarClick={handleParetoBarClick}
+                />
+              )}
+
+              {activeTargetHasNoChart ? (
+                // 지시서 WI-2: 기여율 20% 이상 인자가 하나도 없으면 카드
+                // 대신 이 안내를 띄운다(문구 형식은 지시서 예시 그대로).
+                <section className="resultCard noChartMessage">
+                  <h2>{activeTarget}는 기여율 20% 이상 인자가 없습니다 (최대 {maxContributionPct.toFixed(1)}%)</h2>
+                </section>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+                  {displayFactors.map((item, index) => renderFactorCard(activeTarget, item, index))}
+                </div>
+              )}
+            </>
           )}
 
         </>
@@ -1131,48 +1083,6 @@ function RootCauseContent() {
   );
 }
 
-/** 표시 기준 토글 (spec §A-2/§A-3) -- Y1~Y5 세그먼트와 같은 sticky 줄에
- * 우측 정렬로 얹힌다 (HeatmapParetoSection의 criterionControl 슬롯).
- * 전환은 이미 받은 Pareto 결과를 클라이언트에서 다시 필터링할 뿐, API를
- * 재호출하지 않는다. "판정 기준"이 아니라 "표시 기준"이라 이름 붙인 것은
- * 이 토글이 등급 판정 자체가 아니라 화면에 그릴 차트만 거르기 때문이다. */
-function ChartCriterionToggle({ value, onChange }: { value: ChartCriterion; onChange: (criterion: ChartCriterion) => void }) {
-  return (
-    <div className="chartCriterionBar">
-      <span className="chartCriterionLabel">표시 기준</span>
-      <div className="scatterViewToggle" role="group" aria-label="차트 표시 기준">
-        <button
-          type="button"
-          className={`scatterViewToggleBtn ${value === "significant" ? "active" : ""}`}
-          onClick={() => onChange("significant")}
-        >
-          유의한 인자만
-        </button>
-        <button
-          type="button"
-          className={`scatterViewToggleBtn ${value === "all" ? "active" : ""}`}
-          onClick={() => onChange("all")}
-        >
-          전체 상위 3개
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Pareto/Scatter/Box view toggle (spec "Pareto를 산점도 카드로 병합") --
- * lives in the card header, same row/height as the title, not inside
- * ScatterChart/ParetoChart themselves: the toggle state is owned by
- * whichever card renders the chart (spec §2-2: "산점도마다 독립적인
- * 상태"), purely a client-side re-render of already-fetched
- * points/bins/pareto items, no new API call on switch. Pareto sits first
- * (탐색 뷰 -> 검증 뷰 순서) and is also the *default* view -- 처음 열었을
- * 때는 "어느 인자를 볼까" 전체 조망(Pareto)이 먼저 오고, 개별 인자를
- * 골라 들어간 뒤에야 "그 인자가 실제로 어떤가" 검증(산점도)으로
- * 넘어가는 게 순서에 맞다. 카드별 독립 상태이므로(spec §2-2) 다른 인자
- * 카드를 열어도 각자 Pareto로 시작한다 -- see NumericFactorCard's
- * `useState<ScatterView>("pareto")`. Quick Look은 별개 용도라 그대로
- * `"scatter"` 기본값을 쓴다(아래 quickLookView). */
 /** "비교" 줄 -- Y1~Y5 비교/장비별 Trellis 모달을 여는 트리거다. `보기`
  * 토글과 같은 `.scatterViewToggle*` 마크업을 쓰지만 상태 토글이 아니므로
  * (지시서 A: "눌리면 모달이 열리고 토글은 선택 상태로 남지 않는다")
@@ -1206,14 +1116,16 @@ function CompareToggleRow({ onCompare, onTrellis }: { onCompare: () => void; onT
   );
 }
 
-function ViewToggle({ value, onChange }: { value: ScatterView; onChange: (view: ScatterView) => void }) {
+/** 인자 카드 "보기" 토글 (지시서 WI-1) -- Pareto 옵션을 없앴다(파레토는
+ * 타깃당 1개, 화면 상단에 고정된 PinnedParetoCard가 전담). 이제 Quick
+ * Look의 QuickLookViewToggle과 옵션이 같아졌지만, 상태를 소유하는 카드가
+ * 다르므로(이 토글은 NumericFactorCard, 저쪽은 root-cause 페이지의
+ * quickLookView) 두 컴포넌트를 그대로 둔다. */
+function ViewToggle({ value, onChange }: { value: QuickLookView; onChange: (view: QuickLookView) => void }) {
   return (
     <div className="scatterViewToggleRow">
       <span className="scatterViewToggleLabel">보기</span>
       <div className="scatterViewToggle" role="group" aria-label="차트 보기 방식">
-        <button type="button" className={`scatterViewToggleBtn ${value === "pareto" ? "active" : ""}`} onClick={() => onChange("pareto")}>
-          Pareto
-        </button>
         <button type="button" className={`scatterViewToggleBtn ${value === "scatter" ? "active" : ""}`} onClick={() => onChange("scatter")}>
           Scatter Plot
         </button>
@@ -1340,6 +1252,88 @@ function formatNum1(value: number): string {
   return value.toFixed(1);
 }
 
+/** 지시서 WI-1/WI-4: 파레토는 타깃당 1개, 화면 상단에 고정된다 --
+ * ParetoChart를 non-embedded(기본) 모드로 그린다 -- 그쪽이 이미 소유한
+ * 제목("R/D/Config vs {target}")·등급 범례 헤더를 그대로 쓰고,
+ * `headerActions`로 이미지 저장 버튼만 그 헤더 안에 얹는다(이전에는 이
+ * non-embedded 경로를 실제로 쓰는 곳이 없었다 -- 인자 카드는 항상
+ * embedded로, 즐겨찾기 썸네일은 embedded+thumbnail로 불렀다). 인자
+ * 카드와 달리 즐겨찾기 별은 없다 -- 이 카드는 특정 (타깃, 인자) 조합이
+ * 아니라 타깃 전체의 순위를 보여줘 즐겨찾기 스냅샷(dataset+target+feature)
+ * 모델과 맞지 않는다. */
+function PinnedParetoCard({
+  target,
+  items,
+  n80,
+  datasetId,
+  onBarClick,
+}: {
+  target: string;
+  items: ParetoRankingItem[];
+  n80: number | null;
+  datasetId: string;
+  onBarClick: (item: ParetoRankingItem) => void;
+}) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  return (
+    <ParetoChart
+      target={target}
+      items={items}
+      n80={n80}
+      onBarClick={onBarClick}
+      svgExportRef={svgRef}
+      headerActions={
+        <ExportPngButton
+          svgRef={svgRef}
+          buildOptions={() => ({
+            filename: buildExportFilename({ feature: null, target, view: "pareto" }),
+            captionText: buildParetoCaptionText({ target, factorCount: items.length, datasetId }),
+          })}
+        />
+      }
+    />
+  );
+}
+
+/** 지시서 WI-4: 파레토·산점도·박스플롯 카드 우상단, 즐겨찾기(☆) 옆에
+ * 붙는 이미지 저장 버튼. SVG를 클론해 계산된 스타일을 인라인으로 굽고
+ * (lib/chartExport.ts) canvas에 그려 PNG로 내려받는다 -- 세 차트가 이
+ * 컴포넌트 하나를 공유한다. `buildOptions`를 클릭 시점에 지연 평가하는
+ * 것은 파일명·캡션에 들어가는 시각을 "카드가 열린 시각"이 아니라
+ * "다운로드를 누른 시각"으로 맞추기 위함이다. */
+function ExportPngButton({
+  svgRef,
+  buildOptions,
+}: {
+  svgRef: React.RefObject<SVGSVGElement | null>;
+  buildOptions: () => { filename: string; captionText: string };
+}) {
+  const [busy, setBusy] = useState(false);
+  async function handleClick() {
+    const svg = svgRef.current;
+    if (!svg || busy) return;
+    setBusy(true);
+    try {
+      await exportChartAsPng(svg, buildOptions());
+    } catch (error) {
+      console.warn("차트 이미지 저장 실패", error);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      className="chartExportButton"
+      onClick={() => void handleClick()}
+      disabled={busy}
+      title="이미지로 저장 (PNG)"
+    >
+      ⬇ 이미지 저장
+    </button>
+  );
+}
+
 /** One dropdown per scatter card (spec §5-3) -- no server round-trip on
  * change, `lot_id`/`config` already ride along in the point data
  * ScatterChart already has. */
@@ -1391,9 +1385,6 @@ function NumericFactorCard({
   onCompare,
   onTrellis,
   hasConfig,
-  paretoItems,
-  paretoN80,
-  onParetoBarClick,
   isFavorited,
   isFavoritePending,
   onToggleFavorite,
@@ -1408,15 +1399,9 @@ function NumericFactorCard({
   onCompare: (feature: string) => void;
   onTrellis: (feature: string, step: number) => void;
   hasConfig: boolean;
-  // Pareto 보기(spec "Pareto를 산점도 카드로 병합")용 데이터 -- 카드마다
-  // 다시 fetch하지 않고 부모(RootCauseContent)가 이미 갖고 있는
-  // paretoByTarget에서 한 번만 내려준다.
-  paretoItems: ParetoRankingItem[];
-  paretoN80: number | null;
-  onParetoBarClick: (item: ParetoRankingItem) => void;
-  // D-1: viewType(Scatter/Box/Pareto)별로 별도 즐겨찾기다 -- 이 카드가
-  // 지금 어떤 view인지는 카드 자신만 아므로, 부모가 boolean이 아니라
-  // 함수를 내려줘 카드 내부에서 현재 view로 평가한다.
+  // D-1: viewType(Scatter/Box)별로 별도 즐겨찾기다 -- 이 카드가 지금 어떤
+  // view인지는 카드 자신만 아므로, 부모가 boolean이 아니라 함수를 내려줘
+  // 카드 내부에서 현재 view로 평가한다.
   isFavorited: (viewType: string) => boolean;
   isFavoritePending: (viewType: string) => boolean;
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
@@ -1428,7 +1413,8 @@ function NumericFactorCard({
   // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
   // in a shared store/URL/localStorage -- resets for free whenever this
   // card remounts on a new run/target (see its `key` at the call site).
-  const [view, setView] = useState<ScatterView>("pareto");
+  // 지시서 WI-1: Pareto가 빠졌으므로 기본값은 Scatter Plot이다.
+  const [view, setView] = useState<QuickLookView>("scatter");
   // ≤767px: 산점도 높이 240px (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
   // 전환 §B-6).
   const isMobileLayout = useIsMobileLayout();
@@ -1444,6 +1430,12 @@ function NumericFactorCard({
     setMethodInitialized(true);
     setMethod(numericData.methods.adopted);
   }
+  // 지시서 WI-3: p-value 대신 R²(차수) -- ScatterChart가 추세선을 그릴 때
+  // 쓰는 것과 같은 fitDefectRateCurve를 이미 받아온 산점도 좌표 위에서
+  // 그대로 다시 계산한다(같은 순수 함수·같은 입력이라 값이 어긋나지 않는다).
+  const curveFit = useMemo(() => (numericData ? fitDefectRateCurve(numericData.points) : null), [numericData]);
+  // 지시서 WI-4: 이미지 저장 버튼이 이 SVG를 직렬화한다.
+  const svgRef = useRef<SVGSVGElement | null>(null);
   return (
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
       <div className="factorChartHeader">
@@ -1472,63 +1464,57 @@ function NumericFactorCard({
                   colorBy: colorMode,
                   method,
                   isConfig: false,
-                  // DE그룹: 해석 문구는 저장 시점 값을 문자열로 스냅샷한다
-                  // -- Pareto 보기는 종합 문구, Scatter/Box는 "보통" 등급
-                  // 설명력 캡션(둘 다 없으면 빈 문자열).
-                  interpretation:
-                    view === "pareto"
-                      ? buildParetoSummaryText(paretoItems, paretoN80)
-                      : buildModerateInterpretation(item.confidence_tier, item.eps2),
+                  interpretation: buildModerateInterpretation(item.confidence_tier, item.eps2),
                   championVersion,
                 })
               }
+            />
+            {/* 지시서 WI-4: 이미지 저장 버튼은 즐겨찾기 별 바로 옆. */}
+            <ExportPngButton
+              svgRef={svgRef}
+              buildOptions={() => ({
+                filename: buildExportFilename({ feature: item.feature, target: activeTarget, view }),
+                captionText: buildFactorCaptionText({
+                  feature: item.feature,
+                  target: activeTarget,
+                  eps2: item.eps2,
+                  n: numericData?.n ?? item.n_observed,
+                  datasetId: dataset,
+                }),
+              })}
             />
             <ColorBySelect value={colorMode} onChange={setColorMode} hasConfig={hasConfig} />
           </div>
           <div className="factorChartToggleStack">
             <CompareToggleRow onCompare={() => onCompare(item.feature)} onTrellis={() => onTrellis(item.feature, item.step)} />
             <ViewToggle value={view} onChange={setView} />
-            {/* SPC/ML 방식 토글은 Scatter/Box 보기 전용이다 (spec §2-2/§3-3)
-                -- Pareto 보기에서는 아무 것도 바꾸지 않으므로 숨긴다. */}
-            {view !== "pareto" && numericData?.methods && (
+            {numericData?.methods && (
               <MethodToggle value={method} adopted={numericData.methods.adopted} onChange={setMethod} />
             )}
           </div>
         </div>
         <div className="factorChartHeaderRow meta">
-          <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
+          <span className="sectionLabel">{index + 1}위</span>
+          {/* 지시서 WI-3: p-value·q-value는 화면에서 뺀다(FDR 게이트 자체는
+              백엔드에서 계속 동작 -- 표시만 안 하는 것). ε²·R²(적합
+              차수)·파레토 기여율 셋이 서로를 보완한다(표본이 커지면 p는
+              약한 관계도 극단적으로 유의해져 변별력이 없다). */}
           {numericData && (
             <div className="factorChartMetaLine">
               <span className="metaItem">n={numericData.n.toLocaleString()}</span>
+              <span className="metaItem">ε² {item.eps2.toFixed(3)}</span>
+              {curveFit && <span className="metaItem">R² {curveFit.r2.toFixed(3)} ({curveFit.degree}차)</span>}
               <span className="metaItem">기여율 {item.contribution_pct.toFixed(1)}%</span>
-              <span className="metaItem metaCumulative">누적 {item.cumulative_pct.toFixed(1)}%</span>
-              <span className="metaItem">p-value {formatPValue(item.p_value)}</span>
-              <span className="metaItem">등급 {TIER_LABEL[item.confidence_tier]}</span>
             </div>
           )}
         </div>
       </div>
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
-          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 원인으로 단정할 근거는 부족합니다.
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (ε² = {item.eps2.toFixed(3)}, 등급 {TIER_LABEL[item.confidence_tier]}). 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
-      {view === "pareto" ? (
-        // Pareto는 paretoItems(부모의 paretoByTarget)만 있으면 그릴 수 있다
-        // -- numericData(산점도 좌표)를 기다릴 이유가 없다. 복원 직후처럼
-        // Pareto는 이미 채워졌는데 좌표만 배경에서 다시 채워지는 중일 때도
-        // (spec §3-1) Pareto 보기는 즉시 보여야 한다.
-        <ParetoChart
-          target={activeTarget}
-          items={paretoItems}
-          n80={paretoN80}
-          activeFeature={item.feature}
-          onBarClick={onParetoBarClick}
-          embedded
-          height={chartHeight}
-          reliabilityText={buildModerateInterpretation(item.confidence_tier, item.eps2)}
-        />
-      ) : numericData ? (
+      {numericData ? (
         <>
           <ScatterChart
             data={numericData}
@@ -1538,6 +1524,7 @@ function NumericFactorCard({
             onSelectWafer={onSelectWafer}
             height={chartHeight}
             reliabilityText={buildModerateInterpretation(item.confidence_tier, item.eps2)}
+            svgExportRef={svgRef}
           />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>
@@ -1577,7 +1564,7 @@ function CategoricalFactorCard({
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
       <div className="factorChartMeta">
         <div className="factorChartTitleBlock">
-          <span className="sectionLabel">{index + 1}위 · ε² {item.eps2.toFixed(3)}</span>
+          <span className="sectionLabel">{index + 1}위</span>
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
@@ -1598,19 +1585,21 @@ function CategoricalFactorCard({
             />
           </div>
         </div>
+        {/* 지시서 WI-3: p-value 제거, ε²·기여율만 남긴다 -- R²(적합 곡선)는
+            숫자 x축이 있는 산점도에서만 의미가 있어(회귀 곡선을 그 위에
+            적합한다) Config(범주형) 카드에는 없다. */}
         {categoricalData && (
           <small className="factorChartStats">
             <span>n={categoricalData.n}</span>
+            <span>ε²={item.eps2.toFixed(3)}</span>
             <span>기여율={item.contribution_pct.toFixed(1)}%</span>
-            <span className="metaCumulative">누적={item.cumulative_pct.toFixed(1)}%</span>
-            <span>p-value {formatPValue(item.p_value)}</span>
           </small>
         )}
       </div>
       <ModerateTierCaption tier={item.confidence_tier} eps2={item.eps2} />
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
-          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (p = {formatPValue(item.p_value)}). 원인으로 단정할 근거는 부족합니다.
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (ε² = {item.eps2.toFixed(3)}, 등급 {TIER_LABEL[item.confidence_tier]}). 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
       {categoricalData ? (

@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import InterpretationCard, { type InterpretationRow } from "@/components/InterpretationCard";
 import { TIER_LABEL } from "@/lib/confidenceTier";
-import { formatPValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ParetoRankingItem } from "@/types/data";
 
@@ -113,6 +112,8 @@ export default function ParetoChart({
   height,
   thumbnail = false,
   reliabilityText,
+  svgExportRef,
+  headerActions,
 }: {
   target: string;
   items: ParetoRankingItem[];
@@ -136,6 +137,14 @@ export default function ParetoChart({
   // Pareto 종합 문구("해석")와 카드 하나로 합친다. 빈 문자열/undefined면
   // "신뢰도" 행을 만들지 않는다.
   reliabilityText?: string;
+  // 지시서 WI-4: 이미지 저장 버튼이 이 SVG를 직렬화해 PNG로 굽는다 --
+  // non-embedded(독립 카드) 모드에서만 의미가 있다.
+  svgExportRef?: React.RefObject<SVGSVGElement | null>;
+  // 지시서 WI-1/WI-4: 타깃당 1개로 고정된 카드의 헤더에 얹을 액션(이미지
+  // 저장 버튼 등) -- root-cause/page.tsx가 소유한 상태(export 진행 여부
+  // 등)를 이 컴포넌트에 넣지 않기 위해 완성된 노드를 그대로 받는다.
+  // non-embedded 모드에서만 렌더된다.
+  headerActions?: ReactNode;
 }) {
   const theme = useResolvedTheme();
   const [containerRef, containerWidth] = useContainerWidth();
@@ -228,6 +237,7 @@ export default function ParetoChart({
               onMouseLeave={() => setTooltip(null)}
             >
               <svg
+                ref={svgExportRef}
                 className="paretoOverlay"
                 width={layout.plotWidth}
                 height={plotHeight}
@@ -342,7 +352,6 @@ export default function ParetoChart({
           <div className="heatmapTooltipRow"><span>기여율</span><b>{tooltipItem.contribution_pct.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>누적 기여율</span><b>{tooltipItem.cumulative_pct.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>ε²</span><b>{tooltipItem.eps2.toFixed(3)}</b></div>
-          <div className="heatmapTooltipRow"><span>p값</span><b>{formatPValue(tooltipItem.p_value)}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltipItem.n_observed.toLocaleString()}</b></div>
           {/* 지시서 CD: 알람 등급(심각/위험/주의)과 겹치지 않게 -- 이 값은
               인자-타깃 연관의 세기(강함/보통/근거 부족/관계 없음)다. */}
@@ -367,13 +376,19 @@ export default function ParetoChart({
       <div className="paretoChartHeader">
         <div>
           <span className="sectionLabel">PARETO</span>
-          <h2>{target} 상관 인자 기여도</h2>
+          {/* 지시서 WI-1: 파레토는 타깃당 1개로 고정되며, 인자명이 아니라
+              "R/D/Config vs {타깃}"이 제목이다 -- 특정 인자 하나가 아니라
+              이 타깃의 인자 순위 전체를 보여주는 차트이기 때문이다. */}
+          <h2>R/D/Config vs {target}</h2>
         </div>
-        <div className="paretoLegend paretoLegendInline">
-          <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
-          <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
-          <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
-          <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div className="paretoLegend paretoLegendInline">
+            <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
+            <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
+            <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
+            <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
+          </div>
+          {headerActions}
         </div>
       </div>
       {body}

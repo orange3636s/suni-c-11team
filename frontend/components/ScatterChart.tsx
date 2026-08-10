@@ -25,13 +25,10 @@ const SCRUB_DIM_OPACITY = 0.1;
 // 적은 Config 모드(3~4개)에서만 각 스톱이 어디인지 보이게 한다 (spec CA
 // "그룹 수에 따른 차이").
 const SCRUB_TICK_MAX_STOPS = 12;
-// 인자 카드 "보기" 토글 전체 상태 (Pareto/Scatter/Box) -- Pareto는 이
-// ScatterChart 컴포넌트가 아니라 카드가 직접 분기해 ParetoChart를 그리므로,
-// 이 컴포넌트 자신은 QuickLookView(아래)만 받는다.
-export type ScatterView = "pareto" | "scatter" | "box";
-// ScatterChart가 실제로 렌더하는 뷰. Quick Look 패널에도 Pareto 옵션이 없어
-// 그대로 재사용한다 -- ScatterView와 분리해 두면 quickLookView 같은 state에
-// "pareto"가 흘러들 여지 자체가 타입 레벨에서 없어진다.
+// 인자 카드 "보기" 상태 -- 지시서 WI-1: 파레토는 타깃당 1개로 화면 상단에
+// 고정되고, 인자 카드는 더 이상 Pareto를 자체적으로 그리지 않으므로
+// Scatter/Box 둘뿐이다. Quick Look 패널도 원래 이 값만 받았다(root-cause/
+// page.tsx의 QuickLookViewToggle 참고).
 export type QuickLookView = "scatter" | "box";
 // Unified with the trend curve's 12-quantile profile (spec §2: "Box Plot
 // 도 12구간을 쓴다") -- was 10 (qcut decile) before, which is why the same
@@ -655,6 +652,7 @@ export default function ScatterChart({
   height = HEIGHT,
   reliabilityText,
   thumbnail = false,
+  svgExportRef,
 }: {
   data: ScreeningScatterResponse;
   colorMode: ScatterColorMode;
@@ -680,6 +678,10 @@ export default function ScatterChart({
   // 중심 하나만, 축은 눈금/라벨 없이 선만 남긴다. 식별용이라 값을 읽을
   // 필요가 없다.
   thumbnail?: boolean;
+  // 지시서 WI-4: 이미지 저장 버튼이 이 SVG를 직렬화해 PNG로 굽는다 --
+  // 이 컴포넌트 내부에서도 이미 자신만의 svgRef(드래그 선택 좌표 계산
+  // 등)를 쓰므로, 별도 콜백 ref로 두 곳 모두에 같은 노드를 채운다.
+  svgExportRef?: React.RefObject<SVGSVGElement | null>;
 }) {
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
@@ -689,6 +691,12 @@ export default function ScatterChart({
   const isMobileLayout = useIsMobileLayout();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  // 내부 svgRef(드래그/포인터 좌표 계산)와 부모가 넘긴 svgExportRef(WI-4
+  // 이미지 저장) 둘 다 같은 <svg> 노드를 가리켜야 하므로 콜백 ref로 합친다.
+  function setSvgRef(node: SVGSVGElement | null) {
+    (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = node;
+    if (svgExportRef) svgExportRef.current = node;
+  }
   const [containerWidth, setContainerWidth] = useState(680);
   // 남은 2개 참조 요소(최적 중심/권장 구간)는 기본으로 켜져 있다 (spec §4-2,
   // 경고선 제거로 3개에서 2개로 줄었다).
@@ -1413,7 +1421,7 @@ export default function ScatterChart({
       <InterpretationCard rows={interpretationRows} />
 
       <div className="scatterPlotWrap">
-      <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
+      <svg ref={setSvgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {/* dark-mode-only plot background (spec §4 재지시) -- painted
               first so every other layer sits on top of it. */}

@@ -1,8 +1,14 @@
-/** Single source of truth for q-value/p-value display: 4 decimal places,
- * fixed notation always (never exponential) -- `toFixed` never switches
- * to exponential notation the way `toExponential`/`toPrecision` can, so
- * a very small value (e.g. 1.06e-104) reads as "0.0000" instead of an
+/** Single source of truth for q-value display: 4 decimal places, fixed
+ * notation always (never exponential) -- `toFixed` never switches to
+ * exponential notation the way `toExponential`/`toPrecision` can, so a
+ * very small value (e.g. 1.06e-104) reads as "0.0000" instead of an
  * exponent a non-statistician can't parse at a glance.
+ *
+ * 지시서 "원인 분석 화면 정리" WI-3: p-value는 여기서 뺐다 -- 표본이
+ * 커지면(1,500장 안팎) 약한 관계도 극단적으로 유의해져 변별력이 없다
+ * (root-cause 페이지는 ε²·R²(적합 차수)·파레토 기여율로 대체했다). q-value
+ * (CorrelationHeatmap의 히트맵 셀 툴팁)는 여전히 이 함수를 쓴다 -- FDR
+ * 게이트 자체는 유지되고, 그 결과를 보여주는 자리는 남아 있다.
  */
 function formatFixed4(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "-";
@@ -10,10 +16,6 @@ function formatFixed4(value: number | null | undefined): string {
 }
 
 export function formatQValue(value: number | null | undefined): string {
-  return formatFixed4(value);
-}
-
-export function formatPValue(value: number | null | undefined): string {
   return formatFixed4(value);
 }
 
