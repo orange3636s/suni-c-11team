@@ -329,8 +329,8 @@ export function getMeasurementExpansion(dataset: string): Promise<MeasurementExp
   return getJson(`/api/analysis/measurement-expansion?${new URLSearchParams({ dataset }).toString()}`);
 }
 
-export function getConfigTreemap(dataset: string, step: number): Promise<ConfigTreemapResponse> {
-  return getJson(`/api/monitoring/config-treemap?${new URLSearchParams({ dataset, step: String(step) }).toString()}`);
+export function getConfigTreemap(dataset: string, step: number, target = "Y1"): Promise<ConfigTreemapResponse> {
+  return getJson(`/api/monitoring/config-treemap?${new URLSearchParams({ dataset, step: String(step), target }).toString()}`);
 }
 
 // -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------

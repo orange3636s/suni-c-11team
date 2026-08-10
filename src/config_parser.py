@@ -1,7 +1,7 @@
-"""Config normalization without token decomposition.
+"""Config normalization and the canonical Model/EQ/Chamber parser.
 
-Config is one categorical process value.  Model, equipment, and chamber tokens
-are deliberately not derived from it.
+The source Config column remains one categorical model feature. Hierarchy
+tokens are derived only for analysis/display and never replace the raw value.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pandas as pd
 from src.schema_loader import load_data_schema
 
 
-CONFIG_PARSER_VERSION = "3.0-frequency-no-decomposition"
+CONFIG_PARSER_VERSION = "4.0-canonical-hierarchy"
 MISSING_CONFIG_STRINGS = {"", "nan", "none", "null", "na", "n/a"}
 
 
@@ -34,6 +34,58 @@ def parse_config_value(
     if normalized.lower() in MISSING_CONFIG_STRINGS:
         raise ValueError(f"{column} 값이 비어 있습니다.")
     return normalized
+
+
+def parse_config_hierarchy_value(
+    column: str,
+    value: Any,
+    schema_config: dict[str, Any] | None = None,
+) -> dict[str, str | int | bool]:
+    """Parse one Config value according to ``data_schema.yaml``.
+
+    Invalid legacy categories are retained under an ``Unknown`` hierarchy so
+    every observed wafer remains represented without invented tokens.
+    """
+    schema = schema_config or load_data_schema()
+    normalized = parse_config_value(column, value, schema)
+    column_match = re.compile(schema["feature_patterns"]["config_column"], re.IGNORECASE).fullmatch(column)
+    value_match = re.compile(schema["feature_patterns"]["config_value"], re.IGNORECASE).fullmatch(normalized)
+    step = int(column_match.group("step")) if column_match is not None else 0
+    if value_match is None or int(value_match.group("step")) != step:
+        return {
+            "step": step,
+            "model": "Unknown",
+            "equipment": "Unknown",
+            "chamber": normalized,
+            "matched": False,
+        }
+    model = str(value_match.group("model"))
+    return {
+        "step": step,
+        "model": model if model.lower().startswith("model") else f"Model{model}",
+        "equipment": str(value_match.group("equipment")).upper(),
+        "chamber": str(value_match.group("chamber")).upper(),
+        "matched": True,
+    }
+
+
+def config_hierarchy_series(
+    column: str,
+    values: pd.Series,
+    level: str,
+    schema_config: dict[str, Any] | None = None,
+) -> pd.Series:
+    """Return one canonical hierarchy level while preserving missing values."""
+    if level not in {"model", "equipment", "chamber"}:
+        raise ValueError(f"지원하지 않는 Config 계층입니다: {level}")
+
+    def _parse(value: Any) -> Any:
+        try:
+            return parse_config_hierarchy_value(column, value, schema_config)[level]
+        except ValueError:
+            return pd.NA
+
+    return values.map(_parse).astype("string")
 
 
 def parse_config_columns(

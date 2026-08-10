@@ -18,6 +18,7 @@ import type {
   ParetoRankingResponse,
   RefreshSnapshot,
   ScreeningScatterResponse,
+  TargetProvenance,
 } from "@/types/data";
 
 // J-4: 60초 폴링 간격 -- "탭을 오가는 동안 갱신이 없으면 네트워크 요청이
@@ -90,6 +91,7 @@ export type AnalysisState = {
   // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
   // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
   measurementExpansion: MeasurementExpansionResponse | null;
+  targetProvenance: TargetProvenance | null;
   // FMEA 분석표 (모니터링 홈, 지시서 IA/JA) -- 계산은 백엔드 전용
   // (`src/analysis/screening/fmea.py`), 프런트는 절대 계산하지 않는다.
   // 자동 갱신 스냅샷(`src/automation/refresh.py`)과 수동 "다시 분석"
@@ -143,7 +145,7 @@ export type MonitoringHomeState = {
   // 항상 다시 조회한다. 마지막으로 본 스텝 하나만 보관한다(스텝 선택기를
   // 계속 들고 다닐 필요는 없다 -- 사용자가 실제로 스텝을 바꾸면 그 때는
   // 항상 새로 조회한다).
-  treemap: { step: number; data: ConfigTreemapResponse | null } | null;
+  treemap: { step: number; target: string; data: ConfigTreemapResponse | null } | null;
 } | null;
 
 type AnalysisStateValue = {
@@ -227,6 +229,7 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
     categoricalByKey: {},
     pointsComplete: false,
     measurementExpansion: (snap.analysis.measurementExpansion as MeasurementExpansionResponse | null) ?? null,
+    targetProvenance: snap.analysis.target_provenance ?? null,
     fmea: (snap.analysis.fmea as FmeaTablePayload | null) ?? null,
     fmeaError: snap.analysis.fmeaError ?? null,
     alarmGradeByWaferId: null,
@@ -325,6 +328,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
               // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
               // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
               measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
+              targetProvenance: state.analysis.payload.targetProvenance ?? null,
               // 지시서 JA-1: 저장 시점(POST /api/state/analysis)에 서버가
               // 채워 넣으므로 그대로 복원한다 -- 이 값이 undefined인 것은
               // JA-1 배포 이전에 저장된 옛 레코드뿐이다.
@@ -393,7 +397,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   // 시점에는 "갱신"이 아니라 "복원"이므로 배지를 띄우지 않는다.
   const applySnapshot = useCallback((full: Awaited<ReturnType<typeof getSnapshot>>, announce: boolean) => {
     setSnapshot(full.snapshot);
-    setSnapshotStaleVersion(full.stale_version);
+    setSnapshotStaleVersion(full.stale_version || full.stale_model);
     if (announce && full.snapshot) {
       setSnapshotJustUpdated(true);
       window.setTimeout(() => setSnapshotJustUpdated(false), SNAPSHOT_JUST_UPDATED_MS);

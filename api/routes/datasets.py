@@ -21,6 +21,7 @@ from src.runtime.datasets import (
     DatasetRegistry,
 )
 from src.analysis.screening.schema import parse_schema
+from src.analysis.target_hydration import inspect_target_status
 from src.runtime.store import RuntimeStore
 from src.upload_limits import max_upload_size_bytes, max_upload_size_mb
 
@@ -121,6 +122,7 @@ def get_dataset_schema(dataset_id: str) -> dict[str, Any]:
     return {
         "dataset_id": dataset_id,
         "steps_present": schema.steps_present,
+        "config_steps": [step for column in schema.config_cols if (step := schema.step_of(column)) is not None],
         "max_step": schema.max_step,
         "r_columns": schema.r_cols,
         "d_columns": schema.d_cols,
@@ -130,4 +132,5 @@ def get_dataset_schema(dataset_id: str) -> dict[str, Any]:
         "missing_rates": missing_rates,
         "r_measurement_rate": _measurement_rate(schema.r_cols),
         "d_measurement_rate": _measurement_rate(schema.d_cols),
+        "target_status": inspect_target_status(df).as_dict(),
     }

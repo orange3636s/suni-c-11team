@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
 from functools import lru_cache, wraps
 from typing import Any, Literal
@@ -43,6 +44,12 @@ from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.fmea import build_fmea_table
 from src.analysis.screening.heatmap import HeatmapData, build_categorical_heatmap, build_heatmap
 from src.analysis.screening.schema import parse_schema
+from src.analysis.target_hydration import (
+    TARGET_HYDRATION_VERSION,
+    HydratedTargets,
+    TargetHydrationError,
+    hydrate_targets,
+)
 from src.analysis.screening.selector import (
     PARETO_TOP_N,
     ParetoFactor,
@@ -73,6 +80,25 @@ def _dataframe_or_404(dataset_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.") from exc
 
 
+def _hydrated_targets_or_409(dataset_id: str) -> HydratedTargets:
+    registry = get_dataset_registry()
+    try:
+        dataframe = registry.get_dataframe(dataset_id)
+        dataset_version = registry.content_version(dataset_id)
+    except DatasetNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.") from exc
+    try:
+        return hydrate_targets(
+            dataframe,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            store=RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir),
+            model_dir=settings.model_dir,
+        )
+    except TargetHydrationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
 def _single_flight(fn):
     """B-4: `lru_cache`만으로는 같은 키가 아직 캐시되지 않은 상태에서
     동시에 두 스레드가 들어오면(예: 일일 발송 스케줄러 잡과 사용자의
@@ -96,7 +122,13 @@ def _single_flight(fn):
     return wrapper
 
 
-def _find_cached_factor(dataset: str, df: pd.DataFrame, target: str, feature: str) -> ParetoFactor | None:
+def _find_cached_factor(
+    dataset: str,
+    df: pd.DataFrame,
+    target: str,
+    feature: str,
+    provenance: Any | None = None,
+) -> ParetoFactor | None:
     """B-2: `find_factor`가 직접 부르는 `_ranked_rows_with_contribution`
     (88인자 ANOVA+FDR 전수 스코어링)을 다시 돌리지 않고, Pareto/heatmap이
     이미 채워 뒀을 `_cached_ranked_rows(dataset, target)`를 재사용한다.
@@ -104,20 +136,21 @@ def _find_cached_factor(dataset: str, df: pd.DataFrame, target: str, feature: st
     스코어링하므로 결과는 find_factor와 동일하다 -- 다만 분석 실행이
     5타깃×10인자 산점도를 동시에 요청하면 이 캐시 덕분에 실제 스코어링은
     타깃당 한 번만 일어난다."""
-    rows = _cached_ranked_rows(dataset, target)
+    rows = _ranked_rows_for_provenance(dataset, target, provenance) if provenance is not None else _cached_ranked_rows(dataset, target)
     row = next((r for r in rows if r["feature"] == feature), None)
     return _row_to_factor(df, target, row) if row is not None else None
 
 
 @router.get("/screening/scatter", response_model=ScreeningScatterResponse)
 def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, Any]:
-    df = _dataframe_or_404(dataset)
+    hydrated = _hydrated_targets_or_409(dataset)
+    df = hydrated.dataframe
     schema = parse_schema(df)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃 결과가 없습니다.")
     # Resolves any of the 88 factors regardless of Pareto rank -- a heatmap
     # cell click can open a scatter for a factor outside the top 5.
-    factor = _find_cached_factor(dataset, df, target, feature)
+    factor = _find_cached_factor(dataset, df, target, feature, hydrated.provenance)
     if factor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}' 인자를 찾을 수 없습니다.")
     if factor.kind == "Config":
@@ -151,6 +184,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "n": data.n,
         "axis": data.axis,
         "methods": round_floats(data.methods),
+        "target_provenance": hydrated.provenance.as_dict(),
     }
 
 
@@ -161,14 +195,15 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
     separate response shape from the numeric scatter endpoint above
     rather than an overloaded variant of it.
     """
-    df = _dataframe_or_404(dataset)
+    hydrated = _hydrated_targets_or_409(dataset)
+    df = hydrated.dataframe
     schema = parse_schema(df)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
     if feature not in schema.config_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}'은(는) Config 인자가 아닙니다.")
 
-    factor = _find_cached_factor(dataset, df, target, feature)
+    factor = _find_cached_factor(dataset, df, target, feature, hydrated.provenance)
     if factor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{feature}' 인자를 찾을 수 없습니다.")
 
@@ -182,6 +217,7 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
         "confidence_tier": data.confidence_tier,
         "n": data.n,
         "axis": data.axis,
+        "target_provenance": hydrated.provenance.as_dict(),
     }
 
 
@@ -190,7 +226,16 @@ HEATMAP_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict olde
 HEATMAP_VARIANTS = 5
 
 @lru_cache(maxsize=HEATMAP_CACHE_DATASETS * HEATMAP_VARIANTS)
-def _cached_heatmap(dataset_id: str, kind: str, metric: str, config_level: str) -> HeatmapData:
+def _cached_heatmap(
+    dataset_id: str,
+    kind: str,
+    metric: str,
+    config_level: str,
+    dataset_version: str,
+    model_id: str,
+    model_version: str,
+    hydration_version: str,
+) -> HeatmapData:
     # 캐시 키에 kind/config_level까지 넣는다 (spec E) -- 빠뜨리면 같은
     # dataset_id·metric으로 수치형을 먼저 조회한 뒤 범주형을 조회했을 때
     # lru_cache가 수치형 결과를 그대로 돌려준다. config_level은
@@ -199,7 +244,8 @@ def _cached_heatmap(dataset_id: str, kind: str, metric: str, config_level: str) 
     # 유지한다. 데이터셋 내용은 dataset_id가 존재하는 한 불변이므로
     # (업로드는 매번 새 uuid, 번들 파일은 정적) 이 캐시는 최근 2개
     # 데이터셋만 LRU로 유지해 무한정 커지지 않는다.
-    df = _dataframe_or_404(dataset_id)
+    del dataset_version, model_id, model_version, hydration_version
+    df = _hydrated_targets_or_409(dataset_id).dataframe
     schema = parse_schema(df)
     if kind == "categorical":
         return build_categorical_heatmap(df, schema, level=config_level)  # type: ignore[arg-type]
@@ -221,8 +267,19 @@ def get_screening_heatmap(
     is unchanged from before this parameter existed.
     """
     t0 = time.perf_counter()
+    hydrated = _hydrated_targets_or_409(dataset)
+    provenance = hydrated.provenance
     hits_before = _cached_heatmap.cache_info().hits
-    heatmap = _cached_heatmap(dataset, kind, metric, config_level)
+    heatmap = _cached_heatmap(
+        dataset,
+        kind,
+        metric,
+        config_level,
+        provenance.dataset_version,
+        provenance.model_id or "measured-only",
+        provenance.model_version or "none",
+        TARGET_HYDRATION_VERSION,
+    )
     cached = _cached_heatmap.cache_info().hits > hits_before
     logger.info(
         "screening_heatmap %.1fms (cached=%s, dataset=%s, kind=%s, metric=%s, config_level=%s)",
@@ -241,6 +298,7 @@ def get_screening_heatmap(
         "tier": heatmap.tier,
         "scale": {"min": heatmap.scale["min"], "max": heatmap.scale["max"]},
         "excluded_configs": heatmap.excluded_configs,
+        "target_provenance": provenance.as_dict(),
     }
 
 
@@ -248,18 +306,42 @@ PARETO_CACHE_DATASETS = 2  # keep the most recent 2 datasets' worth, evict older
 PARETO_TARGETS = 5  # Y1..Y5
 
 @lru_cache(maxsize=PARETO_CACHE_DATASETS * PARETO_TARGETS)
-def _cached_ranked_rows(dataset_id: str, target: str) -> tuple[dict, ...]:
+def _cached_ranked_rows_versioned(
+    dataset_id: str,
+    target: str,
+    dataset_version: str,
+    model_id: str,
+    model_version: str,
+    hydration_version: str,
+) -> tuple[dict, ...]:
     # Cached per (dataset_id, target), capped at the 2 most-recent
     # datasets (LRU-evicted): the training tab and the root-cause tab both
     # request the same (dataset, target) pair and must see byte-identical
     # results -- this cache is exactly what guarantees that, not just a
     # performance nicety. Dataset content is immutable once a dataset_id
     # exists (see the heatmap cache's docstring for why that's safe).
-    df = _dataframe_or_404(dataset_id)
+    del dataset_version, model_id, model_version, hydration_version
+    df = _hydrated_targets_or_409(dataset_id).dataframe
     schema = parse_schema(df)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
     return tuple(_ranked_rows(df, schema, target, 0.05, 100, 20))
+
+
+def _ranked_rows_for_provenance(dataset_id: str, target: str, provenance: Any) -> tuple[dict, ...]:
+    return _cached_ranked_rows_versioned(
+        dataset_id,
+        target,
+        provenance.dataset_version,
+        provenance.model_id or "measured-only",
+        provenance.model_version or "none",
+        TARGET_HYDRATION_VERSION,
+    )
+
+
+def _cached_ranked_rows(dataset_id: str, target: str) -> tuple[dict, ...]:
+    hydrated = _hydrated_targets_or_409(dataset_id)
+    return _ranked_rows_for_provenance(dataset_id, target, hydrated.provenance)
 
 
 REFERENCE_MODEL_CACHE_DATASETS = 2
@@ -370,9 +452,10 @@ def _auc_gate(train_dataset_id: str, eval_dataset_id: str) -> tuple[float | None
 
 def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
     t0 = time.perf_counter()
-    hits_before = _cached_ranked_rows.cache_info().hits
-    ranked = list(_cached_ranked_rows(dataset_id, target))
-    cached = _cached_ranked_rows.cache_info().hits > hits_before
+    hydrated = _hydrated_targets_or_409(dataset_id)
+    hits_before = _cached_ranked_rows_versioned.cache_info().hits
+    ranked = list(_ranked_rows_for_provenance(dataset_id, target, hydrated.provenance))
+    cached = _cached_ranked_rows_versioned.cache_info().hits > hits_before
     logger.info(
         "screening_pareto %.1fms (cached=%s, dataset=%s, target=%s)",
         (time.perf_counter() - t0) * 1000, cached, dataset_id, target,
@@ -410,6 +493,10 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
         "effect_size_pass_count": effect_size_pass_count,
         "max_eps2": max_eps2,
         "items": items,
+        "analyzable_target_samples": int(pd.to_numeric(hydrated.dataframe[target], errors="coerce").replace([np.inf, -np.inf], np.nan).notna().sum()),
+        "model_available": bool(hydrated.provenance.model_id) or not hydrated.provenance.uses_predictions,
+        "factor_measurement_insufficient": len(ranked) == 0,
+        "target_provenance": hydrated.provenance.as_dict(),
     }
 
 
@@ -420,10 +507,13 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
     금지") -- `src/automation/refresh.py`가 이 함수를 직접 호출해 다른
     분석 결과와 같은 스냅샷 저장 시점에 함께 계산한다.
     """
-    df = _dataframe_or_404(dataset_id)
+    hydrated = _hydrated_targets_or_409(dataset_id)
+    df = hydrated.dataframe
     schema = parse_schema(df)
     usable_targets = [t for t in targets if t in schema.target_cols]
-    rows_by_target = {t: list(_cached_ranked_rows(dataset_id, t)) for t in usable_targets}
+    rows_by_target = {
+        t: list(_ranked_rows_for_provenance(dataset_id, t, hydrated.provenance)) for t in usable_targets
+    }
     table = build_fmea_table(df, rows_by_target, usable_targets, dataset_id=dataset_id)
     return round_floats(
         {
@@ -463,6 +553,7 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
                 }
                 for f in table.items
             ],
+            "target_provenance": hydrated.provenance.as_dict(),
         }
     )
 
@@ -484,7 +575,12 @@ def get_screening_pareto(dataset: str = "train", target: str = "Y1", top_n: int 
     return _pareto_payload(dataset, target, top_n)
 
 
-def _alarm_factors(train_df, schema, train_dataset_id: str) -> tuple[list[ParetoFactor], list[str]]:
+def _alarm_factors(
+    train_df,
+    schema,
+    train_dataset_id: str,
+    provenance: Any | None = None,
+) -> tuple[list[ParetoFactor], list[str]]:
     """Per-target alarm-eligible factors: every BH-FDR-significant factor
     (see select_fdr_significant_factors's docstring -- deliberately kept
     unchanged so the golden 19-alarm-wafer count doesn't move). Screen
@@ -499,7 +595,11 @@ def _alarm_factors(train_df, schema, train_dataset_id: str) -> tuple[list[Pareto
     factors: list[ParetoFactor] = []
     no_alarm_factor: list[str] = []
     for target in schema.target_cols:
-        rows = _cached_ranked_rows(train_dataset_id, target)
+        rows = (
+            _ranked_rows_for_provenance(train_dataset_id, target, provenance)
+            if provenance is not None
+            else _cached_ranked_rows(train_dataset_id, target)
+        )
         target_factors = [_row_to_factor(train_df, target, row) for row in rows if row["significant"]]
         if not target_factors:
             no_alarm_factor.append(target)
@@ -516,9 +616,10 @@ def _control_range_dict(control_range) -> dict[str, Any]:
 
 @router.get("/control-ranges", response_model=ControlRangeListResponse)
 def get_control_ranges(dataset: str = "train") -> dict[str, Any]:
-    train_df = _dataframe_or_404(dataset)
+    hydrated = _hydrated_targets_or_409(dataset)
+    train_df = hydrated.dataframe
     schema = parse_schema(train_df)
-    factors, no_significant = _alarm_factors(train_df, schema, dataset)
+    factors, no_significant = _alarm_factors(train_df, schema, dataset, hydrated.provenance)
     items = [_control_range_dict(compute_control_range(train_df, factor)) for factor in factors]
     return {
         "train_dataset_id": dataset,
@@ -531,7 +632,15 @@ MEASURED_IDS_CACHE_PAIRS = 8
 
 
 @lru_cache(maxsize=MEASURED_IDS_CACHE_PAIRS)
-def _measured_ids_for_alarm_factors(train: str, eval: str) -> frozenset[str]:
+def _measured_ids_for_alarm_factors_versioned(
+    train: str,
+    eval: str,
+    train_version: str,
+    eval_version: str,
+    model_id: str,
+    model_version: str,
+    hydration_version: str,
+) -> frozenset[str]:
     """알람 판정에 쓸 "선정 인자 계측 여부" -- 기존 unmeasured_id_set과
     동일한 기준(FDR-유의 인자 중 하나라도 계측)이다 (spec 사전 알람 로그
     전면 개편 §B-2 "미계측").
@@ -542,14 +651,30 @@ def _measured_ids_for_alarm_factors(train: str, eval: str) -> frozenset[str]:
     캐시하고, 내부는 `_cached_ranked_rows`를 재사용하는 `_alarm_factors`를
     그대로 쓴다.
     """
-    train_df = _dataframe_or_404(train)
+    hydrated = _hydrated_targets_or_409(train)
+    train_df = hydrated.dataframe
     eval_df = _dataframe_or_404(eval)
     schema = parse_schema(train_df)
-    factors, _ = _alarm_factors(train_df, schema, train)
+    factors, _ = _alarm_factors(train_df, schema, train, hydrated.provenance)
     control_ranges = [compute_control_range(train_df, factor) for factor in factors]
     alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
     verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
     return frozenset(v.lot_wafer_id for v in verdicts if v.status != "unmeasured")
+
+
+def _measured_ids_for_alarm_factors(train: str, eval: str) -> frozenset[str]:
+    train_view = _hydrated_targets_or_409(train)
+    provenance = train_view.provenance
+    eval_version = get_dataset_registry().content_version(eval)
+    return _measured_ids_for_alarm_factors_versioned(
+        train,
+        eval,
+        provenance.dataset_version,
+        eval_version,
+        provenance.model_id or "measured-only",
+        provenance.model_version or "none",
+        TARGET_HYDRATION_VERSION,
+    )
 
 
 def _scored_wafers(
@@ -559,7 +684,7 @@ def _scored_wafers(
     *,
     target: float = alarm_gbdt.DEFAULT_TARGET_YIELD,
     sensitivity: float = alarm_gbdt.DEFAULT_SENSITIVITY,
-) -> tuple[list, float | None, bool]:
+) -> tuple[list, float | None, bool, dict[str, Any]]:
     """공유 파이프라인 -- `get_alarms`와 `compute_alarm_notification_items`가
     똑같이 게이트를 적용하도록 한 곳에 모았다 (spec 알람 신뢰도 게이트
     §A-2: "신뢰할 수 없으면 0건이 된다"가 어디서 알람을 불러오든 항상
@@ -576,15 +701,109 @@ def _scored_wafers(
 
     prediction = _cached_bootstrap_prediction(train, eval)
     if prediction is None:
-        return [], auc_lo, gate_passed
+        prediction = _uncalibrated_hydrated_prediction(eval, eval_df)
+
+    prediction, target_sources, provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
 
     measured_ids = _measured_ids_for_alarm_factors(train, eval)
     scored = alarm_gbdt.score_wafers(
         eval_df, prediction,
         target=target, sensitivity=sensitivity,
-        gate_passed=gate_passed, measured_ids=measured_ids,
+        gate_passed=True, measured_ids=measured_ids, target_sources=target_sources,
     )
-    return scored, auc_lo, gate_passed
+    return scored, auc_lo, gate_passed, provenance
+
+
+def _uncalibrated_hydrated_prediction(
+    eval_dataset_id: str,
+    raw_eval_df: pd.DataFrame,
+) -> alarm_gbdt.BootstrapPrediction:
+    """Build a display-only prediction when no alarm training Y exists.
+
+    The interval is deliberately [0, 100] and the external AUC gate remains
+    closed. This permits risk ranking/history without presenting an
+    uncalibrated interval as trusted evidence.
+    """
+    hydrated = _hydrated_targets_or_409(eval_dataset_id)
+    point = pd.to_numeric(hydrated.dataframe["Y"], errors="coerce").to_numpy(dtype=float)
+    identifier = "Lot_Wafer_ID"
+    lot_wafer_id = (
+        raw_eval_df[identifier].astype(str).tolist()
+        if identifier in raw_eval_df.columns
+        else [str(index) for index in raw_eval_df.index]
+    )
+    aggregate = float(np.mean(point)) if len(point) else 0.0
+    return alarm_gbdt.BootstrapPrediction(
+        lot_wafer_id=lot_wafer_id,
+        pred_mean=point,
+        pred_lo=np.zeros(len(point), dtype=float),
+        pred_hi=np.full(len(point), 100.0, dtype=float),
+        conformal_q=None,
+        coverage_target=alarm_gbdt.CONFORMAL_TARGET_COVERAGE,
+        coverage_actual=None,
+        holdout_oof_actual=None,
+        holdout_oof_pred=None,
+        conformal_q_agg=None,
+        pred_agg_mean=aggregate,
+        pred_agg_lo=None,
+        pred_agg_hi=None,
+    )
+
+
+def _prediction_from_hydrated_targets(
+    eval_dataset_id: str,
+    raw_eval_df: pd.DataFrame,
+    prediction: alarm_gbdt.BootstrapPrediction,
+) -> tuple[alarm_gbdt.BootstrapPrediction, list[str], dict[str, Any]]:
+    """Use the common measured/predicted Y view for alert risk scoring.
+
+    The independent alarm model remains the source of calibrated interval
+    width and AUC evidence. Its point estimate is replaced by the common Y
+    view so missing-target datasets cannot diverge across analyses.
+    """
+    hydrated = _hydrated_targets_or_409(eval_dataset_id)
+    if len(hydrated.dataframe) != len(prediction.pred_mean):
+        raise TargetHydrationError("알람 예측 행 수와 타깃 보강 행 수가 일치하지 않습니다.")
+
+    point = pd.to_numeric(hydrated.dataframe["Y"], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(point).all():
+        raise TargetHydrationError("보강 후에도 최종 수율(Y)이 비어 있어 위험도를 계산할 수 없습니다.")
+    point = np.clip(point, 0.0, 100.0)
+    if prediction.conformal_q is not None:
+        width = np.full(len(point), float(prediction.conformal_q), dtype=float)
+    else:
+        width = np.maximum(
+            np.asarray(prediction.pred_hi, dtype=float) - np.asarray(prediction.pred_mean, dtype=float),
+            np.asarray(prediction.pred_mean, dtype=float) - np.asarray(prediction.pred_lo, dtype=float),
+        )
+    pred_lo = np.clip(point - width, 0.0, 100.0)
+    pred_hi = np.clip(point + width, 0.0, 100.0)
+
+    raw_y = (
+        pd.to_numeric(raw_eval_df["Y"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        if "Y" in raw_eval_df.columns
+        else pd.Series(np.nan, index=raw_eval_df.index)
+    )
+    raw_components = pd.DataFrame(
+        {
+            target: (
+                pd.to_numeric(raw_eval_df[target], errors="coerce").replace([np.inf, -np.inf], np.nan)
+                if target in raw_eval_df.columns
+                else pd.Series(np.nan, index=raw_eval_df.index)
+            )
+            for target in ("Y1", "Y2", "Y3", "Y4", "Y5")
+        },
+        index=raw_eval_df.index,
+    )
+    target_sources = [
+        "measured" if pd.notna(y_value) else ("derived_measured" if components_complete else "predicted")
+        for y_value, components_complete in zip(raw_y.tolist(), raw_components.notna().all(axis=1).tolist(), strict=True)
+    ]
+    return (
+        replace(prediction, pred_mean=point, pred_lo=pred_lo, pred_hi=pred_hi),
+        target_sources,
+        hydrated.provenance.as_dict(),
+    )
 
 
 def _reason_for(score, eval_by_id, warning_lines) -> str:
@@ -603,6 +822,13 @@ def _reason_for(score, eval_by_id, warning_lines) -> str:
         if row is not None and warning_lines
         else warning_line.NO_EXCEEDANCE_REASON
     )
+
+
+@router.get("/alarms/history")
+def get_alarm_snapshot_history(limit: int = 20) -> dict[str, Any]:
+    """Immutable alert snapshots; later promotions never rewrite old rows."""
+    store = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+    return {"items": store.list_alert_snapshots(limit)}
 
 
 @router.get("/alarms", response_model=AlarmListResponse)
@@ -640,7 +866,7 @@ def get_alarms(
     # (부트스트랩 예측 자체를 캐시하는 _cached_bootstrap_prediction은
     # target/sensitivity와 무관한 원시 예측치라 그대로 재사용해도 안전
     # 하다 -- 분류 임계값은 이후 score_wafers에서 매번 새로 적용된다).
-    scored, auc_lo, gate_passed = _scored_wafers(
+    scored, auc_lo, gate_passed, provenance = _scored_wafers(
         train, eval, eval_df, target=resolved_target, sensitivity=resolved_sensitivity
     )
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
@@ -660,6 +886,7 @@ def get_alarms(
                 "grade": score.grade,
                 "risk_percentile": score.risk_percentile,
                 "reason": _reason_for(score, eval_by_id, warning_lines),
+                "target_source": score.target_source,
             }
         )
     items.sort(key=lambda item: item["risk_percentile"])
@@ -682,6 +909,13 @@ def get_alarms(
             "auc_lower_bound": auc_lo,
             "auc_gate_passed": gate_passed,
             "auc_gate_threshold": alarm_gbdt.AUC_GATE,
+            "target_provenance": provenance,
+            "external_delivery_suppressed_reason": (
+                None if gate_passed else (
+                    f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
+                    if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
+                )
+            ),
         }
     )
 
@@ -714,9 +948,11 @@ def compute_alarm_notification_items(
     except HTTPException:
         return None
 
-    scored, _auc_lo, _gate_passed = _scored_wafers(
+    scored, _auc_lo, gate_passed, _provenance = _scored_wafers(
         train, eval, eval_df, target=target, sensitivity=sensitivity
     )
+    if not gate_passed:
+        return []
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의") and s.measured]
 
     warning_lines = _cached_all_warning_lines(train)
@@ -732,6 +968,7 @@ def compute_alarm_notification_items(
                 "grade": score.grade,
                 "risk_percentile": score.risk_percentile,
                 "reason": _reason_for(score, eval_by_id, warning_lines),
+                "target_source": score.target_source,
             }
         )
     return items
@@ -752,11 +989,17 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
     이미 계산해 캐시한 것을 그대로 읽을 뿐이라 이 요청에서 추가 계산이
     없다).
     """
-    train_df = _dataframe_or_404(train)
     eval_df = _dataframe_or_404(eval)
+    train_view = _hydrated_targets_or_409(train)
+    train_df = train_view.dataframe
 
     auc_lo, gate_passed = _auc_gate(train, eval)
     prediction = _cached_bootstrap_prediction(train, eval)
+    target_sources: list[str] = []
+    eval_provenance: dict[str, Any] | None = None
+    if prediction is None:
+        prediction = _uncalibrated_hydrated_prediction(eval, eval_df)
+    prediction, target_sources, eval_provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
 
     # "미계측" 정의는 그대로 둔다 (spec §B-2) -- 선정 인자가 하나도
     # 계측되지 않은 wafer는 예측이 있어도 신뢰할 수 없어 등급을 매기지
@@ -792,6 +1035,7 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
                     "pred_lo": float(prediction.pred_lo[i]),
                     "pred_hi": float(prediction.pred_hi[i]),
                     "reason": reason,
+                    "target_source": target_sources[i],
                 }
             )
 
@@ -827,11 +1071,19 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
             "holdout_oof_predicted": holdout_oof_predicted,
             "auc_lower_bound": auc_lo,
             "auc_gate_passed": gate_passed,
+            "display_prediction_allowed": prediction is not None,
             "auc_gate_threshold": alarm_gbdt.AUC_GATE,
             "interval_coverage_target": prediction.coverage_target if prediction is not None else alarm_gbdt.CONFORMAL_TARGET_COVERAGE,
             "interval_coverage_actual": prediction.coverage_actual if prediction is not None else None,
             "interval_conformal_q": prediction.conformal_q if prediction is not None else None,
             "interval_conformal_q_agg": prediction.conformal_q_agg if prediction is not None else None,
+            "target_provenance": eval_provenance,
+            "external_delivery_suppressed_reason": (
+                None if gate_passed else (
+                    f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
+                    if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
+                )
+            ),
         }
     )
 
@@ -842,13 +1094,13 @@ def _build_report_payload(dataset: str) -> dict[str, Any]:
     chatbot never narrates a number the download button wouldn't also show.
     """
     registry = get_dataset_registry()
-    train_df = _dataframe_or_404(dataset)
-    eval_df = _dataframe_or_404(REPORT_EVAL_DATASET_ID)
+    train_view = _hydrated_targets_or_409(dataset)
+    eval_view = _hydrated_targets_or_409(REPORT_EVAL_DATASET_ID)
     train_meta = registry.get_summary(dataset) or {}
     eval_meta = registry.get_summary(REPORT_EVAL_DATASET_ID) or {}
-    return build_analysis_report(
-        train_df,
-        eval_df,
+    report = build_analysis_report(
+        train_view.dataframe,
+        eval_view.dataframe,
         train_dataset_id=dataset,
         eval_dataset_id=REPORT_EVAL_DATASET_ID,
         train_meta=train_meta,
@@ -856,6 +1108,11 @@ def _build_report_payload(dataset: str) -> dict[str, Any]:
         app_version=APP_VERSION,
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
     )
+    report.setdefault("meta", {})["target_provenance"] = {
+        "train": train_view.provenance.as_dict(),
+        "eval": eval_view.provenance.as_dict(),
+    }
+    return report
 
 
 @router.get("/analysis/report", response_model=AnalysisReportResponse)
@@ -885,7 +1142,8 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     빗나간다 -- 원인 분석 탭 자체가 데이터셋 선택기 하나뿐이라는 점과도
     맞는다.
     """
-    train_df = _dataframe_or_404(dataset)
+    hydrated = _hydrated_targets_or_409(dataset)
+    train_df = hydrated.dataframe
     eval_df = train_df
     schema = parse_schema(train_df)
 
@@ -897,7 +1155,8 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
     # (dataset, target) 기준 프로세스 전역 캐시라 Pareto 화면이 이미 조회한
     # 타깃이면 사실상 즉시 반환된다.
     rows_by_target: dict[str, list[dict]] = {
-        target: list(_cached_ranked_rows(dataset, target)) for target in schema.target_cols
+        target: list(_ranked_rows_for_provenance(dataset, target, hydrated.provenance))
+        for target in schema.target_cols
     }
 
     # "판정 가능 여부"(조치 불가/추가 판정)는 알람 목록과 동일한 FDR-유의
@@ -992,6 +1251,7 @@ def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
             "new_factor_discoveries": [
                 {"feature": d.feature, "target": d.target, "kind": d.kind} for d in summary.new_factor_discoveries
             ],
+            "target_provenance": hydrated.provenance.as_dict(),
         }
     )
 

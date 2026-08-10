@@ -289,6 +289,7 @@ MARGIN_MAX_PP = 4.0
 # 작업 범위는 슬라이더 트레이드오프化뿐이라 값은 그대로 두고 다음 단계
 # 조사 과제로 남긴다.
 GRADE_STEP_PP = 0.8
+ALARM_DECISION_VERSION = "yield-risk-v2"
 
 
 def classify_margin(sensitivity: float) -> float:
@@ -356,6 +357,7 @@ class WaferClassification:
     # 기준으로 정상 계산된다. 사유 표시 전용(§BB "계측 부족" 판별불가
     # 사유 / §BC-2 "사유 제시 불가" 배지·자동 발송 제외).
     measured: bool
+    target_source: str = "measured"
 
 
 def score_wafers(
@@ -366,6 +368,7 @@ def score_wafers(
     sensitivity: float,
     gate_passed: bool = True,
     measured_ids: set[str] | None = None,
+    target_sources: list[str] | None = None,
     lot_column: str = "Lot_ID",
 ) -> list[WaferClassification]:
     """전체 eval wafer의 5분류 결과 (spec §B-1: "합이 평가 wafer 수와
@@ -412,6 +415,7 @@ def score_wafers(
                 pred_hi=float(prediction.pred_hi[i]),
                 risk_percentile=float(percentile[i]),
                 measured=measured,
+                target_source=(target_sources[i] if target_sources is not None else "measured"),
             )
         )
     return results

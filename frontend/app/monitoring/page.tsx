@@ -141,9 +141,9 @@ export default function MonitoringPage() {
 
   // E-4: ConfigTreemap이 탭 이동으로 언마운트/리마운트돼도 마지막으로 조회한
   // 스텝 결과를 다시 조회하지 않도록, monitoringHome 캐시에 함께 들고 있는다.
-  function handleTreemapDataChange(step: number, data: ConfigTreemapResponse | null) {
+  function handleTreemapDataChange(step: number, target: string, data: ConfigTreemapResponse | null) {
     if (!monitoringHome) return;
-    setMonitoringHome({ ...monitoringHome, treemap: { step, data } });
+    setMonitoringHome({ ...monitoringHome, treemap: { step, target, data } });
   }
 
   return (
@@ -199,6 +199,14 @@ export default function MonitoringPage() {
           </section>
         ) : (
           <>
+            {(snapshot.fmea?.target_provenance?.uses_predictions || snapshot.measurementExpansion?.target_provenance?.uses_predictions) && (() => {
+              const provenance = snapshot.fmea?.target_provenance ?? snapshot.measurementExpansion?.target_provenance;
+              return provenance ? (
+                <p className="analysisDataNotice" role="note">
+                  이 분석은 실측값이 없는 항목을 모델 예측값으로 보완해 계산했습니다. 예측값 기반 관계는 실제 공정 원인과 다를 수 있으므로 공정 검증과 함께 사용해 주세요. 모델 {provenance.model_version ?? provenance.model_id ?? "정보 없음"} · 예측 {provenance.predicted_target_cells.toLocaleString()}셀
+                </p>
+              ) : null;
+            })()}
             {/* ID-3 배치: ① 판단 요약 ② FMEA 분석표 ③ 권고 조치
                 ④ 추가 계측 권고 ⑤ 설비 구성 트리맵 */}
             <SummaryBlock snapshot={snapshot} queue={queue} />

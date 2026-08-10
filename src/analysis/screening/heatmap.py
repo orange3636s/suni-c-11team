@@ -14,7 +14,6 @@ unordered categorical.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -23,6 +22,7 @@ import pandas as pd
 from src.analysis.screening.effect_size import eps2_categorical
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, benjamini_hochberg, confidence_tier, score_all_factors
+from src.config_parser import config_hierarchy_series
 
 MIN_CELL_N = 30
 SPEARMAN_SCALE = (-0.5, 0.5)
@@ -35,13 +35,8 @@ EPS2_CATEGORICAL_SCALE = (0.0, 0.05)
 Metric = Literal["spearman", "eps2"]
 ConfigLevel = Literal["model", "eq", "chamber"]
 
-# `Step16_Model2_EQC_CH3`의 3계층 토큰 -- src/config_parser.py는 서버에서
-# 이 분해를 절대 하지 않는다는 원칙이지만, 히트맵은 계층별로 묶어 검정해야
-# 하므로 이 모듈 안에서만 임시로(원본 컬럼은 그대로 두고) 파생한다.
-_CONFIG_LEVEL_RE = re.compile(r"^Step\d+_(Model\d+)_(EQ[A-Z])_(CH\d+)$")
-_LEVEL_GROUP_INDEX: dict[ConfigLevel, int] = {"model": 1, "eq": 2, "chamber": 3}
-
-
+# Config 계층은 src/config_parser.py의 YAML 기반 공통 파서를 사용한다.
+# 원본 Config 범주는 그대로 두고 히트맵 집계용 Series만 파생한다.
 @dataclass
 class HeatmapData:
     features: list[str]
@@ -139,18 +134,9 @@ def build_heatmap(
 
 
 def _config_level_series(config_col: pd.Series, level: ConfigLevel) -> pd.Series:
-    """`Step16_Model2_EQC_CH3` -> 그 레벨의 토큰만 뽑은 파생 Series. 형식이
-    다른 값(미지 Config)은 None -- eps2_categorical의 dropna가 자연히
-    제외하므로 별도 처리가 필요 없다."""
-    idx = _LEVEL_GROUP_INDEX[level]
-
-    def extract(value: object) -> str | None:
-        if pd.isna(value):
-            return None
-        match = _CONFIG_LEVEL_RE.match(str(value))
-        return match.group(idx) if match else None
-
-    return config_col.map(extract)
+    """Return one server-canonical Config hierarchy level."""
+    parser_level = "equipment" if level == "eq" else level
+    return config_hierarchy_series(str(config_col.name), config_col, parser_level)
 
 
 def build_categorical_heatmap(

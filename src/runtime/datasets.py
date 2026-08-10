@@ -20,6 +20,10 @@ from uuid import uuid4
 import pandas as pd
 
 from src.analysis.screening.schema import Schema, parse_schema
+from src.analysis.target_hydration import (
+    inspect_target_status,
+    invalidate_target_hydration_cache,
+)
 from src.dataset_normalization import normalize_dataset
 from src.runtime.app_state import invalidate_state_for_dataset
 from src.runtime.store import RuntimeStore
@@ -120,8 +124,13 @@ def validate_dataset(
     # 이 함수를 쓰지 않고 별도 검증(src/data_validation.py)을 거치므로
     # 여기서 풀어도 학습 경로에는 영향이 없다. 대신 경고로 남겨 "학습에는
     # 못 쓴다"를 알린다.
-    if not schema.target_cols:
-        warnings.append("이 파일에는 타깃(Y) 열이 없습니다 -- 평가 데이터셋으로 쓸 수 있지만 학습에는 쓸 수 없습니다.")
+    target_status = inspect_target_status(df)
+    if target_status.state == "missing_columns":
+        warnings.append("이 파일에는 타깃(Y/Y1~Y5) 열이 없습니다 -- 평가 데이터셋으로 허용하며 승인 모델의 예측값으로 분석합니다.")
+    elif target_status.state == "all_missing":
+        warnings.append("실측 수율·불량률이 없어 승인 모델의 예측값으로 분석합니다.")
+    elif target_status.state == "partial":
+        warnings.append("실측값을 우선 사용하고 결측값만 예측값으로 보완합니다.")
 
     row_count = len(df)
     if row_count < LOW_ROW_COUNT_THRESHOLD:
@@ -263,6 +272,23 @@ class DatasetRegistry:
             raise DatasetNotFoundError(dataset_id)
         return _read_uploaded_csv(str(self.upload_root / record["stored_path"]))
 
+    def content_version(self, dataset_id: str) -> str:
+        """Stable content identifier for analysis/hydration cache keys.
+
+        Uploaded dataset IDs are immutable UUIDs. Bundled IDs are stable across
+        deploys, so include file stat values to invalidate a replaced bundle.
+        """
+        if dataset_id in BUNDLED_DATASET_FILES:
+            path = self._bundled_path(dataset_id)
+            stat = path.stat()
+            return f"bundled:{stat.st_mtime_ns}:{stat.st_size}"
+        record = self.store.get_dataset(dataset_id)
+        if record is None:
+            raise DatasetNotFoundError(dataset_id)
+        path = self.upload_root / record["stored_path"]
+        stat = path.stat()
+        return f"uploaded:{dataset_id}:{stat.st_mtime_ns}:{stat.st_size}"
+
     def upload(self, filename: str, content: bytes) -> dict[str, Any]:
         import gc
 
@@ -320,7 +346,8 @@ class DatasetRegistry:
                 # AG-2: 프런트가 "이 파일에는 Y 계열이 있습니다" 안내를
                 # 띄울지 결정하는 데 쓴다 -- 경고 문구를 문자열로 매칭하지
                 # 않도록 별도 필드로 내려준다.
-                "has_target_columns": bool(validation.schema.target_cols) if validation.schema else False,
+                "has_target_columns": bool(inspect_target_status(df).present_columns),
+                "target_status": inspect_target_status(df).as_dict(),
             }
         finally:
             # The uploaded DataFrame is only needed for this validation pass --
@@ -345,6 +372,7 @@ class DatasetRegistry:
         # 하나만 지우는 API가 없으므로 전체를 비운다 (업로드 캐시는
         # 최대 8개뿐이라 비용이 작다).
         _read_uploaded_csv.cache_clear()
+        invalidate_target_hydration_cache(dataset_id)
         # A deleted dataset's saved 학습/원인 분석/사전 알람 results would
         # otherwise keep pointing a selector at data that no longer exists
         # (spec §3-5) -- best-effort, deletion itself already succeeded above.

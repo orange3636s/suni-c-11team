@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DIVERGING_GREEN, DIVERGING_RED, parseConfig as parseConfigParts } from "@/lib/constants";
+import { DIVERGING_GREEN, DIVERGING_RED } from "@/lib/constants";
+import { getDatasetSchema } from "@/lib/api";
 import { getTreemapData } from "@/lib/monitoringSource";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfigTreemapGroup, ConfigTreemapResponse } from "@/types/data";
 
-const STEP_OPTIONS = Array.from({ length: 30 }, (_, i) => i + 1);
+const TARGET_OPTIONS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 // n이 이 미만인 타일은 회색 처리하고 색을 칠하지 않는다 (지시서 §4③
 // "표본 부족").
 const MIN_TILE_N = 30;
@@ -17,12 +18,6 @@ const MIN_TILE_N = 30;
 const COLOR_SPAN_PP = 3;
 
 type ParsedGroup = ConfigTreemapGroup & { model: string; eq: string; chamber: string };
-
-function parseConfig(group: ConfigTreemapGroup): ParsedGroup | null {
-  const parts = parseConfigParts(group.config);
-  if (!parts) return null;
-  return { ...group, model: parts.model, eq: parts.eq, chamber: parts.chamber };
-}
 
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -37,7 +32,7 @@ function lerpColor(a: string, b: string, t: number): string {
   return rgbToHex([ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t]);
 }
 
-// 발산형 빨강(낮음)-초록(높음), 중앙은 전체 평균. 이 앱 전역에서 이미 쓰는
+// 불량률은 낮을수록 좋으므로 초록(낮음)-빨강(높음), 중앙은 전체 평균.
 // RED/GREEN 토큰과 같은 값이다 (ParetoChart.tsx 등). dataviz 스킬의
 // validate_palette.js로 확인함 -- 라이트 모드는 전 항목 PASS(CVD ΔE
 // 8.6), 다크 모드는 CVD ΔE 6.5로 "6–8 완충 구간, 보조 인코딩이 있으면
@@ -55,7 +50,7 @@ function colorForMean(mean: number, overallMean: number, theme: "light" | "dark"
   const red = theme === "dark" ? RED.dark : RED.light;
   const green = theme === "dark" ? GREEN.dark : GREEN.light;
   const center = theme === "dark" ? CENTER.dark : CENTER.light;
-  return t < 0.5 ? lerpColor(red, center, t / 0.5) : lerpColor(center, green, (t - 0.5) / 0.5);
+  return t < 0.5 ? lerpColor(green, center, t / 0.5) : lerpColor(center, red, (t - 0.5) / 0.5);
 }
 
 // Z-3: 타일이 채색되면(FDR 통과 시에만, 현재 데이터에서는 없음) 배경이
@@ -83,8 +78,8 @@ export default function ConfigTreemap({
   // E-4: 부모(모니터링 홈)의 monitoringHome 캐시에서 넘어온, 마지막으로
   // 조회했던 스텝의 결과 -- 탭을 나갔다 돌아왔을 때(이 컴포넌트가
   // 통째로 언마운트/리마운트될 때) 이 값이 있으면 재조회하지 않는다.
-  initialData?: { step: number; data: ConfigTreemapResponse | null } | null;
-  onDataChange?: (step: number, data: ConfigTreemapResponse | null) => void;
+  initialData?: { step: number; target?: string; data: ConfigTreemapResponse | null } | null;
+  onDataChange?: (step: number, target: string, data: ConfigTreemapResponse | null) => void;
 }) {
   const theme = useResolvedTheme();
   const router = useRouter();
@@ -95,7 +90,11 @@ export default function ConfigTreemap({
   // 고정 높이로 바꾼다.
   const isMobileLayout = useIsMobileLayout();
   const [step, setStep] = useState(initialStep ?? initialData?.step ?? 1);
-  const hasCachedInitial = initialData != null && initialData.step === step;
+  const [target, setTarget] = useState(initialData?.target ?? initialData?.data?.target ?? "Y1");
+  const [stepOptions, setStepOptions] = useState<number[]>([]);
+  const [optionsDataset, setOptionsDataset] = useState("");
+  const optionsReady = optionsDataset === datasetId;
+  const hasCachedInitial = initialData != null && initialData.step === step && (initialData.target ?? "Y1") === target;
   const [data, setData] = useState<ConfigTreemapResponse | null>(hasCachedInitial ? initialData!.data : null);
   const [loading, setLoading] = useState(!hasCachedInitial);
   const [hover, setHover] = useState<HoverState>(null);
@@ -104,18 +103,46 @@ export default function ConfigTreemap({
   const consumedInitialRef = useRef(hasCachedInitial);
 
   useEffect(() => {
-    if (consumedInitialRef.current) {
+    let cancelled = false;
+    void getDatasetSchema(datasetId)
+      .then((schema) => {
+        if (cancelled) return;
+        const available = schema.config_steps.length > 0 ? schema.config_steps : schema.steps_present;
+        const storedStep = Number(window.localStorage.getItem(`monitoring-treemap-step:${datasetId}`));
+        const nextStep = available.includes(storedStep) ? storedStep : available.includes(step) ? step : (available[0] ?? step);
+        const storedTarget = window.localStorage.getItem(`monitoring-treemap-target:${datasetId}`);
+        const nextTarget = TARGET_OPTIONS.includes(storedTarget as (typeof TARGET_OPTIONS)[number]) ? storedTarget! : target;
+        setStepOptions(available);
+        setStep(nextStep);
+        setTarget(nextTarget);
+        setOptionsDataset(datasetId);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStepOptions([step]);
+        setOptionsDataset(datasetId);
+      });
+    return () => { cancelled = true; };
+    // Dataset change is the only reason to reload the schema/options.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (!optionsReady) return;
+    if (consumedInitialRef.current && initialData?.step === step && (initialData.target ?? "Y1") === target) {
       consumedInitialRef.current = false;
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLoading(true);
-      void getTreemapData(datasetId, step).then((result) => {
+      window.localStorage.setItem(`monitoring-treemap-step:${datasetId}`, String(step));
+      window.localStorage.setItem(`monitoring-treemap-target:${datasetId}`, target);
+      void getTreemapData(datasetId, step, target).then((result) => {
         if (cancelled) return;
         setData(result);
         setLoading(false);
-        onDataChange?.(step, result);
+        onDataChange?.(step, target, result);
       });
     }, 0);
     return () => {
@@ -123,17 +150,11 @@ export default function ConfigTreemap({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetId, step]);
+  }, [datasetId, optionsReady, step, target]);
 
-  const { models, unknownCount } = useMemo(() => {
-    if (!data) return { models: [], unknownCount: 0 };
-    const parsed: ParsedGroup[] = [];
-    let unknown = 0;
-    for (const group of data.groups) {
-      const p = parseConfig(group);
-      if (p) parsed.push(p);
-      else unknown += 1;
-    }
+  const models = useMemo(() => {
+    if (!data) return [];
+    const parsed: ParsedGroup[] = data.groups.map((group) => ({ ...group, eq: group.equipment }));
     const byModel = new Map<string, Map<string, ParsedGroup[]>>();
     for (const p of parsed) {
       if (!byModel.has(p.model)) byModel.set(p.model, new Map());
@@ -153,7 +174,7 @@ export default function ConfigTreemap({
           }));
         return { model, totalN: eqRows.reduce((sum, row) => sum + row.totalN, 0), eqRows };
       });
-    return { models: modelRows, unknownCount: unknown };
+    return modelRows;
   }, [data]);
 
   function handleTileClick(group: ParsedGroup) {
@@ -165,23 +186,30 @@ export default function ConfigTreemap({
     <section className="resultCard monitoringTreemapCard">
       <div className="sectionHeading compact">
         <div>
-          <span className="sectionLabel">설비 구성 트리맵</span>
-          <h2>Model → EQ → Chamber 수율</h2>
+          <h2>설비 구성 트리맵 Model → EQ → Chamber 수율</h2>
         </div>
-        <label className="monitoringStepSelect">
-          스텝
-          <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
-            {STEP_OPTIONS.map((s) => (
-              <option key={s} value={s}>Step{s}</option>
-            ))}
-          </select>
-        </label>
+        <div className="monitoringTreemapControls">
+          <label className="monitoringStepSelect">
+            스텝
+            <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
+              {stepOptions.map((s) => (
+                <option key={s} value={s}>Step{s}</option>
+              ))}
+            </select>
+          </label>
+          <label className="monitoringStepSelect">
+            불량 원인
+            <select value={target} onChange={(event) => setTarget(event.target.value)}>
+              {TARGET_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+        </div>
       </div>
 
       {loading ? (
         <p className="emptyMessage">불러오는 중…</p>
       ) : !data || models.length === 0 ? (
-        <p className="emptyMessage">Step{step}에는 Config 데이터가 없습니다.</p>
+        <p className="emptyMessage">{data?.empty_reason ?? `Step${step}에는 Config 데이터가 없습니다.`}</p>
       ) : (
         <>
           <div className="monitoringTreemap">
@@ -199,12 +227,7 @@ export default function ConfigTreemap({
                       <div className="monitoringTreemapTiles">
                         {eqRow.chambers.map((chamber) => {
                           const insufficientN = chamber.n < MIN_TILE_N;
-                          // C-3: 이 스텝 Config가 FDR을 통과했을 때만
-                          // 채색한다 -- 범주형 히트맵과 같은 규칙이다.
-                          // 통과하지 못하면(현재 데이터는 전부 그렇다)
-                          // 검출한계 이하 차이가 적/녹으로 과장되지
-                          // 않도록 전량 중립색 + 텍스트만 보여준다.
-                          const shouldColor = !insufficientN && data.significant;
+                          const shouldColor = !insufficientN;
                           const tileBackground = shouldColor ? colorForMean(chamber.mean, data.overall_mean, theme) : undefined;
                           return (
                             <button
@@ -240,28 +263,18 @@ export default function ConfigTreemap({
               </div>
             ))}
           </div>
-          {unknownCount > 0 && (
-            <p className="emptyMessage monitoringTreemapUnknown">형식을 알 수 없는 Config {unknownCount}건은 표시에서 제외했습니다.</p>
-          )}
           <p className="monitoringTreemapCaption">
-            면적 = 웨이퍼 수 · 색 = 평균 수율(전체 평균 {data.overall_mean.toFixed(1)}% 기준 ±{COLOR_SPAN_PP}%p 고정 스케일) · n&lt;{MIN_TILE_N} 회색
+            면적 = 웨이퍼 수 · 색 = {data.target} 평균 불량률(전체 평균 {data.overall_mean.toFixed(1)}% 기준 ±{COLOR_SPAN_PP}%p 고정 스케일, 낮을수록 초록) · n&lt;{MIN_TILE_N} 회색
           </p>
-          {!data.significant && (
-            <p className="monitoringTreemapCaption">
-              {/* GB-2: "없음"이 아니라 "왜 색이 없는지"를 말한다 -- FDR
-                  미통과라 Config 간 수율 차이가 검출 한계 이하라는 뜻이지,
-                  집계 자체가 없다는 뜻이 아니다(타일은 그대로 보인다). */}
-              <span className="data">FDR 미통과 (Step{step})</span> — Config 간 수율 차이가 검출 한계 이하입니다. 색 대신 수치로만 비교하세요.
-            </p>
-          )}
         </>
       )}
 
       {hover && (
         <div className="heatmapTooltip" style={{ left: hover.x + 14, top: hover.y + 14 }}>
           <strong>{hover.group.config}</strong>
+          <div className="heatmapTooltipRow"><span>경로</span><b>{hover.group.model} → {hover.group.equipment} → {hover.group.chamber}</b></div>
           <div className="heatmapTooltipRow"><span>n</span><b>{hover.group.n}</b></div>
-          <div className="heatmapTooltipRow"><span>평균</span><b>{hover.group.mean.toFixed(2)}%</b></div>
+          <div className="heatmapTooltipRow"><span>{data?.target ?? target} 평균 불량률</span><b>{hover.group.mean.toFixed(2)}%</b></div>
           <div className="heatmapTooltipRow"><span>중앙값</span><b>{hover.group.median.toFixed(2)}%</b></div>
           <div className="heatmapTooltipRow"><span>p5</span><b>{hover.group.p5.toFixed(2)}%</b></div>
           <div className="heatmapTooltipRow"><span>p95</span><b>{hover.group.p95.toFixed(2)}%</b></div>

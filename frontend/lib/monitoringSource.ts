@@ -81,9 +81,9 @@ export async function buildMonitoringSnapshot(
   };
 }
 
-export async function getTreemapData(dataset: string, step: number): Promise<ConfigTreemapResponse | null> {
+export async function getTreemapData(dataset: string, step: number, target = "Y1"): Promise<ConfigTreemapResponse | null> {
   try {
-    return await getConfigTreemap(dataset, step);
+    return await getConfigTreemap(dataset, step, target);
   } catch {
     // 이 데이터셋에 해당 스텝의 Config가 없는 경우 등 -- 빈 상태로 처리.
     return null;

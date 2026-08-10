@@ -30,6 +30,10 @@ class ParetoRankingResponse(BaseModel):
     effect_size_pass_count: int
     max_eps2: float | None
     items: list[ParetoRankingItemSchema]
+    analyzable_target_samples: int = 0
+    model_available: bool = False
+    factor_measurement_insufficient: bool = False
+    target_provenance: dict[str, Any] | None = None
 
 
 class ScatterPointSchema(BaseModel):
@@ -121,6 +125,7 @@ class ScreeningScatterResponse(BaseModel):
     # SPC vs ML 권장구간 비교 (spec: "SPC/ML 방식 전환") -- None for Config
     # factors, which have no numeric x to fit either method on.
     methods: MethodComparisonSchema | None
+    target_provenance: dict[str, Any] | None = None
 
 
 class CategoricalGroupSchema(BaseModel):
@@ -142,6 +147,7 @@ class CategoricalScatterResponse(BaseModel):
     confidence_tier: str
     n: int
     axis: dict[str, str]
+    target_provenance: dict[str, Any] | None = None
 
 
 class HeatmapScaleSchema(BaseModel):
@@ -164,6 +170,7 @@ class HeatmapResponse(BaseModel):
     tier: list[list[str | None]]
     scale: HeatmapScaleSchema
     excluded_configs: int
+    target_provenance: dict[str, Any] | None = None
 
 
 class ControlRangeSchema(BaseModel):
@@ -202,6 +209,7 @@ class AlarmItemSchema(BaseModel):
     grade: str  # "심각" | "위험" | "주의"
     risk_percentile: float  # 0-100, 낮을수록 위험
     reason: str
+    target_source: str = "measured"
 
 
 class AlarmListResponse(BaseModel):
@@ -213,12 +221,12 @@ class AlarmListResponse(BaseModel):
     evaluated_total: int
     alarm_share_warning: bool
     # 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
-    # AUC 하한이 auc_gate_threshold 미만이면 알람을 아예 내지 않는다
-    # (auc_gate_passed=False, items/total/alarm_total 모두 0). §A-3 화면
-    # 안내가 이 값들로 렌더된다.
+    # 외부 발송 신뢰도 게이트. 화면 위험도/이력은 이 값과 별개로 유지된다.
     auc_lower_bound: float | None
     auc_gate_passed: bool
     auc_gate_threshold: float
+    target_provenance: dict[str, Any] | None = None
+    external_delivery_suppressed_reason: str | None = None
 
 
 class WaferPredictionSchema(BaseModel):
@@ -233,6 +241,7 @@ class WaferPredictionSchema(BaseModel):
     pred_hi: float
     # measured=False이거나 어떤 인자도 경고선을 넘지 않았으면 None.
     reason: str | None
+    target_source: str = "measured"
 
 
 class AlertsDataResponse(BaseModel):
@@ -256,10 +265,10 @@ class AlertsDataResponse(BaseModel):
     # 조건) 둘 다 빈 배열이다.
     holdout_oof_actual: list[float] = Field(default_factory=list)
     holdout_oof_predicted: list[float] = Field(default_factory=list)
-    # 알람 신뢰도 게이트 -- AlarmListResponse와 동일한 값(같은 (train,eval)
-    # 쌍이면 항상 일치한다). 게이트 미달이면 심각/위험/주의가 전부 0건이다.
+    # 외부 발송 신뢰도 게이트 -- 화면 분류에는 display_prediction_allowed를 쓴다.
     auc_lower_bound: float | None
     auc_gate_passed: bool
+    display_prediction_allowed: bool = True
     auc_gate_threshold: float
     # 예측 구간 conformal 캘리브레이션 (spec §BA-4) -- 이 세 값이 "구간을
     # 믿어도 되는지"의 근거다. interval_coverage_actual은 eval_df에 실측
@@ -276,6 +285,8 @@ class AlertsDataResponse(BaseModel):
     # interval_conformal_q보다 훨씬 좁다. None이면 웨이퍼 q와 같은 이유
     # (랏 수 부족)로 낼 수 없었다는 뜻.
     interval_conformal_q_agg: float | None = None
+    target_provenance: dict[str, Any] | None = None
+    external_delivery_suppressed_reason: str | None = None
 
 
 class TargetPerformanceSchema(BaseModel):
@@ -576,6 +587,7 @@ class MeasurementExpansionResponse(BaseModel):
     show_full_card: bool
     priorities: list[FactorPrioritySchema] = Field(default_factory=list)
     new_factor_discoveries: list[NewFactorDiscoverySchema] = Field(default_factory=list)
+    target_provenance: dict[str, Any] | None = None
 
 
 RELIABILITY_THRESHOLDS_DISCLAIMER = (

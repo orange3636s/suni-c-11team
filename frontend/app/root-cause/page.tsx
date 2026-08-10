@@ -93,7 +93,7 @@ function formatAlarmCriteria(criteria: { target: number; sensitivity: number } |
 const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
-const RUN_STAGES = ["인자 스크리닝 중 (5개 타깃)", "Pareto 집계 중", "산점도 준비 중", "히트맵 집계 중", "계측 확대 시뮬레이션 중"];
+const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중", "산점도·Box Plot 준비 중", "히트맵 집계 중", "계측 확대 시뮬레이션 중"];
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
@@ -151,27 +151,41 @@ function ModerateTierCaption({ tier, eps2 }: { tier: ConfidenceTier; eps2: numbe
 async function fetchAllScatterData(
   dataset: string,
   paretoByTarget: Record<string, ParetoRankingResponse>,
+  onResult?: (result: {
+    key: string;
+    type: "numeric" | "categorical";
+    data: ScreeningScatterResponse | CategoricalScatterResponse;
+  }) => void,
 ): Promise<{
   scatterMap: Record<string, ScreeningScatterResponse>;
   categoricalMap: Record<string, CategoricalScatterResponse>;
 }> {
-  const fetched = await Promise.all(
-    TARGETS.flatMap((t) =>
-      (paretoByTarget[t]?.items ?? []).map(async (item) => {
-        const key = `${t}::${item.feature}`;
-        if (item.kind === "Config") {
-          return { key, type: "categorical" as const, data: await getScreeningScatterCategorical(dataset, t, item.feature) };
-        }
-        return { key, type: "numeric" as const, data: await getScreeningScatter(dataset, t, item.feature) };
-      }),
-    ),
+  const jobs = TARGETS.flatMap((t) =>
+    (paretoByTarget[t]?.items ?? []).map((item) => ({ target: t, item })),
   );
   const scatterMap: Record<string, ScreeningScatterResponse> = {};
   const categoricalMap: Record<string, CategoricalScatterResponse> = {};
-  for (const result of fetched) {
-    if (result.type === "categorical") categoricalMap[result.key] = result.data;
-    else scatterMap[result.key] = result.data;
-  }
+  let nextJob = 0;
+  const worker = async () => {
+    while (nextJob < jobs.length) {
+      const job = jobs[nextJob++];
+      const key = `${job.target}::${job.item.feature}`;
+      try {
+        if (job.item.kind === "Config") {
+          const data = await getScreeningScatterCategorical(dataset, job.target, job.item.feature);
+          categoricalMap[key] = data;
+          onResult?.({ key, type: "categorical", data });
+        } else {
+          const data = await getScreeningScatter(dataset, job.target, job.item.feature);
+          scatterMap[key] = data;
+          onResult?.({ key, type: "numeric", data });
+        }
+      } catch (error) {
+        console.warn(`개별 차트 로드 실패: ${key}`, error);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, Math.max(jobs.length, 1)) }, () => worker()));
   return { scatterMap, categoricalMap };
 }
 
@@ -430,11 +444,31 @@ function RootCauseContent() {
     const { dataset, paretoByTarget: restoredPareto } = analysis;
     void (async () => {
       try {
-        const { scatterMap, categoricalMap } = await fetchAllScatterData(dataset, restoredPareto);
+        await fetchAllScatterData(dataset, restoredPareto, (result) => {
+          if (cancelled) return;
+          setAnalysis((previous) => {
+            if (!previous || previous.dataset !== dataset) return previous;
+            return result.type === "categorical"
+              ? {
+                  ...previous,
+                  categoricalByKey: {
+                    ...previous.categoricalByKey,
+                    [result.key]: result.data as CategoricalScatterResponse,
+                  },
+                }
+              : {
+                  ...previous,
+                  scatterByKey: {
+                    ...previous.scatterByKey,
+                    [result.key]: result.data as ScreeningScatterResponse,
+                  },
+                };
+          });
+        });
         if (cancelled) return;
         setAnalysis((previous) =>
           previous && previous.dataset === dataset
-            ? { ...previous, scatterByKey: scatterMap, categoricalByKey: categoricalMap, pointsComplete: true }
+            ? { ...previous, pointsComplete: true }
             : previous,
         );
       } catch {
@@ -536,40 +570,85 @@ function RootCauseContent() {
     }, 1000);
     try {
       setRunStageIndex(1);
-      const paretoResults = await Promise.all(
+      const paretoResults = await Promise.allSettled(
         TARGETS.map((t) => getScreeningPareto(datasetId, t).then((response) => [t, response] as const)),
       );
-      const paretoMap: Record<string, ParetoRankingResponse> = Object.fromEntries(paretoResults);
+      const fulfilledPareto: Array<readonly [string, ParetoRankingResponse]> = [];
+      for (const result of paretoResults) {
+        if (result.status === "fulfilled") fulfilledPareto.push(result.value);
+      }
+      if (fulfilledPareto.length === 0) {
+        const firstFailure = paretoResults.find((result) => result.status === "rejected");
+        throw firstFailure?.reason ?? new Error("모든 타깃의 Pareto 분석이 실패했습니다.");
+      }
+      const paretoMap: Record<string, ParetoRankingResponse> = Object.fromEntries(fulfilledPareto);
+      const targetProvenance = fulfilledPareto.find(([, response]) => response.target_provenance)?.[1].target_provenance ?? null;
 
-      setRunStageIndex(2);
-      const { scatterMap, categoricalMap } = await fetchAllScatterData(datasetId, paretoMap);
-
-      setRunStageIndex(3);
-      // Warms the server-side cache with the same computation the
-      // heatmap will read -- not a second independent calculation, just
-      // a second (cheap, cached) round trip.
-      await getScreeningHeatmap(datasetId, "spearman").catch(() => {});
-
-      setRunStageIndex(4);
-      // '계측 확대 권고' 카드 (spec §B-7) -- 분석 실행 시 한 번만 계산해
-      // 결과에 포함시킨다. 실패해도 분석 자체는 이미 성공했으므로 카드
-      // 없이 나머지를 보여준다.
-      const measurementExpansion = await getMeasurementExpansion(datasetId).catch(() => null);
-
+      // Pareto가 준비되는 즉시 화면 골격을 연다. 이후 차트는 제한된
+      // 동시성으로 하나씩 도착하며, 개별 실패가 나머지 차트를 막지 않는다.
       setAnalysis({
         dataset: datasetId,
         createdAt: new Date().toISOString(),
         activeTarget,
         paretoByTarget: paretoMap,
-        scatterByKey: scatterMap,
-        categoricalByKey: categoricalMap,
-        pointsComplete: true,
-        measurementExpansion,
+        scatterByKey: {},
+        categoricalByKey: {},
+        pointsComplete: false,
+        measurementExpansion: null,
+        targetProvenance,
         alarmGradeByWaferId: null,
         alarmCriteria: null,
       });
-      setRunState("done");
       setAnalysisDataset(datasetId);
+
+      setRunStageIndex(2);
+      const scatterPromise = fetchAllScatterData(datasetId, paretoMap, (result) => {
+        setAnalysis((previous) => {
+          if (!previous || previous.dataset !== datasetId) return previous;
+          return result.type === "categorical"
+            ? {
+                ...previous,
+                categoricalByKey: {
+                  ...previous.categoricalByKey,
+                  [result.key]: result.data as CategoricalScatterResponse,
+                },
+              }
+            : {
+                ...previous,
+                scatterByKey: {
+                  ...previous.scatterByKey,
+                  [result.key]: result.data as ScreeningScatterResponse,
+                },
+              };
+        });
+      }).then(() => {
+        setAnalysis((previous) => previous && previous.dataset === datasetId ? { ...previous, pointsComplete: true } : previous);
+      });
+
+      setRunStageIndex(3);
+      const heatmapPromise = getScreeningHeatmap(datasetId, "spearman").catch((error) => {
+        console.warn("히트맵 캐시 준비 실패", error);
+      });
+
+      setRunStageIndex(4);
+      const measurementPromise = getMeasurementExpansion(datasetId)
+        .then((measurementExpansion) => {
+          setAnalysis((previous) => previous && previous.dataset === datasetId
+            ? {
+                ...previous,
+                measurementExpansion,
+                targetProvenance: previous.targetProvenance ?? measurementExpansion.target_provenance,
+              }
+            : previous);
+          return measurementExpansion;
+        })
+        .catch((error) => {
+          console.warn("계측 확대 권고 로드 실패", error);
+          return null;
+        });
+
+      const [, , measurementExpansion] = await Promise.all([scatterPromise, heatmapPromise, measurementPromise]);
+      setRunState("done");
       // 알람 심각도 삼각형 (spec §B) -- 부트스트랩 앙상블이라 수십 초가
       // 걸릴 수 있다(§A-1). 위 setAnalysis를 붙잡아 두면 이미 준비된
       // 산점도/Pareto까지 그만큼 늦게 보이므로, 별도 요청으로 분리해
@@ -608,6 +687,7 @@ function RootCauseContent() {
         activeTarget,
         paretoByTarget: paretoMap,
         measurementExpansion,
+        targetProvenance,
         snapshotVersion: ANALYSIS_SNAPSHOT_VERSION,
       }).catch(() => {});
     } catch (failure) {
@@ -628,6 +708,7 @@ function RootCauseContent() {
   // "알람 마커 기준: 목표 91.0% · 민감도 0.50" -- 모든 ScatterChart 인스턴스가
   // 같은 문자열을 공유한다(카드마다 다시 계산하지 않는다).
   const alarmCriteriaLabel = formatAlarmCriteria(analysis?.alarmCriteria);
+  const analysisVisible = analysis != null && (runState === "running" || runState === "done");
 
   const activeParetoResponse = paretoByTarget[activeTarget];
   const activeParetoItems: ParetoRankingItem[] = useMemo(
@@ -640,6 +721,9 @@ function RootCauseContent() {
   // 백엔드에서 ε² 내림차순 top-5로 내려온다).
   const significantDisplayFactors = useMemo(() => selectDisplayFactors(activeParetoItems), [activeParetoItems]);
   const displayFactors = chartCriterion === "significant" ? significantDisplayFactors : activeParetoItems.slice(0, 3);
+  const activeTargetIsEmpty = Boolean(
+    analysisVisible && activeParetoResponse && activeParetoResponse.items.length === 0,
+  );
   // 이 타깃에서 그릴 차트가 0개인지 (spec §A-4) -- "유의한 인자만" 필터
   // 결과 자체가 비어있는지로 판단한다 (약함만 있고 강함·보통이 0개인
   // 경우도 포함해야 하므로, effect_size_pass_count처럼 약함까지 세는
@@ -651,7 +735,7 @@ function RootCauseContent() {
   // 반복하지 않고 통합 안내 하나만 보여준다.
   const allTargetsHaveNoChart =
     chartCriterion === "significant" &&
-    runState === "done" &&
+    analysisVisible &&
     TARGETS.every((t) => {
       const items = paretoByTarget[t]?.items ?? [];
       return items.length > 0 && selectDisplayFactors(items).length === 0;
@@ -983,16 +1067,22 @@ function RootCauseContent() {
         )}
       </section>
 
+      {analysisVisible && analysis.targetProvenance?.uses_predictions && (
+        <p className="analysisDataNotice" role="note">
+          이 분석은 실측값이 없는 항목을 모델 예측값으로 보완해 계산했습니다. 예측값 기반 관계는 실제 공정 원인과 다를 수 있으므로 공정 검증과 함께 사용해 주세요. 모델 {analysis.targetProvenance.model_version ?? analysis.targetProvenance.model_id ?? "정보 없음"} · 예측 {analysis.targetProvenance.predicted_target_cells.toLocaleString()}셀 · 실측/예측 혼합 행 {analysis.targetProvenance.mixed_rows.toLocaleString()}개
+        </p>
+      )}
+
       <HeatmapParetoSection
         datasetId={datasetId}
-        enabled={runState === "done"}
+        enabled={analysisVisible}
         activeTarget={activeTarget}
         onActiveTargetChange={selectTarget}
         onHeatmapCellSelect={handleHeatmapSelect}
         criterionControl={<ChartCriterionToggle value={chartCriterion} onChange={setChartCriterion} />}
       />
 
-      {runState === "done" && (
+      {analysisVisible && (
         <>
           {quickLook && (
             <article id="heatmapQuickLook" className="resultCard factorChartCard">
@@ -1074,7 +1164,20 @@ function RootCauseContent() {
             </article>
           )}
 
-          {allTargetsHaveNoChart && datasetNoChartStats ? (
+          {activeTargetIsEmpty && activeParetoResponse ? (
+            <section className="resultCard noChartMessage">
+              <h2>{activeTarget} 분석 인자가 없습니다</h2>
+              <p className="noChartStats">
+                분석 가능한 타깃 표본 {activeParetoResponse.analyzable_target_samples?.toLocaleString() ?? "0"}개 · 모델 {activeParetoResponse.model_available ? "사용 가능" : "사용 불가"}
+                <br />
+                {activeParetoResponse.factor_measurement_insufficient
+                  ? "공정 인자의 유효 계측 표본이 부족합니다."
+                  : "현재 데이터에서 순위를 계산할 수 있는 인자가 없습니다."}
+              </p>
+              <p className="noChartStats">모델 상태와 데이터의 R/D/Config 계측값을 확인한 뒤 다시 분석해 주세요.</p>
+              <button type="button" className="button" onClick={() => void runAnalysis()}>다시 분석</button>
+            </section>
+          ) : allTargetsHaveNoChart && datasetNoChartStats ? (
             // 전 타깃이 0개(spec §A-4) -- killing_event처럼 타깃별 안내를
             // 5번 반복하지 않고 상단에 한 번만 표시한다.
             <section className="resultCard noChartMessage">

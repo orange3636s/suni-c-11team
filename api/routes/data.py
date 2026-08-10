@@ -51,6 +51,7 @@ from api.schemas.data import (
 from api.schemas.jobs import TrainJobAccepted, TrainJobResult, TrainJobStatus
 from api.settings import settings
 from src.analysis.screening.schema import parse_schema
+from src.analysis.target_hydration import invalidate_target_hydration_cache
 from src.data_validation import load_data_schema, validate_dataframe
 from src.dataset_normalization import normalize_dataset
 from src.ml.dataset import (
@@ -956,6 +957,7 @@ def delete_model(model_id: str) -> ModelDeleteResponse:
         # mutated by model deletion.
         counts_before = store.model_reference_counts(model_id)
         result = delete_model_bundle(model_id, MODEL_DIR)
+        invalidate_target_hydration_cache()
         return ModelDeleteResponse(
             model_id=model_id,
             deleted_files=result.deleted_files,
@@ -997,5 +999,4 @@ def delete_model(model_id: str) -> ModelDeleteResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="모델 삭제 중 서버 내부 오류가 발생했습니다.",
         ) from exc
-
 

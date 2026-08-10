@@ -42,7 +42,15 @@ def _send_with_retry(send_fn: Callable[[], tuple[bool, str | None]]) -> tuple[bo
     return False, last_error
 
 
-def _filter_new_alarms(store: RuntimeStore, dataset_id: str, channel: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _filter_new_alarms(
+    store: RuntimeStore,
+    dataset_id: str,
+    channel: str,
+    candidates: list[dict[str, Any]],
+    *,
+    model_version: str = "",
+    criteria_version: str = "",
+) -> list[dict[str, Any]]:
     """§C-7 + D-7: 동일 (dataset, wafer, grade, channel) 조합은 24시간 내
     재발송하지 않는다 -- 채널별로 따로 추적한다. channel을 빼면 한
     채널만 성공해도 (dataset, wafer, grade)가 "발송 완료"로 찍혀,
@@ -50,7 +58,13 @@ def _filter_new_alarms(store: RuntimeStore, dataset_id: str, channel: str, candi
     악화된 경우(예: 주의 -> 심각)는 예외로 다시 보낸다.
     """
     since = (datetime.now(timezone.utc) - timedelta(hours=DEDUP_WINDOW_HOURS)).isoformat()
-    recent = store.recent_notifications(dataset_id, since, channel=channel)
+    recent = store.recent_notifications(
+        dataset_id,
+        since,
+        channel=channel,
+        model_version=model_version,
+        criteria_version=criteria_version,
+    )
     recent_by_wafer: dict[str, set[str]] = {}
     for entry in recent:
         recent_by_wafer.setdefault(entry["wafer_id"], set()).add(entry["grade"])
@@ -114,6 +128,8 @@ def _send_to_all_channels(
     source_note: str | None = None,
     target_yield: float = DEFAULT_TARGET_YIELD,
     sensitivity: float = DEFAULT_SENSITIVITY,
+    model_version: str = "",
+    criteria_version: str = "",
 ) -> tuple[dict[str, dict[str, Any]], set[tuple[str, str]], set[tuple[str, str]]]:
     """D-7: 채널마다 자기 24시간 dedupe 기준으로 자기만의 발송 대상을
     다시 추린다 -- 채널 하나가 이미 성공한 (wafer, grade)라도 다른
@@ -129,7 +145,14 @@ def _send_to_all_channels(
     sent_keys: set[tuple[str, str]] = set()
 
     def _dispatch_one(channel: str, send_fn: Callable[[AlarmNotificationPayload], tuple[bool, str | None]]) -> None:
-        to_send = _filter_new_alarms(store, dataset_id, channel, candidates)
+        to_send = _filter_new_alarms(
+            store,
+            dataset_id,
+            channel,
+            candidates,
+            model_version=model_version,
+            criteria_version=criteria_version,
+        )
         if not to_send:
             results[channel] = {"ok": True, "error": None, "sent_count": 0}
             return
@@ -142,7 +165,11 @@ def _send_to_all_channels(
         results[channel] = {"ok": ok, "error": error, "sent_count": len(to_send) if ok else 0}
         if ok:
             store.record_notifications_sent(
-                dataset_id, [(item["lot_wafer_id"], item["grade"]) for item in to_send], channel=channel
+                dataset_id,
+                [(item["lot_wafer_id"], item["grade"]) for item in to_send],
+                channel=channel,
+                model_version=model_version,
+                criteria_version=criteria_version,
             )
             sent_keys.update((item["lot_wafer_id"], item["grade"]) for item in to_send)
 
@@ -188,6 +215,8 @@ def dispatch_alarm_notifications(
     source_note: str | None = None,
     target_yield: float = DEFAULT_TARGET_YIELD,
     sensitivity: float = DEFAULT_SENSITIVITY,
+    model_version: str = "",
+    criteria_version: str = "",
 ) -> dict[str, Any]:
     """`alarms`의 각 원소는 {lot_wafer_id, risk_percentile, grade, reason}
     형태다 (알람 판정 GBDT 전환 §A-3의 알람 목록 항목과 동일한 필드).
@@ -244,6 +273,8 @@ def dispatch_alarm_notifications(
             source_note=source_note,
             target_yield=target_yield,
             sensitivity=sensitivity,
+            model_version=model_version,
+            criteria_version=criteria_version,
         )
 
         if not results:

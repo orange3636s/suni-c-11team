@@ -67,11 +67,43 @@ export type DatasetUploadResponse = {
   // AG-2: Y 계열 감지 여부 -- true면 "학습에 사용하려면 모델 학습·
   // 자동화에서 실행하세요" 안내를 띄운다(자동 학습은 절대 걸지 않는다).
   has_target_columns?: boolean;
+  target_status?: TargetStatus | null;
+};
+
+export type TargetStatus = {
+  state: "missing_columns" | "all_missing" | "partial" | "complete";
+  present_columns: string[];
+  missing_columns: string[];
+  valid_cell_count: number;
+  total_cell_count: number;
+  message: string;
+};
+
+export type TargetProvenance = {
+  dataset_id: string;
+  dataset_version: string;
+  hydration_version: string;
+  model_id: string | null;
+  model_version: string | null;
+  predicted_at: string | null;
+  measured_rows: number;
+  predicted_rows: number;
+  mixed_rows: number;
+  measured_target_cells: number;
+  predicted_target_cells: number;
+  derived_y_rows: number;
+  uses_predictions: boolean;
+  cache_hit: boolean;
+  warnings: string[];
+  warning_counts: Record<string, number>;
+  source_status: TargetStatus;
+  feature_coverage: Record<string, unknown>;
 };
 
 export type DatasetSchemaResponse = {
   dataset_id: string;
   steps_present: number[];
+  config_steps: number[];
   max_step: number;
   r_columns: string[];
   d_columns: string[];
@@ -81,6 +113,7 @@ export type DatasetSchemaResponse = {
   missing_rates: Record<string, number>;
   r_measurement_rate: number | null;
   d_measurement_rate: number | null;
+  target_status: TargetStatus;
 };
 
 export type RelationShape = "monotonic_increasing" | "monotonic_decreasing" | "u_shape" | "unclear";
@@ -193,6 +226,7 @@ export type ScreeningScatterResponse = {
   axis: { x_label: string; y_label: string };
   /** null for Config factors (no numeric x to fit either method on). */
   methods: MethodComparison | null;
+  target_provenance: TargetProvenance | null;
 };
 
 export type CategoricalGroup = {
@@ -214,6 +248,7 @@ export type CategoricalScatterResponse = {
   confidence_tier: ConfidenceTier;
   n: number;
   axis: { x_label: string; y_label: string };
+  target_provenance: TargetProvenance | null;
 };
 
 /** 알람 판정 GBDT 전환 (spec §A-2) -- 관리한계 이탈량이 아니라 부트스트랩
@@ -229,6 +264,7 @@ export type AlarmItem = {
    * 않는다 (spec §A-3: 오차가 Y 표준편차의 72~80%). */
   risk_percentile: number;
   reason: string;
+  target_source: string;
 };
 
 export type AlarmListResponse = {
@@ -240,10 +276,12 @@ export type AlarmListResponse = {
   evaluated_total: number;
   alarm_share_warning: boolean;
   // 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- auc_gate_passed가
-  // false면 items/total/alarm_total 모두 0이다.
+  // false면 외부 발송만 차단된다. 화면 위험도는 계속 제공된다.
   auc_lower_bound: number | null;
   auc_gate_passed: boolean;
   auc_gate_threshold: number;
+  target_provenance: TargetProvenance | null;
+  external_delivery_suppressed_reason: string | null;
 };
 
 export type ReliabilityGrade = "높음" | "보통" | "낮음";
@@ -338,6 +376,7 @@ export type WaferPrediction = {
   pred_lo: number;
   pred_hi: number;
   reason: string | null;
+  target_source: "measured" | "derived_measured" | "predicted" | string;
 };
 
 export type AlertsDataResponse = {
@@ -361,6 +400,7 @@ export type AlertsDataResponse = {
   // 항상 일치한다.
   auc_lower_bound: number | null;
   auc_gate_passed: boolean;
+  display_prediction_allowed: boolean;
   auc_gate_threshold: number;
   // 예측 구간 conformal 캘리브레이션 (spec §BA-4) -- "구간을 믿어도
   // 되는지"를 화면 하단에 보여주는 근거. interval_coverage_actual은
@@ -374,6 +414,8 @@ export type AlertsDataResponse = {
   // 과대평가한다(랏 블록 부트스트랩으로 별도 산출, 항상 웨이퍼 q보다
   // 훨씬 좁다). null이면 웨이퍼 q와 같은 이유(랏 수 부족)로 못 낸 것.
   interval_conformal_q_agg: number | null;
+  target_provenance: TargetProvenance | null;
+  external_delivery_suppressed_reason: string | null;
 };
 
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";
@@ -401,6 +443,10 @@ export type ParetoRankingResponse = {
   effect_size_pass_count: number;
   max_eps2: number | null;
   items: ParetoRankingItem[];
+  analyzable_target_samples?: number;
+  model_available?: boolean;
+  factor_measurement_insufficient?: boolean;
+  target_provenance: TargetProvenance | null;
 };
 
 // FMEA 분석표 (모니터링 홈, 지시서 IA) -- 백엔드가 이미 상위 7개로 걸러
@@ -446,6 +492,7 @@ export type FmeaTablePayload = {
   measurement_shortage_wafers: number;
   correlation_shortage_wafers: number;
   items: FmeaFactorItem[];
+  target_provenance: TargetProvenance | null;
 };
 
 export type HeatmapMetric = "spearman" | "eps2";
@@ -465,6 +512,7 @@ export type HeatmapResponse = {
   tier: Array<Array<ConfidenceTier | null>>;
   scale: { min: number; max: number };
   excluded_configs: number;
+  target_provenance: TargetProvenance | null;
 };
 
 export type TargetPerformance = {
@@ -547,6 +595,7 @@ export type LatestAnalysisPayload = {
   activeTarget: string;
   paretoByTarget: Record<string, ParetoRankingResponse>;
   measurementExpansion?: MeasurementExpansionResponse | null;
+  targetProvenance?: TargetProvenance | null;
   // 지시서 JA-1: 프런트는 이 필드를 절대 채워 보내지 않는다 -- 서버가
   // POST /api/state/analysis 저장 시점에 채운다(api/routes/state.py의
   // `_with_fmea`). 그래서 hydrate() 쪽에서는 항상 값이 있고(JA-1 배포
@@ -631,6 +680,10 @@ export type RefreshSnapshotAlarmItem = {
   lot_id: string | null;
   grade: string;
   risk_percentile: number;
+  target_source: string;
+  model_id: string | null;
+  model_version: string | null;
+  criteria_version: string;
 };
 
 export type RefreshSnapshotAlarms = {
@@ -640,6 +693,9 @@ export type RefreshSnapshotAlarms = {
   counts: Record<"심각" | "위험" | "주의" | "정상" | "판별불가", number>;
   items_top: RefreshSnapshotAlarmItem[];
   total: number;
+  target_provenance: TargetProvenance | null;
+  decision_criteria_version: string;
+  external_delivery_suppressed_reason: string | null;
 };
 
 export type RefreshSnapshotMonitoring = {
@@ -659,6 +715,7 @@ export type RefreshSnapshot = {
     measurementExpansion: Record<string, unknown> | null;
     fmea: FmeaTablePayload | null;
     fmeaError: string | null;
+    target_provenance: TargetProvenance | null;
   };
   alarms: RefreshSnapshotAlarms;
   monitoring: RefreshSnapshotMonitoring;
@@ -668,6 +725,7 @@ export type RefreshSnapshot = {
 export type SnapshotResponse = {
   snapshot: RefreshSnapshot | null;
   stale_version: boolean;
+  stale_model: boolean;
 };
 
 // W-4: 첫 기동 부트스트랩(스냅샷이 아직 없을 때 1회 학습+분석) 진행
@@ -732,11 +790,13 @@ export type FavoriteListResponse = {
   items: FavoriteRecord[];
 };
 
-// 모니터링 홈 트리맵 -- Config 문자열은 서버에서 Model/EQ/Chamber로
-// 분해하지 않는다(원문 그대로). n<30 회색 처리, ±3%p 고정 색 스케일은
-// 프론트에서 처리한다(ConfigTreemap.tsx).
+// 모니터링 홈 트리맵 -- Model/EQ/Chamber 분해는 서버의 공통 Config
+// 파서가 담당한다. 면적은 n, 색은 선택한 불량률 평균이다.
 export type ConfigTreemapGroup = {
   config: string;
+  model: string;
+  equipment: string;
+  chamber: string;
   n: number;
   mean: number;
   median: number;
@@ -747,6 +807,9 @@ export type ConfigTreemapGroup = {
 export type ConfigTreemapResponse = {
   dataset_id: string;
   step: number;
+  target: "Y" | "Y1" | "Y2" | "Y3" | "Y4" | "Y5";
+  target_label: string;
+  deprecated_target: boolean;
   overall_mean: number;
   groups: ConfigTreemapGroup[];
   // C-3: 이 스텝 Config가 최종 수율과의 ANOVA eps² + BH-FDR을 통과했는지 --
@@ -754,6 +817,8 @@ export type ConfigTreemapResponse = {
   // 있었는데도 지금까지 빌드가 통과한 건 우연이 아니라 실제 누락된
   // 버그였다 -- 여기서 바로잡는다.
   significant: boolean;
+  empty_reason: string | null;
+  target_provenance: TargetProvenance | null;
 };
 
 export type FactorPriority = {
@@ -783,5 +848,6 @@ export type MeasurementExpansionResponse = {
   show_full_card: boolean;
   priorities: FactorPriority[];
   new_factor_discoveries: NewFactorDiscovery[];
+  target_provenance: TargetProvenance | null;
 };
 

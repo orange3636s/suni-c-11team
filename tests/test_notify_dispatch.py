@@ -116,6 +116,67 @@ def test_duplicate_within_24h_is_skipped(monkeypatch):
         _cleanup(path)
 
 
+def test_model_or_criteria_version_change_gets_a_new_dedupe_scope(monkeypatch):
+    store, path = _store()
+    try:
+        _connect_slack(store)
+        monkeypatch.setattr(dispatch.senders, "send_slack_alarm", lambda *a, **k: (True, None))
+        common = dict(
+            store=store,
+            trigger=settings_store.TIMING_ON_ANALYSIS,
+            dataset_id="eval-dataset",
+            dataset_label="eval.csv",
+            alarms=[_alarm()],
+            reliability_grade="높음",
+            reliability_score=85,
+        )
+        first = dispatch.dispatch_alarm_notifications(
+            **common, model_version="model-a", criteria_version="criteria-v1"
+        )
+        same = dispatch.dispatch_alarm_notifications(
+            **common, model_version="model-a", criteria_version="criteria-v1"
+        )
+        new_model = dispatch.dispatch_alarm_notifications(
+            **common, model_version="model-b", criteria_version="criteria-v1"
+        )
+        new_criteria = dispatch.dispatch_alarm_notifications(
+            **common, model_version="model-b", criteria_version="criteria-v2"
+        )
+        assert first["skipped"] is False
+        assert same["skipped"] is True
+        assert new_model["skipped"] is False
+        assert new_criteria["skipped"] is False
+    finally:
+        _cleanup(path)
+
+
+def test_alert_snapshots_are_append_only_and_keep_model_provenance():
+    store, path = _store()
+    try:
+        first_id = store.save_alert_snapshot(
+            dataset_id="eval-a",
+            model_id="model-a",
+            model_version="pipeline-a",
+            criteria_version="criteria-v1",
+            payload={"items_top": [{"lot_wafer_id": "W1", "target_source": "predicted"}]},
+            created_at="2026-08-10T00:00:00+00:00",
+        )
+        second_id = store.save_alert_snapshot(
+            dataset_id="eval-a",
+            model_id="model-b",
+            model_version="pipeline-b",
+            criteria_version="criteria-v2",
+            payload={"items_top": []},
+            created_at="2026-08-10T01:00:00+00:00",
+        )
+        history = store.list_alert_snapshots()
+        assert [item["snapshot_id"] for item in history] == [second_id, first_id]
+        assert history[1]["model_id"] == "model-a"
+        assert history[1]["payload"]["items_top"][0]["target_source"] == "predicted"
+    finally:
+        _cleanup(path)
+
+
 def test_escalated_grade_resends_within_24h(monkeypatch):
     store, path = _store()
     try:

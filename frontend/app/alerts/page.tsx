@@ -370,7 +370,7 @@ function AlertsContent() {
     return classifyAll(data.predictions, {
       target: targetYieldForClassify,
       sensitivity: sensitivityForClassify,
-      gatePassed: data.auc_gate_passed,
+      gatePassed: data.display_prediction_allowed,
     });
   }, [data, targetYieldForClassify, sensitivityForClassify]);
 
@@ -529,6 +529,11 @@ function AlertsContent() {
           </p>
         )}
         {error && <p className="errorMessage">{error}</p>}
+        {data?.target_provenance?.uses_predictions && (
+          <p className="analysisDataNotice" role="note">
+            이 화면은 실측값이 없는 항목을 모델 예측값으로 보완해 판정했습니다. 예측값 기반 위험도는 실제 공정 결과와 다를 수 있으므로 공정 검증과 함께 사용해 주세요. 모델 {data.target_provenance.model_version ?? data.target_provenance.model_id ?? "정보 없음"} · 예측 {data.target_provenance.predicted_target_cells.toLocaleString()}셀
+          </p>
+        )}
         {data && mismatchWarning && (
           <div className="alertsMismatchWarning">
             <strong>⚠ 목표 수율 {targetYield.toFixed(1)}%가 이 데이터셋의 분포와 맞지 않습니다.</strong>
@@ -548,7 +553,7 @@ function AlertsContent() {
       {data && (
         <FiveClassGrid
           summary={classSummary}
-          gatePassed={data.auc_gate_passed}
+          gatePassed={data.display_prediction_allowed}
           aucLowerBound={data.auc_lower_bound}
           aucGateThreshold={data.auc_gate_threshold}
           coverageTarget={data.interval_coverage_target}
@@ -563,7 +568,7 @@ function AlertsContent() {
             <h2>알림 기록 ({gradeFilteredAlarmItems.length}건)</h2>
           </div>
           <div className="alertsAlarmListActions">
-            {data?.auc_gate_passed && gradeFilteredAlarmItems.length > 0 && (
+            {data?.display_prediction_allowed && gradeFilteredAlarmItems.length > 0 && (
               <div className="fieldGroup">
                 <span>등급</span>
                 <select value={gradeFilter} onChange={(event) => setGradeFilter(event.target.value)}>
@@ -574,7 +579,7 @@ function AlertsContent() {
                 </select>
               </div>
             )}
-            {data?.auc_gate_passed && alarmTable.sorted.length > 0 && (
+            {data?.display_prediction_allowed && alarmTable.sorted.length > 0 && (
               <button
                 type="button"
                 className="button secondary"
@@ -585,7 +590,7 @@ function AlertsContent() {
             )}
           </div>
         </div>
-        {data && data.auc_gate_passed && gradeFilteredAlarmItems.length > 0 && (
+        {data && data.display_prediction_allowed && gradeFilteredAlarmItems.length > 0 && (
           <TableToolbar
             search={alarmTable.search}
             onSearchChange={alarmTable.setSearch}
@@ -598,7 +603,7 @@ function AlertsContent() {
         {loading && <p className="emptyMessage">불러오는 중…</p>}
         {!loading && data && !data.auc_gate_passed && (
           <div className="alarmGateBanner">
-            <strong>이 데이터셋에서는 알람을 제공하지 않습니다</strong>
+            <strong>화면에는 위험도를 표시하지만 외부 알림은 보내지 않습니다</strong>
             <p>
               {data.auc_lower_bound != null ? (
                 <>
@@ -609,11 +614,11 @@ function AlertsContent() {
                 "알람 순위 품질(AUC)을 산출할 수 없습니다 (표본 부족)."
               )}
               <br />
-              불량률 변동이 계측 인자로 설명되지 않아 위험 wafer를 구분할 수 없습니다. 정상·판별불가는 계속 계산됩니다.
+              {data.external_delivery_suppressed_reason ?? "알람 신뢰도 근거가 부족해 외부 발송을 차단했습니다."}
             </p>
           </div>
         )}
-        {!loading && data && data.auc_gate_passed && (
+        {!loading && data && data.display_prediction_allowed && (
           <>
             {alarmItems.length === 0 && (
               <p className="emptyMessage">
@@ -1090,4 +1095,3 @@ function FiveClassGrid({
     </section>
   );
 }
-

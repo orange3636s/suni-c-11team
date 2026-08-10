@@ -12,6 +12,7 @@ import pandas as pd
 
 from api.routes.monitoring import _is_config_significant
 from src.analysis.screening.schema import Schema
+from src.config_parser import parse_config_hierarchy_value
 
 
 def _synthetic_df(seed: int = 0) -> pd.DataFrame:
@@ -31,6 +32,25 @@ def _synthetic_df(seed: int = 0) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def test_server_config_parser_returns_canonical_hierarchy():
+    parsed = parse_config_hierarchy_value("Step16_Config", "Step16_Model3_EQB_CH4")
+    assert parsed == {
+        "step": 16,
+        "model": "Model3",
+        "equipment": "EQB",
+        "chamber": "CH4",
+        "matched": True,
+    }
+
+
+def test_server_config_parser_keeps_legacy_value_under_unknown_hierarchy():
+    parsed = parse_config_hierarchy_value("Step7_Config", "legacy-machine-A")
+    assert parsed["model"] == "Unknown"
+    assert parsed["equipment"] == "Unknown"
+    assert parsed["chamber"] == "legacy-machine-A"
+    assert parsed["matched"] is False
 
 
 def test_real_effect_is_significant():

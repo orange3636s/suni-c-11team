@@ -18,6 +18,7 @@ from src.analysis.recommendations import _recommended_range_raw
 from src.analysis.screening.effect_size import eps2_categorical
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import benjamini_hochberg
+from src.config_parser import config_hierarchy_series
 
 DEFAULT_N_BOOT = 100
 
@@ -43,7 +44,7 @@ def _chamber_column(df: pd.DataFrame, config_col: str) -> pd.Series:
     """The chamber token (last '_'-separated segment) of a Config column's
     value, e.g. 'Step16_Model3_EQB_CH4' -> 'CH4'.
     """
-    return df[config_col].astype(str).str.split("_").str[-1]
+    return config_hierarchy_series(config_col, df[config_col], "chamber")
 
 
 def chamber_interaction_p(df: pd.DataFrame, feature: str, target: str, config_col: str) -> float | None:

@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
-from api.routes.analysis import _cached_reliability, compute_alarm_notification_items
+from api.routes.analysis import _auc_gate, _cached_reliability, compute_alarm_notification_items
 from api.routes.datasets import get_dataset_registry
 from api.schemas.notify import (
     ConditionsSaveRequest,
@@ -193,19 +193,30 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
     store = _store()
     alarms_state = get_latest_state(store).get("alarms")
     target, sensitivity = _target_sensitivity_from_payload((alarms_state or {}).get("payload"))
+    auc_lo, gate_passed = _auc_gate(body.train_dataset, body.eval_dataset)
+    if not gate_passed:
+        reason = (
+            f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
+            if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
+        )
+        store.record_refresh_dispatch(
+            new_alarm_count=0, blocked_reason=reason, summarized=False, channels={}, source="manual_dispatch"
+        )
+        return {"skipped": True, "reason": reason, "sent_count": None, "results": None}
     items = compute_alarm_notification_items(body.train_dataset, body.eval_dataset, target=target, sensitivity=sensitivity)
     if items is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.")
 
     reliability = _cached_reliability(body.train_dataset, body.eval_dataset)
     registry = get_dataset_registry()
-    summary = registry.get_summary(body.train_dataset)
-    dataset_label = summary["original_filename"] if summary else body.train_dataset
+    summary = registry.get_summary(body.eval_dataset)
+    dataset_label = summary["original_filename"] if summary else body.eval_dataset
+    active = store.active_model() or {}
 
     result = dispatch.dispatch_alarm_notifications(
         store,
         trigger=settings_store.TIMING_ON_ANALYSIS,
-        dataset_id=body.train_dataset,
+        dataset_id=body.eval_dataset,
         dataset_label=dataset_label,
         alarms=items,
         reliability_grade=reliability["grade"],
@@ -213,6 +224,8 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
         dashboard_url=body.dashboard_url,
         target_yield=target,
         sensitivity=sensitivity,
+        model_version=active.get("active_model_id") or "",
+        criteria_version=alarm_gbdt.ALARM_DECISION_VERSION,
     )
     return result
 
@@ -246,24 +259,38 @@ def _run_scheduled_dispatch_job(trigger: str, *, label: str) -> None:
         # 기준으로 판정한다.
         target, sensitivity = _target_sensitivity_from_payload(alarms_state.get("payload"))
 
+        auc_lo, gate_passed = _auc_gate(train_dataset, eval_dataset)
+        if not gate_passed:
+            reason = (
+                f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
+                if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
+            )
+            store.record_refresh_dispatch(
+                new_alarm_count=0, blocked_reason=reason, summarized=False, channels={}, source=label
+            )
+            return
+
         items = compute_alarm_notification_items(train_dataset, eval_dataset, target=target, sensitivity=sensitivity)
         if items is None:
             return
         reliability = _cached_reliability(train_dataset, eval_dataset)
         registry = get_dataset_registry()
-        summary = registry.get_summary(train_dataset)
-        dataset_label = summary["original_filename"] if summary else train_dataset
+        summary = registry.get_summary(eval_dataset)
+        dataset_label = summary["original_filename"] if summary else eval_dataset
+        active = store.active_model() or {}
 
         dispatch.dispatch_alarm_notifications(
             store,
             trigger=trigger,
-            dataset_id=train_dataset,
+            dataset_id=eval_dataset,
             dataset_label=dataset_label,
             alarms=items,
             reliability_grade=reliability["grade"],
             reliability_score=reliability["total_score"],
             target_yield=target,
             sensitivity=sensitivity,
+            model_version=active.get("active_model_id") or "",
+            criteria_version=alarm_gbdt.ALARM_DECISION_VERSION,
         )
     except Exception:
         logger.exception("%s 알림 발송 잡 실행 실패", label)

@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from api.settings import settings
+from src.analysis import alarm_gbdt
 from src.automation import sql_source
 from src.ml.dataset import has_target_column
 from src.runtime.datasets import DatasetRegistry, parse_uploaded_csv
@@ -140,6 +141,19 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
         "errors": errors,
     }
     store.save_refresh_snapshot(snapshot)
+    try:
+        alarm_provenance = alarms_block.get("target_provenance") or {}
+        store.save_alert_snapshot(
+            dataset_id=eval_dataset_id,
+            model_id=alarm_provenance.get("model_id"),
+            model_version=alarm_provenance.get("model_version"),
+            criteria_version=alarms_block.get("decision_criteria_version") or alarm_gbdt.ALARM_DECISION_VERSION,
+            payload=alarms_block,
+            created_at=now_iso,
+        )
+    except Exception:
+        logger.exception("auto_refresh: immutable 알람 스냅샷 저장 실패")
+        errors.append("알람 이력 스냅샷을 저장하지 못했습니다.")
     logger.info("auto_refresh: 스냅샷 저장 완료 mode=%s eval=%s", mode, eval_dataset_id)
 
     # -- 6. 신규 알람 자동 발송 (J-5) -- 별도 모듈, 게이트/발송 시점/
@@ -167,6 +181,8 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
             snapshot_created_at=now_iso,
             target_yield=alarms_block["target_yield"],
             sensitivity=alarms_block["sensitivity"],
+            model_version=(alarms_block.get("target_provenance") or {}).get("model_id") or "",
+            criteria_version=alarms_block.get("decision_criteria_version") or alarm_gbdt.ALARM_DECISION_VERSION,
         )
     except Exception:
         logger.exception("auto_refresh: 신규 알람 발송 처리 실패")
@@ -412,6 +428,10 @@ def _analyze_and_score(
         "measurementExpansion": measurement_expansion,
         "fmea": fmea,
         "fmeaError": fmea_error,
+        "target_provenance": next(
+            (payload.get("target_provenance") for payload in pareto_by_target.values() if payload.get("target_provenance")),
+            None,
+        ),
     }
 
     # 알람 판정 -- 저장된 목표 수율·민감도를 그대로 따른다(A-3 원칙과
@@ -431,7 +451,7 @@ def _analyze_and_score(
         # 받지 않는다(판정이 점추정 기준으로 바뀌며 sigma 계산이 없어짐,
         # spec §CA-1).
         registry.get_dataframe(train_dataset_for_alarms)
-        scored, auc_lo, gate_passed = _scored_wafers(
+        scored, auc_lo, gate_passed, alarm_provenance = _scored_wafers(
             train_dataset_for_alarms, eval_dataset_id, eval_df,
             target=target_yield, sensitivity=sensitivity,
         )
@@ -454,6 +474,10 @@ def _analyze_and_score(
             "lot_id": item.lot_id,
             "grade": item.grade,
             "risk_percentile": item.risk_percentile,
+            "target_source": item.target_source,
+            "model_id": alarm_provenance.get("model_id"),
+            "model_version": alarm_provenance.get("model_version"),
+            "criteria_version": alarm_gbdt.ALARM_DECISION_VERSION,
         }
         for item in alarm_items[:200]
     ]
@@ -464,6 +488,14 @@ def _analyze_and_score(
         "counts": counts,
         "items_top": items_top,
         "total": len(alarm_items),
+        "target_provenance": alarm_provenance,
+        "decision_criteria_version": alarm_gbdt.ALARM_DECISION_VERSION,
+        "external_delivery_suppressed_reason": (
+            None if gate_passed else (
+                f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
+                if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
+            )
+        ),
     }
     # spec §BC-2: 계측 없이 등급이 매겨진 wafer는 사유를 댈 수 없으므로
     # 자동 발송(dispatch_new_alarms) 대상에서 제외한다 -- alarms_block/
@@ -475,6 +507,10 @@ def _analyze_and_score(
             "grade": item.grade,
             "risk_percentile": item.risk_percentile,
             "reason": "",
+            "target_source": item.target_source,
+            "model_id": alarm_provenance.get("model_id"),
+            "model_version": alarm_provenance.get("model_version"),
+            "criteria_version": alarm_gbdt.ALARM_DECISION_VERSION,
         }
         for item in alarm_items
         if item.measured
@@ -487,11 +523,10 @@ def _analyze_and_score(
 def _build_monitoring_block(
     scored: list[Any], target_yield: float, measurement_expansion: dict[str, Any] | None, errors: list[str]
 ) -> dict[str, Any]:
-    measured = [item for item in scored if item.measured]
-    if measured:
-        point = float(np.mean([item.pred_mean for item in measured]))
-        lo = float(np.mean([item.pred_lo for item in measured]))
-        hi = float(np.mean([item.pred_hi for item in measured]))
+    if scored:
+        point = float(np.mean([item.pred_mean for item in scored]))
+        lo = float(np.mean([item.pred_lo for item in scored]))
+        hi = float(np.mean([item.pred_hi for item in scored]))
     else:
         point = lo = hi = None
     gap = None

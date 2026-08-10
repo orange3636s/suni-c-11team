@@ -26,7 +26,7 @@ PROMOTION_TOLERANCE = 0.005
 # 백엔드 로직이 바뀐 뒤에도 옛 스냅샷이 새 화면을 덮어쓴다).
 # v4: analysis 블록에 FMEA 분석표(fmea)가 추가됐다 -- 모니터링 홈 재편
 # (지시서 IA)로 옛 스냅샷에는 이 키가 없다.
-REFRESH_SNAPSHOT_SCHEMA_VERSION = 4
+REFRESH_SNAPSHOT_SCHEMA_VERSION = 5
 REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
 
 # W-2/W-6: 첫 기동 스냅샷 부트스트랩 -- 단일 실행 잠금과 진행 상태를
@@ -169,7 +169,10 @@ class RuntimeStore:
                     dataset_id TEXT NOT NULL,
                     wafer_id TEXT NOT NULL,
                     grade TEXT NOT NULL,
-                    sent_at TEXT NOT NULL
+                    sent_at TEXT NOT NULL,
+                    channel TEXT NOT NULL DEFAULT '',
+                    model_version TEXT NOT NULL DEFAULT '',
+                    criteria_version TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_notify_sent_log_lookup
                 ON notify_sent_log(dataset_id, wafer_id, sent_at DESC);
@@ -202,6 +205,17 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_refresh_dispatch_log_created
                 ON refresh_dispatch_log(created_at DESC);
+                CREATE TABLE IF NOT EXISTS alert_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    model_id TEXT,
+                    model_version TEXT,
+                    criteria_version TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_alert_snapshots_created
+                ON alert_snapshots(created_at DESC);
                 """
             )
             # D-7: notify_sent_log은 원래 채널 구분 없이 (dataset, wafer,
@@ -212,6 +226,14 @@ class RuntimeStore:
             existing_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notify_sent_log)")}
             if "channel" not in existing_columns:
                 connection.execute("ALTER TABLE notify_sent_log ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+            if "model_version" not in existing_columns:
+                connection.execute("ALTER TABLE notify_sent_log ADD COLUMN model_version TEXT NOT NULL DEFAULT ''")
+            if "criteria_version" not in existing_columns:
+                connection.execute("ALTER TABLE notify_sent_log ADD COLUMN criteria_version TEXT NOT NULL DEFAULT ''")
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS idx_notify_sent_log_dedupe
+                ON notify_sent_log(dataset_id, channel, model_version, criteria_version, wafer_id, sent_at DESC)"""
+            )
             # EB그룹: 발송/차단 이력에서 출처(수동 업로드/폴백 데모)를
             # 나중에 추적할 수 있도록 컬럼을 추가한다 -- 위와 같은 이유로
             # CREATE TABLE IF NOT EXISTS만으로는 기존 DB에 반영되지 않는다.
@@ -240,6 +262,12 @@ class RuntimeStore:
             if previous and previous != model_id:
                 rollbacks = [previous, *[item for item in rollbacks if item != previous]][:2]
             connection.execute("""UPDATE model_slots SET active_model_id=?,pipeline_version=?,promoted_at=?,dataset_version=?,previous_model_id=?,status='active',rollback_json=?,active_metadata_json=? WHERE singleton=1""", (model_id, pipeline_version, now, dataset_version, previous, self._json(rollbacks), self._json(metadata)))
+        if previous != model_id:
+            # Import lazily to keep RuntimeStore usable during low-level
+            # migrations without importing sklearn/model loading modules.
+            from src.analysis.target_hydration import invalidate_target_hydration_cache
+
+            invalidate_target_hydration_cache()
         return self.active_model() or {}
 
     def promote_if_better(
@@ -612,6 +640,10 @@ class RuntimeStore:
                 "SELECT COUNT(*) FROM runs WHERE model_id = ? AND event_type IN ('predict','prediction')",
                 (model_id,),
             ).fetchone()[0])
+            prediction_count += int(connection.execute(
+                "SELECT COUNT(*) FROM alert_snapshots WHERE model_id = ?",
+                (model_id,),
+            ).fetchone()[0])
             analysis_count = int(connection.execute(
                 "SELECT COUNT(*) FROM runs WHERE model_id = ? AND event_type IN ('explain','analyze','report')",
                 (model_id,),
@@ -741,25 +773,47 @@ class RuntimeStore:
     # -- 알림 발송 이력 (spec 알림 연동 §C-7: 동일 (dataset, wafer, grade) 조합은
     # 24시간 내 재발송하지 않는다) --
 
-    def recent_notifications(self, dataset_id: str, since_iso: str, *, channel: str) -> list[dict[str, Any]]:
+    def recent_notifications(
+        self,
+        dataset_id: str,
+        since_iso: str,
+        *,
+        channel: str,
+        model_version: str = "",
+        criteria_version: str = "",
+    ) -> list[dict[str, Any]]:
         """D-7: channel별로 조회한다 -- 채널을 구분하지 않으면 한 채널만
         성공해도 다른(실패한) 채널까지 24시간 동안 "이미 발송됨"으로
         보여 재시도되지 않는다."""
         with _lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT wafer_id, grade, sent_at FROM notify_sent_log WHERE dataset_id=? AND channel=? AND sent_at>=?",
-                (dataset_id, channel, since_iso),
+                """SELECT wafer_id, grade, sent_at FROM notify_sent_log
+                WHERE dataset_id=? AND channel=? AND model_version=? AND criteria_version=? AND sent_at>=?""",
+                (dataset_id, channel, model_version, criteria_version, since_iso),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def record_notifications_sent(self, dataset_id: str, entries: list[tuple[str, str]], *, channel: str) -> None:
+    def record_notifications_sent(
+        self,
+        dataset_id: str,
+        entries: list[tuple[str, str]],
+        *,
+        channel: str,
+        model_version: str = "",
+        criteria_version: str = "",
+    ) -> None:
         if not entries:
             return
         now = datetime.now(timezone.utc).isoformat()
         with _lock, self._connect() as connection:
             connection.executemany(
-                "INSERT INTO notify_sent_log (dataset_id, wafer_id, grade, sent_at, channel) VALUES (?,?,?,?,?)",
-                [(dataset_id, wafer_id, grade, now, channel) for wafer_id, grade in entries],
+                """INSERT INTO notify_sent_log
+                (dataset_id, wafer_id, grade, sent_at, channel, model_version, criteria_version)
+                VALUES (?,?,?,?,?,?,?)""",
+                [
+                    (dataset_id, wafer_id, grade, now, channel, model_version, criteria_version)
+                    for wafer_id, grade in entries
+                ],
             )
 
     def purge_old_notification_log(self, *, older_than_iso: str) -> int:
@@ -781,6 +835,49 @@ class RuntimeStore:
                 "SELECT COUNT(*) AS n FROM notify_sent_log WHERE sent_at >= ?", (since_iso,)
             ).fetchone()
         return int(row["n"]) if row else 0
+
+    def save_alert_snapshot(
+        self,
+        *,
+        dataset_id: str,
+        model_id: str | None,
+        model_version: str | None,
+        criteria_version: str,
+        payload: dict[str, Any],
+        created_at: str | None = None,
+    ) -> str:
+        """Append an immutable alert decision snapshot for audit/history."""
+        snapshot_id = f"alert_{uuid4().hex}"
+        timestamp = created_at or datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO alert_snapshots
+                (snapshot_id, created_at, dataset_id, model_id, model_version, criteria_version, payload_json)
+                VALUES (?,?,?,?,?,?,?)""",
+                (
+                    snapshot_id,
+                    timestamp,
+                    dataset_id,
+                    model_id,
+                    model_version,
+                    criteria_version,
+                    self._json(payload),
+                ),
+            )
+        return snapshot_id
+
+    def list_alert_snapshots(self, limit: int = 20) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM alert_snapshots ORDER BY created_at DESC LIMIT ?",
+                (min(max(limit, 1), 200),),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json") or "{}")
+            results.append(item)
+        return results
 
     # -- 자동 갱신 파이프라인 스냅샷 (J-3) --------------------------------
 
@@ -810,6 +907,20 @@ class RuntimeStore:
             return {"snapshot": None, "stale_version": False}
         if raw.get("schema_version") != REFRESH_SNAPSHOT_SCHEMA_VERSION:
             return {"snapshot": None, "stale_version": True}
+        snapshot_model = (
+            ((raw.get("analysis") or {}).get("target_provenance") or {}).get("model_id")
+            or (raw.get("model") or {}).get("champion_version")
+        )
+        active = self.active_model()
+        active_model = (active or {}).get("active_model_id")
+        if snapshot_model and active_model and snapshot_model != active_model:
+            return {
+                "snapshot": None,
+                "stale_version": False,
+                "stale_model": True,
+                "snapshot_model_id": snapshot_model,
+                "active_model_id": active_model,
+            }
         return {"snapshot": raw, "stale_version": False}
 
     def get_refresh_snapshot_meta(self) -> dict[str, Any] | None:

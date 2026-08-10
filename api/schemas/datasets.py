@@ -38,6 +38,7 @@ class DatasetUploadResponse(BaseModel):
     # AG-2: Y 계열 감지 여부 -- 프런트가 "학습에 사용하려면 모델 학습·
     # 자동화에서 실행하세요" 안내를 띄울지 결정한다.
     has_target_columns: bool = False
+    target_status: dict[str, Any] | None = None
 
 
 class DatasetDeleteResponse(BaseModel):
@@ -48,6 +49,7 @@ class DatasetDeleteResponse(BaseModel):
 class DatasetSchemaResponse(BaseModel):
     dataset_id: str
     steps_present: list[int]
+    config_steps: list[int]
     max_step: int
     r_columns: list[str]
     d_columns: list[str]
@@ -62,3 +64,4 @@ class DatasetSchemaResponse(BaseModel):
     # are computed the same way for symmetry).
     r_measurement_rate: float | None
     d_measurement_rate: float | None
+    target_status: dict[str, Any]

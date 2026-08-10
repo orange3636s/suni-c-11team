@@ -156,7 +156,13 @@ def _with_fmea(dataset: str, payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("fmea") is not None:
         return payload
     try:
-        payload = {**payload, "fmea": _fmea_payload(dataset, ALL_TARGET_COLUMNS), "fmeaError": None}
+        fmea = _fmea_payload(dataset, ALL_TARGET_COLUMNS)
+        payload = {
+            **payload,
+            "fmea": fmea,
+            "fmeaError": None,
+            "targetProvenance": fmea.get("target_provenance"),
+        }
     except Exception:
         logger.exception("분석 저장: FMEA 분석표 계산 실패 dataset=%s", dataset)
         payload = {**payload, "fmea": None, "fmeaError": "FMEA 분석표 계산 중 오류가 발생했습니다."}
@@ -277,4 +283,8 @@ def get_snapshot() -> dict[str, Any]:
     보여주지 않고, 다음 갱신 주기에 새 스키마로 다시 채워진다는 것을
     프런트가 안내할 수 있게 한다."""
     status = _store().get_refresh_snapshot_status()
-    return {"snapshot": status["snapshot"], "stale_version": status["stale_version"]}
+    return {
+        "snapshot": status["snapshot"],
+        "stale_version": status["stale_version"],
+        "stale_model": bool(status.get("stale_model")),
+    }

@@ -63,26 +63,35 @@ def eps2_numeric(
     min_n: int = 100,
 ) -> EffectSizeResult | None:
     """Effect size for a continuous factor (R or D column) against a target."""
-    frame = pd.DataFrame({"x": x, "y": y}).dropna()
-    if len(frame) < min_n:
+    # Keep the exact pairwise-deletion/qcut/ANOVA definition, but avoid a
+    # temporary two-column DataFrame plus a pandas groupby for every
+    # feature-target pair. A 1,000 x 88 analysis evaluates this path 440
+    # times (Y1..Y5), so those allocations dominated cold-cache latency.
+    valid = x.notna() & y.notna()
+    x_valid = x.loc[valid]
+    y_valid = y.loc[valid]
+    n_observed = len(x_valid)
+    if n_observed < min_n:
         return None
 
     try:
-        q = pd.qcut(frame["x"], bins, duplicates="drop")
+        q = pd.qcut(x_valid, bins, labels=False, duplicates="drop")
     except ValueError:
         return None
     if q.nunique() < 2:
         return None
 
-    groups = [g["y"].to_numpy() for _, g in frame.groupby(q, observed=True)]
+    q_values = q.to_numpy()
+    y_values = y_valid.to_numpy()
+    groups = [y_values[q_values == label] for label in np.unique(q_values)]
     eps2, p_value = _eps2_from_groups(groups)
 
     return EffectSizeResult(
         eps2=eps2,
         p_value=p_value,
-        n_observed=len(frame),
-        pearson_r=_safe_corr(stats.pearsonr, frame["x"], frame["y"]),
-        spearman_r=_safe_corr(stats.spearmanr, frame["x"], frame["y"]),
+        n_observed=n_observed,
+        pearson_r=_safe_corr(stats.pearsonr, x_valid, y_valid),
+        spearman_r=_safe_corr(stats.spearmanr, x_valid, y_valid),
         k_groups=len(groups),
     )
 
