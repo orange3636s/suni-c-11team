@@ -16,7 +16,6 @@ import type {
   LatestAnalysisPayload,
   LatestStateResponse,
   LatestTrainingPayload,
-  MeasurementExpansionResponse,
   ModelPerformanceResponse,
   NotificationConditions,
   NotificationSettingsSummary,
@@ -337,10 +336,6 @@ export function getScreeningPareto(dataset: string, target: string, topN?: numbe
   const params = new URLSearchParams({ dataset, target });
   if (topN != null) params.set("top_n", String(topN));
   return getJson(`/api/screening/pareto?${params.toString()}`);
-}
-
-export function getMeasurementExpansion(dataset: string): Promise<MeasurementExpansionResponse> {
-  return getJson(`/api/analysis/measurement-expansion?${new URLSearchParams({ dataset }).toString()}`);
 }
 
 export function getConfigTreemap(dataset: string, step: number, target = "Y1"): Promise<ConfigTreemapResponse> {

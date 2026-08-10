@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
-import { CONFIG_SCREENING_PASS_COUNT, CONFIG_SCREENING_TEST_COUNT } from "@/lib/fmeaActions";
+import { CONFIG_SCREENING_PASS_COUNT, CONFIG_SCREENING_TEST_COUNT } from "@/lib/fmeaFormat";
 import { getConfigTreemap, getDatasetSchema } from "@/lib/api";
 import type { ConfigTreemapResponse } from "@/types/data";
 

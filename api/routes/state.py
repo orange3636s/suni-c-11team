@@ -6,7 +6,7 @@ from typing import Any
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
-from api.routes.analysis import _fmea_payload
+from api.routes.analysis import _action_priority_payload, _fmea_payload
 from api.routes.datasets import get_dataset_registry
 from api.schemas.state import (
     ActivateDatasetRequest,
@@ -169,9 +169,25 @@ def _with_fmea(dataset: str, payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _with_action_priority(payload: dict[str, Any]) -> dict[str, Any]:
+    """MB/MC: 모니터링 홈 블록①·②는 항상 train.CSV 기준(작업 지시서
+    MB-6)이라 저장하려는 분석의 eval 데이터셋과 무관하다 -- `_with_fmea`와
+    같은 "이미 있으면 건너뛰고, 없으면 저장 시점에 채우고, 실패해도
+    나머지 저장은 막지 않는다" 정책을 따른다."""
+    if payload.get("actionPriority") is not None:
+        return payload
+    try:
+        action_priority = _action_priority_payload("train")
+        return {**payload, "actionPriority": action_priority, "actionPriorityError": None}
+    except Exception:
+        logger.exception("분석 저장: 조치 우선순위 계산 실패")
+        return {**payload, "actionPriority": None, "actionPriorityError": "조치 우선순위 계산 중 오류가 발생했습니다."}
+
+
 @router.post("/analysis", response_model=StateSaveResponse)
 def save_analysis_state(body: AnalysisStateSaveRequest) -> dict[str, bool]:
     payload = _with_fmea(body.dataset, body.payload)
+    payload = _with_action_priority(payload)
     saved = save_state(_store(), "analysis", dataset={"dataset": body.dataset}, payload=payload)
     return {"saved": saved}
 

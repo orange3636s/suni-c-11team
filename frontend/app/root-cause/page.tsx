@@ -32,7 +32,6 @@ import {
   dispatchAlarmNotifications,
   getDatasetSchema,
   getFavorites,
-  getMeasurementExpansion,
   getScreeningPareto,
   getScreeningScatter,
   getScreeningScatterCategorical,
@@ -64,7 +63,7 @@ const EMPTY_HEATMAP_CACHE: Record<string, HeatmapResponse> = {};
 // 카드 자체의 로딩 상태로 독립적으로 조회하고(analysis.heatmap 캐시에
 // 저장), 여기서 미리 fire-and-forget으로 불러 두던 호출은 결과를 어디에도
 // 쓰지 않는 중복 요청이었다.
-const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중", "산점도·Box Plot 준비 중", "계측 확대 시뮬레이션 중"];
+const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중", "산점도·Box Plot 준비 중"];
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
@@ -483,7 +482,6 @@ function RootCauseContent() {
         scatterByKey: {},
         categoricalByKey: {},
         pointsComplete: false,
-        measurementExpansion: null,
         targetProvenance,
         heatmap: {},
       });
@@ -513,24 +511,7 @@ function RootCauseContent() {
         setAnalysis((previous) => previous && previous.dataset === datasetId ? { ...previous, pointsComplete: true } : previous);
       });
 
-      setRunStageIndex(3);
-      const measurementPromise = getMeasurementExpansion(datasetId)
-        .then((measurementExpansion) => {
-          setAnalysis((previous) => previous && previous.dataset === datasetId
-            ? {
-                ...previous,
-                measurementExpansion,
-                targetProvenance: previous.targetProvenance ?? measurementExpansion.target_provenance,
-              }
-            : previous);
-          return measurementExpansion;
-        })
-        .catch((error) => {
-          console.warn("계측 확대 권고 로드 실패", error);
-          return null;
-        });
-
-      const [, measurementExpansion] = await Promise.all([scatterPromise, measurementPromise]);
+      await scatterPromise;
       setRunState("done");
       // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 신뢰도 게이트·
       // 중복 발송 방지·연결된 채널 유무는 전부 서버(dispatch_alarm_notifications)
@@ -544,11 +525,11 @@ function RootCauseContent() {
       // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을
       // 넘는다 -- 어차피 복원 직후 배경에서 fetchAllScatterData로 다시
       // 채우므로(위 useEffect), 서버에는 화면 목록 구성에 꼭 필요한
-      // Pareto와, 그 자체로 작은 계측 확대 권고 결과만 남긴다.
+      // Pareto만 남긴다. fmea/actionPriority는 프런트가 보내지 않는다
+      // -- 저장 시점에 서버(api/routes/state.py)가 채운다(JA-1).
       void saveAnalysisState(datasetId, {
         activeTarget,
         paretoByTarget: paretoMap,
-        measurementExpansion,
         targetProvenance,
         snapshotVersion: ANALYSIS_SNAPSHOT_VERSION,
       }).catch(() => {});

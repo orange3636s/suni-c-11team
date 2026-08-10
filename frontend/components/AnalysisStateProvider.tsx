@@ -6,19 +6,18 @@ import type { MonitoringSnapshot } from "@/lib/monitoringSource";
 import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
   AlertsDataResponse,
+  ActionPriorityPayload,
   BootstrapStatus,
   CategoricalScatterResponse,
   FmeaTablePayload,
   HeatmapResponse,
   ManualEvalOverride,
-  MeasurementExpansionResponse,
   ModelPerformanceResponse,
   NotificationSettingsSummary,
   ParetoRankingResponse,
   RefreshSnapshot,
   ScreeningScatterResponse,
   TargetProvenance,
-  YieldSummary,
 } from "@/types/data";
 
 // J-4: 60초 폴링 간격 -- "탭을 오가는 동안 갱신이 없으면 네트워크 요청이
@@ -87,12 +86,8 @@ export type AnalysisState = {
   // point-fill fetch) -- false right after a server restore, before that
   // fetch resolves.
   pointsComplete: boolean;
-  // '계측 확대 제안' 카드 (spec 문구 전수 검토 PART B) -- 분석 실행 시 한
-  // 번만 계산되어 여기 저장된다. null은 "아직 계산되지 않음"과 "계산에
-  // 실패함"을 구분하지 않는다 -- 두 경우 모두 카드를 그리지 않는다.
-  measurementExpansion: MeasurementExpansionResponse | null;
   targetProvenance: TargetProvenance | null;
-  // FMEA 분석표 (모니터링 홈, 지시서 IA/JA) -- 계산은 백엔드 전용
+  // FMEA 분석표 (모니터링 홈 블록③, 지시서 IA/JA) -- 계산은 백엔드 전용
   // (`src/analysis/screening/fmea.py`), 프런트는 절대 계산하지 않는다.
   // 자동 갱신 스냅샷(`src/automation/refresh.py`)과 수동 "다시 분석"
   // 저장(`POST /api/state/analysis`, `api/routes/state.py`의 `_with_fmea`)
@@ -102,6 +97,11 @@ export type AnalysisState = {
   // 분석하면 채워진다. `fmeaError`가 있으면 계산이 실패한 것이다.
   fmea?: FmeaTablePayload | null;
   fmeaError?: string | null;
+  // MB/MC: 모니터링 홈 블록①·② -- fmea와 같은 두 경로·같은 null 규칙을
+  // 따르지만 항상 train.CSV 기준이라 eval 데이터셋과 무관하다
+  // (`_with_action_priority`).
+  actionPriority?: ActionPriorityPayload | null;
+  actionPriorityError?: string | null;
   // TA그룹: 상관관계 히트맵 캐시 -- 탭을 오가는 동안(CorrelationHeatmap이
   // 언마운트/리마운트돼도) 재요청하지 않도록 scatterByKey와 같은 원리로
   // 이 컨텍스트에 보관한다. 키는 CorrelationHeatmap 내부와 동일한
@@ -133,12 +133,12 @@ export type AlarmsState = {
 // 재생성됨) 셋뿐이다.
 export type MonitoringHomeState = {
   cacheKey: string;
+  // 블록①②③(조치 우선순위·조치 가능 범위·데이터 한계)에 필요한 값은
+  // 전부 `snapshot.fmea`/`snapshot.actionPriority`에 이미 있다 -- MA-3
+  // 재설계 이전에는 수율 예측 API를 별도로 불러 yieldSummary를 함께
+  // 캐시했지만, 그 API 호출도(delete 대상 블록만 쓰던 필드였다) 더는
+  // 필요 없다.
   snapshot: MonitoringSnapshot;
-  // WB/WC/WD: 요약 카드·모드별 손실 막대·수율 분포 히스토그램의 서버
-  // 계산 결과 -- 같은 캐시 무효화 규칙(cacheKey)을 그대로 따른다. 설비
-  // 구성 트리맵은 WH그룹에서 별도 탭(Config별 트리맵)으로 옮겨져 이
-  // 캐시가 더 이상 들고 있지 않는다 -- 그 탭은 자체 캐시를 쓴다.
-  yieldSummary: YieldSummary | null;
 } | null;
 
 type AnalysisStateValue = {
@@ -207,10 +207,10 @@ type AnalysisStateValue = {
 // 이미 알고 있는 "복원됐지만 아직 좌표/원시 예측치는 없는" 모양
 // (pointsComplete:false, data:null)으로 채우므로, 각 화면의 기존
 // 배경-채움 이펙트(fetchAllScatterData 등)가 그대로 나머지를 채운다 --
-// 화면 쪽 렌더링 코드는 손대지 않는다. `paretoByTarget`/
-// `measurementExpansion`은 스냅샷과 저장된 결과 둘 다 같은 백엔드 함수
-// (`_pareto_payload`/`get_measurement_expansion`)로 만들어지므로 모양이
-// 같다.
+// 화면 쪽 렌더링 코드는 손대지 않는다. `paretoByTarget`/`fmea`/
+// `actionPriority`는 스냅샷과 저장된 결과 둘 다 같은 백엔드 함수
+// (`_pareto_payload`/`_fmea_payload`/`_action_priority_payload`)로
+// 만들어지므로 모양이 같다.
 function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
   const targets = Object.keys(snap.analysis.paretoByTarget ?? {});
   return {
@@ -221,10 +221,11 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
     scatterByKey: {},
     categoricalByKey: {},
     pointsComplete: false,
-    measurementExpansion: (snap.analysis.measurementExpansion as MeasurementExpansionResponse | null) ?? null,
     targetProvenance: snap.analysis.target_provenance ?? null,
     fmea: (snap.analysis.fmea as FmeaTablePayload | null) ?? null,
     fmeaError: snap.analysis.fmeaError ?? null,
+    actionPriority: (snap.analysis.actionPriority as ActionPriorityPayload | null) ?? null,
+    actionPriorityError: snap.analysis.actionPriorityError ?? null,
     heatmap: {},
   };
 }
@@ -317,15 +318,15 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
               scatterByKey: {},
               categoricalByKey: {},
               pointsComplete: false,
-              // 좌표와 달리 이 카드는 그 자체로 작아 재계산 없이 그대로
-              // 복원한다 (spec §B-7: "카드를 열 때마다 재계산하지 마라").
-              measurementExpansion: state.analysis.payload.measurementExpansion ?? null,
               targetProvenance: state.analysis.payload.targetProvenance ?? null,
               // 지시서 JA-1: 저장 시점(POST /api/state/analysis)에 서버가
               // 채워 넣으므로 그대로 복원한다 -- 이 값이 undefined인 것은
-              // JA-1 배포 이전에 저장된 옛 레코드뿐이다.
+              // JA-1 배포 이전에 저장된 옛 레코드뿐이다. actionPriority도
+              // 같은 규칙(`_with_action_priority`).
               fmea: state.analysis.payload.fmea ?? null,
               fmeaError: state.analysis.payload.fmeaError ?? null,
+              actionPriority: state.analysis.payload.actionPriority ?? null,
+              actionPriorityError: state.analysis.payload.actionPriorityError ?? null,
               heatmap: {},
             });
           } else {

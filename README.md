@@ -132,12 +132,17 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 **자동화.** `AUTO_INGEST_DIR`을 설정하면 그 디렉터리에 놓인 새 CSV를 주기적으로(Refresh 주기) 폴링해 Y 컬럼 유무로 갈라 처리합니다 — Y가 있으면 학습, 없으면 평가 데이터셋으로 등록해 원인 분석·수율 예측·모니터링 스냅샷을 갱신합니다(`src/automation/ingest.py`). 이와 별개로 리프레시 파이프라인(`src/automation/refresh.py`)이 같은 주기로 데이터 취득 → (신규 데이터일 때만) 재학습+승격 게이트 → 예측 → 원인분석 → 알람 판정 → 모니터링 스냅샷 저장을 한 번에 수행합니다. **SQL 연동은 구현되어 있습니다** — 모델 학습 팝업에 저장한 접속 정보(host/port/db/user)와 서버 환경변수(`AUTO_INGEST_DB_DRIVER`, `DB_PASSWORD`, `AUTO_INGEST_QUERY`, 선택적으로 `AUTO_INGEST_CURSOR_COLUMN`)가 모두 갖춰지고 실제 접속·조회에 성공해야 SQL 모드로 동작하며, 하나라도 빠지거나 접속·조회가 실패하면(10초 타임아웃 포함) 예외 없이 곧장 내장 폴백(train.CSV/test.CSV)으로 전환합니다(`src/automation/sql_source.py`). DB 엔진은 코드에 고정하지 않고 SQLAlchemy dialect+driver 문자열을 그대로 씁니다. 알림 발송은 매일 09:00·13:00(KST, APScheduler `CronTrigger`)과 "분석 실행 직후" 중 저장된 발송 시점에 해당할 때만 나가며, 알람 신뢰도가 "낮음"이면 통째로 스킵하고, 자동 갱신 경로는 추가로 시간당 발송 예산(6건)과 이전 스냅샷 대비 신규 알람만 보내는 필터를 거칩니다. 수동 업로드 모드는 연속 업로드가 연속 발송이 되지 않도록 10분 최소 간격을 둡니다.
 
-- **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대, 웨이퍼가 아니라 집계 conformal 여유 기준), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록(빈 레일에는 이유와 근거 숫자를 함께 표시), 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
-- **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형은 R,D vs Y1~Y5 -- 셀 농도 ε²·색상 방향 ρ 부호를 항상 함께 표시, 범주형은 Config vs Y1~Y5 -- ε²만, `보기` 토글로 수치형/범주형 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
-- **수율 예측**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 수율 예측 목록(세로 스크롤 영역에 전체를 렌더링 — 초기 노출 행 수만 7행이며 더 볼 방법이 없던 문제를 고쳤다, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기. 알람 신뢰도 게이트를 통과하지 못하면 심각/위험/주의 카드는 "0장"이 아니라 "게이트 미달"로 표시되고, 게이트는 통과했지만 알람이 0건이면 "왜 0건인지"(전 wafer 목표 이상 / 미분류 다수 / 민감도가 낮음) 사유를 함께 보여줍니다 — 숫자만 보고 "알람 없음 = 안전"으로 오독하지 않도록 판정 불가 상태를 명시합니다
+- **모니터링 홈**(`/monitoring`) — 가장 최근 원인 분석 결과를 세 블록으로 요약합니다. 기준은 "엔지니어가 오늘 결정할 수 있는가"입니다.
+  - **① 조치 우선순위** — 타깃별 파레토 기여율 10% 이상인 인자를 전부(개수 고정 아님, train.CSV 기준으로는 5개), 기대 회수(=회수 폭 × 손실 비중) 내림차순으로 보여줍니다. 회수 폭은 "구간 밖 평균 손실 − 구간 안 평균 손실"(`src/analysis/action_priority.py`), 비중은 그 타깃이 5개 타깃 전체 손실에서 차지하는 몫입니다 — 둘을 곱한 결과만이 아니라 두 요소를 함께 보여줍니다. 기대 회수 0.1%p 미만인 행은 흐리게 표시하고 사유(회수 폭이 작음/비중이 낮음)를 붙입니다.
+  - **② 조치 가능 범위** — 같은 인자들의 "구간 밖 / 구간 안 / 미계측" 스택 막대. 분모는 항상 전체 wafer 수입니다(계측된 것만 100%로 그리지 않습니다) — 계측률이 인자당 15% 안팎이라 트랙 대부분이 미계측(빈 구간)으로 보이는 것이 정상입니다.
+  - **③ 이 화면을 얼마나 믿을 수 있나** — 계측 편향(MNAR, 불량 상위 10% wafer의 계측률이 전체 계측률의 몇 배인지)과 랏 간/랏 내 분산 분해(무효과 기대선 포함)를 보여줍니다(`DataLimitationDiagnostics.tsx`).
+
+  블록①·②는 항상 train.CSV(학습 데이터셋) 기준입니다 — 지금 보고 있는 eval 데이터셋이 바뀌어도 흔들리지 않는, 학습 데이터가 뒷받침하는 판단이기 때문입니다. 블록③은 현재 분석 중인 eval 데이터셋 기준입니다. 세 블록 모두 서버가 미리 계산해 스냅샷에 담아 보내므로(`_action_priority_payload`/`_fmea_payload`), 화면은 계산 없이 표시만 합니다. 화면 자체는 읽기 전용이며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다. 설비 구성 트리맵은 별도 탭(`/config-treemap`)으로 분리되어 있습니다.
+- **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형은 R,D vs Y1~Y5 -- 셀 농도 ε²·색상 방향 ρ 부호를 항상 함께 표시, 범주형은 Config vs Y1~Y5 -- ε²만, `보기` 토글로 수치형/범주형 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다. 실행 직후 조치 우선순위(블록①)도 함께 재계산되어 저장됩니다
+- **수율 예측**(`/alerts`) — "이 모델은 순위는 맞지만 값은 못 맞춘다"(상위 20장 적중 95%, R² 0.12)는 전제 위에 설계된 **순위 도구**입니다. Y(=100 − Σ Y1~Y5, 실측 우선 하이드레이션) 오름차순으로 전체 wafer를 나열하고, 웨이퍼·타깃별 핵심 인자(파레토 기여율 10% 이상, 계측된 것 중 최고 순위로 폴백)와 신뢰도(그 임계 이상 인자가 계측된 타깃 수 / 5)를 함께 보여줍니다. 권장사항은 인자→목표 구간 화살표 한 줄로 압축해 표시합니다. 신뢰도 0인 wafer(핵심 인자가 아예 없음)는 별도 "미계측" 블록으로 뺍니다. 화면 우상단에서 CSV 내려받기와 수동 "알림 전송"(연결된 Slack/Telegram/Gmail로 즉시 발송, 억제 규칙은 자동 발송과 동일)을 할 수 있습니다
 - **즐겨찾기**(`/favorites`) — 원인 분석에서 저장한 그래프를 최신순 카드 그리드로 모아 보여줍니다. 점 데이터는 저장하지 않고 저장된 조건(데이터셋·타깃·인자·뷰 종류)으로 다시 조회해 썸네일을 그립니다. 카드 클릭 시 해당 인자의 원인 분석 화면으로 이동합니다
 
-원인 분석·모니터링·수율 예측 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
+원인 분석·모니터링 홈·수율 예측 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
 
 데이터셋은 각 탭의 선택 UI에서 CSV를 업로드해 추가할 수 있고(`POST /api/datasets`), 내장 2종(train/test)과 함께 목록에 표시됩니다.
 
@@ -157,7 +162,7 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 ## 검토했으나 채택하지 않은 것
 
-**"안 만든 것"이 아니라 "검증하고 배제한 것"입니다.**
+**"안 만든 것"이 아니라 "검증하고 배제한 것"입니다.** (모니터링 홈 재설계에서 나온 화면/판정 로직 결정은 `docs/decisions.md`에 별도로 정리했습니다 — 핵심 인자 임계값 20%→10%, 예측 수율 카드·히스토그램·FMEA RPN·계측 확대 시뮬레이션 삭제와 그 대체 지표.)
 
 - **LOT 단위 알람** — 랏 평균 분산비 `var(랏평균)/var(Y)` = 0.045입니다. 다만 랏당 25장이면 랏 효과가 전혀 없는 순수 노이즈에서도 이 값의 기대값이 1/25 = 0.04이므로, 이 수치 자체는 랏 효과의 증거가 아니라 노이즈 기대치입니다 — 진짜 ICC(1,1)은 0.005로 훨씬 작습니다(I-2: 이전 버전에서 0.045를 ICC 근사로 잘못 표기했던 것을 바로잡음). test.CSV에서 알람 2건 이상 LOT의 평균 수율(89.41)이 알람 0건 LOT(89.06)보다 오히려 높아 LOT 단위 신호가 뚜렷하지 않다는 결론은 이 정정으로 바뀌지 않으며 오히려 강화됩니다. wafer 단위로 설계했습니다.
 - **관리한계 롤링 윈도우** — train 400 LOT을 100개씩 4구간으로 나눠 각각 관리한계를 산출해보면, 인자별로 구간 간 변동 폭이 대체로 1~2 수준(Step1_D1은 다소 크게 변동)으로 뚜렷한 시간 드리프트는 보이지 않았습니다.
@@ -180,16 +185,20 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 ```text
 api/            FastAPI 라우트(data/datasets/analysis/chat/state/notify/favorites/monitoring)·스키마·설정
-src/analysis/   인자 스크리닝(ε², BH-FDR), 히트맵, SPC 관리한계, 권장 구간, 웨이퍼 수율 예측 알람(GBDT+conformal, alarm_gbdt.py), 챗봇 컨텍스트용 통계, JSON 보고서
+src/analysis/   인자 스크리닝(ε², BH-FDR), 히트맵, SPC 관리한계, 권장 구간, 웨이퍼 수율 예측 알람(GBDT+conformal, alarm_gbdt.py),
+                 모니터링 홈 블록①·②(action_priority.py), FMEA/블록③ 원천(screening/fmea.py), 챗봇 컨텍스트용 통계, JSON 보고서
 src/ml/         학습 파이프라인(HistGradientBoostingRegressor), 추론 메타데이터, 모델 저장
 src/runtime/    데이터셋 레지스트리, 학습 Job, SQLite 이력 저장(즐겨찾기·모델 승격 이력 포함)
-src/notifications/ Slack/Telegram/Gmail 발송(senders.py), 발송 오케스트레이션·dedupe·재시도(dispatch.py), Telegram 인증 코드 흐름(telegram_bot.py), 채널 설정 영속화(대기 상태 TTL 포함)
+src/notifications/ Slack/Telegram/Gmail 발송(senders.py), 발송 오케스트레이션·dedupe·재시도(dispatch.py), 수율 예측 갱신 발송
+                 (yield_update_dispatch.py/yield_update_senders.py -- 자동 갱신·수동 버튼 공용), Telegram 인증 코드 흐름
+                 (telegram_bot.py), 채널 설정 영속화(대기 상태 TTL 포함)
 src/automation/ 감시 디렉터리 폴링 자동 수집 잡(ingest.py) -- Y 컬럼 유무로 학습/평가 데이터셋을 갈라 등록. 리프레시 파이프라인(refresh.py, refresh_dispatch.py)과 SQL 데이터 소스 판단·증분 수집(sql_source.py)도 이 아래에 있음
-frontend/       Next.js UI (app/monitoring, app/root-cause, app/alerts, app/favorites, components/ai-panel)
+frontend/       Next.js UI (app/monitoring, app/root-cause, app/alerts, app/favorites, app/config-treemap, components/ai-panel)
 prompts/        SUNI 챗봇 시스템 프롬프트(report_system.md, chat_system.md)
 tests/          Python 테스트(pytest)
 scripts/        오프라인 벤치마크(전처리 방식 비교)
 config/         결측 스키마·알람 severity·전처리 정책 YAML
+docs/decisions.md  폐기된 설계와 근거(임계값 변경, 삭제된 화면 블록 등) -- "검토했으나 채택하지 않은 것"과는 별개 목록
 ```
 
 `src/ml/training.py`, `src/ml/ensemble.py`, `src/ml/hybrid.py`의 `train_hybrid_multi_y`는 저장소에 남아 있지만 API 경로에서는 사용되지 않고 테스트에서만 실행됩니다(`src/ml/hybrid.py`의 다른 함수 `save_hybrid_bundle`는 `api/routes/data.py`·`src/ml/pipeline.py`가 실제로 사용합니다).
@@ -291,12 +300,16 @@ AUTO_INGEST_CURSOR_COLUMN=
 - 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/models/promotion-history`(승격 게이트 통과 여부와 무관한 학습 시도 이력), `GET /api/model/latest`
 - 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical` 파라미터로 수치형/범주형 보기 전환 -- 수치형은 ε²(농도)·ρ(색상 방향)를 한 응답에 함께 낸다), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
 - SPC 참조·웨이퍼 알람: `GET /api/control-ranges`(인자별 SPC 관리한계, 산점도 참조선·보고서 `control_limits`에 씀), `GET /api/alarms`(`target`·`sensitivity` 선택 파라미터 -- 원인 분석 탭의 알람 삼각형이 수율 예측 탭에서 저장한 값을 그대로 넘겨 두 화면의 판정 기준을 일치시킨다. 생략하면 기본값 85.0/0.20), `GET /api/alarms/predictions`(응답에서 `holdout`/`factor_bands`/`measurement_bias` 필드는 삭제됨 -- 렌더하는 화면이 없으면서 요청마다 GroupKFold 5회 GBDT 적합을 다시 돌려 수율 예측 탭을 열 때마다 수십 초가 걸렸다. `interval_conformal_q`(웨이퍼 단위 conformal 여유)와 별개로 `interval_conformal_q_agg`(집계 여유, 랏 블록 부트스트랩 산출)를 함께 내려준다 -- SUMMARY 등 평균을 낼 때는 반드시 이 값을 쓴다)
-- 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/measurement-expansion`, `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`
+- 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`
+- 수율 예측(순위 도구): `GET /api/alerts/ranking`(수율 예측 탭이 쓰는 유일한 조회 -- 핵심 인자·신뢰도·권장사항을 함께 낸다)
 - SUNI 챗봇: `POST /api/chat`(SSE 스트리밍, `mode: "report" | "chat"`)
 - 탭 상태 저장(재접속 시 최근 결과 복원): `GET /api/state/latest`, `POST /api/state/training`, `POST /api/state/analysis`, `POST /api/state/alarms`
-- 알림 채널: `GET /api/notify/settings`, `POST /api/notify/slack`(+`/test`), `POST /api/notify/telegram/verify`(+`/test`), `POST /api/notify/gmail`(+`/test`), `GET /api/notify/gmail/verify`, `POST /api/notify/conditions`, `DELETE /api/notify/{channel}`, `POST /api/notify/dispatch`
+- 알림 채널: `GET /api/notify/settings`, `POST /api/notify/slack`(+`/test`), `POST /api/notify/telegram/verify`(+`/test`), `POST /api/notify/gmail`(+`/test`), `GET /api/notify/gmail/verify`, `POST /api/notify/conditions`, `DELETE /api/notify/{channel}`, `POST /api/notify/dispatch`(원인 분석 실행 직후 알람 발송), `POST /api/notify/yield-update/dispatch`(수율 예측 탭의 수동 "알림 전송" 버튼 -- AUC 게이트와 무관, 억제 규칙은 자동 발송과 공유)
 - 즐겨찾기: `POST /api/favorites`, `GET /api/favorites`, `DELETE /api/favorites/{id}`
 - 모니터링: `GET /api/monitoring/config-treemap`
+
+**제거된 것**: `GET /api/analysis/measurement-expansion`(계측 확대 시뮬레이션 -- 모니터링 홈 재설계로 삭제, 근거는 `docs/decisions.md`). `YieldPredictionResponse.yield_summary`(예측 수율 평균·히스토그램·모드별 손실 -- 같은 재설계로 삭제). `FmeaTablePayload.items`/`no_qualifying_factor`/`measurement_shortage_wafers`/`correlation_shortage_wafers`(행별 FMEA 표 -- 블록①로 흡수, 응답에는 `mnar_rate_report`/`variance_decomposition`만 남음).
+**추가된 것**: 조치 우선순위(회수 폭·비중·기대 회수·계측 카운트) -- `_action_priority_payload`가 `analysis.actionPriority`로 스냅샷에 싣는다.
 
 ## Railway 배포
 

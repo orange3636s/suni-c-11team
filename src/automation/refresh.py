@@ -395,7 +395,7 @@ def _analyze_and_score(
     신호로 결정한다(J-2 "부분 실패 정책"). 다섯 번째 반환값은 알람
     판정에 실제로 쓰인 train 데이터셋 id다(J-5의 신뢰도 재계산이 같은
     기준을 써야 한다)."""
-    from api.routes.analysis import _fmea_payload, _pareto_payload, _scored_wafers, get_measurement_expansion
+    from api.routes.analysis import _action_priority_payload, _fmea_payload, _pareto_payload, _scored_wafers
     from src.runtime.app_state import get_latest_state
 
     registry = _dataset_registry(store)
@@ -421,19 +421,21 @@ def _analyze_and_score(
     if failed_targets:
         errors.append(f"일부 타깃 스크리닝 실패: {', '.join(failed_targets)}")
 
-    measurement_expansion = None
-    try:
-        measurement_expansion = get_measurement_expansion(eval_dataset_id)
-    except Exception:
-        logger.exception("auto_refresh: 계측 확대 계산 실패")
-        errors.append("계측 확대 계산에 실패했습니다.")
+    # 알람 판정에 쓸 train 데이터셋 id를 먼저 정한다 -- 블록①(조치
+    # 우선순위)도 같은 train.CSV 기준(작업 지시서 MB-6)이라 아래에서
+    # 재사용한다.
+    latest = get_latest_state(store)
+    train_dataset_for_alarms = (
+        (latest.get("alarms") or {}).get("train_dataset") if latest.get("alarms") else None
+    ) or FALLBACK_TRAIN_DATASET
 
-    # 모니터링 홈 FMEA 분석표 (지시서 IA) -- 다른 원인분석 결과와 같은
-    # 스냅샷 저장 시점에 함께 계산한다. 별도 온디맨드 조회 경로는 없다
-    # (IA-5). 실패해도 나머지 스냅샷 저장을 막지 않는다(J-2 부분 실패 정책).
-    # `fmeaError`는 수동 분석 저장 경로(api/routes/state.py `_with_fmea`)
-    # 와 같은 필드명을 써서, 화면이 두 경로 어느 쪽에서 왔든 같은 로직으로
-    # "계산 안 됨"과 "계산 실패"를 구분할 수 있게 한다(지시서 JA-3).
+    # 모니터링 홈 FMEA 분석표(블록③ 데이터 한계의 원천) -- 다른 원인분석
+    # 결과와 같은 스냅샷 저장 시점에 함께 계산한다. 별도 온디맨드 조회
+    # 경로는 없다(IA-5). 실패해도 나머지 스냅샷 저장을 막지 않는다(J-2
+    # 부분 실패 정책). `fmeaError`는 수동 분석 저장 경로(api/routes/state.py
+    # `_with_fmea`)와 같은 필드명을 써서, 화면이 두 경로 어느 쪽에서
+    # 왔든 같은 로직으로 "계산 안 됨"과 "계산 실패"를 구분할 수 있게
+    # 한다(지시서 JA-3).
     fmea = None
     fmea_error = None
     try:
@@ -443,11 +445,23 @@ def _analyze_and_score(
         errors.append("FMEA 분석표 계산에 실패했습니다.")
         fmea_error = "FMEA 분석표 계산 중 오류가 발생했습니다."
 
+    # MB/MC: 모니터링 홈 블록①·② -- train.CSV 기준이라 eval 데이터셋과
+    # 무관하다. 같은 "부분 실패 정책"(J-2)을 따른다.
+    action_priority = None
+    action_priority_error = None
+    try:
+        action_priority = _action_priority_payload(train_dataset_for_alarms)
+    except Exception:
+        logger.exception("auto_refresh: 조치 우선순위 계산 실패")
+        errors.append("조치 우선순위 계산에 실패했습니다.")
+        action_priority_error = "조치 우선순위 계산 중 오류가 발생했습니다."
+
     analysis_block = {
         "paretoByTarget": pareto_by_target,
-        "measurementExpansion": measurement_expansion,
         "fmea": fmea,
         "fmeaError": fmea_error,
+        "actionPriority": action_priority,
+        "actionPriorityError": action_priority_error,
         "target_provenance": next(
             (payload.get("target_provenance") for payload in pareto_by_target.values() if payload.get("target_provenance")),
             None,
@@ -456,15 +470,11 @@ def _analyze_and_score(
 
     # 알람 판정 -- 저장된 목표 수율·민감도를 그대로 따른다(A-3 원칙과
     # 동일: 여러 화면의 판정 기준이 어긋나면 안 된다).
-    latest = get_latest_state(store)
     alarms_payload = ((latest.get("alarms") or {}).get("payload")) or {}
     from src.analysis import alarm_gbdt
 
     target_yield = alarms_payload.get("targetYield", alarm_gbdt.DEFAULT_TARGET_YIELD)
     sensitivity = alarms_payload.get("sensitivity", alarm_gbdt.DEFAULT_SENSITIVITY)
-    train_dataset_for_alarms = (
-        (latest.get("alarms") or {}).get("train_dataset") if latest.get("alarms") else None
-    ) or FALLBACK_TRAIN_DATASET
 
     try:
         # 존재 검증만 필요하다 -- _scored_wafers는 더 이상 train_df를
@@ -536,13 +546,11 @@ def _analyze_and_score(
         if item.measured
     ]
 
-    monitoring_block = _build_monitoring_block(scored, target_yield, measurement_expansion, errors)
+    monitoring_block = _build_monitoring_block(scored, target_yield, errors)
     return analysis_block, alarms_block, monitoring_block, alarm_items_for_dispatch, train_dataset_for_alarms
 
 
-def _build_monitoring_block(
-    scored: list[Any], target_yield: float, measurement_expansion: dict[str, Any] | None, errors: list[str]
-) -> dict[str, Any]:
+def _build_monitoring_block(scored: list[Any], target_yield: float, errors: list[str]) -> dict[str, Any]:
     if scored:
         point = float(np.mean([item.pred_mean for item in scored]))
         lo = float(np.mean([item.pred_lo for item in scored]))
@@ -555,7 +563,11 @@ def _build_monitoring_block(
     return {
         "predicted_yield": {"point": point, "lo": lo, "hi": hi} if point is not None else None,
         "gap": gap,
-        "gap_pareto": (measurement_expansion or {}).get("priorities", []),
+        # MA-3: '계측 확대' 시뮬레이션(gap_pareto의 유일한 소스였다)이
+        # 모니터링 홈 재설계로 삭제됐다 -- 이 필드는 그 이후로 항상
+        # 빈 배열이다. 스냅샷 스키마 자체는 유지한다(다른 소비처가
+        # `monitoring.gap_pareto` 키 존재를 가정할 수 있어서다).
+        "gap_pareto": [],
         # 트리맵은 스텝별 상호작용 조회라 그 자체는 온디맨드로 유지한다
         # (K/J 공통 원칙: "모든 상호작용이 오프라인으로 되는 것이 목표가
         # 아니다") -- 스냅샷에는 담지 않는다.

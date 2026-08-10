@@ -157,7 +157,6 @@ def test_refresh_analysis_snapshot_preserves_existing_state_when_all_targets_fai
         "api.routes.analysis._pareto_payload",
         lambda dataset_id, target, top_n: (_ for _ in ()).throw(ValueError("broken schema")),
     )
-    monkeypatch.setattr("api.routes.analysis.get_measurement_expansion", lambda dataset_id: None)
 
     ingest._refresh_analysis_snapshot(store, "broken-eval-id")
 

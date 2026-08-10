@@ -504,40 +504,6 @@ export type YieldFallbackSummary = {
   total_combinations: number;
 };
 
-// WD: 수율 분포 히스토그램 한 구간 -- 판정 가능/미계측 스택.
-export type YieldHistogramBin = {
-  label: string;
-  lo: number | null;
-  hi: number | null;
-  judgeable_count: number;
-  not_judgeable_count: number;
-};
-
-// WC: 타깃(불량 모드)별 평균 손실 막대 한 줄.
-export type ModeLoss = {
-  target: string;
-  feature: string | null;
-  avg_loss_pct: number;
-  train_avg_loss_pct: number | null;
-  contribution_pct: number;
-};
-
-// WB 상단 요약 카드 4개 + WC/WD가 함께 쓰는 서버 계산 결과. "판정
-// 가능"은 핵심 인자(기여율 10% 이상, YG)가 실제로 계측된 wafer -- 타깃 값
-// 자체가 알려져 있어도(번들 test.CSV처럼 완전 라벨된 평가셋) 그 사실은
-// 세지 않는다(운영 환경의 미계측 평가 데이터를 가정한 기준).
-export type YieldSummary = {
-  predicted_mean: number;
-  predicted_min: number;
-  predicted_max: number;
-  bottom_n: number;
-  bottom_mean: number | null;
-  judgeable_count: number;
-  total_wafers: number;
-  histogram: YieldHistogramBin[];
-  mode_loss: ModeLoss[];
-};
-
 export type YieldPredictionResponse = {
   train_dataset_id: string;
   eval_dataset_id: string;
@@ -546,7 +512,6 @@ export type YieldPredictionResponse = {
   unmeasured_wafer_ids: string[];
   unmeasured_count: number;
   fallback_summary: YieldFallbackSummary;
-  yield_summary: YieldSummary;
   target_provenance: TargetProvenance | null;
 };
 
@@ -590,41 +555,6 @@ export type ParetoRankingResponse = {
 // 다시 계산하지 않는다). `dataset_id`가 없는 스냅샷(자동 갱신이 아직
 // 한 번도 돌지 않았거나 계산이 실패한 경우)에서는 undefined/null --
 // FmeaTable이 그 상태를 별도로 안내한다.
-export type FmeaFactorItem = {
-  target: string;
-  feature: string;
-  kind: "R" | "D";
-  step: number;
-  eps2: number;
-  relation_shape: RelationShape;
-  factor_value: number | null;
-  range_lo: number | null;
-  range_hi: number | null;
-  measurement_rate: number; // 0-100
-  deviation_rate_pct: number; // 권장 구간 밖 wafer 비율(계측된 wafer 기준), 0-100
-  detection_method: string; // "In-line 샘플 계측" | "Defect 검사"
-  detection_kind: "R" | "D";
-  // 지시서 KA-1: 아래 둘은 타깃 컬럼(Y1~Y5) 기준 "불량률"이지 수율이
-  // 아니다. 진짜 수율은 expected_yield_pct.
-  expected_defect_rate_pct: number | null;
-  defect_rate_deviation_pct: number | null; // %p, 불량률 기준 -- 정렬 기준(내림차순)
-  // 최종 Y 컬럼 기준 진짜 수율 -- "이 인자를 구간 안으로 관리하면 수율이
-  // 얼마가 되는가"에 대한 답. 위 불량률 값과는 다른 질문(합치지 않는다).
-  expected_yield_pct: number | null;
-  // WE-2/WE-3: 이 행의 선정 근거(타깃 내 파레토 기여율)와, 최악 10%
-  // wafer(해당 타깃 손실 상위 10%)에서의 계측률 -- 전체 계측률보다 훨씬
-  // 높으면 "계측이 사후 확인에 가깝다"는 신호(WL의 MNAR 차트와 같은 지표).
-  contribution_pct: number;
-  worst_decile_measurement_rate_pct: number | null;
-  mnar_gap_pp: number | null; // 계측군-미계측군 최종 수율 평균 차, 표본 부족 시 null
-};
-
-// WE-2/YG: 타깃별 10% 이상 인자가 하나도 없을 때의 사유.
-export type FmeaNoQualifyingFactor = {
-  target: string;
-  max_contribution_pct: number;
-};
-
 // WL-1: (타깃, 인자)별 전체 계측률 vs 최악 10% wafer 계측률·배수.
 export type MnarRateRow = {
   target: string;
@@ -644,15 +574,49 @@ export type VarianceDecomposition = {
   icc: number;
 };
 
+// MA-3: 모니터링 홈 블록③(데이터 한계)만 남은 소비처다 -- 행별 FMEA
+// 표(권장구간·편차 등, 17개 필드)는 FmeaTable/ActionBlock과 함께
+// 삭제됐다. 이 타입은 그 이후로 MNAR·분산 분해만 담는다.
 export type FmeaTablePayload = {
   dataset_id: string;
-  total_wafers: number;
-  measurement_shortage_wafers: number;
-  correlation_shortage_wafers: number;
-  no_qualifying_factor: FmeaNoQualifyingFactor[];
-  items: FmeaFactorItem[];
   mnar_rate_report: MnarRateRow[];
   variance_decomposition: VarianceDecomposition | null;
+  target_provenance: TargetProvenance | null;
+};
+
+// MB/MC: 모니터링 홈 블록①(조치 우선순위)·블록②(조치 가능 범위)의
+// 공통 원천 -- 항상 train.CSV 기준(작업 지시서 MB-6). 한 행이 (타깃,
+// 인자) 하나를 나타내며, 두 블록이 같은 행 배열을 서로 다른 필드로
+// 나눠 그린다(회수 폭·비중·기대 회수는 블록①, 계측 카운트는 블록②).
+export type ActionPriorityRow = {
+  target: string;
+  feature: string;
+  relation_shape: RelationShape;
+  factor_value: number | null;
+  range_lo: number | null;
+  range_hi: number | null;
+  measured_count: number;
+  out_of_range_count: number;
+  total_wafers: number;
+  recovery_width_pp: number | null; // 회수 폭 = 구간 밖 평균 손실 − 구간 안 평균 손실
+  share_pct: number; // 비중 = 이 타깃의 평균 손실 / 5개 타깃 평균 손실 합계
+  expected_recovery_pp: number | null; // 기대 회수 = 회수 폭 × 비중
+  contribution_pct: number;
+  dimmed: boolean; // MB-5: 기대 회수 < 0.1%p
+  dim_reason: string | null;
+};
+
+export type ActionPriorityNoQualifyingTarget = {
+  target: string;
+  max_contribution_pct: number;
+};
+
+export type ActionPriorityPayload = {
+  dataset_id: string;
+  total_wafers: number;
+  estimated_additional_action_wafers: number; // MC-4 캡션의 "계측 +10%p 시 추가 조치 대상" 추정치
+  no_qualifying_factor: ActionPriorityNoQualifyingTarget[];
+  rows: ActionPriorityRow[]; // 기대 회수 내림차순
   target_provenance: TargetProvenance | null;
 };
 
@@ -764,7 +728,6 @@ export type LatestTrainingRecord = {
 export type LatestAnalysisPayload = {
   activeTarget: string;
   paretoByTarget: Record<string, ParetoRankingResponse>;
-  measurementExpansion?: MeasurementExpansionResponse | null;
   targetProvenance?: TargetProvenance | null;
   // 지시서 JA-1: 프런트는 이 필드를 절대 채워 보내지 않는다 -- 서버가
   // POST /api/state/analysis 저장 시점에 채운다(api/routes/state.py의
@@ -772,6 +735,11 @@ export type LatestAnalysisPayload = {
   // 이전 옛 레코드만 예외), 프런트가 보내는 요청 바디에는 나타나지 않는다.
   fmea?: FmeaTablePayload | null;
   fmeaError?: string | null;
+  // MB/MC: 모니터링 홈 블록①·② -- fmea와 같은 방식(서버가 저장 시점에
+  // 채운다, `_with_action_priority`)이지만 항상 train.CSV 기준이라 eval
+  // 데이터셋과 무관하다.
+  actionPriority?: ActionPriorityPayload | null;
+  actionPriorityError?: string | null;
   // 지시서 AJ: 저장된 스냅샷의 응답 형태·내용 규칙(예: PARETO_TOP_N
   // 5->10)이 여전히 유효한지 프론트가 직접 검사하는 버전 --
   // frontend/lib/snapshotVersion.ts의 ANALYSIS_SNAPSHOT_VERSION과
@@ -885,9 +853,10 @@ export type RefreshSnapshot = {
   model: RefreshSnapshotModel;
   analysis: {
     paretoByTarget: Record<string, unknown>;
-    measurementExpansion: Record<string, unknown> | null;
     fmea: FmeaTablePayload | null;
     fmeaError: string | null;
+    actionPriority: ActionPriorityPayload | null;
+    actionPriorityError: string | null;
     target_provenance: TargetProvenance | null;
   };
   alarms: RefreshSnapshotAlarms;
@@ -991,36 +960,6 @@ export type ConfigTreemapResponse = {
   // 버그였다 -- 여기서 바로잡는다.
   significant: boolean;
   empty_reason: string | null;
-  target_provenance: TargetProvenance | null;
-};
-
-export type FactorPriority = {
-  feature: string;
-  target: string;
-  measurement_rate: number;
-  recommendation: string; // "+10%p" | "+15%p" | "유지"
-  reason: string;
-  additional_judged: number;
-  yield_contribution_pp: number | null;
-};
-
-export type NewFactorDiscovery = {
-  feature: string;
-  target: string;
-  kind: string;
-};
-
-export type MeasurementExpansionResponse = {
-  train_dataset_id: string;
-  eval_dataset_id: string;
-  action_blocked_wafers: number;
-  total_wafers: number;
-  additional_judged: number;
-  action_target: number;
-  expected_yield_gain_pp: number | null;
-  show_full_card: boolean;
-  priorities: FactorPriority[];
-  new_factor_discoveries: NewFactorDiscovery[];
   target_provenance: TargetProvenance | null;
 };
 

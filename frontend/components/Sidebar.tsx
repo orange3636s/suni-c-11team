@@ -14,8 +14,8 @@ import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 // share one source of truth instead of a second hardcoded list drifting
 // out of sync with this one.
 export const navigationItems = [
-  { label: "모니터링", href: "/monitoring", icon: "monitor" },
-  // WH: Config별 트리맵 -- 모니터링에서 분리한 설비 구성 트리맵 전용 탭.
+  { label: "모니터링 홈", href: "/monitoring", icon: "monitor" },
+  // WH: Config별 트리맵 -- 모니터링 홈에서 분리한 설비 구성 트리맵 전용 탭.
   { label: "Config별 트리맵", href: "/config-treemap", icon: "treemap" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "수율 예측", href: "/alerts", icon: "alert" },
@@ -23,6 +23,21 @@ export const navigationItems = [
 ] as const;
 
 export type NavigationLabel = (typeof navigationItems)[number]["label"];
+
+// ME-2: 세 하단 버튼(모델 학습·모델 분석·자동화·알림 설정)이 공유하는
+// 상태 점 -- 색·크기·aria-label을 한 곳에서만 정의해 각자 구현하다
+// 갈리는 일을 막는다(지시서 "하지 말 것: 각자 구현하지 마라").
+export function SidebarStatusDot({ status, label }: { status: "connected" | "offline" | "error"; label: string }) {
+  return <span className={`sidebarStatusDot ${status === "connected" ? "" : status}`} aria-label={label} />;
+}
+
+export function formatSidebarDot(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 // U-4: 화면 모드는 은유 아이콘(☀/☾) 대신 글자로 말한다 -- 계측 도구에서는
 // 상태를 텍스트로 표시하는 편이 정확하다.
@@ -52,7 +67,7 @@ type SidebarProps = {
 };
 
 export default function Sidebar({
-  activeItem = "모니터링",
+  activeItem = "모니터링 홈",
   collapsed = false,
   onToggleCollapse,
   mode = "shell",
@@ -69,15 +84,35 @@ export default function Sidebar({
     analysisPanelOpen,
     setAnalysisPanelOpen,
   } = usePanelState();
-  const { snapshot } = useAnalysisState();
-  // RA-1: 모델 분석·자동화 버튼에만 상태 점을 붙인다 -- 모델 학습에는
-  // "연결" 개념이 없으므로 점을 두지 않는다. 오류(스냅샷 errors 배열에
-  // 뭔가 남아 있음)를 SQL 연결 여부보다 먼저 본다 -- 연결은 됐지만
-  // 최근 사이클이 실패했다면 "연결됨(초록)"이 아니라 "오류(주황)"가
-  // 맞는 신호다.
+  const { snapshot, training, notifications } = useAnalysisState();
+  // ME-2: 세 하단 버튼(모델 학습·모델 분석·알림 설정) 모두 같은 점을
+  // 쓴다 -- 오류(있으면)를 연결 여부보다 먼저 본다는 우선순위도 셋이
+  // 같다.
   const analysisStatus: "connected" | "offline" | "error" =
     snapshot && snapshot.errors.length > 0 ? "error" : snapshot?.source.mode === "sql" ? "connected" : "offline";
   const analysisStatusLabel = { connected: "SQL 연결됨", offline: "SQL 미연결", error: "오류" }[analysisStatus];
+
+  // ME-2: 모델 학습 -- 이 세션에서 수동 업로드로 학습을 실행한 적이
+  // 있으면(TrainingState가 채워진다) 그 파일·시각을 보여주고, 없으면
+  // 콜드 스타트가 쓴 내장 train.csv가 여전히 활성 모델이라는 뜻이다.
+  // 학습 실패는 팝업이 닫히면 사라지는 일시적 폼 상태라 여기(항상 보이는
+  // 점)로 끌어올릴 지속 상태가 없다 -- 두 상태만 구분한다.
+  const trainingStatus: "connected" | "offline" = training ? "connected" : "offline";
+  const trainingStatusLabel = training
+    ? `수동 학습 · ${training.performance?.source_filename ?? "-"} · ${formatSidebarDot(training.createdAt)}`
+    : "내장 데이터로 학습됨";
+
+  // ME-2: 알림 설정 -- 채널 하나라도 연결되어 있으면 초록, 아니면 회색.
+  // 인증 만료·발송 실패의 지속 상태는 저장되지 않아(NotificationSettingsSummary가
+  // 마지막 발송 실패 사유를 담지 않는다) 구분하지 않는다.
+  const connectedChannelNames = [
+    notifications.slack.connected ? "Slack" : null,
+    notifications.telegram.connected ? "Telegram" : null,
+    notifications.gmail.connected ? "Gmail" : null,
+  ].filter((name): name is string => name != null);
+  const notificationStatus: "connected" | "offline" = connectedChannelNames.length > 0 ? "connected" : "offline";
+  const notificationStatusLabel =
+    connectedChannelNames.length > 0 ? `${connectedChannelNames.join(" · ")} 연결됨` : "연결된 채널 없음";
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
   // 접힘 상태 전용 (spec §D-2) -- 트리거 아이콘의 실제 위치를 읽어 패널을
@@ -228,21 +263,23 @@ export default function Sidebar({
               헤더에 이미 SOURCE 항목(연결 상태, Header.tsx의
               .headerContextSource)이 있어 사이드바에 점을 새로
               만들지 않는다(중복 표시 금지) -- 세 줄만 제거한다. */}
-          {/* RA-1: 기존 "모델 학습·자동화" 통합 버튼을 둘로 나눈다 --
-              학습은 수동 전용(연결 개념이 없어 점을 두지 않는다), 분석은
-              SQL·refresh time을 품으므로 점을 붙인다. 순서: 모델 학습 →
-              모델 분석·자동화 → 알림 설정 → 화면 모드. */}
+          {/* ME-2: 세 버튼(모델 학습·모델 분석·자동화·알림 설정) 모두
+              상태 점을 붙인다(RA-1 시절에는 분석에만 있었다) -- 같은
+              SidebarStatusDot 컴포넌트를 재사용해 색·크기가 갈리지
+              않는다. 순서: 모델 학습 → 모델 분석·자동화 → 알림 설정 →
+              화면 모드. */}
           <button
             type="button"
             className={`themeToggle trainingTrigger ${collapsed ? "railIconButton" : ""}`}
             aria-label="모델 학습"
             aria-haspopup="dialog"
             aria-expanded={trainingPanelOpen}
-            title="모델 학습"
+            title={`모델 학습 (${trainingStatusLabel})`}
             onClick={() => setTrainingPanelOpen((open) => !open)}
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Database size={16} strokeWidth={1.5} /></span>
             <span className="themeTriggerLabel">모델 학습</span>
+            <SidebarStatusDot status={trainingStatus} label={trainingStatusLabel} />
           </button>
           <button
             type="button"
@@ -255,21 +292,20 @@ export default function Sidebar({
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Activity size={16} strokeWidth={1.5} /></span>
             <span className="themeTriggerLabel">모델 분석·자동화</span>
-            <span className={`sidebarStatusDot ${analysisStatus === "connected" ? "" : analysisStatus}`} aria-hidden="true" />
+            <SidebarStatusDot status={analysisStatus} label={analysisStatusLabel} />
           </button>
-          {/* 지시서 Q: 사이드바 하단 순서 -- 모델 학습 / 모델 분석·자동화 /
-              알림 설정 / 화면 모드. */}
           <button
             type="button"
             className={`themeToggle settingsTrigger ${collapsed ? "railIconButton" : ""}`}
             aria-label="알림 설정"
             aria-haspopup="dialog"
             aria-expanded={settingsPanelOpen}
-            title="알림 설정"
+            title={`알림 설정 (${notificationStatusLabel})`}
             onClick={() => setSettingsPanelOpen((open) => !open)}
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Settings size={16} strokeWidth={1.5} /></span>
             <span className="themeTriggerLabel">알림 설정</span>
+            <SidebarStatusDot status={notificationStatus} label={notificationStatusLabel} />
           </button>
           <div className="themeTriggerCol" ref={themeMenuRef}>
             {/* 펼침 상태는 기존 그대로 컨테이너 내부에 렌더 (spec §D-2 대상은

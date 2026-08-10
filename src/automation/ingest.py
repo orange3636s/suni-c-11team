@@ -132,7 +132,7 @@ def _refresh_analysis_snapshot(store: RuntimeStore, dataset_id: str) -> None:
     """원인분석·알림 이력 상태 스냅샷을 새 데이터셋 기준으로 갱신한다.
     `save_state`가 매번 `created_at`을 새로 찍으므로, 모니터링 홈의
     캐시 무효화(=created_at 비교)가 자동으로 동작한다."""
-    from api.routes.analysis import _pareto_payload, get_measurement_expansion
+    from api.routes.analysis import _action_priority_payload, _pareto_payload
     from src.analysis.screening.selector import PARETO_TOP_N
 
     pareto_by_target: dict[str, Any] = {}
@@ -151,15 +151,20 @@ def _refresh_analysis_snapshot(store: RuntimeStore, dataset_id: str) -> None:
         logger.warning("auto_ingest: 전 타깃 Pareto 실패 -- 스냅샷 갱신 생략 dataset=%s", dataset_id)
         return
 
-    measurement_expansion = None
-    try:
-        measurement_expansion = get_measurement_expansion(dataset_id)
-    except Exception:
-        logger.exception("auto_ingest: 계측 확대 계산 실패 dataset=%s", dataset_id)
-
     latest = get_latest_state(store)
     previous_analysis = latest.get("analysis") or {}
     previous_analysis_payload = previous_analysis.get("payload") or {}
+    previous_alarms = latest.get("alarms") or {}
+    train_dataset_id = previous_alarms.get("train_dataset") or "train"
+
+    # MB/MC: 모니터링 홈 블록①·② -- train.CSV 기준(작업 지시서 MB-6)이라
+    # 이 ingest 경로(SQL 자동 수집)에서도 함께 갱신한다.
+    action_priority = None
+    try:
+        action_priority = _action_priority_payload(train_dataset_id)
+    except Exception:
+        logger.exception("auto_ingest: 조치 우선순위 계산 실패 dataset=%s", dataset_id)
+
     save_state(
         store,
         "analysis",
@@ -167,11 +172,10 @@ def _refresh_analysis_snapshot(store: RuntimeStore, dataset_id: str) -> None:
         payload={
             "activeTarget": previous_analysis_payload.get("activeTarget", "Y1"),
             "paretoByTarget": pareto_by_target,
-            "measurementExpansion": measurement_expansion,
+            "actionPriority": action_priority,
         },
     )
 
-    previous_alarms = latest.get("alarms") or {}
     previous_alarms_payload = previous_alarms.get("payload") or {}
     save_state(
         store,

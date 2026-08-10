@@ -21,7 +21,6 @@ from api.schemas.analysis import (
     CategoricalScatterResponse,
     ControlRangeListResponse,
     HeatmapResponse,
-    MeasurementExpansionResponse,
     ModelPerformanceResponse,
     ParetoRankingResponse,
     PreprocessingComparisonResponse,
@@ -31,14 +30,12 @@ from api.schemas.analysis import (
 )
 from api.settings import APP_VERSION, settings
 from src.analysis import alarm_gbdt, distribution_shift, preprocessing_compare, reliability, target_fallback, warning_line
-from src.analysis.alarm_bands import classify_measured_bands
+from src.analysis.reliability_score import FAIL_RATE_TARGETS
 from src.analysis.control_range import (
     compute_control_range,
     evaluate_alarms,
     summarize_wafer_status,
 )
-from src.analysis.measurement_expansion import MIN_ACTION_BLOCKED_SHARE, compute_measurement_expansion
-from src.analysis.recommendations import FactorRecommendation, compute_factor_recommendation
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
 from src.analysis.scatter import build_categorical_data, build_scatter_data
@@ -581,13 +578,18 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
 
 
 def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
-    """FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 타깃별 파레토 기여율
-    10% 이상인 인자를 전부 스냅샷에 담는다(YG). 온디맨드 REST 엔드포인트는
-    두지 않는다(지시서 IA-5: "자동 갱신 파이프라인에서 함께 계산되게
-    하라, 별도 조회 금지") -- `src/automation/refresh.py`가 이 함수를
-    직접 호출해 다른 분석 결과와 같은 스냅샷 저장 시점에 함께 계산한다.
-    같은 시점에 WL(데이터 한계 진단: MNAR 계측 편향 + 분산 분해)도 함께
-    계산해 담는다 -- 같은 eval 프레임을 재사용하므로 별도 조회가 없다.
+    """모니터링 홈 블록③(데이터 한계) -- MNAR 계측 편향 + 분산 분해.
+
+    MA-3: 이 함수는 원래 FMEA 분석표(행별 권장구간·편차) 전체를
+    반환했지만, 그 표를 그리던 FmeaTable/ActionBlock이 모니터링 홈
+    재설계로 삭제되면서 행 데이터(`items`)의 유일한 소비처가 없어졌다
+    (블록①은 이제 `_action_priority_payload`가 train.CSV 기준으로 따로
+    낸다 -- 이 함수의 eval 기준 표와는 다른 산출물이다). 남은 소비처
+    (`DataLimitationDiagnostics`)는 `mnar_rate_report`/
+    `variance_decomposition`만 읽으므로 그 둘만 내려보낸다 -- payload가
+    작아진다(행마다 17개 필드였던 `items`가 통째로 빠진다).
+    `build_fmea_table`은 여전히 내부에서 호출한다 -- MNAR 리포트가 그
+    표의 (타깃, 인자) 쌍을 그대로 재사용하기 때문이다.
     """
     hydrated = _hydrated_targets_or_409(dataset_id)
     df = hydrated.dataframe
@@ -598,8 +600,6 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
     }
     table = build_fmea_table(df, rows_by_target, usable_targets, dataset_id=dataset_id)
 
-    # WL: 데이터 한계 진단(계측 편향 + 분산 분해) -- FMEA와 같은 eval
-    # 프레임·같은 (타깃, 인자) 쌍을 재사용해 별도 조회 없이 함께 낸다.
     from src.analysis.data_limitations import build_mnar_rate_report, compute_variance_decomposition
 
     mnar_report = build_mnar_rate_report(df, [(f.target, f.feature) for f in table.items])
@@ -608,12 +608,6 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
     return round_floats(
         {
             "dataset_id": dataset_id,
-            "total_wafers": table.total_wafers,
-            "measurement_shortage_wafers": table.measurement_shortage_wafers,
-            "correlation_shortage_wafers": table.correlation_shortage_wafers,
-            "no_qualifying_factor": [
-                {"target": n.target, "max_contribution_pct": n.max_contribution_pct} for n in table.no_qualifying_factor
-            ],
             "mnar_rate_report": [
                 {
                     "target": r.target,
@@ -636,34 +630,57 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
                 if variance_decomposition is not None
                 else None
             ),
-            "items": [
+            "target_provenance": hydrated.provenance.as_dict(),
+        }
+    )
+
+
+def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
+    """모니터링 홈 블록①(조치 우선순위)·블록②(조치 가능 범위) -- 항상
+    train.CSV 기준(작업 지시서 MB-6)이라 eval 데이터셋 선택과 무관하게
+    안정적이다. 랭킹(`_ranked_rows_for_provenance`)과 권장구간 계산
+    (`compare_methods`의 자체 캐시)이 이미 프로세스 전역으로 캐시되어
+    있어(YF/ZD 성능 작업 참고) train 데이터셋이 바뀌지 않는 한 사실상
+    즉시 반환된다.
+    """
+    from src.analysis.action_priority import build_action_priority_table
+
+    hydrated = _hydrated_targets_or_409(train_dataset_id)
+    df = hydrated.dataframe
+    schema = parse_schema(df)
+    usable_targets = [t for t in FAIL_RATE_TARGETS if t in schema.target_cols]
+    rows_by_target = {
+        t: list(_ranked_rows_for_provenance(train_dataset_id, t, hydrated.provenance)) for t in usable_targets
+    }
+    table = build_action_priority_table(df, rows_by_target)
+
+    return round_floats(
+        {
+            "dataset_id": train_dataset_id,
+            "total_wafers": table.total_wafers,
+            "estimated_additional_action_wafers": table.estimated_additional_action_wafers,
+            "no_qualifying_factor": [
+                {"target": n.target, "max_contribution_pct": n.max_contribution_pct} for n in table.no_qualifying_factor
+            ],
+            "rows": [
                 {
-                    "target": f.target,
-                    "feature": f.feature,
-                    "kind": f.kind,
-                    "step": f.step,
-                    "eps2": f.eps2,
-                    "relation_shape": f.relation_shape,
-                    "factor_value": f.factor_value,
-                    "range_lo": f.range_lo,
-                    "range_hi": f.range_hi,
-                    "measurement_rate": f.measurement_rate,
-                    "deviation_rate_pct": f.deviation_rate_pct,
-                    "detection_method": f.detection_method,
-                    "detection_kind": f.detection_kind,
-                    # 지시서 KA-1: 아래 둘은 타깃 컬럼(Y1~Y5) 기준 불량률이지
-                    # 수율이 아니다 -- 이름을 그렇게 정정했다.
-                    "expected_defect_rate_pct": f.expected_defect_rate_pct,
-                    "defect_rate_deviation_pct": f.defect_rate_deviation_pct,
-                    # 진짜 수율(최종 Y 컬럼) 기준 -- 위 불량률과 다른 값이다.
-                    "expected_yield_pct": f.expected_yield_pct,
-                    # WE-2/WE-3: 행 선정 근거(파레토 기여율)와, 최악 10%
-                    # wafer에서의 계측률(WL의 MNAR 계측 편향과 같은 지표).
-                    "contribution_pct": f.contribution_pct,
-                    "worst_decile_measurement_rate_pct": f.worst_decile_measurement_rate_pct,
-                    "mnar_gap_pp": f.mnar_gap_pp,
+                    "target": r.target,
+                    "feature": r.feature,
+                    "relation_shape": r.relation_shape,
+                    "factor_value": r.factor_value,
+                    "range_lo": r.range_lo,
+                    "range_hi": r.range_hi,
+                    "measured_count": r.measured_count,
+                    "out_of_range_count": r.out_of_range_count,
+                    "total_wafers": r.total_wafers,
+                    "recovery_width_pp": r.recovery_width_pp,
+                    "share_pct": r.share_pct,
+                    "expected_recovery_pp": r.expected_recovery_pp,
+                    "contribution_pct": r.contribution_pct,
+                    "dimmed": r.dimmed,
+                    "dim_reason": r.dim_reason,
                 }
-                for f in table.items
+                for r in table.rows
             ],
             "target_provenance": hydrated.provenance.as_dict(),
         }
@@ -1175,37 +1192,6 @@ def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, An
             "none_count": table.fallback_summary.none_count,
             "total_combinations": table.fallback_summary.total_combinations,
         },
-        # WB/WC/WD: 모니터링 홈 요약 카드·모드별 손실 막대·수율 분포
-        # 히스토그램이 그대로 쓰는 서버 계산 결과.
-        "yield_summary": {
-            "predicted_mean": table.summary.predicted_mean,
-            "predicted_min": table.summary.predicted_min,
-            "predicted_max": table.summary.predicted_max,
-            "bottom_n": table.summary.bottom_n,
-            "bottom_mean": table.summary.bottom_mean,
-            "judgeable_count": table.summary.judgeable_count,
-            "total_wafers": table.summary.total_wafers,
-            "histogram": [
-                {
-                    "label": b.label,
-                    "lo": None if b.lo == float("-inf") else b.lo,
-                    "hi": None if b.hi == float("inf") else b.hi,
-                    "judgeable_count": b.judgeable_count,
-                    "not_judgeable_count": b.not_judgeable_count,
-                }
-                for b in table.summary.histogram
-            ],
-            "mode_loss": [
-                {
-                    "target": m.target,
-                    "feature": m.feature,
-                    "avg_loss_pct": m.avg_loss_pct,
-                    "train_avg_loss_pct": m.train_avg_loss_pct,
-                    "contribution_pct": m.contribution_pct,
-                }
-                for m in table.summary.mode_loss
-            ],
-        },
         "target_provenance": eval_view.provenance.as_dict(),
     }
 
@@ -1391,135 +1377,6 @@ def get_analysis_report(dataset: str = "train", *, response: Response) -> dict[s
     """
     response.headers["Content-Disposition"] = f'attachment; filename="analysis_report_{dataset}.json"'
     return _build_report_payload(dataset)
-
-
-@router.get("/analysis/measurement-expansion", response_model=MeasurementExpansionResponse)
-def get_measurement_expansion(dataset: str = "train") -> dict[str, Any]:
-    """'계측 확대 권고' 카드 (spec 문구 전수 검토 PART B) -- 원인 분석 탭이
-    "원인 분석 실행" 직후 한 번만 호출해 결과를 상태에 저장한다 (spec §B-7:
-    "카드를 열 때마다 재계산하지 마라").
-
-    JSON 보고서와 달리 eval을 고정된 REPORT_EVAL_DATASET_ID("test")로 두지
-    않고 선택된 데이터셋 자기 자신을 판정 대상으로 삼는다. 이 카드가 답하는
-    질문은 "이 데이터셋 자체의 계측을 늘리면 어떻게 되는가"이므로, 인자
-    구성이 아예 다른 다른 데이터셋(예: 업로드 데이터셋의 특정 인자가
-    test.csv에는 없는 컬럼인 경우)을 판정 기준으로 쓰면 그 데이터셋의
-    실제 계측률과 무관하게 전량 "판정불가"로 나와 §B-6 축소 조건이 항상
-    빗나간다 -- 원인 분석 탭 자체가 데이터셋 선택기 하나뿐이라는 점과도
-    맞는다.
-    """
-    hydrated = _hydrated_targets_or_409(dataset)
-    train_df = hydrated.dataframe
-    eval_df = train_df
-    schema = parse_schema(train_df)
-
-    # 타깃당 전체 R+D+Config 풀 스코어링(88개 인자 x ANOVA)을 한 번씩만
-    # 돌려 재사용한다 -- select_primary_factor/select_fdr_significant_factors/
-    # score_all_factors를 각각 부르면 같은 스코어링을 3번 반복하게 되어
-    # (원인 분석 실행이 이미 호출한 /api/screening/pareto와도 별개로) 이
-    # 카드 하나 때문에 원인 분석 실행이 수십 초 느려진다. `_cached_ranked_rows`는
-    # (dataset, target) 기준 프로세스 전역 캐시라 Pareto 화면이 이미 조회한
-    # 타깃이면 사실상 즉시 반환된다.
-    rows_by_target: dict[str, list[dict]] = {
-        target: list(_ranked_rows_for_provenance(dataset, target, hydrated.provenance))
-        for target in schema.target_cols
-    }
-
-    # "판정 가능 여부"(조치 불가/추가 판정)는 알람 목록과 동일한 FDR-유의
-    # 인자 전체 집합으로 판단한다 -- get_alarms_predictions가 쓰는 것과
-    # 같은 개념(_alarm_factors). 타깃마다 1위 인자 하나만 쓰면(select_primary_factor)
-    # 여러 타깃이 같은 인자를 1위로 뽑는 데이터셋(치우친 스코어링 결과)에서
-    # 사실상 서로 다른 컬럼 1개만 보는 셈이 되어, 그 인자 하나의 계측률만으로
-    # "조치 불가"가 결정돼 데이터셋 전체 계측률과 동떨어진 값이 나온다.
-    judgment_factors: list[ParetoFactor] = [
-        _row_to_factor(train_df, target, row)
-        for target, rows in rows_by_target.items()
-        for row in rows
-        if row["significant"]
-    ]
-    control_ranges = [compute_control_range(train_df, factor) for factor in judgment_factors]
-    alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
-    verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
-    alarm_ids = [v.lot_wafer_id for v in verdicts if v.status == "alarm"]
-    normal_ids = [v.lot_wafer_id for v in verdicts if v.status == "normal"]
-    unmeasured_ids = [v.lot_wafer_id for v in verdicts if v.status == "unmeasured"]
-    total_wafers = len(verdicts)
-
-    # §B-6 축소 조건은 여기서 이미 판정 가능하다 (unmeasured_ids까지만
-    # 있으면 됨) -- 카드가 어차피 한 줄로 축소될 데이터셋(계측률이 충분한
-    # 경우)에서 아래 권장구간 계산(SPC/ML 부트스트랩, 인자 수가 많으면
-    # 수십 초)까지 돌리는 건 낭비다.
-    show_full_card = total_wafers > 0 and (len(unmeasured_ids) / total_wafers) >= MIN_ACTION_BLOCKED_SHARE
-
-    if not show_full_card:
-        summary = compute_measurement_expansion(
-            train_df, eval_df, {}, {}, {}, classify_measured_bands(
-                train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, [], [], dataset_id=dataset
-            ), [], total_wafers=total_wafers,
-        )
-    else:
-        bands = classify_measured_bands(
-            train_df, eval_df, alarm_ids, normal_ids, unmeasured_ids, judgment_factors, control_ranges,
-            dataset_id=dataset,
-        )
-
-        # B-3 인자별 우선순위 표는 스펙 예시("Step1_D1 -> Y3")대로 타깃당
-        # 1위 인자 하나씩, 5행으로 보여준다 -- 위 판정 가능 여부 집합과는
-        # 별개다.
-        primary_factors: dict[str, ParetoFactor] = {
-            target: _row_to_factor(train_df, target, rows[0]) for target, rows in rows_by_target.items() if rows
-        }
-
-        # 인자별 권장구간(SPC/ML 채택 방식)만 필요하다 -- 개선 권장 목록
-        # (per-wafer 행)은 삭제됐으므로 compute_factor_recommendation을
-        # 직접 부른다 (spec 알람 신뢰도 게이트 §B-2).
-        factor_summaries: dict[str, FactorRecommendation] = {}
-        for target, factor in primary_factors.items():
-            control_range = compute_control_range(train_df, factor)
-            factor_summary = compute_factor_recommendation(train_df, factor, control_range, dataset_id=dataset)
-            if factor_summary is not None:
-                factor_summaries[target] = factor_summary
-
-        judgment_features = [factor.feature for factor in judgment_factors]
-        summary = compute_measurement_expansion(
-            train_df,
-            eval_df,
-            rows_by_target,
-            primary_factors,
-            factor_summaries,
-            bands,
-            judgment_features,
-            total_wafers=total_wafers,
-        )
-
-    return round_floats(
-        {
-            "train_dataset_id": dataset,
-            "eval_dataset_id": dataset,
-            "action_blocked_wafers": summary.action_blocked_wafers,
-            "total_wafers": summary.total_wafers,
-            "additional_judged": summary.additional_judged,
-            "action_target": summary.action_target,
-            "expected_yield_gain_pp": summary.expected_yield_gain_pp,
-            "show_full_card": summary.show_full_card,
-            "priorities": [
-                {
-                    "feature": p.feature,
-                    "target": p.target,
-                    "measurement_rate": p.measurement_rate,
-                    "recommendation": p.recommendation,
-                    "reason": p.reason,
-                    "additional_judged": p.additional_judged,
-                    "yield_contribution_pp": p.yield_contribution_pp,
-                }
-                for p in summary.priorities
-            ],
-            "new_factor_discoveries": [
-                {"feature": d.feature, "target": d.target, "kind": d.kind} for d in summary.new_factor_discoveries
-            ],
-            "target_provenance": hydrated.provenance.as_dict(),
-        }
-    )
 
 
 RELIABILITY_CACHE_PAIRS = 8

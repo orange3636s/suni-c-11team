@@ -9796,9 +9796,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   .resultCard.alertsClassSection, .rcPage .resultCard.alertsClassSection{ padding: 12px 13px; }
   .panel{ padding: 12px 13px; }
   .panel-quiet,
-  .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet,
-  .resultCard.measurementExpansionCard, .rcPage .resultCard.measurementExpansionCard,
-  .resultCard.measurementExpansionCollapsed, .rcPage .resultCard.measurementExpansionCollapsed{ padding: 12px 13px; }
+  .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet{ padding: 12px 13px; }
   .resultCard, .rcPage .resultCard{ padding: 12px 13px; }
 }
 @media (max-width: 479px){
@@ -9806,9 +9804,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   .resultCard.alertsClassSection, .rcPage .resultCard.alertsClassSection{ padding: 10px 11px; }
   .panel{ padding: 10px 11px; }
   .panel-quiet,
-  .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet,
-  .resultCard.measurementExpansionCard, .rcPage .resultCard.measurementExpansionCard,
-  .resultCard.measurementExpansionCollapsed, .rcPage .resultCard.measurementExpansionCollapsed{ padding: 10px 11px; }
+  .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet{ padding: 10px 11px; }
   .resultCard, .rcPage .resultCard{ padding: 10px 11px; }
 }
 
@@ -10055,77 +10051,9 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 
 .sectionCaption{ font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; margin: 4px 0 12px; }
 
-/* -- 계측 확대 권고 카드 (spec 문구 전수 검토 PART B) --------------------- */
-.measurementExpansionCollapsed{ color: var(--text-secondary); font-size: var(--fs-body); }
-
-.meMetricRow{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
-.meMetricTile{ display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius-panel); border: 1px solid var(--border); background: var(--surface-secondary); min-width: 0; }
-.meMetricTileEmphasis{ border-color: #0891B2; background: color-mix(in srgb, #0891B2 8%, var(--surface)); }
-.meMetricLabel{ font-size: var(--fs-sm); color: var(--text-secondary); }
-.meMetricValue{ font-size: var(--fs-display); font-weight: 600; color: var(--text-primary); line-height: 1.2; }
-.meMetricSub{ font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
-
-.meFootnote{ font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; margin: 12px 0; }
-.meFootnoteFinal{ margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
-
-.meTable{ table-layout: fixed; width: 100%; }
-.meTable th, .meTable td{ padding: 8px 10px; font-size: var(--fs-sm); word-break: keep-all; overflow-wrap: break-word; }
-.meTable th:nth-child(1), .meTable td:nth-child(1){ width: 18%; }
-.meTable th:nth-child(2), .meTable td:nth-child(2){ width: 10%; }
-.meTable th:nth-child(3), .meTable td:nth-child(3){ width: 10%; }
-.meTable th:nth-child(4), .meTable td:nth-child(4){ width: 32%; }
-.meTable th:nth-child(5), .meTable td:nth-child(5){ width: 15%; }
-.meTable th:nth-child(6), .meTable td:nth-child(6){ width: 15%; }
-.meReasonCell{ color: var(--text-secondary); }
-
-/* -- S-3: 표는 ≤767px에서 카드로 접지 않고 가로 스크롤이 기본 전략이다
-   (하지 말 것 목록: 표 -> 카드 전환 금지 -- 컬럼 간 비교가 표의 목적).
-   .meScrollTable(MeasurementExpansionCard.tsx의 계측 확대 표,
-   monitoring/page.tsx의 유의 인자 표가 공유)이 이 전략을 켠다:
-     - 첫 컬럼(랏/인자 ID) sticky left:0, 불투명 배경 명시(.tableWrap이
-       이미 쓰는 --surface-card/--surface와 같은 값 -- 스크롤 중 아래
-       내용이 비쳐 보이지 않게).
-     - <th>는 이미 상단 sticky(.tableWrap th{position:sticky;top:0}) +
-       개별 불투명 배경(.tableWrap th{background:...})을 갖고 있다 --
-       부모(thead)에만 배경이 있고 자식 th에는 없어서 스크롤 시 헤더가
-       투명해지는 known bug는 이미 없다(확인 완료, 회귀 아님).
-     - 셀 패딩 9px 10px -> 7px 8px (.rcPage .tableWrap th/td 기준값).
-     - 스크롤 힌트 캡션(.meScrollHint). */
-@media (max-width: 767px){
-  .meScrollTable{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  /* table-layout은 fixed로 둔다 -- 열 폭(nth-child 퍼센트)은 이 표
-     자체의 박스 기준으로 계산되므로, min-width로 박스를 넓히기만 해도
-     (부모 .meScrollTable의 overflow-x:auto가 넘치는 만큼 스크롤을
-     받는다) 열 비율은 그대로 유지된다. */
-  .meScrollTable .meTable{ min-width: 640px; }
-  .meScrollTable table:not(.meTable){ min-width: 560px; }
-  .rcPage .tableWrap th, .rcPage .tableWrap td{ padding: 7px 8px; }
-  .meScrollTable th:first-child, .meScrollTable td:first-child{
-    position: sticky; left: 0;
-    background: var(--surface-card, var(--surface));
-  }
-  .meScrollTable th:first-child{ z-index: calc(var(--z-sticky-seg) + 1); }
-  .meScrollTable td:first-child{ z-index: 1; }
-  .meScrollHint{
-    margin: 4px 2px 0; font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted);
-  }
-}
-@media (min-width: 768px){
-  /* 767px 초과에서는 스크롤 힌트 자체가 필요 없다(표가 이미 폭에 맞게
-     그려진다) -- 데스크톱/태블릿에서는 숨긴다. */
-  .meScrollHint{ display: none; }
-}
-/* -- S-3: ≤479px, 저우선순위 "기대 효과"(구 "사유") 열을 숨긴다 --------
-   ID(인자)·수치(계측률/추가 판정/수율 기여)·등급 배지(권고)는 항상
-   남긴다(하지 말 것 목록). 정보를 조용히 지우지 않도록
-   .meHiddenColumnNote 캡션으로 숨겼다는 사실 자체를 남긴다. */
-.meHiddenColumnNote{ display: none; }
-@media (max-width: 479px){
-  .meTable .meReasonColHeader, .meTable .meReasonCell{ display: none; }
-  .meHiddenColumnNote{
-    display: block; margin: 4px 2px 0; font-size: var(--fs-xs); color: var(--text-secondary);
-  }
-}
+/* MA-3: 계측 확대 권고 카드 CSS는 컴포넌트(ActionBlock.tsx)와 함께
+   삭제했다 -- 모니터링 홈 블록①(ActionPriorityBlock)이 아래 새 클래스로
+   대체한다. */
 
 /* -- S-4: 비교 모달(Y1~Y5 / 장비별 Trellis) ≤767px -----------------------
    두 모달 다 가로 스크롤은 항상 유지한다(하지 말 것 목록: 패널을 세로로
@@ -10221,9 +10149,6 @@ html[data-theme="dark"] .meSideEffectCard.reliability strong{ color: #22D3EE; }
 html[data-theme="dark"] .meSideEffectCard.falsePositive{ border-color: #34D399; }
 html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; }
 
-@media (max-width: 767px){
-  .meMetricRow{ grid-template-columns: 1fr; }
-}
 
 /* 1280px에서 한 줄에 들어가야 한다 (spec §A-1) -- keep-all만 쓴다.
    white-space: nowrap과 함께 쓰면 좁은 화면에서 텍스트가 잘린다. */
@@ -10810,8 +10735,6 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 .rcCellMeta,
 .yieldGapMean,
 .yieldGapText,
-.meMetricValue,
-.meTable .numCol,
 .reliabilityTable .numCol,
 .scatterSelectionBoxTable td,
 .heatmapTooltip b,
@@ -10836,7 +10759,6 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
    없어 uppercase가 시각적으로 no-op이지만, 폰트/자간/크기는 그대로
    적용돼 "계측값 아래 위치한 표 헤더"까지 같은 규율을 따른다. */
 .tableWrap th,
-.meTable th,
 .reliabilityTable th{
   font-family: var(--font-data);
   font-size: var(--fs-micro);
@@ -11127,9 +11049,7 @@ html[data-theme="dark"] .resultCard.alertsClassSection{
 .resultCard.alertsClassSection{
   border-top: 2px solid var(--ink);
 }
-.resultCard.panel-quiet,
-.resultCard.measurementExpansionCard,
-.resultCard.measurementExpansionCollapsed{
+.resultCard.panel-quiet{
   background: transparent;
   border-color: var(--line-soft);
 }
@@ -11220,172 +11140,81 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   background: var(--sig-green);
 }
 .sidebarStatusDot.offline{ background: var(--text-muted); }
-/* RA-1: 모델 분석·자동화 버튼 전용 -- 연결됨(초록)/미연결(회색)/오류(주황)
-   3단계. sidebarStatusDot의 offline은 이미 회색이라 재사용하고, error만
-   새로 추가한다. */
+/* 연결됨(초록)/미연결(회색)/오류(주황) 3단계. offline은 이미 회색이라
+   재사용하고, error만 새로 추가한다. */
 .sidebarStatusDot.error{ background: var(--sig-amber); }
-.analysisTrigger{ position: relative; }
-.analysisTrigger .sidebarStatusDot{
+/* ME-2: 모델 학습·모델 분석·자동화·알림 설정 세 버튼 전부 같은 위치
+   규칙을 쓴다(RA-1 시절에는 분석 버튼 전용이었다) -- 접힘 상태에서도
+   점이 보여야 한다(지시서 "접힘 상태에서도 점은 보인다"). */
+.trainingTrigger,
+.analysisTrigger,
+.settingsTrigger{ position: relative; }
+.trainingTrigger .sidebarStatusDot,
+.analysisTrigger .sidebarStatusDot,
+.settingsTrigger .sidebarStatusDot{
   position: absolute;
   top: 8px;
   right: 8px;
 }
-.analysisTrigger.railIconButton .sidebarStatusDot{ top: 4px; right: 4px; }
+.trainingTrigger.railIconButton .sidebarStatusDot,
+.analysisTrigger.railIconButton .sidebarStatusDot,
+.settingsTrigger.railIconButton .sidebarStatusDot{ top: 4px; right: 4px; }
 
-/* ── FMEA 분석표 (모니터링 홈, 지시서 IB) ──────────────────────────────
-   14열이라 가로 스크롤이 항상 생긴다(.meScrollTable과 달리 모바일에서만
-   켜지는 게 아니라 상시 켠다) -- .tableWrap이 이미 주는 헤더 sticky+
-   개별 배경(위 .tableWrap th 규칙)은 그대로 물려받고, 여기서는 가로
-   스크롤과 좌측 sticky 두 열(타깃·잠재 원인)만 추가한다. */
-.fmeaDescription{ margin: 4px 0 12px; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; }
-.fmeaScrollTable{ overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.fmeaTable{ min-width: 1420px; table-layout: fixed; }
-.fmeaTable th, .fmeaTable td{ white-space: nowrap; }
-.fmeaTable th:nth-child(1), .fmeaTable td:nth-child(1){ width: 56px; }
-.fmeaTable th:nth-child(2), .fmeaTable td:nth-child(2){ width: 34px; }
-.fmeaTable th:nth-child(3), .fmeaTable td:nth-child(3){ width: 150px; }
-.fmeaTable th:nth-child(4), .fmeaTable td:nth-child(4){ width: 90px; }
-.fmeaTable th:nth-child(5), .fmeaTable td:nth-child(5){ width: 130px; }
-.fmeaTable th:nth-child(6), .fmeaTable td:nth-child(6){ width: 80px; }
-.fmeaTable th:nth-child(7), .fmeaTable td:nth-child(7){ width: 34px; }
-.fmeaTable th:nth-child(8), .fmeaTable td:nth-child(8){ width: 150px; }
-.fmeaTable th:nth-child(9), .fmeaTable td:nth-child(9){ width: 80px; }
-.fmeaTable th:nth-child(10), .fmeaTable td:nth-child(10){ width: 34px; }
-.fmeaTable th:nth-child(11), .fmeaTable td:nth-child(11){ width: 74px; }
-.fmeaTable th:nth-child(12), .fmeaTable td:nth-child(12){ width: 96px; }
-.fmeaTable th:nth-child(13), .fmeaTable td:nth-child(13){ width: 96px; }
-/* 지시서 KA-1: 14열이 새로 추가된 "예상 수율"(Y 컬럼 기준) -- 기존
-   14열("권고 조치")은 15열로 밀렸다. */
-.fmeaTable th:nth-child(14), .fmeaTable td:nth-child(14){ width: 96px; }
-.fmeaTable th:nth-child(15), .fmeaTable td:nth-child(15){ width: 260px; }
-/* 권고 조치만 white-space:normal -- 유일한 자유 서식 열(지시서 IB-3). */
-.fmeaColAction{ white-space: normal !important; }
-.fmeaColScore{ text-align: center; font-weight: 700; font-family: var(--font-data); }
-.fmeaColRpn{ font-weight: 700; font-family: var(--font-data); }
-/* 좌측 sticky 두 열: 타깃(1열, left:0)과 잠재 원인(3열, left:90px --
-   1열(56px) + 2열 S(34px) 폭의 합이어야 그 사이 S열이 스크롤에 가려질
-   때 이가 맞물린다. 지시서 KA-2 회귀: 90px 대신 56px(1열 폭만)로 잘못
-   둬서, 스크롤 시 3열이 실제 표 흐름상 위치(90px)보다 34px 왼쪽에
-   붙어 4·5열(인자값·권장 구간) 앞부분이 sticky 3열 밑에 가려졌다 --
-   "권장 구간" 셀이 "50.7~69.4"가 아니라 뒷부분만 보이는 "~69.4"로
-   보이던 원인이었다(데이터/포맷 문제가 아니라 sticky 오프셋 오류).
-   td/th 둘 다 불투명 배경을 명시한다 -- 배경이 비면 스크롤 중 아래
-   내용이 비쳐 보인다(하지 말 것 목록). */
-.fmeaTable .fmeaSticky{ position: sticky; z-index: 1; background: var(--surface-card, var(--surface)); }
-.fmeaTable th.fmeaSticky{ z-index: calc(var(--z-sticky-seg) + 1); background: var(--table-header-bg); }
-.fmeaTable .fmeaStickyTarget{ left: 0; }
-.fmeaTable .fmeaStickyFeature{ left: 90px; }
-
-/* 지시서 KC-1: 색은 이 7개 조건에만 -- 인자값(구간 밖)·계측률(<10%)·
-   D(=10)·RPN(임계)·불량률 편차(≥0.3%p)·잠재 원인(항상). 나머지(타깃·
-   구간·이탈률·S·O·구간 내 불량률·예상 수율)는 무채색이다(KC-3). */
-.fmeaOutOfRange{ color: var(--sig-amber); font-weight: 700; }
-.fmeaRateLow{ color: var(--sig-red); }
-/* D가 10(최댓값)이면 계측률이 이 공정의 구조적 문제임을 드러낸다 --
-   S·O에는 이 처리를 하지 않는다(KC-3, D만 색을 쓰는 이유). */
-.fmeaScoreMax{ color: var(--sig-red); }
-.fmeaRpn-red{ color: var(--sig-red); }
-.fmeaRpn-amber{ color: var(--sig-amber); }
-.fmeaDeviationPositive{ color: var(--sig-amber); font-weight: 700; }
-.fmeaDeviationMuted{ color: var(--text-muted); }
-.fmeaDetectionKind{ font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 700; color: var(--text-secondary); }
-/* 잠재 원인(인자명)은 항상 강조 -- "정상은 무채색" 규율의 의도적
-   예외로, 이 표에서 유일하게 링크인 셀임을 드러낸다(초록 --sig-green은
-   FMEA 표에 쓰지 않는다, KC-3). */
+/* MA-3: 모니터링 홈 재설계로 FMEA 분석표(FmeaTable.tsx)·권고 조치/계측
+   확대(ActionBlock.tsx)·요약 카드(SummaryCards.tsx)·모드별 손실 막대
+   (ModeLossBars.tsx)·수율 분포 히스토그램(YieldHistogram.tsx)이 전부
+   삭제됐다 -- 그 컴포넌트 전용 CSS도 함께 지웠다. `.fmeaFeatureLink`
+   만 예외로 남긴다: 새 블록①(ActionPriorityBlock.tsx)·블록②
+   (CoverageBlock.tsx)이 같은 "잠재 원인 강조 링크" 스타일을 그대로
+   재사용한다. */
 .fmeaFeatureLink{ color: var(--measured); font-weight: 600; }
 
-/* MNAR 경고 행 배경 (지시서 KC-2) -- 딱 한 행만(가장 큰 |mnar_gap_pp|)
-   강조한다. 다른 조건으로 행 배경을 쓰지 않는다(KC-3). td는 배경이
-   투명해 기본적으로 부모 tr의 배경이 비쳐 보이지만, sticky 셀(타깃·
-   잠재 원인)은 스크롤 중 투명해지면 안 되므로(IB-4) 자기 배경을 이미
-   불투명하게 갖고 있다 -- 그 셀에도 같은 톤을 명시로 덮어써야 강조가
-   행 전체에 고르게 보인다. */
-.fmeaMnarRow{ background: #FFFAF5; }
-.fmeaMnarRow .fmeaSticky{ background: #FFFAF5; }
-html[data-theme="dark"] .fmeaMnarRow{ background: rgba(255, 170, 60, 0.08); }
-html[data-theme="dark"] .fmeaMnarRow .fmeaSticky{ background: rgba(255, 170, 60, 0.08); }
-
-/* 산출 규칙 4칸 카드 (지시서 IB-5) */
-.fmeaRuleGrid{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
-.fmeaRuleCard{
-  display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: var(--radius-panel);
-  border: 1px solid var(--border); background: var(--surface-secondary);
+/* ---- 모니터링 홈 블록①: 조치 우선순위 (작업 지시서 MB) -------------- */
+.actionPrioritySortSelect{
+  font-size: var(--fs-sm); padding: 6px 10px; border-radius: var(--radius-control);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
 }
-.fmeaRuleLabel{ font: 700 12px/1.3 var(--font-ui); color: var(--text-primary); }
-.fmeaRuleWhat{ font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.4; }
-.fmeaRuleFormula{ font: 600 11px/1.3 var(--font-data); color: var(--text-secondary); }
-@media (max-width: 767px){
-  .fmeaRuleGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.actionPriorityTable{ min-width: 900px; }
+.actionPriorityTable th, .actionPriorityTable td{ vertical-align: top; }
+.actionPriorityRow.dimmed{ opacity: 0.45; }
+.actionPriorityRankTop{ color: var(--sig-red); font-weight: 700; }
+.actionPriorityTargetTag{ margin-left: 6px; font-size: var(--fs-xs); color: var(--text-secondary); font-weight: 400; }
+/* MB-1b: 같은 타깃이 이어지는 행은 타깃명을 생략하고 좌측 세로선으로만
+   묶음을 드러낸다(정렬을 깨면서까지 강제로 붙이지 않는다 -- 그냥 정렬
+   결과가 우연히 인접했을 때만 보이는 표시). */
+.actionPriorityGrouped{ border-left: 2px solid var(--border); padding-left: 8px; }
+.actionPriorityDescription{ color: var(--text-secondary); font-size: var(--fs-sm); max-width: 260px; }
+.actionPriorityCurrentOut{ color: var(--sig-amber); font-weight: 700; }
+.actionPrioritySubline{ margin-top: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
+.actionPriorityExpected{ font-variant-numeric: tabular-nums; }
+.actionPriorityPositive{ color: var(--sig-green); font-weight: 600; }
+.actionPriorityDimReason{ color: var(--text-secondary); font-size: var(--fs-sm); font-style: italic; }
+
+/* ---- 모니터링 홈 블록②: 조치 가능 범위 (작업 지시서 MC) -------------- */
+.coverageLegend{ display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--text-secondary); margin: 8px 0 14px; }
+.coverageLegend span{ display: inline-flex; align-items: center; gap: 6px; }
+.coverageLegendSwatch{ display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.coverageRow{ margin-bottom: 14px; }
+.coverageRow:last-child{ margin-bottom: 0; }
+.coverageRowHead{ display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+/* MC-2: 전체 1,000장을 분모로 그린다 -- 계측된 것만 100%로 그리지
+   않는다(지시서 "하지 말 것"). 미계측이 85~93%라 트랙 대부분이 배경색
+   (빈 트랙)으로 보이는 것이 정상이다. */
+.coverageTrack{
+  display: flex; height: 16px; border-radius: 4px; overflow: hidden;
+  background: var(--surface-muted); border: 1px solid var(--border);
 }
-
-/* 하단 주의 문구 3개 (지시서 IB-6) -- ①만 경고색, ②③은 정보색. */
-.fmeaNotice{ margin-top: 12px; padding: 10px 14px; border-radius: var(--radius-panel); font-size: var(--fs-sm); line-height: 1.6; }
-.fmeaNotice p{ margin: 0; }
-.fmeaNotice p + p{ margin-top: 4px; }
-.fmeaNoticeCaution{
-  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-card, rgba(0,0,0,.1)));
-  background: var(--warning-soft); color: var(--warning);
-}
-.fmeaNoticeInfo{
-  border: 1px solid var(--border-card, var(--border)); background: var(--surface-secondary, var(--surface-muted));
-  color: var(--text-secondary);
-}
-
-/* 권고 조치 표 (지시서 IC) -- 비고 열은 근거 문장이라 길다. */
-.fmeaActionNote{ color: var(--text-secondary); font-size: var(--fs-sm); white-space: normal; }
-
-/* 계측 확대 제안 카드 바로 아래 붙는 두 캡션(정의 병기 + FMEA 정합성,
-   지시서 JB-2/ID-4). 카드가 아니라 .rcPage 그리드의 별도 항목이라
-   (MeasurementExpansionCard.tsx 내부는 건드리지 않는다, JB-1) 카드처럼
-   보이지 않도록 배경·테두리 없이 좁은 줄간격만 준다. */
-.fmeaMeasurementFootnotes{ display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
-.fmeaMetricDefinitions,
-.fmeaMeasurementAlignmentNote{ margin: 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
-
-/* ---- 작업 지시서 WB: 상단 요약 카드 4개 ------------------------------ */
-.summaryCardsGrid{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
-.summaryCard{ display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius-panel); border: 1px solid var(--border); background: var(--surface-secondary); min-width: 0; }
-.summaryCardLabel{ font-size: var(--fs-xs); color: var(--text-secondary); }
-.summaryCardValue{ font-variant-numeric: tabular-nums; font-size: var(--fs-display); font-weight: 600; line-height: 1.2; }
-.summaryCardValue-amber{ color: var(--sig-amber); }
-.summaryCardValue-muted{ color: var(--text-muted); }
-.summaryCardSub{ font-size: var(--fs-xs); color: var(--text-muted); }
-@media (max-width: 767px){ .summaryCardsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
-/* ---- 작업 지시서 WC: 모드별 손실 막대 -------------------------------- */
-.modeLossList{ display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
-.modeLossRow{ display: grid; grid-template-columns: 140px 1fr 96px; align-items: center; gap: 10px; }
-.modeLossLabel{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.modeLossTarget{ font-weight: 600; }
-.modeLossFeature{ font-size: var(--fs-xs); color: var(--measured); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.modeLossBarTrack{ height: 14px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
-.modeLossBarFill{ height: 100%; border-radius: 999px; background: var(--inferred); }
-.modeLossBarFill-top{ background: var(--measured); }
-.modeLossFigures{ display: flex; flex-direction: column; align-items: flex-end; gap: 0; font-variant-numeric: tabular-nums; }
-.modeLossPp{ font-weight: 600; }
-.modeLossContribution{ font-size: var(--fs-xs); color: var(--text-muted); }
-@media (max-width: 767px){ .modeLossRow{ grid-template-columns: 96px 1fr 72px; } }
-
-/* ---- 작업 지시서 WD: 수율 분포 히스토그램(판정 가능/미계측 스택) ----- */
-.yieldHistogram{ display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: end; gap: 8px; height: 160px; margin-top: 16px; padding: 0 2px; }
-.yieldHistogramCol{ display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; }
-.yieldHistogramBarStack{ display: flex; flex-direction: column-reverse; width: 100%; flex: 1 1 auto; border-radius: 4px 4px 0 0; overflow: hidden; background: var(--surface-muted); }
-.yieldHistogramSeg-judgeable{ background: var(--inferred); }
-.yieldHistogramSeg-notJudgeable{
-  background: repeating-linear-gradient(45deg, var(--line-soft), var(--line-soft) 3px, transparent 3px, transparent 7px);
-  border-bottom: 1px solid var(--line-soft);
-}
-.yieldHistogramSeg-empty{ height: 2px; background: var(--line-soft); align-self: flex-end; width: 100%; }
-.yieldHistogramCount{ font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
-.yieldHistogramLabel{ font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
-@media (max-width: 767px){ .yieldHistogram{ height: 120px; gap: 4px; } .yieldHistogramLabel{ font-size: 9px; } }
-
-/* ---- 작업 지시서 WF: 조치 블록(한 카드, 권고 조치·계측 확대 두 표) --- */
-.actionBlockSection + .actionBlockSection{ margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-card, var(--border)); }
-.actionBlockSubheading{ margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
-.fmeaFootnote{ margin: 8px 2px 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
+.coverageSeg{ height: 100%; }
+.coverageSeg-out{ background: var(--sig-amber); }
+.coverageSeg-in{ background: var(--measured); }
+.coverageSeg-unmeasured{ background: transparent; }
+.coverageRowCaption{ margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* ---- 작업 지시서 WL: 데이터 한계 진단(MNAR + 분산 분해) -------------- */
+/* MA-3 정리 중 실수로 함께 지웠다가 복원 -- DataLimitationDiagnostics.tsx
+   (블록③, 유일한 남은 소비처)가 여전히 쓴다. */
+.actionBlockSubheading{ margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
+.fmeaFootnote{ margin: 8px 2px 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
 .limitsGrid{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 12px; }
 @media (max-width: 1023px){ .limitsGrid{ grid-template-columns: 1fr; } }
 

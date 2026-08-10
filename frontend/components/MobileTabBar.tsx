@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useRef } from "react";
-import { navigationItems, type NavigationLabel } from "@/components/Sidebar";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { usePanelState } from "@/components/PanelStateProvider";
+import { formatSidebarDot, navigationItems, SidebarStatusDot, type NavigationLabel } from "@/components/Sidebar";
 
 /** Replaces the left sidebar at ≤1023px (spec: JSON 보고서 버튼 제거 ·
  * 모바일 레이아웃 전환 §B-3) -- a floating navy pill bar, same visual
@@ -25,6 +26,25 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
     analysisPanelOpen,
     setAnalysisPanelOpen,
   } = usePanelState();
+  const { snapshot, training, notifications } = useAnalysisState();
+  // ME-2: 데스크톱 사이드바(Sidebar.tsx)와 같은 판정 규칙 -- 컴포넌트만
+  // 다시 쓰고(SidebarStatusDot) 로직은 여기서 다시 계산한다(이 탭바는
+  // 사이드바 대신 렌더되므로 같은 훅 인스턴스를 공유할 수 없다).
+  const analysisStatus: "connected" | "offline" | "error" =
+    snapshot && snapshot.errors.length > 0 ? "error" : snapshot?.source.mode === "sql" ? "connected" : "offline";
+  const analysisStatusLabel = { connected: "SQL 연결됨", offline: "SQL 미연결", error: "오류" }[analysisStatus];
+  const trainingStatus: "connected" | "offline" = training ? "connected" : "offline";
+  const trainingStatusLabel = training
+    ? `수동 학습 · ${training.performance?.source_filename ?? "-"} · ${formatSidebarDot(training.createdAt)}`
+    : "내장 데이터로 학습됨";
+  const connectedChannelNames = [
+    notifications.slack.connected ? "Slack" : null,
+    notifications.telegram.connected ? "Telegram" : null,
+    notifications.gmail.connected ? "Gmail" : null,
+  ].filter((name): name is string => name != null);
+  const notificationStatus: "connected" | "offline" = connectedChannelNames.length > 0 ? "connected" : "offline";
+  const notificationStatusLabel =
+    connectedChannelNames.length > 0 ? `${connectedChannelNames.join(" · ")} 연결됨` : "연결된 채널 없음";
 
   // Keeps the selected tab in view if the bar has scrolled (spec: "선택된
   // 항목이 화면 밖이면 자동으로 스크롤해 보이게 한다").
@@ -62,27 +82,33 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
           className="mobileTab mobileTabButton"
           aria-haspopup="dialog"
           aria-expanded={trainingPanelOpen}
+          title={`모델 학습 (${trainingStatusLabel})`}
           onClick={() => setTrainingPanelOpen((value) => !value)}
         >
           모델 학습
+          <SidebarStatusDot status={trainingStatus} label={trainingStatusLabel} />
         </button>
         <button
           type="button"
           className="mobileTab mobileTabButton"
           aria-haspopup="dialog"
           aria-expanded={analysisPanelOpen}
+          title={`모델 분석·자동화 (${analysisStatusLabel})`}
           onClick={() => setAnalysisPanelOpen((value) => !value)}
         >
           모델 분석·자동화
+          <SidebarStatusDot status={analysisStatus} label={analysisStatusLabel} />
         </button>
         <button
           type="button"
           className="mobileTab mobileTabButton"
           aria-haspopup="dialog"
           aria-expanded={settingsPanelOpen}
+          title={`알림 설정 (${notificationStatusLabel})`}
           onClick={() => setSettingsPanelOpen((value) => !value)}
         >
           알림 설정
+          <SidebarStatusDot status={notificationStatus} label={notificationStatusLabel} />
         </button>
       </div>
     </nav>
