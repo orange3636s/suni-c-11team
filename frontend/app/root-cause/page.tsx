@@ -707,8 +707,20 @@ function RootCauseContent() {
     setAnalysis((previous) => (previous ? { ...previous, activeTarget: target } : previous));
   }
 
+  // QB-1: Config 여부는 스키마(config_columns)로 판정한다 -- 예전에는
+  // `/_Config$/` 이름 패턴에 기대는 휴리스틱이었다. 데이터셋 컬럼명
+  // 규칙(Step{n}_Config)이 우연히 일치해 지금까지는 사고가 나지 않았지만,
+  // 400 응답을 받고서야 분기하는 방식이 아니라 요청 전에 권위 있는
+  // 근거(스키마)로 미리 분기해야 한다(하지 말 것: 400 왕복 후 재호출).
+  // 스키마가 아직 없는 극히 짧은 창(딥링크 최초 진입)에서만 이름 패턴을
+  // 폴백으로 쓴다.
+  function isConfigFeature(feature: string): boolean {
+    if (analysisSchema) return analysisSchema.config_columns.includes(feature);
+    return /_Config$/.test(feature);
+  }
+
   function openFactor(target: string, feature: string) {
-    const isConfig = /_Config$/.test(feature);
+    const isConfig = isConfigFeature(feature);
     setActiveTarget(target);
     updateUrl(target, feature);
     setQuickLook(null);
