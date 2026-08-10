@@ -724,6 +724,41 @@ def delete_prediction_model(
     return delete_model_bundle(model_id, model_dir).deleted_files
 
 
+# ND-4: 보관 정책 -- 최근 이 개수만큼의 세트(+ 현재 챔피언)만 남긴다.
+# 학습 라이브러리가 바뀌면 옛 세트는 로드조차 안 되므로 무기한 쌓아둘
+# 이유가 없다 (지시서 ND-3/ND-4).
+MODEL_RETENTION_KEEP = 3
+
+
+def enforce_model_retention(
+    model_dir: str | Path = DEFAULT_MODEL_DIR,
+    *,
+    keep: int = MODEL_RETENTION_KEEP,
+    active_model_id: str | None = None,
+) -> list[str]:
+    """새 모델을 저장한 직후 호출한다 -- `created_at` 내림차순으로 최근
+    `keep`개(기본 3)만 남기고 나머지를 지운다. `active_model_id`(현재
+    챔피언)는 그 순위와 무관하게 항상 보존한다 -- 롤백 대상이 사라지면
+    안 되기 때문이다. 삭제마다 로그를 남긴다."""
+    models, _warnings = list_prediction_models(model_dir)
+    keep_ids = {item["model_id"] for item in models[:keep]}
+    if active_model_id:
+        keep_ids.add(active_model_id)
+    deleted: list[str] = []
+    for item in models:
+        model_id = item["model_id"]
+        if model_id in keep_ids:
+            continue
+        try:
+            delete_model_bundle(model_id, model_dir)
+        except Exception:
+            logger.exception("models: 보관 정책에 따른 삭제 실패: %s", model_id)
+            continue
+        deleted.append(model_id)
+        logger.info("models: %s 삭제 (보관 %d개 초과)", model_id, keep)
+    return deleted
+
+
 def load_prediction_model_target(
     model_id: str,
     target: str,

@@ -16,12 +16,13 @@ __pycache__/
 !frontend/.env.local.example
 frontend/.env.local
 
-# Models
-models/*.pkl
-models/*.joblib
-models/*.json
-!models/Y_hist_gradient_boosting_regressor_20260730_230445.joblib
-!models/Y_hist_gradient_boosting_regressor_20260730_230445.json
+# Models -- ND: 전량 무시로 전환했다. 예전에는 models/*.pkl 등 평면
+# 파일 패턴만 걸러 SCREENING_GBDT_*/HYBRID_MULTI_Y_*처럼 하위 폴더에 담긴
+# 세트는 걸러지지 않고 그대로 커밋됐다(20개 넘게 쌓인 원인). 라이브러리가
+# 바뀌면 옛 모델은 로드조차 안 되므로 보관하지 않는다 -- 필요하면 코드로
+# 재학습한다.
+models/*
+!models/.gitkeep
 
 # Data
 data/raw/*

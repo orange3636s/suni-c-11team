@@ -16,7 +16,6 @@ from src.ml.hybrid import (
     ModelStagingDirectory,
     TRAINING_TARGET_ORDER,
     AutoFeaturePreprocessor,
-    _splitter,
 )
 from src.ml.inference import get_prediction_model_detail, list_prediction_models
 from src.ml.memory_usage import memory_snapshot
@@ -83,14 +82,12 @@ def test_categorical_preprocessor_is_frequency_encoded_float32() -> None:
     assert transformed.shape[1] == 2
 
 
-def test_hybrid_splitter_is_fixed_holdout_not_kfold() -> None:
-    features = pd.DataFrame({"Step1_R1": np.arange(30, dtype=np.float32)})
-    groups = pd.Series([f"LOT{index // 3:02d}" for index in range(30)])
-
-    splits, method = _splitter(features, groups)
-
-    assert method in {"stratified_group_holdout", "group_shuffle_fallback"}
-    assert len(splits) == 2
+def test_training_target_order_is_y1_through_y5() -> None:
+    # ND: this used to also cover src.ml.hybrid._splitter (the fixed
+    # stratified-group-holdout split for the now-removed
+    # train_hybrid_multi_y HGBR/RandomForest comparison path) -- that
+    # function is gone with it, so only the still-live constant remains
+    # covered here.
     assert TRAINING_TARGET_ORDER == [f"Y{index}" for index in range(1, 6)]
 
 

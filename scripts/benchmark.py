@@ -36,11 +36,22 @@ from sklearn.model_selection import GroupKFold
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import select_primary_factor
 from src.ml.hybrid import AutoFeaturePreprocessor
-from src.ml.pipeline import FAIL_RATE_TARGETS, HGBR_PARAMS, build_features
+from src.ml.pipeline import FAIL_RATE_TARGETS, build_features
 
 TRAIN_CSV = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 N_FOLDS = 5
 FINAL_YIELD_COLUMN = "Y"
+# ND: src/ml/pipeline.py switched its production model to LightGBM and no
+# longer exports HGBR_PARAMS -- this benchmark compares preprocessing
+# strategies (A/B/C), not model libraries, and keeps HistGradientBoosting
+# fixed across all three variants on purpose (see module docstring), so its
+# own copy of the old params is kept local instead of following that swap.
+HGBR_PARAMS = dict(
+    max_iter=300,
+    learning_rate=0.06,
+    max_depth=6,
+    random_state=42,
+)
 
 
 def _numeric(series: pd.Series) -> pd.Series:

@@ -108,19 +108,18 @@ def test_y_target_training_succeeds(prepared_training_data) -> None:
     assert result.outlier_strategy == outlier_strategy_for_model(result.best_model_name)
     assert result.outlier_indicator is (result.outlier_strategy == "flag_only")
     assert set(result.model_strategies.values()) <= {"native", "median"}
-    assert result.model_outlier_strategies["HistGradientBoostingRegressor"] == "flag_only"
+    assert result.model_outlier_strategies["LGBMRegressor"] == "flag_only"
     assert result.fallback_used is False
 
 
 def test_model_specific_missing_and_outlier_policies() -> None:
-    assert missing_strategy_for_model("HistGradientBoostingRegressor") == "native"
-    assert outlier_strategy_for_model("HistGradientBoostingRegressor") == "flag_only"
-    assert missing_strategy_for_model("XGBoostRegressor") == "native"
-    assert outlier_strategy_for_model("XGBoostRegressor") == "flag_only"
-    assert missing_strategy_for_model("CatBoostRegressor") == "native"
-    assert outlier_strategy_for_model("CatBoostRegressor") == "flag_only"
-    assert missing_strategy_for_model("RandomForestRegressor") == "median"
-    assert outlier_strategy_for_model("RandomForestRegressor") == "flag_only"
+    # ND: LGBMRegressor is the only production model now (see
+    # src/ml/pipeline.py's module docstring for why) -- it gets native
+    # missing-value handling and flag-only outlier treatment, same as
+    # HistGBDT did before. Anything else falls back to the generic
+    # median/iqr policy.
+    assert missing_strategy_for_model("LGBMRegressor") == "native"
+    assert outlier_strategy_for_model("LGBMRegressor") == "flag_only"
     assert missing_strategy_for_model("Ridge") == "median"
     assert outlier_strategy_for_model("Ridge") == "iqr"
 

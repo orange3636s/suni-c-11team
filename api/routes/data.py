@@ -74,6 +74,7 @@ from src.ml.inference import (
     ModelLoadError,
     get_prediction_model_detail,
     delete_model_bundle,
+    enforce_model_retention,
     list_prediction_models,
     load_latest_model_bundle,
     get_latest_model_metadata,
@@ -644,7 +645,11 @@ async def train_model(
     _report_training_progress("모델 저장", 90)
 
     created_at = datetime.now().astimezone()
-    model_id = f"SCREENING_GBDT_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
+    # ND-5: 명명 규칙 통일 -- LGBM_<타깃>_<타임스탬프> (타깃은 이 번들이
+    # 최종적으로 산출하는 FINAL_YIELD_COLUMN="Y"). 마이크로초까지 남긴 건
+    # 기존 SCREENING_GBDT_* 관례와 같다 -- 같은 초에 여러 학습 Job이
+    # 끝나도 모델 ID가 충돌하지 않아야 한다.
+    model_id = f"LGBM_Y_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
     hybrid_result = build_hybrid_training_result(
         evaluation,
         source_filename=filename,
@@ -692,6 +697,14 @@ async def train_model(
             "final_y_metrics": hybrid_result.metadata["final_y_metrics"],
         },
     )
+    # ND-4: 보관 정책 -- 방금 승격된 모델(챔피언일 수도, 게이트에 밀린
+    # 후보일 수도 있다)을 포함해 최근 3세트만 남긴다. 저장은 이미
+    # 끝났으므로 여기서 실패해도 학습 자체의 성공 여부에는 영향을 주지
+    # 않는다 -- 베스트 에포트.
+    try:
+        enforce_model_retention(MODEL_DIR, active_model_id=model_id)
+    except Exception:
+        logger.exception("모델 보관 정책 적용 실패")
 
     final_metrics = evaluation.metrics[FINAL_YIELD_COLUMN]
     per_target_metrics = target_metrics_summary(evaluation)

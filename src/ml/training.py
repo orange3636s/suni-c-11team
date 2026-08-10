@@ -6,15 +6,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from lightgbm import LGBMRegressor
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import (
-    HistGradientBoostingRegressor,
-)
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
@@ -30,19 +28,14 @@ from src.ml.memory_usage import log_memory_stage
 
 
 logger = logging.getLogger(__name__)
+# ND: LightGBM replaced HistGradientBoosting/RandomForest/XGBoost/CatBoost
+# here too -- see src/ml/pipeline.py's module docstring for the comparison
+# that picked it (fastest, fully deterministic, native missing handling).
 NATIVE_MISSING_MODELS = {
-    "HistGradientBoostingRegressor",
-    "HistGradientBoostingPoisson",
-    "XGBoostRegressor",
-    "CatBoostRegressor",
+    "LGBMRegressor",
 }
 FLAG_ONLY_OUTLIER_MODELS = {
-    "HistGradientBoostingRegressor",
-    "HistGradientBoostingPoisson",
-    "XGBoostRegressor",
-    "CatBoostRegressor",
-    "RandomForestRegressor",
-    "ExtraTreesRegressor",
+    "LGBMRegressor",
 }
 
 
@@ -208,15 +201,10 @@ def _build_preprocessor(
 def _candidate_estimators(random_state: int) -> dict[str, Any]:
     """Production uses one bounded model; comparisons waste Railway memory."""
     return {
-        "HistGradientBoostingRegressor": HistGradientBoostingRegressor(
-            learning_rate=0.05,
-            max_iter=150,
-            max_leaf_nodes=31,
-            min_samples_leaf=20,
-            l2_regularization=1.0,
-            early_stopping=True,
-            n_iter_no_change=12,
+        "LGBMRegressor": LGBMRegressor(
+            n_estimators=300,
             random_state=random_state,
+            verbose=-1,
         ),
     }
 
