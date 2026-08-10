@@ -10,7 +10,6 @@ import type {
   FavoriteListResponse,
   FavoriteRecord,
   FavoriteSnapshot,
-  HeatmapKind,
   HeatmapResponse,
   LatestAlarmsPayload,
   LatestAnalysisPayload,
@@ -320,11 +319,10 @@ export function getPromotionHistory(limit = 5): Promise<PromotionHistoryResponse
 }
 
 // TC-4: metric 토글이 사라졌다 -- numeric 보기는 항상 ε²(농도)+rho(방향)를
-// 함께 받는다. TC-3: categorical 보기도 계층(config_level) 선택 없이 항상
-// 원본 Config 조합 그대로다.
-export function getScreeningHeatmap(dataset: string, kind?: HeatmapKind): Promise<HeatmapResponse> {
+// 함께 받는다. NG-1: categorical 보기 자체를 제거했다 -- 항상 numeric만
+// 조회한다.
+export function getScreeningHeatmap(dataset: string): Promise<HeatmapResponse> {
   const params = new URLSearchParams({ dataset });
-  if (kind) params.set("kind", kind);
   return getJson(`/api/screening/heatmap?${params.toString()}`);
 }
 

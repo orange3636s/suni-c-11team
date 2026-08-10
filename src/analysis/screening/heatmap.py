@@ -17,9 +17,12 @@ here (bypassing that gate, same as rho already did) so the cell still shows
 a real number instead of going blank -- only the `gate_excluded`/`tier`
 flags communicate the gate outcome.
 
-Config columns get a separate path (`build_categorical_heatmap`) --
-correlation isn't defined for an unordered categorical, so it uses eps2
-only, no `rho`.
+NG-1: Config x Y1~Y5 히트맵(구 `build_categorical_heatmap`)은 제거했다 --
+600건 검정에서 FDR 통과 0건이라 전량 중립색이었고, Config별 트리맵 탭이
+같은 정보를 더 잘 보여준다. `eps2_categorical` 자체는 트리맵이 계속 쓰므로
+(src/analysis/screening/selector.py, src/analysis/llm_stats.py,
+api/routes/monitoring.py) 건드리지 않았다 -- 지운 것은 이 히트맵 전용
+경로뿐이다.
 """
 
 from __future__ import annotations
@@ -28,23 +31,16 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from src.analysis.screening.effect_size import eps2_categorical, eps2_numeric
+from src.analysis.screening.effect_size import eps2_numeric
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import (
     DEFAULT_FDR_ALPHA,
-    DEFAULT_MIN_N_CATEGORICAL,
-    benjamini_hochberg,
-    confidence_tier,
     effective_confidence_tier,
     score_all_factors,
 )
 
 MIN_CELL_N = 30
 EPS2_SCALE = (0.0, 0.7)
-# 범주형(Config) 히트맵 전용 고정 스케일 (지시서 E: "자동 정규화 금지" --
-# 실측 기준 Config의 ε²는 최대 0.006, 중앙값 0.0003이라 관측 최대값에
-# 맞추면 신호 없는 셀이 새빨갛게 렌더된다).
-EPS2_CATEGORICAL_SCALE = (0.0, 0.05)
 # TC-4: eps2가 이 이상인데 |rho|가 이 미만이면 "순위상관으로는 약해
 # 보이지만 설명력은 높은" U자형 관계로 판정한다 (프런트 툴팁용 임계 --
 # 백엔드는 원값만 내려주고 판정 자체는 프런트에서 한다).
@@ -165,99 +161,4 @@ def build_heatmap(
         gate_excluded=[gate_grid[i] for i in order],
         scale={"min": EPS2_SCALE[0], "max": EPS2_SCALE[1]},
         excluded_configs=len(schema.config_cols),
-    )
-
-
-def build_categorical_heatmap(
-    df: pd.DataFrame,
-    schema: Schema,
-    fdr_alpha: float = DEFAULT_FDR_ALPHA,
-) -> HeatmapData:
-    """Config x Y1~Y5 히트맵 -- R/D 히트맵과 별도 경로다 (spec: "합치지
-    말고 토글로 분리한다"). 지표는 ε² 고정(ρ는 순서 없는 범주형에 정의되지
-    않는다). FDR 가족은 이 레벨 하나에서 나오는 스텝x타깃 셀 전체.
-
-    TC-3: 각 셀의 ANOVA 그룹은 Model/EQ/Chamber로 축약한 계층이 아니라
-    원본 Config 값 그대로다 -- 한 Step_Config 컬럼의 원본 값 자체가 이미
-    "Model x EQ x Chamber" 조합이라(실측: test.CSV 기준 스텝당 32~36개
-    고유값, Model3 x EQ3 x Chamber4=36과 일치), 계층으로 축약하면(기존
-    Model 3그룹/EQ 3그룹/Chamber 4그룹) 조합 특이적 효과가 평균에 묻혀
-    사라진다.
-
-    색칠 여부(q<0.05)는 여기서 결정하지 않는다 -- `significant`/`q`
-    그리드를 그대로 내려주고, "FDR 통과 셀만 칠한다"는 프론트가 렌더
-    시점에 적용한다(숫자형 히트맵과 응답 형태를 공유하기 위함).
-    """
-    features = schema.config_cols
-    targets = schema.target_cols
-
-    results: dict[tuple[str, str], object] = {}
-    p_values: list[float] = []
-    keys_with_p: list[tuple[str, str]] = []
-    for feature in features:
-        raw_series = df[feature] if feature in df.columns else None
-        for target in targets:
-            result = (
-                eps2_categorical(raw_series, df[target], min_n=DEFAULT_MIN_N_CATEGORICAL)
-                if raw_series is not None and target in df.columns
-                else None
-            )
-            results[(feature, target)] = result
-            if result is not None:
-                p_values.append(result.p_value)
-                keys_with_p.append((feature, target))
-
-    q_by_key = dict(zip(keys_with_p, benjamini_hochberg(p_values))) if p_values else {}
-
-    values: list[list[float | None]] = []
-    n_grid: list[list[int]] = []
-    q_grid: list[list[float | None]] = []
-    sig_grid: list[list[bool]] = []
-    tier_grid: list[list[str | None]] = []
-    gate_grid: list[list[bool]] = []
-
-    for feature in features:
-        value_row: list[float | None] = []
-        n_row: list[int] = []
-        q_row: list[float | None] = []
-        sig_row: list[bool] = []
-        tier_row: list[str | None] = []
-        gate_row: list[bool] = []
-        for target in targets:
-            result = results[(feature, target)]
-            q = q_by_key.get((feature, target))
-            value_row.append(result.eps2 if result else None)
-            n_row.append(result.n_observed if result else 0)
-            q_row.append(q)
-            sig_row.append(bool(q is not None and q < fdr_alpha))
-            tier_row.append(confidence_tier(result.eps2, result.p_value) if result else None)
-            # Config는 eps2_categorical의 min_n 하나만 쓰고 QA-2의
-            # 표본 부족/게이트 불일치 개념이 없다 -- value/tier가 이미 같은
-            # `result`에서 나오므로 항상 정합한다.
-            gate_row.append(False)
-        values.append(value_row)
-        n_grid.append(n_row)
-        q_grid.append(q_row)
-        sig_grid.append(sig_row)
-        tier_grid.append(tier_row)
-        gate_grid.append(gate_row)
-
-    order = sorted(
-        range(len(features)),
-        key=lambda i: max((v for v in values[i] if v is not None), default=0.0),
-        reverse=True,
-    )
-
-    return HeatmapData(
-        features=[features[i] for i in order],
-        targets=targets,
-        values=[values[i] for i in order],
-        rho=[[None] * len(targets) for _ in order],
-        n=[n_grid[i] for i in order],
-        q=[q_grid[i] for i in order],
-        significant=[sig_grid[i] for i in order],
-        tier=[tier_grid[i] for i in order],
-        gate_excluded=[gate_grid[i] for i in order],
-        scale={"min": EPS2_CATEGORICAL_SCALE[0], "max": EPS2_CATEGORICAL_SCALE[1]},
-        excluded_configs=len(schema.r_cols) + len(schema.d_cols),
     )

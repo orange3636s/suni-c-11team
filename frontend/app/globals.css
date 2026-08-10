@@ -41,7 +41,6 @@ html,body,button,input,select,textarea{font-family:var(--font-ui)}
 .sidebar .themeTrigger .themeIcon{width:18px;height:18px}
 .sidebar .themeTriggerLabel{display:inline-flex;align-items:center;min-width:0;white-space:nowrap;font-size: var(--fs-body);font-weight:500;line-height:1}
 .sidebar .themeTrigger .themeChevron{flex:0 0 auto;width:15px;height:15px;margin-left:auto}
-.sidebar .themeMenu{width:160px;padding:6px;border-radius:13px;z-index:100}
 .sidebar .themeOptions button{min-height:36px;height:36px;padding:0 10px;border-radius:9px;font:500 13px/1 var(--font-ui)}
 .resultCard,.surfaceCard,.uploadCard{border-radius:var(--card-radius)}
 .button,input,select,.fileSelectButton{min-height:var(--control-height);border-radius:var(--control-radius);font:500 13px/1 var(--font-ui)}
@@ -65,7 +64,7 @@ body,.rcPage,.rcPage button,.rcPage input,.rcPage select,.rcPage table{font-fami
 .rcPage .rcGrid{gap:var(--space-gap)}.rcPage .rcMetricStrip>div{padding:12px;border-radius: var(--radius-panel);border:1px solid var(--border-card);background:var(--surface-muted)}.rcPage .rcMetricStrip strong{font-size: var(--fs-display);font-weight:600;line-height:1.2}.rcPage .rcHeroNumber{font-size: var(--fs-display);font-weight:600;line-height:1.2}
 .rcPage .tableWrap{border:1px solid var(--border-card);border-radius: var(--radius-panel);background:var(--surface-card)}.rcPage .tableWrap th{font-size: var(--fs-sm);font-weight:600;background:var(--surface-muted)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font-size: var(--fs-body);line-height:1.45}.rcPage .tableWrap td{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rcPage .rcEmpty{min-height:120px;padding:24px;display:grid;place-content:center;text-align:center}.rcPage .rcEmpty h2{font-size: var(--fs-title)}.rcPage .rcEmpty p,.rcPage .errorMessage,.rcPage .emptyMessage{font-size: var(--fs-body);line-height:1.5}.rcPage .errorMessage{padding:13px 14px;border:1px solid color-mix(in srgb,var(--danger) 24%,var(--border-card));border-radius: var(--radius-panel);background:color-mix(in srgb,var(--danger) 7%,transparent)}
-.sidebar .themeToggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);color:#fff;font:500 13px/1 var(--font-ui);box-shadow:none}.sidebar .themeToggle:hover{background:rgba(255,255,255,.11)}.sidebar .themeToggle:active{transform:scale(.98)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}.sidebar .themeMenu>strong{font-size: var(--fs-sm)}.sidebar .themeOptions button{min-height:36px;border-radius:9px;font:500 13px/1 var(--font-ui)}
+.sidebar .themeToggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);color:#fff;font:500 13px/1 var(--font-ui);box-shadow:none}.sidebar .themeToggle:hover{background:rgba(255,255,255,.11)}.sidebar .themeToggle:active{transform:scale(.98)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu>strong{font-size: var(--fs-sm)}.sidebar .themeOptions button{min-height:36px;border-radius:9px;font:500 13px/1 var(--font-ui)}
 html[data-theme="dark"] .rcPage .resultCard,html[data-theme="dark"] .rcPage .tableWrap{border-color:rgba(255,255,255,.09)}html[data-theme="dark"] .rcPage .workspaceTabs,html[data-theme="dark"] .rcPage .rcMetricStrip>div{border-color:rgba(255,255,255,.09)}
 @media(max-width:767px){.rcPage{padding:18px 16px;gap:12px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size: var(--fs-display)}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}.rcPage .tableWrap td{max-width:170px}}
 
@@ -6161,10 +6160,19 @@ html[data-theme="dark"] .dataTable th{
   border-radius: var(--radius-panel);
 }
 
+/* NF: 이전에는 .themeMenu 배경/테두리/z-index가 네 곳(L44, L67 부근의
+   패킹된 두 줄, 여기)에 흩어져 있었고, 이 규칙만 유일하게 background를
+   지정했다 -- 다른 세 곳이 나중에 로드되며 width/padding/z-index/
+   border-radius를 다시 덮어써 규칙이 바뀔 때마다 배경이 통째로 빠지기
+   쉬운 구조였다. 여기 하나로 합치고, 불투명 토큰(--surface-card)과
+   --border-card/--z-dropdown을 써서 라이트/다크 모두 별도 오버라이드
+   없이 정확히 맞도록 한다(.themeMenuPortal과 같은 패턴). */
 .sidebar .themeMenu{
-  border-color: rgba(255, 255, 255, 0.12);
-  border-radius: 18px;
-  background: rgba(250, 252, 255, 0.94);
+  z-index: var(--z-dropdown);
+  width: 160px;
+  padding: 6px;
+  border: 1px solid var(--border-card);
+  background: var(--surface-card);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
 }
 
@@ -6213,10 +6221,6 @@ html[data-theme="dark"] .sidebar{
   box-shadow:
     0 26px 68px rgba(0, 7, 20, 0.3),
     0 8px 24px rgba(0, 9, 25, 0.18);
-}
-
-html[data-theme="dark"] .sidebar .themeMenu{
-  background: rgba(44, 44, 46, 0.9);
 }
 
 html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
@@ -7567,7 +7571,7 @@ root-cause{
 .rcPage .resultCard{padding:var(--space-card);border:1px solid var(--border-card);border-radius:var(--radius-card);background:var(--surface-card);box-shadow:none}
 .rcPage .pageHeading:not(.uploadIntro) h1{font-size:var(--text-page);font-weight:600;line-height:1.2}.rcPage .pageHeading:not(.uploadIntro) p{font-size: var(--fs-body);font-weight:400;line-height:1.5}.rcPage .resultCard h2{font-size:var(--text-section);font-weight:600;line-height:1.3}.rcPage .workspaceTabs{border-radius: var(--radius-panel)}.rcPage .workspaceTabs button{min-height:36px;border-radius:var(--radius-tab);font:500 13px/1.2 var(--font-ui)}
 .rcPage .rcControlBar input,.rcPage .rcControlBar select,.rcPage .button{min-height:38px;border-radius:var(--radius-control);font:500 13px/1 var(--font-ui)}.rcPage .button.primary{font-weight:600}.rcPage .tableWrap{border-radius: var(--radius-panel);border:1px solid var(--border-card)}.rcPage .tableWrap th,.rcPage .tableWrap td{padding:9px 10px;font:13px/1.45 var(--font-ui)}.rcPage .tableWrap th{font-size: var(--fs-sm);font-weight:600}.rcPage .rcEmpty{min-height:120px;padding:24px}.rcPage .rcGrid,.rcPage .rcGrid>*{min-width:0;max-width:100%}
-.sidebar .themeToggle{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);font:500 13px/1 var(--font-ui)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}.sidebar .themeMenu{z-index:60;width:160px;padding:6px;border-radius:13px;box-shadow:0 8px 24px rgba(15,23,42,.14)}
+.sidebar .themeToggle{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 11px;border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-control);background:rgba(255,255,255,.06);font:500 13px/1 var(--font-ui)}.sidebar .themeTriggerLabel{display:inline}.sidebar .themeToggle .themeIcon{width:18px;height:18px}.sidebar .themeToggle .themeChevron{width:15px;height:15px;margin-left:auto}
 @media(max-width:767px){.rcPage{padding:18px 16px}.rcPage .pageHeading:not(.uploadIntro) h1{font-size: var(--fs-display)}.rcPage .resultCard{padding:14px}.sidebar .themeTriggerLabel,.sidebar .themeToggle .themeChevron{display:none}.sidebar .themeToggle{width:38px;padding:0;justify-content:center}}
 
 /* The sidebar used to be fixed while its visual width and main offset diverged
@@ -10288,7 +10292,12 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
    충돌하지 않지만, 높이만큼은 두 버튼이 정확히 같아야 하므로 고정값으로
    맞춘다 (spec: "두 버튼의 폭과 높이가 정확히 같아야 한다"). */
 .sidebar .themeTriggerCol .themeTrigger,
-.sidebar .settingsTrigger{
+.sidebar .settingsTrigger,
+/* NF-3: 모델 학습·모델 분석·자동화는 이 규칙 밖의 .themeToggle 기본값
+   (min-height:38px, padding:0 11px)만 쓰고 있어 화면 모드·알림 설정과
+   치수가 어긋났다 -- 네 버튼 모두 여기로 통일한다. */
+.sidebar .trainingTrigger,
+.sidebar .analysisTrigger{
   width: 100%;
   height: 40px;
   min-width: 0;

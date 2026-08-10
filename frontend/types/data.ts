@@ -620,7 +620,8 @@ export type ActionPriorityPayload = {
   target_provenance: TargetProvenance | null;
 };
 
-export type HeatmapKind = "numeric" | "categorical";
+// NG-1: 범주형(Config vs Y1~Y5) 보기를 제거했다 -- 항상 "numeric"이다.
+export type HeatmapKind = "numeric";
 
 export type HeatmapResponse = {
   dataset_id: string;

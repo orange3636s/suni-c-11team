@@ -105,13 +105,6 @@ def test_rho_matches_golden_by_feature(heatmap):
             assert actual[col_index] == pytest.approx(expected[col_index], abs=RHO_TOLERANCE)
 
 
-def test_categorical_rho_is_always_none(train_df, schema):
-    from src.analysis.screening.heatmap import build_categorical_heatmap
-
-    categorical = build_categorical_heatmap(train_df, schema)
-    assert all(v is None for row in categorical.rho for v in row)
-
-
 def test_exactly_five_cells_pass_rho_threshold_and_match_selection(heatmap):
     hits = []
     for row_index, feature in enumerate(heatmap.features):
