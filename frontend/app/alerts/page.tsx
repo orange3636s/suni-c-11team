@@ -319,10 +319,9 @@ function AlertsContent() {
   );
 
   // 재접속/새로고침 + 첫 방문을 한 이펙트가 함께 처리한다 -- predictions/
-  // holdout은 wafer 수만큼 커질 수 있어 서버에 저장하지 않으므로(spec:
-  // alarmGradeByWaferId와 같은 원칙), 복원된 설정(있다면)을 반영한 뒤 항상
-  // 새로 불러온다. trainDataset은 datasetsLoaded가 끝나야 정확히
-  // 해석되므로 그것도 함께 기다린다.
+  // holdout은 wafer 수만큼 커질 수 있어 서버에 저장하지 않으므로, 복원된
+  // 설정(있다면)을 반영한 뒤 항상 새로 불러온다. trainDataset은
+  // datasetsLoaded가 끝나야 정확히 해석되므로 그것도 함께 기다린다.
   const initializedFromHydration = useRef(false);
   useEffect(() => {
     if (!hydrated || !datasetsLoaded || initializedFromHydration.current) return;

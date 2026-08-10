@@ -3,20 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import InterpretationCard, { type InterpretationRow } from "@/components/InterpretationCard";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
-import { ALARM_GRADE_COLOR, parseConfig } from "@/lib/constants";
+import { parseConfig } from "@/lib/constants";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { AlarmGrade, RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
-
-// "개선 권고"는 알람 삼각형 대상이 아니다 (spec §B: 마커는 심각/위험/주의 3
-// 등급만 -- 알람이 아닌 참고용 등급까지 표시하면 무엇이 진짜 알람인지
-// 흐려진다).
-type AlarmMarkerGrade = "심각" | "위험" | "주의";
-function isAlarmMarkerGrade(grade: AlarmGrade): grade is AlarmMarkerGrade {
-  return grade === "심각" || grade === "위험" || grade === "주의";
-}
+import type { RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
 
 export type ScatterColorMode = "default" | "config_model" | "lot";
 // 그룹 스크럽 슬라이더 정렬 기준 (spec CA) -- 기본은 평균순: Lot_ID는 처리
@@ -57,7 +49,11 @@ const BOX_JITTER_STD = 0.1;
 // room again, sized to comfortably fit the widest realistic tick label
 // (~35px, e.g. "-123.4") + 8px tick-gap + the title text + its own 8px
 // gap, with a few px of slack.
-const MARGIN = { top: 36, right: 28, bottom: 46, left: 76 };
+// top/right trimmed 36/28 -> 28/16 (경고선 제거) -- 라벨 최고 행이
+// warning_line(34)에서 window_bounds(20)로 낮아졌고, 오른쪽 끝에
+// 붙던 경고선(warning_hi) 값 라벨도 사라져 두 여백 모두 그만큼
+// 빈 공간으로 남았던 것을 걷어냈다.
+const MARGIN = { top: 28, right: 16, bottom: 46, left: 76 };
 // Matches .scatterTickLabel's font (app/globals.css) -- used to measure
 // candidate tick labels for the overlap-backoff pass (spec §8). HP-HMI
 // 전환으로 .scatterTickLabel이 등폭(var(--font-data))이 됐으므로, 폭
@@ -69,24 +65,23 @@ const Y_TICK_LABEL_HEIGHT_PX = 14;
 const X_TICK_COUNT: [max: number, min: number] = [10, 8];
 const Y_TICK_COUNT: [max: number, min: number] = [8, 6];
 const HEIGHT = 420;
-// 기준선 라벨 겹침 수정 (spec §C-2) -- "최적 중심"/"경고선"/"권장 구간"
-// 라벨이 서로의 x 위치가 가까울 때 겹치던 문제를, 3단 높이로 분산해
-// 해결한다. offset은 plot 상단 가장자리(y=0) 기준 위쪽(margin 안)으로
-// 얼마나 띄우는지이며, 값이 클수록 차트에서 더 멀다 -- 34가 가장 위
-// (경고선), 6이 차트에 가장 가깝다(최적 중심). 14px 간격은 라벨 한 줄의
-// 대략적인 높이와 맞춘 값이라 세 줄이 서로 겹치지 않는다.
-type LabelRowKey = "warning_line" | "window_bounds" | "optimal_center";
+// 기준선 라벨 겹침 수정 (spec §C-2) -- "최적 중심"/"권장 구간" 라벨이
+// 서로의 x 위치가 가까울 때 겹치던 문제를, 2단 높이로 분산해 해결한다.
+// offset은 plot 상단 가장자리(y=0) 기준 위쪽(margin 안)으로 얼마나
+// 띄우는지이며, 값이 클수록 차트에서 더 멀다 -- 20이 위(권장 구간), 6이
+// 차트에 가장 가깝다(최적 중심). 14px 간격은 라벨 한 줄의 대략적인
+// 높이와 맞춘 값이라 두 줄이 서로 겹치지 않는다. (경고선 제거로 3단에서
+// 2단으로 줄었다 -- 행 번호를 당겼다.)
+type LabelRowKey = "window_bounds" | "optimal_center";
 const LABEL_ROW_OFFSET: Record<LabelRowKey, number> = {
   optimal_center: 6,
   window_bounds: 20,
-  warning_line: 34,
 };
-// 생략 순서 (spec §C-3): 경고선(1, 항상 표시) > 권장 구간 경계(2) > 최적
-// 중심(3, 가장 먼저 생략) -- 숫자가 작을수록 우선순위가 높다.
+// 생략 순서 (spec §C-3): 권장 구간 경계(1) > 최적 중심(2, 가장 먼저
+// 생략) -- 숫자가 작을수록 우선순위가 높다.
 const LABEL_ROW_PRIORITY: Record<LabelRowKey, number> = {
-  warning_line: 1,
-  window_bounds: 2,
-  optimal_center: 3,
+  window_bounds: 1,
+  optimal_center: 2,
 };
 // .scatterLineLabel의 font-weight/font-size와 맞춘 측정용 폰트 문자열
 // (spec §C-4 폭 계산에 실제 렌더 폭을 써야 축약 여부 판단이 정확하다).
@@ -98,24 +93,6 @@ const COMPACT_LABEL_CHART_WIDTH = 600;
 // 권장 구간 밴드 폭이 이보다 좁으면 양끝 경계값 라벨을 생략한다 (spec
 // §C-5).
 const BAND_BOUNDARY_MIN_WIDTH = 60;
-
-type LineMeta = {
-  legendId: string;
-  shortLabel: string;
-  legendLabel: string;
-  dash: string;
-  strokeWidth: number;
-};
-
-// 알람 판정 GBDT 전환 (spec §C-1/§C-3) -- 관리한계(IQR 1.5배, LCL/UCL)를
-// 부분 의존도 기반 경고선으로 교체했다. ±3σ/±6σ/평균/Q1/Q3와 마찬가지로
-// 기존 IQR 통계 자체는 src/analysis/control_range.py에 남아 있지만 화면에는
-// 더 이상 그리지 않는다 (백엔드가 iqr_lo/iqr_hi를 reference_lines에서 이미
-// 제외하고 warning_lo/warning_hi로 보낸다).
-const LINE_META: Record<"warning_lo" | "warning_hi", LineMeta> = {
-  warning_lo: { legendId: "warning", shortLabel: "경고선", legendLabel: "경고선 (예측 수율 기준)", dash: "10 5", strokeWidth: 2 },
-  warning_hi: { legendId: "warning", shortLabel: "경고선", legendLabel: "경고선 (예측 수율 기준)", dash: "10 5", strokeWidth: 2 },
-};
 
 function formatNum1(value: number): string {
   return value.toFixed(1);
@@ -338,12 +315,6 @@ function categoryPositionForValue(value: number, bins: BoxBin[]): number {
   return bins.length;
 }
 
-// HP-HMI 색 규율(지시서 §H-1) -- 경고선은 이상 임계값이므로 신호색
-// (--sig-amber)을 쓴다. 참조선 종류·개수·계산·라벨 문구는 그대로다,
-// 색만 바꿨다.
-const LINE_COLOR: Record<string, { light: string; dark: string }> = {
-  warning: { light: "#B8791A", dark: "#E4A23E" },
-};
 // SPC/ML 방식 전환 (spec §3-4) -- 권장 구간 밴드/경계선/Box Plot 구간-내
 // 박스 테두리가 이 한 쌍을 공유한다. HP-HMI 색 규율(§H-1) 적용 후:
 // 권장 구간은 "정상 상태"(이상 신호가 아님)라 SPC/ML 모두 같은 무채색
@@ -367,18 +338,11 @@ const OPTIMAL_CENTER_COLOR = { light: "#141A22", dark: "#F5F5F7" };
 // 것이므로, 이 선만은 신호색(--sig-red)을 쓴다.
 const TREND_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 
-// 점 반지름(style.size)의 diameter 기준 1.6배 (spec §B-1: "점이 4px이면
-// 삼각형 한 변 6.5px" -- 점보다 조금 큰 정도로, 주변 점을 가리지 않는다).
-const ALARM_TRIANGLE_RATIO = 1.6;
-// z-index: 일반 점 < 박스 < 이상치 < 삼각형(항상 최상단), 여러 등급이
-// 겹치면 심각이 가장 위 (spec §B-2).
-const ALARM_GRADE_Z: Record<"심각" | "위험" | "주의", number> = { 심각: 3, 위험: 2, 주의: 1 };
-
 // Box-plot 색 규칙. 상자 테두리/수염은 "권장구간 안쪽인지"와 무관하게 항상
 // 중립(var(--line))이다. 상자 자체는 옅게 채운다(8% var(--measured), 아래
 // 렌더 지점의 fillOpacity). 중앙값은 무채색(var(--text)). 관리한계 개념
 // 제거(GBDT 전환)에 따라 통계적 이상치(IQR 기준)는 항상 outlierNeutral
-// 하나로 통일한다 -- 경고선 기반 채색은 이번 작업 범위가 아니다.
+// 하나로 통일한다 -- 경고선은 화면에서 완전히 제거됐으므로 그 기준 채색도 없다.
 // Y-5: --line의 다크 값을 rgba(255,255,255,.14)(1.57:1, WCAG UI 요소
 // 3:1 기준 미달)에서 .34(3.05:1)로 올렸다 -- 여기 두 하드코딩 사본도
 // 같이 맞춘다(둘 다 CSS 변수가 아니라 SVG stroke에 직접 넣는 JS 상수라
@@ -442,26 +406,9 @@ function IconOutlierDots({ color }: { color: string }) {
   );
 }
 
-/** 삼각형 꼭짓점 3개 -- 위쪽 꼭짓점이 (cx, cy - r)에 오는 정삼각형 근사.
- * 알람 판정 GBDT 전환 spec §B-1: "속이 빈 삼각형. 채우지 마라." */
-function trianglePoints(cx: number, cy: number, r: number): string {
-  const a = (cx - r * 0.87).toFixed(2);
-  const b = (cx + r * 0.87).toFixed(2);
-  const top = (cy - r).toFixed(2);
-  const bottom = (cy + r * 0.5).toFixed(2);
-  return `${cx.toFixed(2)},${top} ${a},${bottom} ${b},${bottom}`;
-}
-
-function IconTriangle({ color }: { color: string }) {
-  return (
-    <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
-      <polygon points={trianglePoints(11, 9, 6)} fill="none" strokeWidth="1.4" style={{ stroke: color }} />
-    </svg>
-  );
-}
-// dash 패턴은 실제 렌더 상수(LINE_META.warning_lo.dash="10 5", 최적 중심
-// 라인의 "4 3")를 그대로 받는다 -- 범례에서도 실선/점선 구분이 실제
-// 차트와 같은 비율로 보이게 한다 (지시서 N-1).
+// dash 패턴은 실제 렌더 상수(최적 중심 라인의 "4 3")를 그대로 받는다 --
+// 범례에서도 실선/점선 구분이 실제 차트와 같은 비율로 보이게 한다
+// (지시서 N-1).
 function IconDashedLine({ color, dash }: { color: string; dash: string }) {
   return (
     <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
@@ -560,7 +507,7 @@ function scrubGroupKeyOf(point: ScatterPoint, mode: ScatterColorMode): string | 
 // "기본" Color By 점 스타일 -- 관리한계(IQR/LCL/UCL) 개념 제거(GBDT 전환)에
 // 이어, "기본"은 "구분하지 않음"이라는 뜻으로 통일했다(spec P-1): 권장
 // 구간 안/밖을 포함한 어떤 zone 구분도 점 색·크기로 표현하지 않는다.
-// 권장 구간·경고선은 참조선/밴드로 이미 표시되므로 점에서 중복 인코딩할
+// 권장 구간은 참조선/밴드로 이미 표시되므로 점에서 중복 인코딩할
 // 필요가 없다. --measured 토큰과 동일한 값.
 //
 // 점 농도 완화 (X-1) -- 이 0.28은 임의값이 아니라 Box Plot의 지터된 일반
@@ -596,13 +543,11 @@ function colorForPoint(
   };
 }
 
-// A single vertical line drawn on the chart -- either one of the two
-// LCL/UCL reference lines, or the (backend-provided, not
-// frontend-computed) optimal-center point. Unified so both go through
-// the same paint order / label-collision layout instead of two parallel
-// code paths.
+// A single vertical line drawn on the chart -- the (backend-provided, not
+// frontend-computed) optimal-center point. Kept as its own type so the
+// paint order / label-collision layout stays generic over reference lines.
 type DisplayLine = {
-  key: "warning_lo" | "warning_hi" | "optimal";
+  key: "optimal";
   value: number;
   color: { light: string; dark: string };
   dash: string;
@@ -610,8 +555,8 @@ type DisplayLine = {
   greyedOut: boolean;
 };
 
-// 기준선 라벨 하나 -- 경고선/최적 중심 vertical line뿐 아니라 권장 구간
-// 밴드의 요약 라벨(window_bounds)도 같은 체계로 배치되므로, "라인이
+// 기준선 라벨 하나 -- 최적 중심 vertical line뿐 아니라 권장 구간 밴드의
+// 요약 라벨(window_bounds)도 같은 체계로 배치되므로, "라인이
 // 있는가"와 무관하게 여기서는 x 위치 + 우선순위 행만 다룬다 (spec §C-6:
 // Box Plot도 같은 로직을 쓴다 -- plotX가 이미 두 보기를 통일하므로
 // 여기서부터는 view를 몰라도 된다).
@@ -630,7 +575,7 @@ type FloatingLabelPlacement = { key: string; x: number; y: number; hidden: boole
  * 아무 라벨도 충돌하지 않으면 전부 가장 낮은 높이(차트에 가장 가까운
  * offset)에 그대로 둔다 -- 불필요한 계단을 만들지 않는다. 충돌이 하나라도
  * 있으면 각 라벨을 자기 우선순위의 지정 행으로 올리고, 그래도 같은 행
- * 안에서 겹치면(예: 경고선 lo/hi가 서로 가까움) 우선순위가 낮은 쪽부터
+ * 안에서 겹치면(예: 최적 중심과 권장 구간 라벨이 서로 가까움) 우선순위가 낮은 쪽부터
  * 생략한다 -- 생략된 라벨은 그려지지 않지만, 그 라벨이 속한 선/밴드 자체는
  * 별도로 계속 그려지므로 호버 시 툴팁으로 값을 확인할 수 있다(spec §C-3
  * "생략된 라벨은 호버 시 툴팁으로 표시한다"). */
@@ -704,8 +649,6 @@ export default function ScatterChart({
   method,
   onSelectWafer,
   height = HEIGHT,
-  alarmGradeByWaferId,
-  alarmCriteriaLabel,
   reliabilityText,
   thumbnail = false,
 }: {
@@ -724,20 +667,6 @@ export default function ScatterChart({
   method?: WindowMethod;
   onSelectWafer: (point: ScatterPoint) => void;
   height?: number;
-  // 알람 판정 GBDT 전환 (spec §B) -- wafer_id -> 등급. 카드 하나가 한 번의
-  // "원인 분석 실행"에서 나온 알람 목록 전체를 공유하므로 caller가 한 번만
-  // 가져와 모든 ScatterChart 인스턴스에 그대로 넘긴다 (여기서 재요청하지
-  // 않는다). 세 가지 값을 구분한다 (spec AC): `undefined`는 이 화면에서
-  // 심각도 마커 기능 자체를 지원하지 않음(예: 즐겨찾기 썸네일 -- 범례
-  // 자리를 아예 그리지 않는다), `null`은 값을 가져오는 중(부트스트랩
-  // 앙상블이라 수십 초 걸릴 수 있다), 객체는 로딩이 끝났음(비어 있으면
-  // 대상 없음)을 뜻한다.
-  alarmGradeByWaferId?: Record<string, AlarmGrade> | null;
-  // 지시서: "알람 마커 기준: 목표 91.0% · 민감도 0.50" -- caller(원인
-  // 분석 페이지)가 alarms 상태에서 실제로 적용된 값을 문자열로 미리
-  // 포맷해 넘긴다. 이 컴포넌트는 AnalysisState를 모르므로 여기서 직접
-  // 계산하지 않는다.
-  alarmCriteriaLabel?: string | null;
   // HA그룹: "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김
   // -- root-cause/page.tsx의 buildModerateInterpretation과 동일 로직).
   // 이 컴포넌트가 자체 계산한 "해석" 행과 함께 카드 하나로 합쳐 그린다.
@@ -757,18 +686,9 @@ export default function ScatterChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [containerWidth, setContainerWidth] = useState(680);
-  // All 4 remaining reference elements default to visible (spec §4-2).
-  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(new Set(["warning", "optimal", "recommended"]));
-  // 알람 심각도 3등급 -- 등급별로 독립적으로 켜고 끌 수 있다 (spec §B-3).
-  // 기본은 전부 켜짐.
-  const [visibleAlarmGrades, setVisibleAlarmGrades] = useState<Set<AlarmMarkerGrade>>(
-    () => new Set(["심각", "위험", "주의"]),
-  );
-  // 심각도 마커 전체 on/off (spec AC) -- 등급별 토글과 별개로, "표시 중일
-  // 때"라는 조건 자체를 켜고 끈다. 기본값은 표시(기존 동작 유지). 카드마다
-  // 독립이며 (이 컴포넌트가 target/run마다 remount되므로) 타깃 변경 시
-  // 자동으로 기본값으로 되돌아간다.
-  const [alarmMarkersVisible, setAlarmMarkersVisible] = useState(true);
+  // 남은 2개 참조 요소(최적 중심/권장 구간)는 기본으로 켜져 있다 (spec §4-2,
+  // 경고선 제거로 3개에서 2개로 줄었다).
+  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(new Set(["optimal", "recommended"]));
   const [trendVisible, setTrendVisible] = useState(true);
   // Box Plot's own togglable elements (spec §4) -- 개별 wafer/이상치 wafer
   // can be switched off from the legend same as every other reference
@@ -1030,25 +950,6 @@ export default function ScatterChart({
     setScrubInputInvalid(false);
   }
 
-  const warningLo = data.reference_lines.find((l) => l.key === "warning_lo");
-  const warningHi = data.reference_lines.find((l) => l.key === "warning_hi");
-  const warningFullyNonDrawable = !warningLo?.drawable && !warningHi?.drawable;
-
-  // 알람 판정 GBDT 전환 (spec §B-4) -- 삼각형은 관리한계/권장구간과 무관하게
-  // 어디에나 나타날 수 있다: 다변량 판정이므로 정상이다.
-  function alarmGradeOf(waferId: string | null): AlarmMarkerGrade | null {
-    if (!waferId || !alarmGradeByWaferId) return null;
-    const grade = alarmGradeByWaferId[waferId];
-    return grade && isAlarmMarkerGrade(grade) ? grade : null;
-  }
-  const alarmGradeCounts: Record<AlarmMarkerGrade, number> = { 심각: 0, 위험: 0, 주의: 0 };
-  if (alarmGradeByWaferId) {
-    for (const point of data.points) {
-      const grade = alarmGradeOf(point.lot_wafer_id);
-      if (grade) alarmGradeCounts[grade] += 1;
-    }
-  }
-  const hasAnyAlarmMarker = alarmGradeCounts.심각 + alarmGradeCounts.위험 + alarmGradeCounts.주의 > 0;
   // The active method's own window/center (spec §3) -- null when
   // data.methods is null (Config factors, never routed through this
   // component in practice) or that method couldn't fit a window at all.
@@ -1079,20 +980,6 @@ export default function ScatterChart({
 
   const displayLines = useMemo<DisplayLine[]>(() => {
     const lines: DisplayLine[] = [];
-    if (warningLo?.drawable) {
-      lines.push({
-        key: "warning_lo", value: warningLo.value,
-        color: LINE_COLOR.warning, dash: LINE_META.warning_lo.dash, strokeWidth: LINE_META.warning_lo.strokeWidth,
-        greyedOut: !warningLo.alarm_relevant,
-      });
-    }
-    if (warningHi?.drawable) {
-      lines.push({
-        key: "warning_hi", value: warningHi.value,
-        color: LINE_COLOR.warning, dash: LINE_META.warning_hi.dash, strokeWidth: LINE_META.warning_hi.strokeWidth,
-        greyedOut: !warningHi.alarm_relevant,
-      });
-    }
     if (displayedOptimalCenter != null) {
       lines.push({
         key: "optimal", value: displayedOptimalCenter,
@@ -1100,32 +987,30 @@ export default function ScatterChart({
       });
     }
     return lines;
-  }, [warningLo, warningHi, displayedOptimalCenter]);
+  }, [displayedOptimalCenter]);
 
   // 차트 폭이 좁으면 라벨을 축약형(값만)으로 바꾼다 (spec §C-4). 이 폭
   // 미만에서는 권장 구간 요약 라벨도 아예 빼고 밴드 안쪽 경계값 라벨에
   // 정보 전달을 맡긴다 (아래 BAND_BOUNDARY_MIN_WIDTH 조건부 렌더 참고).
   const isNarrowChart = containerWidth < COMPACT_LABEL_CHART_WIDTH;
 
-  // 경고선/최적 중심 라인 라벨 + 권장 구간 요약 라벨을 한 배열로 모아 같은
-  // 3단 충돌 배치 로직을 함께 통과시킨다 (spec §C-2) -- 꺼진 그룹은 애초에
+  // 최적 중심 라인 라벨 + 권장 구간 요약 라벨을 한 배열로 모아 같은
+  // 2단 충돌 배치 로직을 함께 통과시킨다 (spec §C-2) -- 꺼진 그룹은 애초에
   // 배치 대상에서 빼서, 숨겨진 라벨이 다른 라벨의 자리를 차지하지 않는다.
   const floatingLabels = useMemo<FloatingLabel[]>(() => {
     const items: FloatingLabel[] = [];
     for (const line of displayLines) {
-      if (!visibleGroups.has(lineGroupOf(line))) continue;
-      const name = line.key === "optimal" ? "최적 중심" : "경고선";
+      if (!visibleGroups.has("optimal")) continue;
       // 보정 §I-5: 최적 중심은 SPC/ML 방식에 따라 값 자체가 달라지므로
       // (권장 구간 라벨처럼) 방식을 라벨에 표기한다 -- 색으로는 더 이상
-      // 구분하지 않으니(§H-1) 텍스트가 유일한 구분 수단이다. 경고선은
-      // 방식과 무관해 표기하지 않는다.
-      const methodSuffix = line.key === "optimal" ? ` (${METHOD_LABEL[activeMethod]})` : "";
+      // 구분하지 않으니(§H-1) 텍스트가 유일한 구분 수단이다.
+      const methodSuffix = ` (${METHOD_LABEL[activeMethod]})`;
       const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
       items.push({
         key: line.key,
-        rowKey: line.key === "optimal" ? "optimal_center" : "warning_line",
+        rowKey: "optimal_center",
         x: plotX(line.value),
-        full: `${name} ${formatNum1(line.value)}${methodSuffix}`,
+        full: `최적 중심 ${formatNum1(line.value)}${methodSuffix}`,
         short: formatNum1(line.value),
         color,
       });
@@ -1175,7 +1060,6 @@ export default function ScatterChart({
   }, [data.bins, plotWidth, plotHeight, view, boxBins]);
 
   function isGroupFullyNonDrawable(groupId: string): boolean {
-    if (groupId === "warning") return warningFullyNonDrawable;
     if (groupId === "optimal") return !optimalAvailable;
     if (groupId === "recommended") return recommendedRangeValue == null;
     return false;
@@ -1432,51 +1316,13 @@ export default function ScatterChart({
     ...(reliabilityText ? [{ label: "신뢰도" as const, text: reliabilityText }] : []),
   ];
 
-  // Reference-line legend labels/descriptions (spec §5-1/§5-2) -- the
-  // numeric value now rides in the *label* itself ("관리한계 LCL/UCL  49.9
-  // / 69.9"), not the description, so the description is free to hold
-  // only the one thing a swatch alone can't convey: what it means to be
-  // outside it. A one-sided factor (e.g. Step1_D1, LCL-less) collapses to
-  // a single value instead of a slash pair (spec §5-6).
-  // 알람 판정 GBDT 전환 (spec §C-3/§C-4-1) -- 값은 라벨에, 실측 수율 차이는
-  // 설명에 싣는다. 예측값이 아니라 관측값이다 (§C-4-1 "예측 기반 수치를
-  // 범례에 쓰지 마라"). 표본이 30장 미만이면 백엔드가 gap을 null로 보내고,
-  // 그 방향은 수치 없이 "표본이 적어..."로 대체한다.
-  function warningLegendLabel(): string {
-    if (warningHi?.drawable && !warningLo?.drawable) return `경고선  ${formatNum1(warningHi.value)}`;
-    if (warningLo?.drawable && !warningHi?.drawable) return `경고선  ${formatNum1(warningLo.value)}`;
-    if (warningLo?.drawable && warningHi?.drawable) return `경고선  ${formatNum1(warningLo.value)} / ${formatNum1(warningHi.value)}`;
-    return "경고선";
-  }
-  function warningLegendDesc(): string {
-    const parts: string[] = [];
-    if (warningHi?.drawable) {
-      parts.push(
-        warningHi.observed_yield_gap_pp != null
-          ? `이 값을 넘은 wafer의 실제 수율이 ${Math.abs(warningHi.observed_yield_gap_pp).toFixed(1)}%p 낮게 관측되었습니다`
-          : "이 값을 넘은 표본이 적어 수율 차이를 계산할 수 없습니다",
-      );
-    }
-    if (warningLo?.drawable) {
-      parts.push(
-        warningLo.observed_yield_gap_pp != null
-          ? `이 값보다 낮은 wafer의 실제 수율이 ${Math.abs(warningLo.observed_yield_gap_pp).toFixed(1)}%p 낮게 관측되었습니다`
-          : "이 값보다 낮은 표본이 적어 수율 차이를 계산할 수 없습니다",
-      );
-    }
-    return parts.join(" · ") || "예측 수율이 낮게 관측되는 구간의 경계";
-  }
   // 단조 인자는 최적 중심 자체가 개념적으로 없으므로 항목을 아예 숨긴다
   // (spec §3-4) -- u_shape/unclear에서 값이 빠진 경우는 기존처럼 "해당
   // 없음" 비활성 카드로 남겨 이유를 알 수 있게 한다.
   const showOptimalLegendCard = data.relation_shape !== "monotonic_increasing" && data.relation_shape !== "monotonic_decreasing";
 
-  function lineGroupOf(line: DisplayLine): string {
-    return line.key === "optimal" ? "optimal" : "warning";
-  }
-
   function renderLineBody(line: DisplayLine) {
-    if (!visibleGroups.has(lineGroupOf(line))) return null;
+    if (!visibleGroups.has("optimal")) return null;
     const x = plotX(line.value);
     const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
     return (
@@ -1581,22 +1427,8 @@ export default function ScatterChart({
             </>
           )}
 
-          {/* shading: amber outside the 경고선 (알람 판정 GBDT 전환 §C-3,
-              IQR 관리한계 대신 PDP 기반 경고선), green 13% band across
-              the recommended range (spec §4-2). Both sit below the points,
-              same as before -- a background region shouldn't obscure data. */}
-          {!thumbnail && (() => {
-            const loX = warningLo?.drawable ? plotX(warningLo.value) : 0;
-            const hiX = warningHi?.drawable ? plotX(warningHi.value) : plotWidth;
-            return visibleGroups.has("warning") ? (
-              <>
-                {warningLo?.drawable && <rect x={0} y={0} width={Math.max(loX, 0)} height={plotHeight} className="scatterOutsideShade" />}
-                {warningHi?.drawable && <rect x={hiX} y={0} width={Math.max(plotWidth - hiX, 0)} height={plotHeight} className="scatterOutsideShade" />}
-              </>
-            ) : null;
-          })()}
           {/* 썸네일에서는 최적 중심 참조선 하나만 남긴다 (지시서 P-2) --
-              권장 구간 밴드는 4종 참조선 중 하나라 여기서 함께 생략한다. */}
+              권장 구간 밴드는 3종 참조선 중 하나라 여기서 함께 생략한다. */}
           {!thumbnail && visibleGroups.has("recommended") && recommendedRangeValue && (() => {
             const [lo, hi] = recommendedRangeValue;
             const x1 = Math.min(plotX(lo), plotX(hi));
@@ -1711,8 +1543,7 @@ export default function ScatterChart({
                           isSelected,
                         );
                         // 관리한계 개념 제거(GBDT 전환) -- 통계적 이상치(IQR
-                        // 기준)는 경고선과 무관한 무채색 하나로 통일한다.
-                        // 경고선 기반 채색은 이번 작업 범위가 아니다.
+                        // 기준)는 항상 무채색 하나로 통일한다.
                         const outlierColor = theme === "dark" ? BOX_COLOR.outlierNeutral.dark : BOX_COLOR.outlierNeutral.light;
                         return (
                           <circle
@@ -1774,13 +1605,10 @@ export default function ScatterChart({
                 );
               })}
 
-          {/* reference line bodies, stacked bottom-to-top per spec §4-1:
-              최적 중심 first, then 경고선 (closest to the trend
-              curve/labels above them). Labels are a separate,
-              always-topmost pass below so they never sit under a
+          {/* reference line body -- 최적 중심 (spec §4-1). Labels are a
+              separate, always-topmost pass below so they never sit under a
               later-drawn line. */}
-          {displayLines.filter((line) => line.key === "optimal").map((line) => renderLineBody(line))}
-          {!thumbnail && displayLines.filter((line) => line.key === "warning_lo" || line.key === "warning_hi").map((line) => renderLineBody(line))}
+          {displayLines.map((line) => renderLineBody(line))}
 
           {/* confidence band + trend curve -- above every reference line.
               Segments touching a sparse (outlier-widened) bin render
@@ -1816,56 +1644,6 @@ export default function ScatterChart({
                 ))}
             </>
           )}
-
-          {/* 알람 심각도 삼각형 -- 항상 최상단(일반 점 < 박스 < 이상치 <
-              삼각형, spec §B-2). 관리한계/권장구간과 무관하게 어디에나
-              나타날 수 있다(다변량 판정이므로 정상, spec §B-4). */}
-          {hasAnyAlarmMarker && alarmMarkersVisible && view === "scatter" && (() => {
-            const markers = data.points
-              .map((point) => ({ point, grade: alarmGradeOf(point.lot_wafer_id) }))
-              .filter((m): m is { point: ScatterPoint; grade: AlarmMarkerGrade } => m.grade != null && visibleAlarmGrades.has(m.grade))
-              .sort((a, b) => ALARM_GRADE_Z[a.grade] - ALARM_GRADE_Z[b.grade]);
-            return markers.map(({ point, grade }, i) => {
-              const style = colorForPoint(point, colorMode, lotIndex, theme);
-              const color = ALARM_GRADE_COLOR[grade];
-              return (
-                <polygon
-                  key={`alarm-${point.lot_wafer_id ?? i}`}
-                  points={trianglePoints(xScale(point.x), yScale(point.y), style.size * ALARM_TRIANGLE_RATIO)}
-                  fill="none"
-                  strokeWidth={1.4}
-                  style={{ pointerEvents: "none", stroke: color }}
-                />
-              );
-            });
-          })()}
-          {hasAnyAlarmMarker && alarmMarkersVisible && view === "box" && (() => {
-            const markers: { cx: number; cy: number; grade: AlarmMarkerGrade; id: string }[] = [];
-            for (const bin of boxBins) {
-              for (const member of bin.members) {
-                if (member.isOutlier && !boxPointsVisible.outlier) continue;
-                if (!member.isOutlier && !boxPointsVisible.inlier) continue;
-                const grade = alarmGradeOf(member.point.lot_wafer_id);
-                if (!grade || !visibleAlarmGrades.has(grade)) continue;
-                markers.push({
-                  cx: catScale(bin.index + 1 + member.jitter),
-                  cy: yScale(member.point.y),
-                  grade,
-                  id: member.point.lot_wafer_id ?? `${bin.index}-${markers.length}`,
-                });
-              }
-            }
-            markers.sort((a, b) => ALARM_GRADE_Z[a.grade] - ALARM_GRADE_Z[b.grade]);
-            return markers.map((m) => (
-              <polygon
-                key={`alarm-box-${m.id}`}
-                points={trianglePoints(m.cx, m.cy, 4.5 * ALARM_TRIANGLE_RATIO)}
-                fill="none"
-                strokeWidth={1.4}
-                style={{ pointerEvents: "none", stroke: ALARM_GRADE_COLOR[m.grade] }}
-              />
-            ));
-          })()}
 
           {/* line name labels -- topmost of all. 썸네일은 라벨을 전부 생략한다
               (지시서 P-2). */}
@@ -2044,20 +1822,11 @@ export default function ScatterChart({
           </div>
         )}
 
-        {/* 경고선 · 최적 중심 · 권장 구간 · 구간 평균 불량률 4종 -- Color By와
-            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)는 GBDT 전환으로 제거된
-            개념이라 범례에 없다 (src/analysis/control_range.py에는 그대로
-            남아 있지만 화면에 더는 노출하지 않는다). */}
+        {/* 최적 중심 · 권장 구간 · 구간 평균 불량률 3종 -- Color By와
+            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)와 경고선은 화면에
+            더는 노출하지 않는 개념이다 (src/analysis/control_range.py,
+            warning_line.py에는 그대로 남아 있다). */}
         <div className="scatterLegendRow">
-          <LegendCard
-            icon={<IconDashedLine color={theme === "dark" ? LINE_COLOR.warning.dark : LINE_COLOR.warning.light} dash={LINE_META.warning_lo.dash} />}
-            label={warningLegendLabel()}
-            desc={warningLegendDesc()}
-            onClick={(event) => toggleGroup("warning", event)}
-            active={visibleGroups.has("warning") && !warningFullyNonDrawable}
-            disabled={warningFullyNonDrawable}
-            title={warningFullyNonDrawable ? "경고선 없음 (이 인자 단독으로는 예측 수율이 임계 아래로 내려가지 않음)" : "예측 수율이 낮아지는 구간의 경계"}
-          />
           {showOptimalLegendCard && (
             <LegendCard
               icon={<IconDashedLine color={theme === "dark" ? OPTIMAL_CENTER_COLOR.dark : OPTIMAL_CENTER_COLOR.light} dash="4 3" />}
@@ -2090,77 +1859,6 @@ export default function ScatterChart({
             title="구간 평균 불량률"
           />
         </div>
-
-        {/* 심각도 마커 -- 로딩 중/대상 있음/대상 없음 3상태를 항상 같은
-            자리에 표시한다 (spec AC: "나타났다 사라진다" 문제 -- 등급별
-            판정은 부트스트랩 앙상블이라 수십 초 걸리는 별도 API라서
-            alarmGradeByWaferId가 null인 동안이 로딩 중이다). `undefined`는
-            이 화면 자체가 심각도 마커를 지원하지 않는다는 뜻이라(즐겨찾기
-            썸네일 등) 자리조차 그리지 않는다. 계산은 새로 하지 않고
-            alarmGradeCounts/hasAnyAlarmMarker를 그대로 쓴다. 대상이 있을
-            때만 전체 표시/숨김 토글이 활성화되고, 켜져 있을 때만 등급별
-            개별 토글이 함께 나타난다. */}
-        {alarmGradeByWaferId !== undefined && (
-        <div className="scatterLegendRow scatterAlarmLegendRow">
-          {alarmGradeByWaferId === null ? (
-            <LegendCard
-              icon={<IconTriangle color={theme === "dark" ? "#6B7280" : "#9CA3AF"} />}
-              label="심각도 마커 · 불러오는 중…"
-              disabled
-              title="불러오는 중입니다"
-            />
-          ) : hasAnyAlarmMarker ? (
-            <>
-              <LegendCard
-                icon={<IconTriangle color={ALARM_GRADE_COLOR.심각} />}
-                label={`심각도 마커 ${alarmMarkersVisible ? "표시" : "숨김"} · ${alarmGradeCounts.심각 + alarmGradeCounts.위험 + alarmGradeCounts.주의}건`}
-                onClick={() => setAlarmMarkersVisible((v) => !v)}
-                active={alarmMarkersVisible}
-                title={alarmMarkersVisible ? "클릭하면 심각도 마커를 숨깁니다" : "클릭하면 심각도 마커를 표시합니다"}
-              />
-              {alarmMarkersVisible &&
-                (["심각", "위험", "주의"] as const).map((grade) => (
-                  <LegendCard
-                    key={grade}
-                    icon={<IconTriangle color={ALARM_GRADE_COLOR[grade]} />}
-                    label={`${grade} ${alarmGradeCounts[grade]}`}
-                    onClick={() =>
-                      setVisibleAlarmGrades((current) => {
-                        const next = new Set(current);
-                        if (next.has(grade)) next.delete(grade);
-                        else next.add(grade);
-                        return next;
-                      })
-                    }
-                    active={visibleAlarmGrades.has(grade)}
-                    disabled={alarmGradeCounts[grade] === 0}
-                    title={`${grade} 등급 알람 (예측 수율 신뢰구간 상한 기준)`}
-                  />
-                ))}
-            </>
-          ) : (
-            <LegendCard
-              icon={<IconTriangle color={theme === "dark" ? "#6B7280" : "#9CA3AF"} />}
-              label="심각도 마커 · 해당 없음"
-              disabled
-              title="이 인자에는 심각도 대상 웨이퍼가 없습니다"
-            />
-          )}
-        </div>
-        )}
-        {alarmMarkersVisible && hasAnyAlarmMarker && (
-          <p className="scatterAlarmLegendNote">
-            삼각형은 전체 인자를 종합한 판정이므로 권장 구간 안에도 나타날 수 있습니다.
-          </p>
-        )}
-        {/* 지시서: 알림 기록에서 저장한 목표 수율·민감도로 삼각형을
-            그렸다는 것을 밝힌다 -- 이게 없으면 두 화면의 등급이 달라
-            보일 때(알림 기록에서 값을 바꾼 직후 등) 원인을 알 수 없다.
-            토글이 꺼져 있어도(alarmMarkersVisible=false) 계산 자체의
-            기준은 여전히 유효하므로 계속 보여준다. */}
-        {hasAnyAlarmMarker && alarmCriteriaLabel && (
-          <p className="scatterAlarmLegendNote">알람 마커 기준: {alarmCriteriaLabel}</p>
-        )}
       </div>
 
       {lineHover && (() => {
@@ -2184,19 +1882,7 @@ export default function ScatterChart({
             </div>
           );
         }
-        const line = data.reference_lines.find((l) => l.key === lineHover.key);
-        if (!line || (line.key !== "warning_lo" && line.key !== "warning_hi")) return null;
-        const meta = LINE_META[line.key];
-        return (
-          <div className="heatmapTooltip" style={{ left: lineHover.x + 14, top: lineHover.y + 14 }}>
-            <strong>{meta.legendLabel}</strong>
-            <div className="heatmapTooltipRow"><span>값</span><b>{line.value.toFixed(1)}</b></div>
-            <div className="heatmapTooltipRow"><span>이 선 밖</span><b>{line.outside_count.toLocaleString()}장</b></div>
-            {line.observed_yield_gap_pp != null && (
-              <div className="heatmapTooltipRow"><span>실측 수율 차이</span><b>{line.observed_yield_gap_pp.toFixed(1)}%p</b></div>
-            )}
-          </div>
-        );
+        return null;
       })()}
 
       {trendHover && !pointHover && (

@@ -16,16 +16,11 @@ const STRONG_RHO = 0.15;
 const POINT_HOVER_RADIUS = 16;
 
 // 발산(초록/빨강) 팔레트 및 관리한계(IQR LCL/UCL) 잔재 제거 (지시서 L/N-3) --
-// 이 모달은 여전히 reference_lines에서 "iqr_lo"/"iqr_hi" 키를 찾고 있었는데,
-// 그 키는 GBDT 전환 이후 백엔드가 더 이상 보내지 않는다(ScatterChart.tsx가
-// 이미 "warning_lo"/"warning_hi"로 전환했다) -- 그래서 이 모달의 "관리한계
-// LCL/UCL" 참조선·범례는 항상 빈 상태로 죽어 있었다. 실제 존재하는
-// 경고선(warning_lo/hi) 키로 바꾸고 색도 규율에 맞춘다: 그룹별 최적 중심은
-// --text, 경고선은 --sig-amber. 구간 평균 곡선은 이 차트의 핵심 판독
-// 대상이라 신호색(--sig-red)을 쓴다.
+// 그룹별 최적 중심은 --text. 구간 평균 곡선은 이 차트의 핵심 판독
+// 대상이라 신호색(--sig-red)을 쓴다. (경고선은 화면에서 완전히
+// 제거했다 -- 아래 최적 중심/구간 평균 렌더만 남는다.)
 const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
 const INFERRED_COLOR = { light: "#C0392B", dark: "#EE6B76" };
-const WARNING_COLOR = { light: "#B8791A", dark: "#E4A23E" };
 // 산점도 "기본" 모드와 동일한 --measured 단일 점 색.
 const POINT_COLOR = { light: "#0E306D", dark: "#7BA3E8" };
 
@@ -217,8 +212,6 @@ export default function CompareAcrossTargetsModal({
   }, [dataByTarget]);
 
   const originData = dataByTarget[originTarget];
-  const warningLo = originData?.reference_lines.find((l) => l.key === "warning_lo");
-  const warningHi = originData?.reference_lines.find((l) => l.key === "warning_hi");
   const optimalCenter = originData?.optimal_center ?? null;
 
   const interpretation = useMemo(() => {
@@ -239,7 +232,6 @@ export default function CompareAcrossTargetsModal({
             {originData && (
               <p className="compareModalMeta">
                 n={originData.n.toLocaleString()} 계측
-                {warningLo?.drawable && warningHi?.drawable && ` · 경고선 ${formatNum(warningLo.value)} ~ ${formatNum(warningHi.value)}`}
               </p>
             )}
             {interpretation && (
@@ -277,9 +269,6 @@ export default function CompareAcrossTargetsModal({
 
         <div className="compareModalFooter">
           <div className="compareModalLegend">
-            {warningLo?.drawable && warningHi?.drawable && (
-              <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? WARNING_COLOR.dark : WARNING_COLOR.light }} /> 경고선 ({formatNum(warningLo.value)} / {formatNum(warningHi.value)})</span>
-            )}
             {optimalCenter != null && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light }} /> 최적 중심 ({formatNum(optimalCenter)})</span>}
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 구간 평균 불량률</span>
           </div>
@@ -334,8 +323,6 @@ function MiniChart({
   const xTicks = useMemo(() => [xDomain[0], xDomain[1]], [xDomain]);
   const yTicks = useMemo(() => [yDomain[0], yDomain[1]], [yDomain]);
 
-  const warningLo = data?.reference_lines.find((l) => l.key === "warning_lo");
-  const warningHi = data?.reference_lines.find((l) => l.key === "warning_hi");
   const optimalCenter = data?.optimal_center ?? null;
 
   function handleMouseMove(event: React.MouseEvent<SVGRectElement>) {
@@ -363,7 +350,6 @@ function MiniChart({
   const trendOpacity = isStrong ? 1 : 0.45;
   const lineOpacity = isStrong ? 1 : 0.5;
   const titleColor = isStrong ? (theme === "dark" ? "#7BA3E8" : "#0E306D") : "#9CA3AF";
-  const warningColor = theme === "dark" ? WARNING_COLOR.dark : WARNING_COLOR.light;
   const textColor = theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light;
   const inferredColor = theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light;
 
@@ -391,13 +377,6 @@ function MiniChart({
               <text key={`x-${tick}`} x={xScale(tick)} y={plotHeight + 14} textAnchor="middle" className="compareMiniTick">{formatNum(tick)}</text>
             ))}
 
-            {warningLo?.drawable && (
-              <rect x={0} y={0} width={Math.max(xScale(warningLo.value), 0)} height={plotHeight} className="compareMiniOutsideShade" />
-            )}
-            {warningHi?.drawable && (
-              <rect x={xScale(warningHi.value)} y={0} width={Math.max(plotWidth - xScale(warningHi.value), 0)} height={plotHeight} className="compareMiniOutsideShade" />
-            )}
-
             {/* points painted before every reference line/curve so lines
                 stay visible on top (spec §4-1, applies to this mini chart too).
                 패널이 작으므로 반지름을 산점도보다 더 줄인다 (지시서 N-3). */}
@@ -407,12 +386,6 @@ function MiniChart({
 
             {optimalCenter != null && (
               <line x1={xScale(optimalCenter)} x2={xScale(optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
-            )}
-            {warningLo?.drawable && (
-              <line x1={xScale(warningLo.value)} x2={xScale(warningLo.value)} y1={0} y2={plotHeight} stroke={warningColor} strokeWidth={1.6} strokeDasharray="10 5" opacity={lineOpacity} />
-            )}
-            {warningHi?.drawable && (
-              <line x1={xScale(warningHi.value)} x2={xScale(warningHi.value)} y1={0} y2={plotHeight} stroke={warningColor} strokeWidth={1.6} strokeDasharray="10 5" opacity={lineOpacity} />
             )}
 
             {data.bins.length > 0 && (

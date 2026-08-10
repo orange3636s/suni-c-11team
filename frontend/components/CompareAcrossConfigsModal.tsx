@@ -9,7 +9,7 @@ import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
-// n 미만이면 그룹 내 최적중심/구간/경고선을 그리지 않는다 -- 근거 없는
+// n 미만이면 그룹 내 최적중심/구간을 그리지 않는다 -- 근거 없는
 // 선을 그리면 오탐을 유도하므로 (지시서 "n 부족 처리").
 const MIN_GROUP_N = 30;
 // Y1~Y5 비교 모달(CompareAcrossTargetsModal의 MiniChart)과 완전히 같은
@@ -27,13 +27,12 @@ const BIN_COUNT = 12;
 // 최적 중심이 x 범위의 이 비율을 넘게 흩어지면 "따로 분리" 문구를 얹는다.
 const CENTER_SPREAD_RATIO = 0.15;
 
-// 발산(초록/빨강) 팔레트 제거 (지시서 N-3) -- 그룹별 최적 중심은 --text,
-// 경고선은 --sig-amber. 구간 평균 곡선은 이 차트의 핵심 판독 대상이라
-// 신호색(--sig-red)을 쓴다 -- ScatterChart.tsx의
-// OPTIMAL_CENTER_COLOR/TREND_COLOR/LINE_COLOR.warning과 동일한 상수쌍이다.
+// 발산(초록/빨강) 팔레트 제거 (지시서 N-3) -- 그룹별 최적 중심은 --text.
+// 구간 평균 곡선은 이 차트의 핵심 판독 대상이라 신호색(--sig-red)을
+// 쓴다 -- ScatterChart.tsx의 OPTIMAL_CENTER_COLOR/TREND_COLOR와 동일한
+// 상수쌍이다. (경고선은 화면에서 완전히 제거했다.)
 const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
 const INFERRED_COLOR = { light: "#C0392B", dark: "#EE6B76" };
-const WARNING_COLOR = { light: "#B8791A", dark: "#E4A23E" };
 const GRAY = { light: "#9CA3AF", dark: "#6B7280" };
 // 산점도 "기본" 모드의 단일 점 색과 동일한 상수(--measured, 지시서 P-1).
 const POINT_COLOR = { light: "#0E306D", dark: "#7BA3E8" };
@@ -155,20 +154,19 @@ function computeBins(points: { x: number; y: number }[]): BinStat[] {
   return bins;
 }
 
-/** 그룹 내 최적중심/최적구간/경고선을 12-bin 프로파일에서 재계산한다
- * (지시서 "그룹별 재계산 규칙" -- 전체 데이터로 계산된 값을 복사하면 이
- * 기능의 목적, 즉 패널마다 달라지는지를 보는 것이 무너진다). SPC 결과와
- * 정확히 일치할 필요는 없다 -- 세 패널에 같은 규칙만 일관되게 적용되면
- * 패널 간 상대 비교는 유효하다. */
+/** 그룹 내 최적중심/최적구간을 12-bin 프로파일에서 재계산한다 (지시서
+ * "그룹별 재계산 규칙" -- 전체 데이터로 계산된 값을 복사하면 이 기능의
+ * 목적, 즉 패널마다 달라지는지를 보는 것이 무너진다). SPC 결과와 정확히
+ * 일치할 필요는 없다 -- 세 패널에 같은 규칙만 일관되게 적용되면 패널
+ * 간 상대 비교는 유효하다. */
 function computeGroupWindow(points: { x: number; y: number }[]): {
   bins: BinStat[];
   optimalCenter: number | null;
   rangeLo: number | null;
   rangeHi: number | null;
-  warningX: number | null;
 } {
   const bins = computeBins(points);
-  if (bins.length === 0) return { bins, optimalCenter: null, rangeLo: null, rangeHi: null, warningX: null };
+  if (bins.length === 0) return { bins, optimalCenter: null, rangeLo: null, rangeHi: null };
 
   let minIdx = 0;
   for (let i = 1; i < bins.length; i++) if (bins[i].y_mean < bins[minIdx].y_mean) minIdx = i;
@@ -179,18 +177,7 @@ function computeGroupWindow(points: { x: number; y: number }[]): {
   while (lo - 1 >= 0 && bins[lo - 1].y_mean <= threshold) lo--;
   while (hi + 1 < bins.length && bins[hi + 1].y_mean <= threshold) hi++;
 
-  const variance = points.reduce((s, p) => s + (p.y - overallMean) ** 2, 0) / points.length;
-  const sigma = Math.sqrt(variance);
-  const warnThreshold = overallMean + 0.5 * sigma;
-  let warningX: number | null = null;
-  for (const b of bins) {
-    if (b.y_mean > warnThreshold) {
-      warningX = b.x_lo;
-      break;
-    }
-  }
-
-  return { bins, optimalCenter: bins[minIdx].x_mean, rangeLo: bins[lo].x_lo, rangeHi: bins[hi].x_hi, warningX };
+  return { bins, optimalCenter: bins[minIdx].x_mean, rangeLo: bins[lo].x_lo, rangeHi: bins[hi].x_hi };
 }
 
 type GroupStat = {
@@ -202,7 +189,6 @@ type GroupStat = {
   optimalCenter: number | null;
   rangeLo: number | null;
   rangeHi: number | null;
-  warningX: number | null;
   insufficientN: boolean;
 };
 
@@ -211,7 +197,7 @@ function buildGroupStat(key: string, points: ScatterPoint[]): GroupStat {
   const rho = spearmanRho(points);
   const insufficientN = n < MIN_GROUP_N;
   if (insufficientN) {
-    return { key, points, n, rho, bins: [], optimalCenter: null, rangeLo: null, rangeHi: null, warningX: null, insufficientN };
+    return { key, points, n, rho, bins: [], optimalCenter: null, rangeLo: null, rangeHi: null, insufficientN };
   }
   const window = computeGroupWindow(points);
   return { key, points, n, rho, ...window, insufficientN };
@@ -437,7 +423,6 @@ export default function CompareAcrossConfigsModal({
           <div className="compareModalLegend">
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GRAY.dark : GRAY.light }} /> 전체 최적 중심 (층화 전)</span>
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light }} /> 그룹별 최적 중심</span>
-            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? WARNING_COLOR.dark : WARNING_COLOR.light }} /> 그룹별 경고선</span>
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 구간 평균 불량률</span>
           </div>
         </div>
@@ -477,7 +462,6 @@ function TrellisPanel({
 
   const textColor = theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light;
   const inferredColor = theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light;
-  const warningColor = theme === "dark" ? WARNING_COLOR.dark : WARNING_COLOR.light;
   const grayColor = theme === "dark" ? GRAY.dark : GRAY.light;
   const pointColor = theme === "dark" ? POINT_COLOR.dark : POINT_COLOR.light;
 
@@ -534,7 +518,7 @@ function TrellisPanel({
           )}
 
           {/* 권장 구간 밴드: 옅은 중립 배경만, 테두리 없음 -- 작은 패널에서는
-              덜어낼수록 핵심 3선(최적 중심/구간 평균 곡선/경고선)이 산다
+              덜어낼수록 핵심 2선(최적 중심/구간 평균 곡선)이 산다
               (지시서 N-3). */}
           {!group.insufficientN && group.rangeLo != null && group.rangeHi != null && (
             <rect
@@ -558,9 +542,6 @@ function TrellisPanel({
           )}
           {!group.insufficientN && group.optimalCenter != null && (
             <line x1={xScale(group.optimalCenter)} x2={xScale(group.optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.4} strokeDasharray="4 3" />
-          )}
-          {!group.insufficientN && group.warningX != null && (
-            <line x1={xScale(group.warningX)} x2={xScale(group.warningX)} y1={0} y2={plotHeight} stroke={warningColor} strokeWidth={1.4} strokeDasharray="10 5" />
           )}
 
           {!group.insufficientN && group.bins.length > 0 && (

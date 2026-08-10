@@ -641,11 +641,10 @@ export type LatestAnalysisRecord = {
 };
 
 // wafer 수만큼 커지는 predictions/holdout는 서버에 저장하지 않는다 (spec
-// 학습·분석 결과 상태 유지와 같은 원칙 -- AnalysisState의
-// alarmGradeByWaferId/scatterByKey와 동일하게, 재접속 시 가벼운 설정값만
-// 복원하고 무거운 데이터는 배경에서 다시 불러온다). 목표 수율·민감도만
-// 저장해 두면 재접속 시 사용자가 마지막으로 보던 설정 그대로 다시
-// 조회할 수 있다.
+// 학습·분석 결과 상태 유지와 같은 원칙 -- AnalysisState의 scatterByKey와
+// 동일하게, 재접속 시 가벼운 설정값만 복원하고 무거운 데이터는 배경에서
+// 다시 불러온다). 목표 수율·민감도만 저장해 두면 재접속 시 사용자가
+// 마지막으로 보던 설정 그대로 다시 조회할 수 있다.
 export type LatestAlarmsPayload = {
   targetYield: number;
   sensitivity: number;

@@ -8764,8 +8764,6 @@ html[data-theme="dark"] .scatterPlotBg{ fill: #242426; }
 .scatterGridLine-x{ opacity: 0.35; }
 html[data-theme="dark"] .scatterGridLine{ stroke: rgba(255, 255, 255, 0.05); opacity: 1; }
 .scatterTickLabel{ font-family: var(--font-data); font-size: var(--fs-micro); fill: var(--text-secondary); }
-.scatterOutsideShade{ fill: var(--sig-amber); opacity: 0.08; }
-html[data-theme="dark"] .scatterOutsideShade{ opacity: 0.12; }
 /* 권장 구간 band (spec: SPC/ML 방식 전환 §3-4, HP-HMI 색 규율 §H-1로
    무채색 갱신): fill color set inline per-theme in TSX (METHOD_COLOR --
    SPC/ML 모두 같은 중립 톤), opacity fixed at 15% here -- never higher,
@@ -8987,7 +8985,6 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareMiniChartHeader .confidenceBadge{ min-width: 64px; justify-content: center; text-align: center; flex: 0 0 auto; }
 .compareMiniGridLine{ stroke: var(--border); stroke-width: 1; opacity: 0.6; }
 .compareMiniTick{ font: 9px var(--font-data); fill: var(--text-secondary); }
-.compareMiniOutsideShade{ fill: #B8791A; opacity: 0.08; }
 .compareMiniGuideLine{ stroke: var(--text-secondary); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0.6; }
 .compareMiniTooltip{ position: fixed; pointer-events: none; z-index: var(--z-tooltip); }
 .compareModalFooter{
@@ -10337,11 +10334,6 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
 /* 신뢰성 상세 패널의 게이트 안내 행 (spec §D-3). */
 .reliabilityGateRow td{ color: var(--danger); font-size: var(--fs-sm); padding-top: 0 !important; border-bottom: none !important; }
 html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
-
-/* 산점도/Box Plot 알람 삼각형 범례 (spec §B-3) */
-.scatterAlarmLegendRow{ align-items: center; }
-.scatterAlarmLegendLabel{ font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); margin-right: 4px; }
-.scatterAlarmLegendNote{ font-size: var(--fs-xs); color: var(--text-muted); margin: 4px 0 0; line-height: 1.5; }
 
 /* ============================================================
    설정 패널 신설 -- §A 사이드바 2분할, §B Theme 아이콘, §C/§D 설정 패널,
