@@ -111,36 +111,12 @@ def test_run_auto_ingest_job_moves_broken_file_to_failed_without_raising(
     assert (watch_dir / ingest.FAILED_SUBDIR / "broken.csv").exists()
 
 
-def test_run_auto_ingest_job_leaves_file_in_place_on_retry_later(
-    monkeypatch: pytest.MonkeyPatch, watch_dir: Path,
-) -> None:
-    # 학습 Job이 이미 실행 중이면(_RetryLater) 파일을 옮기지 않고 다음
-    # 주기에 다시 시도해야 한다 -- processed/도 failed/도 아니다.
-    watch_dir.mkdir()
-    (watch_dir / "busy.csv").write_text("Y\n1\n")
-    monkeypatch.setattr(ingest, "settings", SimpleNamespace(auto_ingest_enabled=True, auto_ingest_dir=str(watch_dir)))
-
-    def _busy(path: Path) -> None:
-        raise ingest._RetryLater()
-
-    monkeypatch.setattr(ingest, "_process_incoming_csv", _busy)
-
-    ingest.run_auto_ingest_job()
-
-    assert (watch_dir / "busy.csv").exists()
-    assert not (watch_dir / ingest.PROCESSED_SUBDIR).exists()
-    assert not (watch_dir / ingest.FAILED_SUBDIR).exists()
-
-
-def test_process_incoming_csv_dispatches_by_target_column(
+def test_process_incoming_csv_always_ingests_as_eval_regardless_of_target_column(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    training_calls = []
+    """RB-3: 자동 수집은 더 이상 학습을 트리거하지 않는다 -- Y 컬럼이
+    있든 없든 항상 평가(분석) 데이터셋으로만 등록된다."""
     eval_calls = []
-    monkeypatch.setattr(
-        ingest, "_ingest_training_csv",
-        lambda registry, filename, content: training_calls.append(filename),
-    )
     monkeypatch.setattr(
         ingest, "_ingest_eval_csv",
         lambda store, registry, filename, content: eval_calls.append(filename),
@@ -151,59 +127,12 @@ def test_process_incoming_csv_dispatches_by_target_column(
     with_y = tmp_path / "with_y.csv"
     with_y.write_text("Lot_Wafer_ID,Y\nL1W1,90\n")
     ingest._process_incoming_csv(with_y)
-    assert training_calls == ["with_y.csv"]
-    assert eval_calls == []
 
     without_y = tmp_path / "without_y.csv"
     without_y.write_text("Lot_Wafer_ID,Y1\nL1W1,3\n")
     ingest._process_incoming_csv(without_y)
-    assert eval_calls == ["without_y.csv"]
-    assert training_calls == ["with_y.csv"]
 
-
-class _FakeRegistry:
-    def __init__(self) -> None:
-        self.deleted: list[str] = []
-
-    def upload(self, filename: str, content: bytes) -> dict:
-        return {"success": True, "dataset_id": "new-upload-id"}
-
-    def delete(self, dataset_id: str) -> None:
-        self.deleted.append(dataset_id)
-
-
-class _FakeManager:
-    def __init__(self, tmp_path: Path) -> None:
-        self._tmp_path = tmp_path
-        self.cleanup_calls: list[str] = []
-
-    def allocate_input_path(self, job_id: str) -> Path:
-        return self._tmp_path / f"{job_id}.csv"
-
-    def submit(self, **kwargs) -> None:
-        from src.runtime.operation_coordinator import ActiveOperationError
-
-        raise ActiveOperationError("training already running")
-
-    def cleanup_input(self, job_id: str) -> None:
-        self.cleanup_calls.append(job_id)
-
-
-def test_ingest_training_csv_rolls_back_registration_on_retry_later(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    """B-6 회귀: upload()가 매번 새 uuid를 발급하므로, 학습 슬롯이 이미
-    사용 중이라 제출이 실패했을 때 등록을 되돌리지 않으면 같은 물리
-    파일이 폴링 주기마다 새 dataset_id로 계속 중복 등록된다."""
-    registry = _FakeRegistry()
-    manager = _FakeManager(tmp_path)
-    monkeypatch.setattr("api.routes.data.get_training_job_manager", lambda: manager)
-
-    with pytest.raises(ingest._RetryLater):
-        ingest._ingest_training_csv(registry, "busy.csv", b"Lot_Wafer_ID,Y\nL1W1,90\n")
-
-    assert registry.deleted == ["new-upload-id"]
-    assert manager.cleanup_calls  # input file cleanup still happens
+    assert eval_calls == ["with_y.csv", "without_y.csv"]
 
 
 def test_refresh_analysis_snapshot_preserves_existing_state_when_all_targets_fail(

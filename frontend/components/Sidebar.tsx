@@ -1,10 +1,11 @@
 "use client";
 
-import { Database, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Activity, Database, Monitor, Moon, Settings, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
 import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
@@ -58,7 +59,23 @@ export default function Sidebar({
 }: SidebarProps) {
   const isDrawer = mode === "drawer";
   const { theme, setTheme } = useTheme();
-  const { settingsPanelOpen, setSettingsPanelOpen, trainingPanelOpen, setTrainingPanelOpen } = usePanelState();
+  const {
+    settingsPanelOpen,
+    setSettingsPanelOpen,
+    trainingPanelOpen,
+    setTrainingPanelOpen,
+    analysisPanelOpen,
+    setAnalysisPanelOpen,
+  } = usePanelState();
+  const { snapshot } = useAnalysisState();
+  // RA-1: 모델 분석·자동화 버튼에만 상태 점을 붙인다 -- 모델 학습에는
+  // "연결" 개념이 없으므로 점을 두지 않는다. 오류(스냅샷 errors 배열에
+  // 뭔가 남아 있음)를 SQL 연결 여부보다 먼저 본다 -- 연결은 됐지만
+  // 최근 사이클이 실패했다면 "연결됨(초록)"이 아니라 "오류(주황)"가
+  // 맞는 신호다.
+  const analysisStatus: "connected" | "offline" | "error" =
+    snapshot && snapshot.errors.length > 0 ? "error" : snapshot?.source.mode === "sql" ? "connected" : "offline";
+  const analysisStatusLabel = { connected: "SQL 연결됨", offline: "SQL 미연결", error: "오류" }[analysisStatus];
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
   // 접힘 상태 전용 (spec §D-2) -- 트리거 아이콘의 실제 위치를 읽어 패널을
@@ -209,22 +226,37 @@ export default function Sidebar({
               헤더에 이미 SOURCE 항목(연결 상태, Header.tsx의
               .headerContextSource)이 있어 사이드바에 점을 새로
               만들지 않는다(중복 표시 금지) -- 세 줄만 제거한다. */}
-          {/* 지시서 L-1: 모델 학습 진입점 -- 설정 버튼과 동일한 패턴
-              (.themeToggle 공유, 접힘 시 아이콘만). 화면 모드 위에 둔다. */}
+          {/* RA-1: 기존 "모델 학습·자동화" 통합 버튼을 둘로 나눈다 --
+              학습은 수동 전용(연결 개념이 없어 점을 두지 않는다), 분석은
+              SQL·refresh time을 품으므로 점을 붙인다. 순서: 모델 학습 →
+              모델 분석·자동화 → 알림 설정 → 화면 모드. */}
           <button
             type="button"
             className={`themeToggle trainingTrigger ${collapsed ? "railIconButton" : ""}`}
-            aria-label="모델 학습·자동화"
+            aria-label="모델 학습"
             aria-haspopup="dialog"
             aria-expanded={trainingPanelOpen}
-            title="모델 학습·자동화"
+            title="모델 학습"
             onClick={() => setTrainingPanelOpen((open) => !open)}
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Database size={16} strokeWidth={1.5} /></span>
-            <span className="themeTriggerLabel">모델 학습·자동화</span>
+            <span className="themeTriggerLabel">모델 학습</span>
           </button>
-          {/* 지시서 Q: 사이드바 하단 순서 -- 모델 학습 / 알림 설정 / 화면
-              모드. */}
+          <button
+            type="button"
+            className={`themeToggle analysisTrigger ${collapsed ? "railIconButton" : ""}`}
+            aria-label="모델 분석·자동화"
+            aria-haspopup="dialog"
+            aria-expanded={analysisPanelOpen}
+            title={`모델 분석·자동화 (${analysisStatusLabel})`}
+            onClick={() => setAnalysisPanelOpen((open) => !open)}
+          >
+            <span className="themeTriggerIcon" aria-hidden="true"><Activity size={16} strokeWidth={1.5} /></span>
+            <span className="themeTriggerLabel">모델 분석·자동화</span>
+            <span className={`sidebarStatusDot ${analysisStatus === "connected" ? "" : analysisStatus}`} aria-hidden="true" />
+          </button>
+          {/* 지시서 Q: 사이드바 하단 순서 -- 모델 학습 / 모델 분석·자동화 /
+              알림 설정 / 화면 모드. */}
           <button
             type="button"
             className={`themeToggle settingsTrigger ${collapsed ? "railIconButton" : ""}`}

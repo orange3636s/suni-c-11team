@@ -8,6 +8,7 @@ import BootstrapStatusBanner from "@/components/BootstrapStatusBanner";
 import Header from "@/components/Header";
 import ManualModeBanner from "@/components/ManualModeBanner";
 import MobileTabBar from "@/components/MobileTabBar";
+import ModelAnalysisPanel from "@/components/ModelAnalysisPanel";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SettingsPanel from "@/components/SettingsPanel";
 import Sidebar, { type NavigationLabel } from "@/components/Sidebar";
@@ -32,6 +33,8 @@ export default function DashboardShell({
     setSettingsPanelOpen,
     trainingPanelOpen,
     setTrainingPanelOpen,
+    analysisPanelOpen,
+    setAnalysisPanelOpen,
   } = usePanelState();
   // 모바일 반응형 패치 S-1 (셸 아키텍처 개편) -- 이전에는 ≤1023px에서
   // <Sidebar>가 DOM에서 통째로 사라지고 <MobileTabBar>만 남았다. 지금은
@@ -124,6 +127,7 @@ export default function DashboardShell({
       <AiPanel open={aiPanelOpen} onToggle={() => setAiPanelOpen((value) => !value)} />
       <SettingsPanel open={settingsPanelOpen} onClose={() => setSettingsPanelOpen(false)} />
       <TrainingPanel open={trainingPanelOpen} onClose={() => setTrainingPanelOpen(false)} />
+      <ModelAnalysisPanel open={analysisPanelOpen} onClose={() => setAnalysisPanelOpen(false)} />
     </div>
   );
 }

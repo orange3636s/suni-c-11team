@@ -242,12 +242,12 @@ def trigger_refresh(background_tasks: BackgroundTasks) -> dict[str, Any]:
 
 @router.post("/activate-dataset")
 def activate_dataset(body: ActivateDatasetRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """AG: 원인 분석·알림 기록에서 새 파일을 업로드하면 이 엔드포인트가
-    불린다 -- "업로드는 활성 평가 데이터셋 전환이다"(지시서 AG-1). 화면별로
-    개별 재분석을 걸지 않고, 스냅샷 파이프라인을 한 번만 실행해 세 화면이
-    같은 결과를 공유하게 한다. 학습은 절대 걸지 않는다(AG-2) -- 여기서는
-    평가 데이터셋 포인터만 바꾸고, `_maybe_retrain`은 train_dataset를
-    건드리지 않으므로 자동 학습 트리거가 없다."""
+    """AG: 원인 분석·알림 기록·모델 분석 팝업(RC)에서 새 파일을 업로드하면
+    이 엔드포인트가 불린다 -- "업로드는 활성 평가 데이터셋 전환이다"
+    (지시서 AG-1). 화면별로 개별 재분석을 걸지 않고, 스냅샷 파이프라인을
+    한 번만 실행해 세 화면이 같은 결과를 공유하게 한다. 학습은 절대
+    걸지 않는다(AG-2, RB-3) -- refresh 파이프라인 자체가 학습을
+    트리거하는 경로를 갖고 있지 않다."""
     registry = get_dataset_registry()
     summary = registry.get_summary(body.dataset_id)
     if summary is None:

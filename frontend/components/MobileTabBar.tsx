@@ -17,7 +17,14 @@ import { usePanelState } from "@/components/PanelStateProvider";
  */
 export default function MobileTabBar({ activeItem }: { activeItem: NavigationLabel }) {
   const activeRef = useRef<HTMLAnchorElement>(null);
-  const { settingsPanelOpen, setSettingsPanelOpen, trainingPanelOpen, setTrainingPanelOpen } = usePanelState();
+  const {
+    settingsPanelOpen,
+    setSettingsPanelOpen,
+    trainingPanelOpen,
+    setTrainingPanelOpen,
+    analysisPanelOpen,
+    setAnalysisPanelOpen,
+  } = usePanelState();
 
   // Keeps the selected tab in view if the bar has scrolled (spec: "선택된
   // 항목이 화면 밖이면 자동으로 스크롤해 보이게 한다").
@@ -48,7 +55,8 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
             버튼이라 다른 탭들과 달리 <Link>가 아니다). */}
         {/* 지시서 L-1: 데스크톱 사이드바 하단의 모델 학습 진입점을 좁은
             폭에서도 열 수 있어야 한다 -- 이 탭바에는 사이드바 자체가
-            없으므로 설정과 같은 방식으로 편입한다. */}
+            없으므로 설정과 같은 방식으로 편입한다. RA-1: 통합 버튼이
+            둘로 나뉘어 여기도 같이 나눈다. */}
         <button
           type="button"
           className="mobileTab mobileTabButton"
@@ -56,7 +64,16 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
           aria-expanded={trainingPanelOpen}
           onClick={() => setTrainingPanelOpen((value) => !value)}
         >
-          모델 학습·자동화
+          모델 학습
+        </button>
+        <button
+          type="button"
+          className="mobileTab mobileTabButton"
+          aria-haspopup="dialog"
+          aria-expanded={analysisPanelOpen}
+          onClick={() => setAnalysisPanelOpen((value) => !value)}
+        >
+          모델 분석·자동화
         </button>
         <button
           type="button"

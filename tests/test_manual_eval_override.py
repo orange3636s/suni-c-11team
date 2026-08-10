@@ -96,7 +96,7 @@ def test_dispatch_is_called_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_
     store, registry = _store_and_registry(tmp_path)
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
-    monkeypatch.setattr(refresh, "_maybe_retrain", lambda s, r, m, e: {
+    monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
         "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
     })
     monkeypatch.setattr(

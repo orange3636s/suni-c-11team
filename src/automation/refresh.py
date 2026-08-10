@@ -1,8 +1,12 @@
 """J-2/J-3: 리프레시 파이프라인 -- 갱신 주기마다 데이터 취득(SQL 또는
-폴백) -> (신규 데이터일 때만) 학습 + 승격 게이트 -> 챔피언 예측 ->
-원인분석 -> 알람 판정 -> 모니터링 요약을 계산해 하나의 스냅샷으로
-저장한다. 사용자가 버튼을 누르지 않아도 어느 탭이든 최신 결과가 즉시
-보이게 하는 것이 목적이다(J-4가 이 스냅샷을 읽는다).
+폴백) -> 현재 챔피언으로 예측 -> 원인분석 -> 알람 판정 -> 모니터링
+요약을 계산해 하나의 스냅샷으로 저장한다. 사용자가 버튼을 누르지
+않아도 어느 탭이든 최신 결과가 즉시 보이게 하는 것이 목적이다(J-4가 이
+스냅샷을 읽는다).
+
+RB-3: 이 파이프라인은 학습을 트리거하지 않는다 -- SQL/폴백에서 받은
+데이터는 항상 분석셋(eval)이고, 학습은 모델 학습 팝업의 수동 업로드
+(또는 내장 train.csv)로만 일어난다.
 
 `run_refresh_pipeline`은 APScheduler가 `refreshIntervalMinutes`마다
 호출한다(`api/main.py`, job id `auto_refresh`) -- 기존 `auto_ingest`
@@ -14,7 +18,6 @@ try/except하고, 실패는 로그 + 스냅샷의 `errors` 배열에 남긴다(�
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import threading
 from datetime import datetime, timezone
@@ -26,9 +29,7 @@ import pandas as pd
 from api.settings import settings
 from src.analysis import alarm_gbdt
 from src.automation import sql_source
-from src.ml.dataset import has_target_column
 from src.runtime.datasets import DatasetRegistry, parse_uploaded_csv
-from src.runtime.operation_coordinator import ActiveOperationError
 from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -36,9 +37,6 @@ logger = logging.getLogger(__name__)
 REFRESH_JOB_ID = "auto_refresh"
 FALLBACK_TRAIN_DATASET = "train"
 FALLBACK_EVAL_DATASET = "test"
-# app_state 키 -- 마지막으로 학습에 실제로 제출한 데이터의 내용 해시.
-# 같은 해시면(신규 행이 없으면) 재학습을 건너뛴다(J-1 "재학습 조건").
-DATA_HASH_STATE_KEY = "automation:last_train_hash"
 TARGETS = ("Y1", "Y2", "Y3", "Y4", "Y5")
 
 # AF/AG: 주기 잡(APScheduler)과 수동 최신화 버튼·업로드 연동이 전부 이
@@ -66,15 +64,6 @@ def _dataset_registry(store: RuntimeStore) -> DatasetRegistry:
     return DatasetRegistry(store, settings.dataset_upload_dir, settings.bundled_dataset_dir)
 
 
-def _content_hash(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
-
-
-class _RetryLater(Exception):
-    """학습 Job 슬롯이 이미 사용 중일 때만 쓴다 -- src/automation/ingest.py의
-    동명 예외와 같은 용도(일시적 혼잡, 다음 주기에 재시도)."""
-
-
 def run_refresh_pipeline() -> None:
     if not _refresh_lock.acquire(blocking=False):
         logger.info("auto_refresh: 이미 다른 실행이 진행 중이라 이번 호출은 건너뜁니다.")
@@ -99,8 +88,10 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
     # -- 1. 데이터 소스 해석 (J-1) -----------------------------------
     mode, train_dataset_id, eval_dataset_id, source_row_count = _resolve_source(store, registry, errors)
 
-    # -- 2. (신규 데이터일 때만) 학습 + 승격 게이트 (J-1) --------------
-    model_meta = _maybe_retrain(store, registry, mode, errors)
+    # -- 2. 현재 챔피언 정보만 읽는다 (RB-3) -- refresh 파이프라인은 더
+    # 이상 학습을 트리거하지 않는다. 학습은 모델 학습 팝업의 수동
+    # 업로드로만 일어난다("자동화 없음" -- RA-3 데이터 흐름).
+    model_meta = _current_model_meta(store)
 
     # -- 3. 챔피언으로 예측 + 4. 원인분석 + 5. 알람 판정 ---------------
     analysis_block, alarms_block, monitoring_block, alarm_items_for_dispatch, train_dataset_for_alarms = (
@@ -191,16 +182,18 @@ def _run_refresh_pipeline_inner(store: RuntimeStore) -> None:
 def _resolve_source(
     store: RuntimeStore, registry: DatasetRegistry, errors: list[str]
 ) -> tuple[str, str, str, int]:
-    """SQL 모드를 먼저 시도하고, 실패하거나 설정이 없으면 폴백(train/test)
-    으로 넘어간다. SQL 모드에서 얻은 배치가 학습용(Y 있음)인지 평가용
-    (Y 없음)인지는 기존 파일 기반 자동 수집과 동일한 기준
-    (`has_target_column`)으로 가른다.
+    """SQL 모드를 먼저 시도하고, 실패하거나 설정이 없으면 폴백(test)으로
+    넘어간다. RB-3: SQL/폴백에서 받은 배치는 이제 항상 분석셋(eval)이다
+    -- Y 유무로 학습/평가를 가르지 않는다(자동 학습 경로 자체가 없다).
+    학습 대상(train_dataset)은 이 함수가 절대 바꾸지 않는다 -- 직전
+    스냅샷의 것을 그대로 이어받거나(자동 학습을 걸지 않는다, AG-2),
+    없으면 내장 train.CSV로 폴백한다. 학습 대상을 실제로 바꾸는 것은
+    모델 학습 팝업의 수동 업로드/내장 train.csv뿐이다.
 
     AG-3: 업로드로 활성화된 "수동 평가 데이터셋"이 있으면 SQL/폴백보다
     먼저 그것을 쓴다 -- 주기 잡이 사용자가 올린 파일을 원래 소스로
     되돌리지 않는다("자동 갱신으로 복귀"를 눌러 override를 지우기
-    전까지). 학습 대상(train_dataset)은 건드리지 않는다 -- 직전
-    스냅샷의 것을 그대로 이어받는다(자동 학습을 걸지 않는다, AG-2)."""
+    전까지)."""
     manual = store.get_manual_eval_override()
     if manual is not None:
         previous = store.get_refresh_snapshot_status()["snapshot"]
@@ -217,39 +210,28 @@ def _resolve_source(
     if sql_source.is_sql_configured(store):
         dataframe = sql_source.fetch_incremental(store)
         if dataframe is not None:
+            previous = store.get_refresh_snapshot_status()["snapshot"]
+            previous_source = (previous or {}).get("source") if previous else None
+            previous_train = (previous_source or {}).get("train_dataset") if previous_source else None
             if dataframe.empty:
-                # 신규 행이 없다 -- 학습/평가 데이터셋은 바뀌지 않았으므로
+                # 신규 행이 없다 -- 평가 데이터셋은 바뀌지 않았으므로
                 # 직전 스냅샷의 소스를 그대로 쓴다(첫 실행이면 폴백).
-                previous = store.get_refresh_snapshot_status()["snapshot"]
-                previous_source = (previous or {}).get("source") if previous else None
                 if previous_source and previous_source.get("mode") == "sql":
                     return "sql", previous_source["train_dataset"], previous_source["eval_dataset"], previous_source.get("row_count", 0)
                 # 첫 SQL 조회가 하필 0행이면 폴백으로 시작한다.
             else:
                 filename = f"sql_refresh_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.csv"
                 content = dataframe.to_csv(index=False).encode("utf-8")
-                if has_target_column(dataframe):
-                    dataset_id = _register_dataset(registry, filename, content, errors)
-                    if dataset_id is not None:
-                        # 학습용 배치다 -- eval은 이전 스냅샷의 eval을
-                        # 유지한다(SQL 모드에서 평가 대상은 별도 조회로
-                        # 갱신되며, 이 사이클은 학습 데이터만 새로 받았다).
-                        previous = store.get_refresh_snapshot_status()["snapshot"]
-                        previous_eval = ((previous or {}).get("source") or {}).get("eval_dataset")
-                        return "sql", dataset_id, previous_eval or dataset_id, len(dataframe)
-                else:
-                    dataset_id = _register_dataset(registry, filename, content, errors)
-                    if dataset_id is not None:
-                        previous = store.get_refresh_snapshot_status()["snapshot"]
-                        previous_train = ((previous or {}).get("source") or {}).get("train_dataset")
-                        return "sql", previous_train or FALLBACK_TRAIN_DATASET, dataset_id, len(dataframe)
+                dataset_id = _register_dataset(registry, filename, content, errors)
+                if dataset_id is not None:
+                    return "sql", previous_train or FALLBACK_TRAIN_DATASET, dataset_id, len(dataframe)
 
-    # 폴백: 내장 train.CSV로 학습, test.CSV로 평가 (J-1).
+    # 폴백: 내장 test.CSV로 평가 (J-1).
     try:
-        train_df = registry.get_dataframe(FALLBACK_TRAIN_DATASET)
-        row_count = len(train_df)
+        eval_df = registry.get_dataframe(FALLBACK_EVAL_DATASET)
+        row_count = len(eval_df)
     except Exception:
-        errors.append("폴백 데이터셋(train.CSV)을 읽지 못했습니다.")
+        errors.append("폴백 데이터셋(test.CSV)을 읽지 못했습니다.")
         row_count = 0
     return "fallback", FALLBACK_TRAIN_DATASET, FALLBACK_EVAL_DATASET, row_count
 
@@ -267,98 +249,19 @@ def _register_dataset(registry: DatasetRegistry, filename: str, content: bytes, 
     return result["dataset_id"]
 
 
-def _maybe_retrain(
-    store: RuntimeStore, registry: DatasetRegistry, mode: str, errors: list[str]
-) -> dict[str, Any]:
-    """J-1 "재학습 조건" -- 데이터 내용 해시가 이전과 같고 챔피언이 이미
-    있으면 학습을 건너뛴다. 승격 게이트(`RuntimeStore.promote_if_better`)
-    자체는 이미 구현돼 있어(수동 학습과 공유) 여기서 다시 만들지 않는다
-    -- 그 게이트를 통과시키는 학습 Job 제출 경로(`api.routes.data`)를
-    그대로 재사용한다.
-    """
-    train_dataset_id = FALLBACK_TRAIN_DATASET if mode == "fallback" else None
-    try:
-        if mode == "fallback":
-            content = (registry.bundled_root / "train.CSV").read_bytes()
-        else:
-            snapshot = store.get_refresh_snapshot_status()["snapshot"]
-            train_dataset_id = ((snapshot or {}).get("source") or {}).get("train_dataset")
-            if not train_dataset_id:
-                return {"champion_version": _current_champion_id(store), "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": "학습 대상 데이터셋 없음"}
-            content = registry.get_dataframe(train_dataset_id).to_csv(index=False).encode("utf-8")
-    except Exception:
-        logger.exception("auto_refresh: 학습 대상 데이터 읽기 실패")
-        errors.append("학습 대상 데이터를 읽지 못했습니다.")
-        return {"champion_version": _current_champion_id(store), "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": "학습 대상 데이터 읽기 실패"}
-
-    content_hash = _content_hash(content)
-    stored_hash = (store.get_app_state(DATA_HASH_STATE_KEY) or {}).get("value")
-    champion_exists = store.active_model() is not None
-
-    if champion_exists and stored_hash == content_hash:
-        return {
-            "champion_version": _current_champion_id(store),
-            "trained_at": None,
-            "promoted": None,
-            "gate_reason": None,
-            "skipped_reason": "데이터 내용 변경 없음 -- 재학습 생략",
-        }
-
-    filename = f"{train_dataset_id or 'train'}_auto_refresh.csv"
-    try:
-        from api.routes.data import _run_persisted_training_job, get_training_job_manager
-        from src.runtime.training_jobs import new_training_job_id
-
-        upload_result = registry.upload(filename, content)
-        if not upload_result.get("success"):
-            errors.append(f"자동 재학습용 데이터셋 등록 실패: {upload_result.get('blocking_errors')}")
-            return {"champion_version": _current_champion_id(store), "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": "데이터셋 등록 실패"}
-        dataset_id = upload_result["dataset_id"]
-
-        manager = get_training_job_manager()
-        job_id = new_training_job_id()
-        from functools import partial
-
-        input_path = manager.allocate_input_path(job_id)
-        input_path.write_bytes(content)
-        manager.submit(
-            job_id=job_id,
-            source_filename=filename,
-            input_path=input_path,
-            runner=partial(_run_persisted_training_job, input_path, filename, {}),
-        )
-        # 학습 Job은 비동기로 돈다 -- 이번 사이클은 제출까지만 하고,
-        # 예측/분석/알람은 (아직 승격 전인) 기존 챔피언으로 계속한다.
-        # 해시는 제출 시점에 기록한다: 같은 내용으로 매 사이클 중복
-        # 제출하지 않기 위함이지, 승격 성공 여부와는 무관하다.
-        store.set_app_state(DATA_HASH_STATE_KEY, {"value": content_hash})
-        return {
-            "champion_version": _current_champion_id(store),
-            "trained_at": None,
-            "promoted": None,
-            "gate_reason": None,
-            "skipped_reason": None,
-            "training_job_submitted": job_id,
-        }
-    except ActiveOperationError:
-        logger.info("auto_refresh: 다른 무거운 작업이 실행 중이라 학습을 다음 주기로 미룹니다.")
-        return {
-            "champion_version": _current_champion_id(store),
-            "trained_at": None,
-            "promoted": None,
-            "gate_reason": None,
-            "skipped_reason": "다른 작업이 실행 중이라 이번 주기는 건너뜀",
-        }
-    except Exception:
-        logger.exception("auto_refresh: 자동 재학습 제출 실패")
-        errors.append("자동 재학습을 제출하지 못했습니다 -- 기존 챔피언으로 계속합니다.")
-        return {
-            "champion_version": _current_champion_id(store),
-            "trained_at": None,
-            "promoted": None,
-            "gate_reason": None,
-            "skipped_reason": "학습 제출 실패",
-        }
+def _current_model_meta(store: RuntimeStore) -> dict[str, Any]:
+    """RB-3: refresh 파이프라인은 더 이상 학습을 제출하지 않는다 --
+    현재 활성 챔피언을 읽기만 한다. `trained_at`/`promoted`/`gate_reason`은
+    이 파이프라인이 학습을 트리거하던 시절에도 항상 None이었다(학습이
+    비동기라 완료를 여기서 기다리지 않았다) -- 그 필드 의미는 그대로
+    유지한다."""
+    return {
+        "champion_version": _current_champion_id(store),
+        "trained_at": None,
+        "promoted": None,
+        "gate_reason": None,
+        "skipped_reason": None,
+    }
 
 
 def _current_champion_id(store: RuntimeStore) -> str | None:

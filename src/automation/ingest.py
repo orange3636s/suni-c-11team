@@ -1,13 +1,14 @@
 """자동 수집 파이프라인 1단계 (작업 지시서 "자동 수집 파이프라인") --
-감시 디렉터리(`settings.auto_ingest_dir`)를 폴링해 새 CSV를 Y 컬럼
-유무로 갈라 처리한다.
+감시 디렉터리(`settings.auto_ingest_dir`)를 폴링해 새 CSV를 처리한다.
 
-    Y 있음 -> 학습 데이터셋 등록 -> 학습 잡 제출 (승격 게이트는
-              `RuntimeStore.promote_if_better`가 학습 완료 시점에 이미
-              적용한다 -- 여기서 따로 기다리지 않는다)
-    Y 없음 -> 평가 데이터셋 등록 -> 최신 챔피언 모델로 예측(있으면) ->
-              원인분석 Pareto·계측 확대 재계산 -> state/analysis,
-              state/alarms 스냅샷 갱신(created_at 포함)
+RB-3: "자동화·모델학습·모델분석 3분리" 지시서 이후로는 Y 컬럼 유무와
+무관하게 모든 파일이 평가(분석) 데이터셋으로 등록된다 -- 자동 수집이
+학습을 트리거하는 경로 자체가 없다(refresh time은 분석만 갱신한다,
+학습은 모델 학습 팝업의 수동 업로드로만 일어난다).
+
+    평가 데이터셋 등록 -> 최신 챔피언 모델로 예측(있으면) -> 원인분석
+    Pareto·계측 확대 재계산 -> state/analysis, state/alarms 스냅샷
+    갱신(created_at 포함)
 
 `run_auto_ingest_job`은 APScheduler가 주기적으로 호출한다
 (`api/main.py`) -- 알림 발송 잡과 같은 best-effort 원칙으로, 파일 하나가
@@ -19,16 +20,13 @@ from __future__ import annotations
 import logging
 import shutil
 from datetime import datetime, timezone
-from functools import partial
 from pathlib import Path
 from typing import Any
 
 from api.settings import settings
 from src.analysis import alarm_gbdt
-from src.ml.dataset import has_target_column
 from src.runtime.app_state import get_latest_state, save_state
 from src.runtime.datasets import DatasetRegistry
-from src.runtime.operation_coordinator import ActiveOperationError
 from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -81,11 +79,6 @@ def run_auto_ingest_job() -> None:
     for path in new_csv_files(settings.auto_ingest_dir):
         try:
             _process_incoming_csv(path)
-        except _RetryLater:
-            # 학습 Job이 이미 실행 중이라 이번 파일은 건너뛴다 -- 파일을
-            # 옮기지 않고 그대로 두면 다음 주기에 다시 시도한다.
-            logger.info("auto_ingest: 학습 중이라 다음 주기로 미룸 file=%s", path.name)
-            continue
         except Exception:
             logger.exception("auto_ingest_failed file=%s", path.name)
             move_to(path, FAILED_SUBDIR)
@@ -93,67 +86,14 @@ def run_auto_ingest_job() -> None:
             move_to(path, PROCESSED_SUBDIR)
 
 
-class _RetryLater(Exception):
-    """학습 Job 슬롯이 이미 사용 중일 때만 쓴다 -- 파일 오류가 아니라 일시적
-    혼잡이므로 failed/로 보내지 않고 다음 주기에 다시 시도한다."""
-
-
 def _process_incoming_csv(path: Path) -> None:
     content = path.read_bytes()
     filename = path.name
     store = _runtime_store()
     registry = _dataset_registry(store)
-
-    # Y 유무 판정은 src/ml/dataset.py의 기존 기준(has_target_column)을
-    # 그대로 쓴다 -- 학습 경로와 자동 수집이 서로 다른 기준으로 판정하면
-    # "학습에서는 Y 있다고 하고 자동수집은 없다고 하는" 모순이 생긴다.
-    from src.runtime.datasets import parse_uploaded_csv
-
-    dataframe, _ = parse_uploaded_csv(content)
-
-    if has_target_column(dataframe):
-        _ingest_training_csv(registry, filename, content)
-    else:
-        _ingest_eval_csv(store, registry, filename, content)
-
-
-def _ingest_training_csv(registry: DatasetRegistry, filename: str, content: bytes) -> None:
-    """기존 API를 그대로 재사용한다 -- 데이터셋 등록은 `POST /api/datasets`와
-    같은 `DatasetRegistry.upload`, 학습 실행은 `POST /api/train/jobs`와
-    같은 `TrainingJobManager.submit` + `_run_persisted_training_job`.
-    승격 게이트(`RuntimeStore.promote_if_better`)는 그 학습 경로
-    (`api.routes.data.train_model`) 안에 이미 있어 자동/수동 모두 같은
-    게이트를 통과한다 -- 여기서 따로 게이트를 걸 필요가 없다.
-    """
-    from api.routes.data import _run_persisted_training_job, get_training_job_manager
-    from src.runtime.training_jobs import new_training_job_id
-
-    upload_result = registry.upload(filename, content)
-    if not upload_result.get("success"):
-        raise ValueError(f"데이터셋 등록 실패: {upload_result.get('blocking_errors')}")
-    dataset_id = upload_result["dataset_id"]
-
-    manager = get_training_job_manager()
-    job_id = new_training_job_id()
-    try:
-        input_path = manager.allocate_input_path(job_id)
-        input_path.write_bytes(content)
-        manager.submit(
-            job_id=job_id,
-            source_filename=filename,
-            input_path=input_path,
-            runner=partial(_run_persisted_training_job, input_path, filename, {}),
-        )
-    except ActiveOperationError as exc:
-        manager.cleanup_input(job_id)
-        # B-6: upload()는 매번 새 uuid를 발급하므로, 여기서 등록을 되돌리지
-        # 않으면 학습 슬롯이 계속 사용 중인 동안(예: 30분 학습) 같은
-        # 물리 파일이 폴링 주기(예: 5분)마다 새 dataset_id로 재등록된다
-        # -- 파일을 옮기지 않아 다음 주기에 재시도하므로, 등록만이라도
-        # 반드시 롤백해야 중복이 쌓이지 않는다.
-        registry.delete(dataset_id)
-        raise _RetryLater from exc
-    logger.info("auto_ingest: 학습 Job 등록 job_id=%s file=%s", job_id, filename)
+    # RB-3: Y 유무와 무관하게 항상 평가(분석) 데이터셋으로 등록한다 --
+    # 자동 수집이 학습을 트리거하는 경로가 없다.
+    _ingest_eval_csv(store, registry, filename, content)
 
 
 def _ingest_eval_csv(store: RuntimeStore, registry: DatasetRegistry, filename: str, content: bytes) -> None:

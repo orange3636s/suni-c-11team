@@ -11129,6 +11129,17 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   background: var(--sig-green);
 }
 .sidebarStatusDot.offline{ background: var(--text-muted); }
+/* RA-1: 모델 분석·자동화 버튼 전용 -- 연결됨(초록)/미연결(회색)/오류(주황)
+   3단계. sidebarStatusDot의 offline은 이미 회색이라 재사용하고, error만
+   새로 추가한다. */
+.sidebarStatusDot.error{ background: var(--sig-amber); }
+.analysisTrigger{ position: relative; }
+.analysisTrigger .sidebarStatusDot{
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.analysisTrigger.railIconButton .sidebarStatusDot{ top: 4px; right: 4px; }
 
 /* ── FMEA 분석표 (모니터링 홈, 지시서 IB) ──────────────────────────────
    14열이라 가로 스크롤이 항상 생긴다(.meScrollTable과 달리 모바일에서만

@@ -25,6 +25,11 @@ type PanelStateValue = {
   // 지시서 L-1: 모델 학습 팝업도 설정·챗봇 패널과 상호 배타적이다.
   trainingPanelOpen: boolean;
   setTrainingPanelOpen: (value: BoolUpdater) => void;
+  // RA-1: 모델 학습·자동화가 둘로 나뉘면서 생긴 두 번째 팝업(모델
+  // 분석·자동화) -- trainingPanelOpen과도 서로 배타적이다(동시에 열리지
+  // 않는다).
+  analysisPanelOpen: boolean;
+  setAnalysisPanelOpen: (value: BoolUpdater) => void;
   // The dataset id that 원인 분석 last completed for, or null if no
   // analysis has finished yet (or it was invalidated by a dataset change).
   // SUNI's AI panel reads this to know whether it has anything to answer
@@ -69,6 +74,7 @@ export default function PanelStateProvider({
   const [aiPanelOpen, setAiPanelOpenState] = useState(initialAiPanelOpen);
   const [settingsPanelOpen, setSettingsPanelOpenState] = useState(false);
   const [trainingPanelOpen, setTrainingPanelOpenState] = useState(false);
+  const [analysisPanelOpen, setAnalysisPanelOpenState] = useState(false);
   const [analysisDataset, setAnalysisDataset] = useState<string | null>(null);
   const [pendingChatRequest, setPendingChatRequest] = useState<PendingChatRequest | null>(null);
 
@@ -87,6 +93,7 @@ export default function PanelStateProvider({
       if (next) {
         setSettingsPanelOpenState(false);
         setTrainingPanelOpenState(false);
+        setAnalysisPanelOpenState(false);
       }
       return next;
     });
@@ -99,6 +106,7 @@ export default function PanelStateProvider({
         setAiPanelOpenState(false);
         writeCookie(AI_PANEL_COOKIE, false);
         setTrainingPanelOpenState(false);
+        setAnalysisPanelOpenState(false);
       }
       return next;
     });
@@ -111,6 +119,22 @@ export default function PanelStateProvider({
         setAiPanelOpenState(false);
         writeCookie(AI_PANEL_COOKIE, false);
         setSettingsPanelOpenState(false);
+        setAnalysisPanelOpenState(false);
+      }
+      return next;
+    });
+  }, []);
+
+  // RA-1: 모델 분석·자동화 팝업 -- 챗봇/설정/모델 학습 팝업과 상호
+  // 배타적이다(같은 규칙을 그대로 따른다).
+  const setAnalysisPanelOpen = useCallback((value: BoolUpdater) => {
+    setAnalysisPanelOpenState((previous) => {
+      const next = typeof value === "function" ? value(previous) : value;
+      if (next) {
+        setAiPanelOpenState(false);
+        writeCookie(AI_PANEL_COOKIE, false);
+        setSettingsPanelOpenState(false);
+        setTrainingPanelOpenState(false);
       }
       return next;
     });
@@ -134,6 +158,8 @@ export default function PanelStateProvider({
       setSettingsPanelOpen,
       trainingPanelOpen,
       setTrainingPanelOpen,
+      analysisPanelOpen,
+      setAnalysisPanelOpen,
       analysisDataset,
       setAnalysisDataset,
       pendingChatRequest,
@@ -150,6 +176,8 @@ export default function PanelStateProvider({
       setSettingsPanelOpen,
       trainingPanelOpen,
       setTrainingPanelOpen,
+      analysisPanelOpen,
+      setAnalysisPanelOpen,
       analysisDataset,
       pendingChatRequest,
       requestChat,
