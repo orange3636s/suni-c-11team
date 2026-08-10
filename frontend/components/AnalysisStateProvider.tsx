@@ -10,6 +10,7 @@ import type {
   CategoricalScatterResponse,
   ConfigTreemapResponse,
   FmeaTablePayload,
+  HeatmapResponse,
   ManualEvalOverride,
   MeasurementExpansionResponse,
   ModelPerformanceResponse,
@@ -101,6 +102,14 @@ export type AnalysisState = {
   // 분석하면 채워진다. `fmeaError`가 있으면 계산이 실패한 것이다.
   fmea?: FmeaTablePayload | null;
   fmeaError?: string | null;
+  // TA그룹: 상관관계 히트맵 캐시 -- 탭을 오가는 동안(CorrelationHeatmap이
+  // 언마운트/리마운트돼도) 재요청하지 않도록 scatterByKey와 같은 원리로
+  // 이 컨텍스트에 보관한다. 키는 CorrelationHeatmap 내부와 동일한
+  // `numeric:${metric}` / `categorical:${configLevel}` 형식 -- 서버에는
+  // 저장하지 않는다(스냅샷 예산은 Pareto만으로도 이미 거의 다 쓴다;
+  // scatterByKey처럼 재접속 시에는 다시 조회한다). 분석을 새로 실행하면
+  // 이 객체 자체가 새로 만들어지므로 자연히 빈 캐시로 시작한다.
+  heatmap: Record<string, HeatmapResponse>;
 } | null;
 
 export type AlarmsState = {
@@ -219,6 +228,7 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
     targetProvenance: snap.analysis.target_provenance ?? null,
     fmea: (snap.analysis.fmea as FmeaTablePayload | null) ?? null,
     fmeaError: snap.analysis.fmeaError ?? null,
+    heatmap: {},
   };
 }
 
@@ -319,6 +329,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
               // JA-1 배포 이전에 저장된 옛 레코드뿐이다.
               fmea: state.analysis.payload.fmea ?? null,
               fmeaError: state.analysis.payload.fmeaError ?? null,
+              heatmap: {},
             });
           } else {
             setAnalysisSnapshotStale(true);

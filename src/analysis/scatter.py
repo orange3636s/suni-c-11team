@@ -16,7 +16,7 @@ import pandas as pd
 
 from src.analysis.control_range import ControlRange, compute_control_range
 from src.analysis.recommendations import compute_factor_recommendation
-from src.analysis.screening.quantile_profile import quantile_bins
+from src.analysis.screening.quantile_profile import DEFAULT_BINS, quantile_bins
 from src.analysis.screening.selector import ParetoFactor, effective_confidence_tier
 from src.analysis.warning_line import compute_warning_line, observed_yield_gap
 from src.analysis.window_methods import compare_methods
@@ -264,7 +264,10 @@ def build_scatter_data(
             "one_sided": control_range.one_sided,
             "fallback_applied": control_range.fallback_applied,
         },
-        bins=_quantile_bins(frame["x"], frame["y"]),
+        # TC-5: 이 필드는 SPC 계열(recommendations.py/window_methods.py)과
+        # 같은 이유로 12구간 고정을 유지한다 -- Sturges는 히트맵/Pareto의
+        # eps2 계산에만 적용했다.
+        bins=_quantile_bins(frame["x"], frame["y"], bins=DEFAULT_BINS),
         optimal_center=optimal_center,
         optimal_center_dropped_reason=optimal_center_dropped_reason,
         eps2=factor.eps2,

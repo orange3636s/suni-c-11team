@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from src.analysis.control_range import ControlRange, compute_control_range
-from src.analysis.screening.quantile_profile import quantile_bins, window_from_bins
+from src.analysis.screening.quantile_profile import DEFAULT_BINS, quantile_bins, window_from_bins
 from src.analysis.screening.selector import ParetoFactor, effective_confidence_tier
 from src.analysis.window_methods import MethodComparison, compare_methods
 
@@ -43,7 +43,12 @@ def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | 
     shot too); kept here as the standalone SPC-only primitive that
     llm_stats.py's per-chamber breakdown still needs.
     """
-    bins = quantile_bins(x, y)
+    # TC-5: 권장 구간(SPC 쪽)은 자동 구간수를 적용하지 않고 기존 12로
+    # 고정한다 -- 구간 수가 바뀌면 최적 중심·권장 구간이 달라지고 알람
+    # 판정(alarm_bands.classify_measured_bands가 이 window로 이탈을
+    # 판정한다)이 조용히 변한다. 히트맵/Pareto의 eps2 계산(effect_size.py)
+    # 에만 Sturges를 적용했다.
+    bins = quantile_bins(x, y, bins=DEFAULT_BINS)
     if not bins:
         return None
     return window_from_bins(bins, x, float(y.mean()))

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import CorrelationHeatmap, { type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
+import type { HeatmapResponse } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 
@@ -27,6 +28,9 @@ export default function HeatmapParetoSection({
   // 선택적 슬롯. 모델 학습 탭은 이 토글이 없으므로 넘기지 않으면 아무것도
   // 렌더되지 않는다 (이 컴포넌트는 두 탭이 공유한다).
   criterionControl,
+  // TA그룹: CorrelationHeatmap으로 그대로 흘려보낸다.
+  heatmapInitialCache,
+  onHeatmapCacheUpdate,
 }: {
   datasetId: string;
   enabled: boolean;
@@ -34,6 +38,8 @@ export default function HeatmapParetoSection({
   onActiveTargetChange: (target: string) => void;
   onHeatmapCellSelect: (selection: HeatmapCellSelection) => void;
   criterionControl?: ReactNode;
+  heatmapInitialCache?: Record<string, HeatmapResponse>;
+  onHeatmapCacheUpdate?: (cache: Record<string, HeatmapResponse>) => void;
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
@@ -55,7 +61,13 @@ export default function HeatmapParetoSection({
 
   return (
     <>
-      <CorrelationHeatmap datasetId={datasetId} enabled={enabled} onSelectCell={onHeatmapCellSelect} />
+      <CorrelationHeatmap
+        datasetId={datasetId}
+        enabled={enabled}
+        onSelectCell={onHeatmapCellSelect}
+        initialCache={heatmapInitialCache}
+        onCacheUpdate={onHeatmapCacheUpdate}
+      />
 
       {enabled && (
         <>

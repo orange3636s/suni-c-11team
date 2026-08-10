@@ -11,8 +11,11 @@ import type { ConfigTreemapGroup, ConfigTreemapResponse } from "@/types/data";
 
 const TARGET_OPTIONS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 // n이 이 미만인 타일은 회색 처리하고 색을 칠하지 않는다 (지시서 §4③
-// "표본 부족").
-const MIN_TILE_N = 30;
+// "표본 부족"). TC-6: 30을 실측했더니 test.CSV 기준 조합의 56.7%가
+// 회색이 되어 트리맵이 거의 비어 보였다 -- 25로 낮추면 43.2%로 절반
+// 미만이다. src/analysis/screening/selector.py의
+// DEFAULT_MIN_N_CATEGORICAL과 같은 값을 유지한다.
+const MIN_TILE_N = 25;
 // 고정 ±3%p 스케일 -- 관측 최대/최소로 자동 정규화하면 0.9%p 차이가
 // 새빨갛게 렌더되어 없는 신호를 만든다 (지시서 §4③ "색 스케일 규칙").
 const COLOR_SPAN_PP = 3;

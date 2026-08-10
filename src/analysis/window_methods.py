@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeRegressor
 
-from src.analysis.screening.quantile_profile import optimal_center_from_bins, quantile_bins, window_from_bins
+from src.analysis.screening.quantile_profile import DEFAULT_BINS, optimal_center_from_bins, quantile_bins, window_from_bins
 
 N_BOOTSTRAP = 60
 FAIL_QUANTILE = 0.90
@@ -112,7 +112,10 @@ def _spc_raw_window(x: pd.Series, y: pd.Series) -> RawWindow | None:
     reimplemented so "SPC" never disagrees with what's already on
     screen.
     """
-    bins = quantile_bins(x, y)
+    # TC-5: SPC 경로는 기존 12구간 고정을 유지한다 (recommendations.py의
+    # 같은 결정과 동일한 이유 -- 알람 판정에 쓰이는 window라 조용히
+    # 바뀌면 안 된다).
+    bins = quantile_bins(x, y, bins=DEFAULT_BINS)
     if not bins:
         return None
     window = window_from_bins(bins, x, float(y.mean()))

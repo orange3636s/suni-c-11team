@@ -27,48 +27,53 @@ pytestmark = pytest.mark.skipif(
     reason="data/raw/train.CSV is not tracked in git; place the real dataset there to run golden checks.",
 )
 
+## TC-5: regenerated after `eps2_numeric` switched from a flat 8-bin qcut to
+## a Sturges-rule auto bin count (`suggest_bin_count`). Every factor's eps2
+## shifted, so the ranking pool -- not just each #1 factor -- reshuffled;
+## most #2-#5 slots changed feature identity, not just their percentage.
+
 # target -> ordered (feature, contribution_pct) for the fixed top 5, full
 # R+D+Config pool, denominated by that same full pool.
 GOLDEN_TOP5 = {
     "Y1": [
-        ("Step28_R1", 63.9),
-        ("Step8_D1", 3.7),
+        ("Step28_R1", 62.5),
+        ("Step13_D1", 4.9),
         ("Step6_R1", 2.9),
-        ("Step21_D1", 2.6),
-        ("Step13_D1", 2.5),
+        ("Step20_R1", 2.5),
+        ("Step19_R1", 2.4),
     ],
     "Y2": [
-        ("Step16_R1", 63.1),
-        ("Step24_R1", 5.0),
-        ("Step14_D1", 4.1),
-        ("Step8_D1", 4.0),
-        ("Step1_D1", 3.5),
+        ("Step16_R1", 64.1),
+        ("Step1_D1", 4.6),
+        ("Step8_D1", 4.4),
+        ("Step14_D1", 3.0),
+        ("Step24_R1", 2.2),
     ],
     "Y3": [
-        ("Step1_D1", 92.6),
-        ("Step13_D1", 1.0),
-        ("Step2_R1", 0.7),
-        ("Step14_D1", 0.5),
-        ("Step15_R1", 0.5),
+        ("Step1_D1", 88.5),
+        ("Step13_D1", 1.5),
+        ("Step11_D1", 1.4),
+        ("Step26_R1", 0.9),
+        ("Step22_R3", 0.9),
     ],
     "Y4": [
-        ("Step24_R1", 41.2),
+        ("Step24_R1", 42.6),
         ("Step21_D1", 8.1),
+        ("Step22_R1", 6.6),
         ("Step14_R2", 4.3),
-        ("Step8_D1", 3.8),
-        ("Step22_R3", 3.3),
+        ("Step7_R2", 3.4),
     ],
     "Y5": [
-        ("Step18_R1", 76.7),
-        ("Step27_D1", 5.8),
-        ("Step22_D1", 4.4),
-        ("Step14_D1", 3.6),
-        ("Step2_R1", 1.7),
+        ("Step18_R1", 79.4),
+        ("Step27_D1", 4.8),
+        ("Step22_D1", 3.2),
+        ("Step2_R1", 3.1),
+        ("Step14_D1", 3.0),
     ],
 }
 
 # Whether the fixed top-5's cumulative contribution reaches 80%.
-GOLDEN_CUM5 = {"Y1": (75.6, False), "Y2": (79.7, False), "Y3": (95.4, True), "Y4": (60.7, False), "Y5": (92.2, True)}
+GOLDEN_CUM5 = {"Y1": (75.1, False), "Y2": (78.3, False), "Y3": (93.2, True), "Y4": (65.0, False), "Y5": (93.5, True)}
 
 # Confidence-tier composition across the fixed top 5 (강함/보통/약함/참고).
 # Updated for the eps2-gated grade (spec §5-2): p-value alone no longer
@@ -79,7 +84,7 @@ GOLDEN_TIER_COUNTS = {
     "Y2": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
     "Y3": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
     "Y4": {"strong": 0, "moderate": 1, "weak": 0, "reference": 4},
-    "Y5": {"strong": 1, "moderate": 0, "weak": 1, "reference": 3},
+    "Y5": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
 }
 
 PCT_TOLERANCE = 0.5

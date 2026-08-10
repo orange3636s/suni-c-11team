@@ -169,6 +169,11 @@ class HeatmapResponse(BaseModel):
     features: list[str]
     targets: list[str]
     values: list[list[float | None]]
+    # TC-4: numeric 보기는 항상 ε²(설명력, 부호 없음)를 values/셀 농도로
+    # 쓰고, rho(부호 있는 스피어만 상관)는 색상 방향에만 쓴다 -- U자
+    # 관계도 진하게 표시되면서 방향은 색으로 읽힌다. categorical 보기는
+    # 정의상 방향이 없어 이 그리드가 전부 None이다.
+    rho: list[list[float | None]] = Field(default_factory=list)
     n: list[list[int]]
     q: list[list[float | None]]
     significant: list[list[bool]]

@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from src.analysis.screening.bin_count import suggest_bin_count
+
 
 @dataclass
 class EffectSizeResult:
@@ -66,7 +68,7 @@ HARD_MIN_N = 30  # 종류 불문 이 미만은 통계적으로 무의미해 완�
 def eps2_numeric(
     x: pd.Series,
     y: pd.Series,
-    bins: int = 8,
+    bins: int | None = None,
     min_n: int = 100,
     hard_min_n: int = HARD_MIN_N,
 ) -> EffectSizeResult | None:
@@ -78,6 +80,13 @@ def eps2_numeric(
     반환하되 `under_sampled=True`로 표시한다(QA-2) -- D 인자처럼 계측률이
     낮은 종류가 min_n 미달이라는 이유만으로 화면에서 통째로 사라지는
     것을 막는다.
+
+    TC-5: `bins`가 None이면(모든 실제 호출부가 그렇다) 표본 수에 맞춘
+    Sturges 구간 수(`suggest_bin_count`)를 쓴다 -- 예전에는 8로 고정이라
+    D(n~480)와 R(n~1500)이 같은 구간 폭을 강제로 나눠 가졌다. 이 함수
+    하나가 히트맵(screening/heatmap.py)과 Pareto(selector.py) eps2 계산의
+    유일한 공통 경로이므로, 여기 한 곳만 바꾸면 두 화면이 계속 같은 값을
+    본다.
     """
     # Keep the exact pairwise-deletion/qcut/ANOVA definition, but avoid a
     # temporary two-column DataFrame plus a pandas groupby for every
@@ -90,8 +99,9 @@ def eps2_numeric(
     if n_observed < hard_min_n:
         return None
 
+    effective_bins = bins if bins is not None else suggest_bin_count(n_observed)
     try:
-        q = pd.qcut(x_valid, bins, labels=False, duplicates="drop")
+        q = pd.qcut(x_valid, effective_bins, labels=False, duplicates="drop")
     except ValueError:
         return None
     if q.nunique() < 2:

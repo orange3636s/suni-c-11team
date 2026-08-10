@@ -31,12 +31,18 @@ TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.C
 # recommended window and 구간 평균 불량률 curve already used, so a factor's
 # "최적 중심" can no longer land outside its own "권장구간" the way it used
 # to for some factor/target pairs before this fix.
+## TC-5: regenerated after `eps2_numeric` switched from a flat 8-bin qcut to
+## a Sturges-rule auto bin count (`suggest_bin_count`) -- D-heavy factors
+## (n~480) now use 10 bins instead of 8, R factors (n~1500) use 12 instead
+## of 8. shape/center are unaffected (they come from quantile_profile.py's
+## own bin count, which TC-5 deliberately left pinned at 12 for anything
+## alarm/recommendation-adjacent).
 GOLDEN_TABLE = {
-    "Y1": {"feature": "Step28_R1", "eps2": 0.192, "shape": "u_shape", "center": 57.9},
-    "Y2": {"feature": "Step16_R1", "eps2": 0.159, "shape": "u_shape", "center": 56.5},
-    "Y3": {"feature": "Step1_D1", "eps2": 0.660, "shape": "monotonic_increasing", "center": None},
-    "Y4": {"feature": "Step24_R1", "eps2": 0.073, "shape": "u_shape", "center": 56.7},
-    "Y5": {"feature": "Step18_R1", "eps2": 0.287, "shape": "u_shape", "center": 55.9},
+    "Y1": {"feature": "Step28_R1", "eps2": 0.209, "shape": "u_shape", "center": 57.9},
+    "Y2": {"feature": "Step16_R1", "eps2": 0.196, "shape": "u_shape", "center": 56.5},
+    "Y3": {"feature": "Step1_D1", "eps2": 0.687, "shape": "monotonic_increasing", "center": None},
+    "Y4": {"feature": "Step24_R1", "eps2": 0.081, "shape": "u_shape", "center": 56.7},
+    "Y5": {"feature": "Step18_R1", "eps2": 0.327, "shape": "u_shape", "center": 55.9},
 }
 
 # contribution_pct/cumulative_pct denominated by the FULL candidate pool
@@ -44,11 +50,11 @@ GOLDEN_TABLE = {
 # not just the FDR-significant subset. This is the fix for the "single
 # significant factor reads as 100% contribution" bug.
 CONTRIBUTION_TABLE = {
-    "Y1": {"top1_pct": 63.9, "cum10_pct": 85.0, "n80": 7, "fdr_count": 1},
-    "Y2": {"top1_pct": 63.1, "cum10_pct": 84.8, "n80": 6, "fdr_count": 2},
-    "Y3": {"top1_pct": 92.6, "cum10_pct": 97.5, "n80": 1, "fdr_count": 1},
-    "Y4": {"top1_pct": 41.2, "cum10_pct": 74.5, "n80": 13, "fdr_count": 1},
-    "Y5": {"top1_pct": 76.7, "cum10_pct": 95.5, "n80": 2, "fdr_count": 1},
+    "Y1": {"top1_pct": 62.5, "cum10_pct": 84.7, "n80": 8, "fdr_count": 1},
+    "Y2": {"top1_pct": 64.1, "cum10_pct": 87.4, "n80": 6, "fdr_count": 1},
+    "Y3": {"top1_pct": 88.5, "cum10_pct": 96.6, "n80": 1, "fdr_count": 1},
+    "Y4": {"top1_pct": 42.6, "cum10_pct": 77.2, "n80": 12, "fdr_count": 1},
+    "Y5": {"top1_pct": 79.4, "cum10_pct": 97.3, "n80": 2, "fdr_count": 1},
 }
 
 EPS2_TOLERANCE = 0.01
@@ -130,15 +136,19 @@ def test_top_factor_contribution_never_reads_100_percent(primary_factors):
         )
 
 
-def test_fdr_significant_factors_include_y2_second_factor(train_df, schema):
+def test_fdr_significant_factors_for_y2(train_df, schema):
     """The alarm engine's factor set (select_fdr_significant_factors) keeps
-    every BH-FDR-significant factor, not just the strongest. Step24_R1
-    passes FDR (q<0.05) for Y2 but isn't Y2's strongest factor; it must
-    still appear here even though the display-only `select_primary_factor`
-    (used for Pareto/training cards) never surfaces it for Y2.
+    every BH-FDR-significant factor, not just the strongest.
+
+    TC-5: before the Sturges bin-count switch, Step24_R1 also passed FDR
+    (q<0.05) for Y2 as a second factor alongside Step16_R1. Under the new
+    auto bin count its q-value no longer clears 0.05 for Y2 -- eps2_numeric's
+    bin count changed from a flat 8 to n-dependent (R factors now use 12
+    bins instead of 8), which shifts the ANOVA group boundaries and hence
+    the p-value. Only Step16_R1 remains significant for Y2 now.
     """
     y2_factors = select_fdr_significant_factors(train_df, schema, "Y2")
-    assert {f.feature for f in y2_factors} == {"Step16_R1", "Step24_R1"}
+    assert {f.feature for f in y2_factors} == {"Step16_R1"}
 
 
 def test_no_config_factor_passes_fdr(train_df, schema):

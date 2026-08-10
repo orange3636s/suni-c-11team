@@ -39,7 +39,12 @@ DEFAULT_FDR_ALPHA = 0.05
 # 미만(effect_size.HARD_MIN_N)의 완전 무의미한 표본은 여전히 걸러진다.
 DEFAULT_MIN_N_R = 100
 DEFAULT_MIN_N_D = 40
-DEFAULT_MIN_N_CATEGORICAL = 20
+# TC-6: 20 -> 30을 먼저 시도했으나, test.CSV(36개 Config 조합 x 30 스텝
+# 컬럼) 기준 조합당 표본 실측 분포로는 30 문턱이 조합의 56.7%를 회색
+# 처리해 트리맵이 거의 비어 보였다(지시서: "절반을 넘으면 25로
+# 낮춰라"). 25는 43.2%로 절반 미만 -- 프런트 트리맵의 MIN_TILE_N도 같은
+# 값으로 맞춘다(frontend/components/ConfigTreemap.tsx).
+DEFAULT_MIN_N_CATEGORICAL = 25
 DEFAULT_TOP_N = 5  # select_top_factors 기본 limit -- 학습 탭 스크리닝 등 다른 호출부가 함께 쓴다
 PARETO_TOP_N = 10  # Pareto 차트(원인 분석 탭) 표시용 -- 위와 독립적으로 조정한다
 
