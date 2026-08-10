@@ -307,6 +307,54 @@ class AlertsDataResponse(BaseModel):
     external_delivery_suppressed_reason: str | None = None
 
 
+class AlertCellColorSchema(BaseModel):
+    """RC-4b: y1~y5 셀 하나의 색상 메타데이터. direction은 "red"|"blue"|
+    None(방향 불분명), shade는 "dark"|"medium"|"light"|"gray"|"measured"
+    (실측값은 색을 쓰지 않는다 -- 프런트가 무채색으로 렌더한다)."""
+
+    direction: str | None
+    shade: str
+    feature: str | None
+    contribution_pct: float | None
+    factor_value: float | None
+    optimal_center: float | None
+
+
+class AlertCandidateSchema(BaseModel):
+    lot_wafer_id: str
+    lot_id: str | None
+    y: float
+    y_components: dict[str, float]
+    reliability: int
+    primary_target: str
+    primary_feature: str
+    factor_value: float | None
+    range_lo: float | None
+    range_hi: float | None
+    reason: str
+    cells: dict[str, AlertCellColorSchema]
+
+
+class AlertRankingSummarySchema(BaseModel):
+    mean_reliability: float
+    min_reliability: int
+    below_threshold_count: int
+    zero_reliability_count: int
+
+
+class AlertRankingResponse(BaseModel):
+    """RE-1: y(=100 − Σ Y1~Y5) 오름차순 상위 N건. 정렬 기준은 y 하나뿐
+    -- 신뢰도는 표시 재료일 뿐 정렬·필터에 쓰지 않는다."""
+
+    train_dataset_id: str
+    eval_dataset_id: str
+    total_wafers: int
+    top_n: int
+    candidates: list[AlertCandidateSchema]
+    summary: AlertRankingSummarySchema
+    target_provenance: dict[str, Any] | None = None
+
+
 class TargetPerformanceSchema(BaseModel):
     target: str
     no_factor_available: bool

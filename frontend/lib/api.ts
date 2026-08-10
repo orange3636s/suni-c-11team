@@ -1,5 +1,6 @@
 import type {
   AlarmListResponse,
+  AlertRankingResponse,
   AlertsDataResponse,
   CategoricalScatterResponse,
   ConfigHeatmapLevel,
@@ -295,6 +296,14 @@ export function getAlertsData(
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
   if (maxStep != null) params.set("max_step", String(maxStep));
   return getJson(`/api/alarms/predictions?${params.toString()}`);
+}
+
+// RE-1: y 오름차순 상위 N건 -- 알림 기록 화면이 쓰는 유일한 판정
+// 엔드포인트다(위 getAlertsData/구 5분류 체계는 더 이상 알림 기록에서
+// 호출하지 않는다).
+export function getAlertsRanking(trainDataset: string, evalDataset: string, topN: number): Promise<AlertRankingResponse> {
+  const params = new URLSearchParams({ train: trainDataset, eval: evalDataset, top_n: String(topN) });
+  return getJson(`/api/alerts/ranking?${params.toString()}`);
 }
 
 export function getReliability(dataset: string, evalDataset: string): Promise<ReliabilityResponse> {

@@ -10957,6 +10957,39 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 
 .paretoUnderSampledLabel{ color: var(--sig-amber); }
 
+/* RE-2/RC-4b: 알림기록 y1~y5 셀 -- 농도(진하기)는 예측에 쓴 인자의
+   파레토 기여율(확실할수록 진하게), 색상(빨강/파랑)은 그 인자가
+   증가할 때 y가 나빠지는지 좋아지는지. 실측값은 무채색(기본 텍스트
+   색 + 실선 테두리) -- 색이 있다는 것 자체가 "예측값"의 신호가
+   되게 한다("하지 말 것: 실측값 셀에 색을 입히지 마라"). */
+.alertCell{ text-align: right; font-variant-numeric: tabular-nums; }
+.alertCell.measured{ color: var(--text-primary); border: 1px solid var(--border); }
+.alertCell.gray{ background: var(--surface-tertiary); color: var(--text-muted); }
+/* RC-4b 팔레트는 --sig-red/--measured 재사용을 제안하지만, 그 두 토큰은
+   다크 모드에서 이미 밝은 색(#EE6B76/#7BA3E8, 어두운 배경 위 강조색
+   용도)으로 바뀌어 있다 -- 그 값을 그대로 배경에 쓰고 흰 글자를
+   얹으면 다크 모드에서 대비가 무너진다(지시서가 예로 든 트리맵
+   #0B0B0B 고정과 같은 종류의 문제를 반대 방향에서 만드는 것과 같다).
+   "대비 4.5:1 이상, 다크 모드에서도 확인"이 "기존 토큰 재사용"보다
+   우선한다고 보고, 라이트/다크 공통으로 대비를 미리 확인한 고정
+   팔레트를 쓴다(히트맵의 고정 발산 팔레트 THEME_COLORS와 같은 이유 --
+   데이터 인코딩 색은 앱 테마와 무관하게 항상 식별 가능해야 한다). */
+.alertCell.red.dark{ background: #DC2626; color: #fff; }
+.alertCell.red.medium{ background: #FCA5A5; color: #7F1D1D; }
+.alertCell.red.light{ background: #FEE2E2; color: #7F1D1D; }
+.alertCell.blue.dark{ background: #2563EB; color: #fff; }
+.alertCell.blue.medium{ background: #93C5FD; color: #1E3A8A; }
+.alertCell.blue.light{ background: #DBEAFE; color: #1E3A8A; }
+
+/* RC-4: 신뢰도 열 -- 등폭 정수, 40 미만만 주황. 색 구간 이외(70 이상 ·
+   40~69)는 기본 텍스트색이라 별도 클래스가 필요 없다. */
+.alertReliabilityCell{ font-variant-numeric: tabular-nums; text-align: center; color: var(--text-secondary); }
+.alertReliabilityCell.low{ color: var(--sig-amber); font-weight: 600; }
+.alertReasonCell{ color: var(--text-secondary); font-size: var(--fs-sm); white-space: nowrap; }
+.alertsSummaryCard{ font-size: var(--fs-sm); color: var(--text-secondary); }
+.alertsSummaryCard p{ margin: 0 0 4px; }
+.alertsSummaryCard p:last-child{ margin-bottom: 0; }
+
 /* 계측 확대 제안(계측 큐) 권고 배지 -- "+N%p"는 게이트 미달(계측 부족)이라
    신호색을 유지하고, "유지"는 정상 분류라 무채색. */
 .meRecommendationBadge{

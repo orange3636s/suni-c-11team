@@ -119,15 +119,24 @@ def cell_color(
 ) -> dict[str, object]:
     """RC-4b: 한 (wafer, target) 셀의 색상 메타데이터. 실측값은 색을 쓰지
     않는다("하지 말 것: 실측값 셀에 색을 입히지 마라") -- direction=None,
-    shade="measured"로 반환해 프런트가 무채색으로 렌더하게 한다."""
+    shade="measured"로 반환해 프런트가 무채색으로 렌더하게 한다.
+    factor_value/optimal_center은 툴팁(RC-4b "파레토 기여율 68.2% ·
+    꼭짓점 55.8 오른쪽 → 증가 시 악화")을 프런트에서 그대로 조립하는 데
+    쓴다."""
     factor = primary_factors.get(target)
     if is_measured:
-        return {"direction": None, "shade": "measured", "feature": factor.feature if factor else None, "contribution_pct": None}
+        return {
+            "direction": None, "shade": "measured",
+            "feature": factor.feature if factor else None, "contribution_pct": None,
+            "factor_value": factor_value, "optimal_center": None,
+        }
     if factor is None:
-        return {"direction": None, "shade": "gray", "feature": None, "contribution_pct": None}
+        return {"direction": None, "shade": "gray", "feature": None, "contribution_pct": None, "factor_value": None, "optimal_center": None}
     return {
         "direction": cell_direction(factor, factor_value),
         "shade": shade_bucket(factor.contribution_pct),
         "feature": factor.feature,
         "contribution_pct": factor.contribution_pct,
+        "factor_value": factor_value,
+        "optimal_center": factor.optimal_center,
     }

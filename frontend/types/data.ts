@@ -444,6 +444,56 @@ export type AlertsDataResponse = {
   external_delivery_suppressed_reason: string | null;
 };
 
+// RE-1: y(=100 − Σ Y1~Y5) 오름차순 상위 N건 -- /alarms/predictions(구
+// 5분류·목표 수율 체계)를 대체한다. 정렬 기준은 y 하나뿐이다.
+
+// RC-4b: y1~y5 셀 하나의 색상 메타데이터. direction은 방향(악화/개선),
+// shade는 예측 근거(파레토 기여율) 농도 -- 실측값은 shade="measured"로
+// 내려와 무채색으로 렌더한다("하지 말 것: 실측값 셀에 색을 입히지 마라").
+export type AlertCellColor = {
+  direction: "red" | "blue" | null;
+  shade: "dark" | "medium" | "light" | "gray" | "measured";
+  feature: string | null;
+  contribution_pct: number | null;
+  factor_value: number | null;
+  optimal_center: number | null;
+};
+
+export type AlertCandidate = {
+  lot_wafer_id: string;
+  lot_id: string | null;
+  y: number;
+  y_components: Record<string, number>;
+  // RC-4: 0~100 정수. 실측 모드는 1.0, 예측 모드는 핵심 인자 파레토
+  // 기여율만큼만 인정해 합산 x 20 한 값 -- 정렬·필터에는 쓰지 않는다
+  // (판단 재료로 표시만 한다).
+  reliability: number;
+  primary_target: string;
+  primary_feature: string;
+  factor_value: number | null;
+  range_lo: number | null;
+  range_hi: number | null;
+  reason: string;
+  cells: Record<string, AlertCellColor>;
+};
+
+export type AlertRankingSummary = {
+  mean_reliability: number;
+  min_reliability: number;
+  below_threshold_count: number;
+  zero_reliability_count: number;
+};
+
+export type AlertRankingResponse = {
+  train_dataset_id: string;
+  eval_dataset_id: string;
+  total_wafers: number;
+  top_n: number;
+  candidates: AlertCandidate[];
+  summary: AlertRankingSummary;
+  target_provenance: TargetProvenance | null;
+};
+
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";
 
 export type ParetoRankingItem = {
