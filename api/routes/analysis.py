@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from api.routes.datasets import get_dataset_registry
 from api.schemas.analysis import (
@@ -29,7 +29,7 @@ from api.schemas.analysis import (
     ScreeningScatterResponse,
 )
 from api.settings import APP_VERSION, settings
-from src.analysis import alarm_gbdt, preprocessing_compare, reliability, target_fallback, warning_line
+from src.analysis import alarm_gbdt, distribution_shift, preprocessing_compare, reliability, target_fallback, warning_line
 from src.analysis.alarm_bands import classify_measured_bands
 from src.analysis.control_range import (
     compute_control_range,
@@ -388,25 +388,51 @@ def _cached_all_warning_lines(dataset_id: str):
     return lines
 
 
-BOOTSTRAP_CACHE_PAIRS = 2
+BOOTSTRAP_MODELS_CACHE_TRAINS = 2
+BOOTSTRAP_PREDICTION_CACHE_ENTRIES = 8  # (train, eval, max_step) 조합 -- 스텝 슬라이더가 여러 값을 오갈 수 있어 기존 pair 캐시보다 넉넉히 둔다
 
 
 @_single_flight
-@lru_cache(maxsize=BOOTSTRAP_CACHE_PAIRS)
-def _cached_bootstrap_prediction(train_dataset_id: str, eval_dataset_id: str):
-    """§A-1 부트스트랩 앙상블 -- (train, eval) 쌍마다 한 번만 계산해
-    캐시한다 (spec §A-1: "분석 실행 시 한 번만 수행하고 캐시한다")."""
+@lru_cache(maxsize=BOOTSTRAP_MODELS_CACHE_TRAINS)
+def _cached_bootstrap_models(train_dataset_id: str):
+    """§A-1 부트스트랩 앙상블 -- train_dataset_id 하나로 한 번만 적합해
+    캐시한다 (spec §A-1: "분석 실행 시 한 번만 수행하고 캐시한다").
+
+    지시서 작업 2(특정 스텝까지의 정보만으로 예측): 적합(fit)만 여기서
+    캐시하고, eval/max_step에 따라 달라지는 예측은
+    `_cached_bootstrap_prediction`이 이 캐시를 재사용해 가볍게 계산한다
+    -- max_step을 바꿔도 GBDT 30회를 다시 학습하지 않는다.
+    """
     train_df = _dataframe_or_404(train_dataset_id)
-    eval_df = _dataframe_or_404(eval_dataset_id)
     schema = parse_schema(train_df)
     features = alarm_gbdt.feature_columns(schema)
     if not features or alarm_gbdt.FINAL_YIELD_COLUMN not in train_df.columns:
         return None
     t0 = time.perf_counter()
-    result = alarm_gbdt.fit_bootstrap_ensemble(train_df, eval_df, features)
+    result = alarm_gbdt.fit_bootstrap_models(train_df, features, compute_step_profile=True)
     logger.info(
-        "alarm_gbdt bootstrap ensemble fit %.1fms (train=%s, eval=%s)",
-        (time.perf_counter() - t0) * 1000, train_dataset_id, eval_dataset_id,
+        "alarm_gbdt bootstrap ensemble fit %.1fms (train=%s)",
+        (time.perf_counter() - t0) * 1000, train_dataset_id,
+    )
+    return result
+
+
+@_single_flight
+@lru_cache(maxsize=BOOTSTRAP_PREDICTION_CACHE_ENTRIES)
+def _cached_bootstrap_prediction(train_dataset_id: str, eval_dataset_id: str, max_step: int | None = None):
+    """지시서 작업 2 -- 이미 적합된 모델(`_cached_bootstrap_models`)로
+    eval을 예측한다. 재학습이 없어 가볍지만(모델 30개의 predict뿐), 같은
+    (train, eval, max_step) 조합을 반복 조회할 때는 여전히 캐시를 그대로
+    쓴다."""
+    bundle = _cached_bootstrap_models(train_dataset_id)
+    if bundle is None:
+        return None
+    eval_df = _dataframe_or_404(eval_dataset_id)
+    t0 = time.perf_counter()
+    result = alarm_gbdt.predict_with_bootstrap_models(bundle, eval_df, max_step=max_step)
+    logger.info(
+        "alarm_gbdt bootstrap predict %.1fms (train=%s, eval=%s, max_step=%s)",
+        (time.perf_counter() - t0) * 1000, train_dataset_id, eval_dataset_id, max_step,
     )
     return result
 
@@ -684,6 +710,7 @@ def _scored_wafers(
     *,
     target: float = alarm_gbdt.DEFAULT_TARGET_YIELD,
     sensitivity: float = alarm_gbdt.DEFAULT_SENSITIVITY,
+    max_step: int | None = None,
 ) -> tuple[list, float | None, bool, dict[str, Any]]:
     """공유 파이프라인 -- `get_alarms`와 `compute_alarm_notification_items`가
     똑같이 게이트를 적용하도록 한 곳에 모았다 (spec 알람 신뢰도 게이트
@@ -696,20 +723,41 @@ def _scored_wafers(
     게이트 미달이어도 정상/판별불가는 여전히 계산해야 하므로(spec §B-4)
     부트스트랩 예측 자체는 건너뛰지 않는다 -- 이전(품질 게이트 시
     예측조차 안 함)과 달라진 부분이다.
+
+    지시서 작업 2(특정 스텝까지의 정보만으로 예측): `max_step`이 주어지면
+    alarm_gbdt의 (마스킹된) 앙상블 예측을 target_hydration의 실측/모델
+    보강 뷰로 덮어쓰지 않는다 -- 그 뷰는 "Step N까지만 진행됐다"는 상태를
+    전혀 모르므로, 그대로 두면 max_step 마스킹 자체가 화면에 아무 영향을
+    주지 못한다.
     """
     auc_lo, gate_passed = _auc_gate(train, eval)
 
-    prediction = _cached_bootstrap_prediction(train, eval)
+    prediction = _cached_bootstrap_prediction(train, eval, max_step)
     if prediction is None:
         prediction = _uncalibrated_hydrated_prediction(eval, eval_df)
+        prediction, target_sources, provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
+    elif max_step is not None:
+        target_sources = ["predicted"] * len(prediction.lot_wafer_id)
+        provenance = None
+    else:
+        prediction, target_sources, provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
 
-    prediction, target_sources, provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
+    # 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step 모드에서 그 스텝의
+    # OOF AUC가 게이트 미만이면(또는 표본 부족으로 산출 불가면) 심각/
+    # 위험은 주의로 낮춘다. 알람 자체를 막지는 않는다(gate_passed=False와
+    # 다르다) -- 조기 예측은 본질적으로 정확도가 낮을 뿐이다.
+    cap_at_caution = False
+    if max_step is not None:
+        bundle = _cached_bootstrap_models(train)
+        step_gate_passed = alarm_gbdt.gate_for_step(bundle.step_auc_profile, max_step)[0] if bundle is not None else None
+        cap_at_caution = step_gate_passed is not True
 
     measured_ids = _measured_ids_for_alarm_factors(train, eval)
     scored = alarm_gbdt.score_wafers(
         eval_df, prediction,
         target=target, sensitivity=sensitivity,
         gate_passed=True, measured_ids=measured_ids, target_sources=target_sources,
+        cap_at_caution=cap_at_caution,
     )
     return scored, auc_lo, gate_passed, provenance
 
@@ -838,6 +886,7 @@ def get_alarms(
     grade: str | None = None,
     target: float | None = None,
     sensitivity: float | None = None,
+    max_step: int | None = Query(None, ge=1, le=30, description="이 스텝까지의 정보만으로 판정합니다."),
 ) -> dict[str, Any]:
     """알람 판정 GBDT 전환 (spec §A) + 민감도 슬라이더를 실제 트레이드오프로
     (spec §CA-1) -- 부트스트랩 앙상블로 예측한 최종 수율(Y)의 점추정이
@@ -853,6 +902,9 @@ def get_alarms(
 
     알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
     AUC 하한이 0.65 미만이면 알람을 아예 내지 않는다.
+
+    지시서 작업 2(특정 스텝까지의 정보만으로 예측): `max_step`을 생략하면
+    (기본값 None) 기존 동작과 완전히 같다.
     """
     # train 존재 여부는 _scored_wafers -> _auc_gate/_cached_bootstrap_prediction이
     # 검증한다(둘 다 첫 줄에서 _dataframe_or_404(train)을 부른다) -- 여기서는
@@ -867,7 +919,7 @@ def get_alarms(
     # target/sensitivity와 무관한 원시 예측치라 그대로 재사용해도 안전
     # 하다 -- 분류 임계값은 이후 score_wafers에서 매번 새로 적용된다).
     scored, auc_lo, gate_passed, provenance = _scored_wafers(
-        train, eval, eval_df, target=resolved_target, sensitivity=resolved_sensitivity
+        train, eval, eval_df, target=resolved_target, sensitivity=resolved_sensitivity, max_step=max_step
     )
     alarm_scored = [s for s in scored if s.grade in ("심각", "위험", "주의")]
 
@@ -975,7 +1027,11 @@ def compute_alarm_notification_items(
 
 
 @router.get("/alarms/predictions", response_model=AlertsDataResponse)
-def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str, Any]:
+def get_alarms_predictions(
+    train: str = "train",
+    eval: str = "test",
+    max_step: int | None = Query(None, ge=1, le=30, description="이 스텝까지의 정보만으로 예측합니다."),
+) -> dict[str, Any]:
     """사전 알람 로그 전면 개편 (spec §A-3) -- 등급을 서버가 매겨 내려주지
     않고, wafer별 원시 예측치(pred_mean/pred_lo/pred_hi)와 목표 수율 조정에
     필요한 학습 Y 분위수를 내려준다. 목표 수율·민감도를 조절할 때마다 이
@@ -988,18 +1044,41 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
     때마다 정밀도·재현율을 즉시 추정하게 한다(`_cached_bootstrap_prediction`이
     이미 계산해 캐시한 것을 그대로 읽을 뿐이라 이 요청에서 추가 계산이
     없다).
+
+    지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- `max_step`을
+    생략하면(기본값 None) 기존 동작과 완전히 같다. 주어지면 alarm_gbdt의
+    (마스킹된) 앙상블 예측을 그대로 쓰고 target_hydration의 실측/모델
+    보강 뷰로 덮어쓰지 않는다 -- 그 뷰는 스텝 진행 상태를 모르므로 덮어쓰면
+    max_step이 화면에 아무 영향을 주지 못한다(`_scored_wafers`와 같은
+    이유).
     """
     eval_df = _dataframe_or_404(eval)
     train_view = _hydrated_targets_or_409(train)
     train_df = train_view.dataframe
 
     auc_lo, gate_passed = _auc_gate(train, eval)
-    prediction = _cached_bootstrap_prediction(train, eval)
+    prediction = _cached_bootstrap_prediction(train, eval, max_step)
     target_sources: list[str] = []
     eval_provenance: dict[str, Any] | None = None
     if prediction is None:
         prediction = _uncalibrated_hydrated_prediction(eval, eval_df)
-    prediction, target_sources, eval_provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
+        prediction, target_sources, eval_provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
+    elif max_step is not None:
+        target_sources = ["predicted"] * len(prediction.lot_wafer_id)
+        eval_provenance = None
+    else:
+        prediction, target_sources, eval_provenance = _prediction_from_hydrated_targets(eval, eval_df, prediction)
+
+    # 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step이 주어졌을 때만
+    # 계산한다(그 외에는 전체 스텝 기준 AUC 게이트만 쓴다). bundle은
+    # _cached_bootstrap_prediction이 이미 _cached_bootstrap_models로
+    # 한 번 캐시해 둔 것을 그대로 읽으므로 추가 계산이 없다.
+    step_auc: float | None = None
+    step_auc_gate_passed: bool | None = None
+    if max_step is not None:
+        bundle = _cached_bootstrap_models(train)
+        if bundle is not None:
+            step_auc_gate_passed, step_auc = alarm_gbdt.gate_for_step(bundle.step_auc_profile, max_step)
 
     # "미계측" 정의는 그대로 둔다 (spec §B-2) -- 선정 인자가 하나도
     # 계측되지 않은 wafer는 예측이 있어도 신뢰할 수 없어 등급을 매기지
@@ -1077,6 +1156,9 @@ def get_alarms_predictions(train: str = "train", eval: str = "test") -> dict[str
             "interval_coverage_actual": prediction.coverage_actual if prediction is not None else None,
             "interval_conformal_q": prediction.conformal_q if prediction is not None else None,
             "interval_conformal_q_agg": prediction.conformal_q_agg if prediction is not None else None,
+            "effective_max_step": max_step,
+            "max_step_auc": step_auc,
+            "max_step_auc_gate_passed": step_auc_gate_passed,
             "target_provenance": eval_provenance,
             "external_delivery_suppressed_reason": (
                 None if gate_passed else (
@@ -1316,6 +1398,17 @@ def _cached_reliability(dataset_id: str, eval_dataset_id: str) -> dict[str, Any]
         coverage_pct=coverage_pct,
         bad_sample_size=bad_sample_size,
     )
+
+    # 지시서 작업 4(분포 이동 감지) -- eval에는 실측 Y가 없는 것이 정상이라
+    # AUC 게이트만으로는 "이 train으로 이 eval을 판정해도 되는가"를 항상
+    # 잡아내지 못한다(실측 검증 결과: 같은 게이트 판정이 실제로는 반대로
+    # 나온 조합이 있었다). train==eval이면 자기 자신과 비교라 의미가 없어
+    # 건너뛴다.
+    shift_report = None
+    if features and dataset_id != eval_dataset_id:
+        eval_df = _dataframe_or_404(eval_dataset_id)
+        shift_report = distribution_shift.compute_distribution_shift(df, eval_df, features)
+
     return {
         "dataset_id": dataset_id,
         "eval_dataset_id": eval_dataset_id,
@@ -1337,6 +1430,18 @@ def _cached_reliability(dataset_id: str, eval_dataset_id: str) -> dict[str, Any]
         "low_holdout_sample": breakdown.low_holdout_sample,
         "target_fallback_tier": fallback.tier,
         "target_fallback_message": fallback.message,
+        "distribution_shift": (
+            {
+                "median": shift_report.median,
+                "max": shift_report.max,
+                "worst_feature": shift_report.worst_feature,
+                "level": shift_report.level,
+                "missing_rate_gap": shift_report.missing_rate_gap,
+                "missing_rate_worst_feature": shift_report.missing_rate_worst_feature,
+            }
+            if shift_report is not None
+            else None
+        ),
     }
 
 

@@ -21,19 +21,58 @@ export function classifyMargin(sensitivity: number): number {
   return (1.0 - sensitivity) * MARGIN_MAX_PP;
 }
 
+// 지시서 작업 3(스텝별 신뢰도 게이트) -- capAtCaution=true면 심각/위험도
+// "주의"로 낮춘다. src/analysis/alarm_gbdt.py의 classify_wafer(cap_at_caution)
+// 와 동일한 공식이어야 한다. 특정 스텝까지의 정보만으로 예측할 때
+// (max_step) 그 스텝의 OOF AUC가 게이트 미만이면 쓴다 -- 조기 예측이라
+// 알람 자체를 막지는 않되(gatePassed=false와 다르다) 가장 강한 등급까지는
+// 내주지 않는다.
 export function classifyWafer(
   predMean: number,
   predLo: number,
-  opts: { target: number; sensitivity: number; gatePassed?: boolean },
+  opts: { target: number; sensitivity: number; gatePassed?: boolean; capAtCaution?: boolean },
 ): AlertGrade {
-  const { target, sensitivity, gatePassed = true } = opts;
+  const { target, sensitivity, gatePassed = true, capAtCaution = false } = opts;
   const margin = classifyMargin(sensitivity);
   if (gatePassed) {
-    if (predMean <= target - margin - 2 * GRADE_STEP_PP) return "심각";
-    if (predMean <= target - margin - GRADE_STEP_PP) return "위험";
+    if (predMean <= target - margin - 2 * GRADE_STEP_PP) return capAtCaution ? "주의" : "심각";
+    if (predMean <= target - margin - GRADE_STEP_PP) return capAtCaution ? "주의" : "위험";
     if (predMean <= target - margin) return "주의";
   }
   if (predLo >= target) return "정상";
+  return null;
+}
+
+// 지시서 작업 1(등급 분류: 절대 임계값 -> 순위 기반) -- 개발자 수정지시서
+// §0 배경: 부트스트랩 앙상블 점추정은 실측 대비 33~56%로 압축돼 있어
+// classifyWafer의 %p 절대 임계값이 사실상 거의 알람을 못 낸다. 순위는
+// 이 압축과 무관하게 안정적으로 유지된다 -- src/analysis/alarm_gbdt.py의
+// classify_wafer_by_rank와 동일한 공식이어야 한다.
+export const ALARM_SHARE_MIN_PCT = 1.0;
+export const ALARM_SHARE_MAX_PCT = 10.0;
+
+// 이 화면엔 방식을 고르는 UI가 없다 -- 서버(alarm_gbdt.ALARM_CLASSIFY_MODE)
+// 기본값과 반드시 같은 값을 유지한다.
+export const ALARM_CLASSIFY_MODE: "rank" | "absolute" = "rank";
+
+/** 지시서 작업 1 -- 절대 %p 임계값 대신 `allPreds`(같은 평가 배치의
+ * pred_mean 전체) 안에서 이 wafer의 상대 순위로 심각/위험/주의를
+ * 매긴다. target과 무관하다 -- "정상"은 이 함수가 매기지 않는다
+ * (classifyAll이 여전히 predLo >= target으로 별도 판정한다). */
+export function classifyWaferByRank(
+  predMean: number,
+  allPreds: number[],
+  opts: { sensitivity: number; gatePassed?: boolean; capAtCaution?: boolean },
+): AlertGrade {
+  const { sensitivity, gatePassed = true, capAtCaution = false } = opts;
+  if (!gatePassed) return null;
+  const n = allPreds.length;
+  const belowOrEqual = allPreds.reduce((count, v) => count + (v <= predMean ? 1 : 0), 0);
+  const pct = (belowOrEqual / n) * 100;
+  const base = ALARM_SHARE_MIN_PCT + sensitivity * (ALARM_SHARE_MAX_PCT - ALARM_SHARE_MIN_PCT);
+  if (pct <= base * 0.3) return capAtCaution ? "주의" : "심각";
+  if (pct <= base * 0.6) return capAtCaution ? "주의" : "위험";
+  if (pct <= base) return "주의";
   return null;
 }
 
@@ -44,14 +83,29 @@ export type ClassifiedWafer = WaferPrediction & { grade: AlertGrade };
 // (실측 MAE: 미계측군 2.694 / 1개만 계측 2.923 -- 1개만 계측된 쪽이 더
 // 부정확했다), conformal 구간이 이미 그 불확실성을 폭으로 반영한다.
 // measured는 이제 사유 표시에만 쓴다 (아래 reasonFor/미분류 사유 분리).
+//
+// 지시서 작업 1: mode="rank"(기본값)면 classifyWaferByRank로, "absolute"면
+// 기존 classifyWafer로 심각/위험/주의를 매긴다. 두 방식 모두 "정상"은
+// predLo >= target(절대 기준)으로 이 함수가 직접 판정한다 -- src/analysis
+// /alarm_gbdt.py의 score_wafers와 동일한 순서(순위/절대 판정 -> 정상
+// 폴백)여야 한다.
 export function classifyAll(
   predictions: WaferPrediction[],
-  opts: { target: number; sensitivity: number; gatePassed: boolean },
+  opts: { target: number; sensitivity: number; gatePassed: boolean; capAtCaution?: boolean; mode?: "rank" | "absolute" },
 ): ClassifiedWafer[] {
-  return predictions.map((p) => ({
-    ...p,
-    grade: classifyWafer(p.pred_mean, p.pred_lo, opts),
-  }));
+  const { target, mode = ALARM_CLASSIFY_MODE } = opts;
+  if (mode === "absolute") {
+    return predictions.map((p) => ({
+      ...p,
+      grade: classifyWafer(p.pred_mean, p.pred_lo, opts),
+    }));
+  }
+  const allPreds = predictions.map((p) => p.pred_mean);
+  return predictions.map((p) => {
+    let grade = classifyWaferByRank(p.pred_mean, allPreds, opts);
+    if (grade == null && p.pred_lo >= target) grade = "정상";
+    return { ...p, grade };
+  });
 }
 
 export type PrecisionRecallEstimate = {

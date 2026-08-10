@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -73,6 +74,12 @@ ALARM_DEFAULTS_VERSION = 1
 # 잡은 경험값이다 -- 화면에도 이 사실을 명시한다 (§D-2).
 AUC_GATE = 0.65
 
+# 지시서 작업 3(스텝별 신뢰도 게이트) -- compute_step_auc_profile이 OOF AUC를
+# 내는 스텝 격자. STEP_GRID에 없는 max_step으로 조회하면(예: max_step=12)
+# 가장 가까운 격자점의 AUC를 쓴다(gate_for_step) -- 보간하지 않는다(격자
+# 사이 AUC는 실측하지 않았으므로).
+STEP_GRID = [1, 5, 10, 15, 20, 25, 30]
+
 # 예측 구간 conformal 캘리브레이션 (spec "예측 구간 캘리브레이션 + 미분류
 # 사유 분리" §BA) -- 목표 포함률. q(홀드아웃 |잔차| 분위수)는 이 값 기준
 # 분위수를 쓴다. 서버 상수로만 조절한다 -- UI는 만들지 않는다(§BA-3).
@@ -86,15 +93,39 @@ def feature_columns(schema) -> list[str]:
     return [*schema.r_cols, *schema.d_cols]
 
 
-def prepare_feature_matrix(df: pd.DataFrame, features: list[str]) -> pd.DataFrame:
+_STEP_RE = re.compile(r"^Step(\d+)_")
+
+
+def step_of(feature: str) -> int | None:
+    """지시서 작업 2 -- 인자명에서 스텝 번호를 뽑는다("Step12_R3" -> 12).
+    `Step(\\d+)_` 패턴에 안 맞는 인자(있다면, 예: Config 계열)는 None --
+    `max_step`으로도 가려지지 않는다(스텝이 없는 인자는 "그 시점까지
+    진행됐는지"를 따질 대상이 아니다)."""
+    m = _STEP_RE.match(feature)
+    return int(m.group(1)) if m else None
+
+
+def prepare_feature_matrix(
+    df: pd.DataFrame, features: list[str], *, max_step: int | None = None
+) -> pd.DataFrame:
     """`features` 중 `df`에 없는 컬럼은 전부 NaN으로 채운다 -- train과 eval의
     컬럼 구성이 다른 데이터셋 조합(예: 스키마가 다른 업로드 데이터셋을
     train으로, 내장 test를 eval로)에서도 HistGradientBoostingRegressor가
     그대로 동작하게 한다. 컬럼이 아예 없다고 예측을 거부할 이유가 없다:
     NaN이 늘어날 뿐이고 그 자체가 이미 네이티브로 처리된다.
+
+    지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- `max_step`이 주어지면
+    그보다 뒤 스텝의 인자는 (df에 값이 있어도) 전부 NaN으로 가린다. "아직
+    그 스텝까지만 진행된 wafer"를 흉내내는 용도로, 예측(추론) 경로에서만
+    쓴다 -- 학습(`fit_bootstrap_models`)은 항상 전체 스텝으로 한 번만
+    학습하고, 이 마스킹은 추론 시 eval 행렬에만 적용한다(모델을 다시
+    학습하지 않는다).
     """
     out = pd.DataFrame(index=df.index)
     for f in features:
+        if max_step is not None and (step := step_of(f)) is not None and step > max_step:
+            out[f] = np.nan
+            continue
         out[f] = pd.to_numeric(df[f], errors="coerce") if f in df.columns else np.nan
     return out
 
@@ -171,34 +202,60 @@ def _stratified_holdout_sample(
     return actual_y[idx], pred_point[idx]
 
 
-def _fit_one_bootstrap(
-    train_x: pd.DataFrame, train_y: pd.Series, eval_x: pd.DataFrame, b: int
-) -> np.ndarray:
+def _fit_one_bootstrap_model(
+    train_x: pd.DataFrame, train_y: pd.Series, b: int
+) -> HistGradientBoostingRegressor:
     boot_idx = train_x.sample(len(train_x), replace=True, random_state=b).index
     model = HistGradientBoostingRegressor(max_iter=GBDT_MAX_ITER, random_state=b)
     model.fit(train_x.loc[boot_idx], train_y.loc[boot_idx])
-    return model.predict(eval_x)
+    return model
 
 
-def fit_bootstrap_ensemble(
+@dataclass
+class BootstrapModels:
+    """지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- `fit_bootstrap_ensemble`의
+    적합(fit) 부분만 분리한 번들. 학습은 eval_df/max_step과 무관하게
+    train_df 하나로 끝나므로 train_dataset_id 기준으로 캐시할 수 있고,
+    max_step별 재요청은 이미 적합된 모델로 `predict_with_bootstrap_models`의
+    가벼운 예측만 다시 수행하면 된다 -- GBDT 30회 재학습(인자 58개·1만 행
+    기준 태스크당 2~5초, 총 수십 초)을 되풀이하지 않는다.
+    """
+
+    models: list[HistGradientBoostingRegressor]
+    features: list[str]
+    holdout: HoldoutPredictions | None
+    coverage_target: float
+    group_col: str
+    # 지시서 작업 3(스텝별 신뢰도 게이트) -- STEP_GRID 격자별 OOF AUC.
+    # 학습(적합) 시점에 한 번만 계산해 여기 담아 둔다 -- max_step별
+    # 요청마다 다시 돌리지 않는다(격자 7개 x 5-fold GBDT라 가볍지 않다).
+    # None이면 랏 수 부족으로 애초에 산출할 수 없었다는 뜻(holdout=None과
+    # 같은 조건).
+    step_auc_profile: dict[int, float] | None
+
+
+def fit_bootstrap_models(
     train_df: pd.DataFrame,
-    eval_df: pd.DataFrame,
     features: list[str],
     *,
     target_col: str = FINAL_YIELD_COLUMN,
     n_boot: int = N_BOOTSTRAP,
-    id_column: str = "Lot_Wafer_ID",
     group_col: str = "Lot_ID",
     coverage_target: float = CONFORMAL_TARGET_COVERAGE,
-) -> BootstrapPrediction:
-    """예측 구간 conformal 캘리브레이션 (spec §BA) -- 부트스트랩 앙상블은
-    점추정(`pred_mean`)의 안정성에만 쓰고, 구간(`pred_lo`/`pred_hi`)은
-    train을 랏 단위 GroupKFold로 잘라 낸 out-of-fold |잔차|의
-    `coverage_target` 분위수(conformal margin `q`)로 낸다. 부트스트랩
-    5/95 분위수(모델이 어느 표본을 뽑았는지에 대한 불확실성만 반영)는
-    잔차 자체의 불확실성(그 모델도 얼마나 틀리는지)을 재지 못해 실측
-    포함률이 목표(90%)의 1/4 수준(18~25%)으로 나왔다 -- 이 함수가 그
-    캘리브레이션 붕괴를 고친다.
+    compute_step_profile: bool = False,
+) -> BootstrapModels:
+    """부트스트랩 앙상블 학습 -- `fit_bootstrap_ensemble`이 예전에 fit+predict를
+    한 번에 하던 것 중 fit 부분(비용의 대부분)만 담당한다. eval_df를
+    받지 않는다: 이 결과는 어떤 eval/어떤 max_step으로 예측하든 그대로
+    재사용된다(지시서 작업 2).
+
+    `compute_step_profile=True`면 지시서 작업 3(스텝별 신뢰도 게이트)의
+    STEP_GRID OOF AUC 프로파일도 함께 낸다 -- 격자 7개 x 5-fold = GBDT
+    35회 적합이 추가로 붙는 무거운 연산이라 기본값은 False다. 이 값을
+    실제로 쓰는 API 캐시 경로(`api/routes/analysis.py`의
+    `_cached_bootstrap_models`)만 명시적으로 True를 넘긴다 -- 그 결과가
+    train_dataset_id 기준으로 캐시되어 한 번만 계산되기 때문에 감당
+    가능하다.
     """
     train_valid = train_df[train_df[target_col].notna()]
     train_x = prepare_feature_matrix(train_valid, features)
@@ -206,25 +263,57 @@ def fit_bootstrap_ensemble(
     keep = train_y.notna()
     train_x, train_y = train_x[keep], train_y[keep]
 
-    eval_x = prepare_feature_matrix(eval_df, features)
-
     # 30회 부트스트랩은 서로 완전히 독립이라 병렬화해도 결정성이 깨지지
     # 않는다 (각 회차의 random_state=b는 그대로 고정) -- 직렬로 돌리면
     # 인자 58개·1만 행 기준 태스크당 2~5초씩 걸려 전체 2분을 넘겨
     # 요청 하나로 감당하기 어렵다.
-    preds: list[np.ndarray] = Parallel(n_jobs=-1, prefer="processes")(
-        delayed(_fit_one_bootstrap)(train_x, train_y, eval_x, b) for b in range(n_boot)
+    models: list[HistGradientBoostingRegressor] = Parallel(n_jobs=-1, prefer="processes")(
+        delayed(_fit_one_bootstrap_model)(train_x, train_y, b) for b in range(n_boot)
+    )
+    holdout = compute_holdout_predictions(
+        train_df, features, target_col=target_col, group_col=group_col, coverage=coverage_target
+    )
+    step_auc_profile = (
+        compute_step_auc_profile(train_df, features, target_col=target_col, group_col=group_col)
+        if compute_step_profile
+        else None
+    )
+    return BootstrapModels(
+        models=models, features=features, holdout=holdout, coverage_target=coverage_target, group_col=group_col,
+        step_auc_profile=step_auc_profile,
     )
 
-    p = np.array(preds)
+
+def predict_with_bootstrap_models(
+    bundle: BootstrapModels,
+    eval_df: pd.DataFrame,
+    *,
+    target_col: str = FINAL_YIELD_COLUMN,
+    id_column: str = "Lot_Wafer_ID",
+    max_step: int | None = None,
+) -> BootstrapPrediction:
+    """예측 구간 conformal 캘리브레이션 (spec §BA) -- 이미 적합된 부트스트랩
+    모델(`bundle`, `fit_bootstrap_models` 참고)로 `eval_df`를 예측한다.
+    점추정(`pred_mean`)의 안정성은 부트스트랩 앙상블에서, 구간
+    (`pred_lo`/`pred_hi`)은 train을 랏 단위 GroupKFold로 잘라 낸
+    out-of-fold |잔차|의 `coverage_target` 분위수(conformal margin `q`)로
+    낸다. 부트스트랩 5/95 분위수(모델이 어느 표본을 뽑았는지에 대한
+    불확실성만 반영)는 잔차 자체의 불확실성(그 모델도 얼마나 틀리는지)을
+    재지 못해 실측 포함률이 목표(90%)의 1/4 수준(18~25%)으로 나왔다 --
+    holdout 기반 conformal q가 그 캘리브레이션 붕괴를 고친다.
+
+    지시서 작업 2 -- `max_step`이 주어지면 eval 특징 행렬만 그 스텝
+    이후를 가려("아직 그 스텝까지만 진행된 wafer" 흉내) 예측한다. 모델
+    자체(`bundle`)는 항상 전체 스텝으로 학습된 그대로다.
+    """
+    eval_x = prepare_feature_matrix(eval_df, bundle.features, max_step=max_step)
+    p = np.array([model.predict(eval_x) for model in bundle.models])
     pred_mean = p.mean(axis=0)
     lot_wafer_id = (
         eval_df[id_column].astype(str).tolist() if id_column in eval_df.columns else [str(i) for i in eval_df.index]
     )
 
-    holdout = compute_holdout_predictions(
-        train_df, features, target_col=target_col, group_col=group_col, coverage=coverage_target
-    )
+    holdout = bundle.holdout
     if holdout is not None:
         q = holdout.conformal_q
         pred_lo = pred_mean - q
@@ -256,9 +345,9 @@ def fit_bootstrap_ensemble(
     q_agg: float | None = None
     if holdout is not None:
         n_lots_eval = (
-            int(eval_df[group_col].nunique()) if group_col in eval_df.columns else len(eval_df)
+            int(eval_df[bundle.group_col].nunique()) if bundle.group_col in eval_df.columns else len(eval_df)
         )
-        q_agg = compute_aggregate_conformal_q(holdout, n_lots_eval, coverage=coverage_target)
+        q_agg = compute_aggregate_conformal_q(holdout, n_lots_eval, coverage=bundle.coverage_target)
     pred_agg_lo = pred_agg_mean - q_agg if q_agg is not None else None
     pred_agg_hi = pred_agg_mean + q_agg if q_agg is not None else None
 
@@ -268,7 +357,7 @@ def fit_bootstrap_ensemble(
         pred_lo=pred_lo,
         pred_hi=pred_hi,
         conformal_q=q,
-        coverage_target=coverage_target,
+        coverage_target=bundle.coverage_target,
         coverage_actual=coverage_actual,
         holdout_oof_actual=holdout_oof_actual,
         holdout_oof_pred=holdout_oof_pred,
@@ -276,6 +365,31 @@ def fit_bootstrap_ensemble(
         pred_agg_mean=pred_agg_mean,
         pred_agg_lo=pred_agg_lo,
         pred_agg_hi=pred_agg_hi,
+    )
+
+
+def fit_bootstrap_ensemble(
+    train_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    features: list[str],
+    *,
+    target_col: str = FINAL_YIELD_COLUMN,
+    n_boot: int = N_BOOTSTRAP,
+    id_column: str = "Lot_Wafer_ID",
+    group_col: str = "Lot_ID",
+    coverage_target: float = CONFORMAL_TARGET_COVERAGE,
+    max_step: int | None = None,
+) -> BootstrapPrediction:
+    """`fit_bootstrap_models` + `predict_with_bootstrap_models`을 한 번에
+    호출하는 얇은 래퍼 -- 기존 단일 함수 호출부(테스트 등)와의 하위
+    호환용이다. 서버(api/routes/analysis.py)는 두 함수를 나눠 불러
+    fit 결과를 train_dataset_id 기준으로 캐시한다(지시서 작업 2).
+    """
+    bundle = fit_bootstrap_models(
+        train_df, features, target_col=target_col, n_boot=n_boot, group_col=group_col, coverage_target=coverage_target,
+    )
+    return predict_with_bootstrap_models(
+        bundle, eval_df, target_col=target_col, id_column=id_column, max_step=max_step,
     )
 
 
@@ -289,7 +403,30 @@ MARGIN_MAX_PP = 4.0
 # 작업 범위는 슬라이더 트레이드오프化뿐이라 값은 그대로 두고 다음 단계
 # 조사 과제로 남긴다.
 GRADE_STEP_PP = 0.8
-ALARM_DECISION_VERSION = "yield-risk-v2"
+
+# 지시서 작업 1(등급 분류: 절대 임계값 -> 순위 기반) -- 부트스트랩 앙상블
+# 점추정은 실측 대비 33~56%로 압축돼 있다(개발자 수정지시서 §0 배경:
+# 실제 train -> 합성 test 조합에서 예측 편차/실제 편차 = 56%, 합성
+# train -> 합성 test 조합에서는 33%). `classify_wafer`의 %p 절대
+# 임계값은 이 압축을 그대로 맞고 있어 target=88.0/sensitivity=0.2
+# 기본값에서 웨이퍼 1,000장 중 알람이 1장(0.1%)만 나오는 등 사실상
+# 아무것도 못 잡는 상황이 실측으로 확인됐다. 반면 예측 "순위"는 이
+# 압축과 거의 무관하게 유지된다 -- 모델이 "얼마나 낮게" 예측하는지는
+# 틀려도 "어느 wafer가 상대적으로 더 낮게 예측됐는지"는 비교적 안정적
+# 이다. `classify_wafer_by_rank`는 순위(평가 대상 안에서의 백분위)를
+# 직접 등급에 쓴다.
+ALARM_SHARE_MIN_PCT = 1.0
+ALARM_SHARE_MAX_PCT = 10.0
+
+# "rank"(기본값) | "absolute" -- score_wafers가 심각/위험/주의를 매길
+# 때 쓰는 방식. 이 프로젝트에는 별도 config/ 패키지가 없어(설정은
+# api/settings.py가 담당하지만 그건 인프라/환경변수 전용이다) 이 판정
+# 알고리즘 선택 상수는 AUC_GATE 등 다른 판정 상수와 같은 자리인 이
+# 모듈에 둔다. `classify_wafer`(절대 방식)는 지우지 않는다 -- 목표
+# 수율이 명확한 이관 환경 등에서는 여전히 유효할 수 있어 런타임에
+# 전환 가능해야 한다.
+ALARM_CLASSIFY_MODE = "rank"
+ALARM_DECISION_VERSION = "yield-risk-v3"
 
 
 def classify_margin(sensitivity: float) -> float:
@@ -310,6 +447,7 @@ def classify_wafer(
     target: float,
     sensitivity: float,
     gate_passed: bool = True,
+    cap_at_caution: bool = False,
 ) -> str | None:
     """민감도 슬라이더를 실제 트레이드오프로 (spec §CA-1/§CA-3) -- 목표
     수율 기준 5분류. 심각/위험/주의는 **점추정(pred_mean)** 기준이다 --
@@ -323,17 +461,62 @@ def classify_wafer(
     정상/판별불가만 계산, spec §B-4). 다섯 분류는 서로 겹치지 않는다 --
     심각 -> 위험 -> 주의 -> 정상 순으로 먼저 맞는 조건 하나만 반환하고,
     전부 해당 없으면 None(판별불가)이다.
+
+    지시서 작업 3(스텝별 신뢰도 게이트) -- `cap_at_caution=True`면 심각/
+    위험도 "주의"로 낮춰 반환한다. 특정 스텝까지의 정보만으로 예측할 때
+    (max_step) 그 스텝의 OOF AUC가 게이트 미만이면 쓴다 -- 조기 예측은
+    본질적으로 정확도가 낮으므로 알람 자체를 막지는 않되(게이트
+    미달=완전 차단이던 gate_passed=False와 다르다) 가장 강한 등급까지는
+    내주지 않는다.
     """
     margin = classify_margin(sensitivity)
     if gate_passed:
         if pred_mean <= target - margin - 2 * GRADE_STEP_PP:
-            return "심각"
+            return "주의" if cap_at_caution else "심각"
         if pred_mean <= target - margin - GRADE_STEP_PP:
-            return "위험"
+            return "주의" if cap_at_caution else "위험"
         if pred_mean <= target - margin:
             return "주의"
     if pred_lo >= target:
         return "정상"
+    return None
+
+
+def classify_wafer_by_rank(
+    pred_mean: float,
+    all_preds: np.ndarray,
+    *,
+    sensitivity: float,
+    gate_passed: bool = True,
+    cap_at_caution: bool = False,
+) -> str | None:
+    """지시서 작업 1(등급 분류: 절대 임계값 -> 순위 기반) -- `classify_wafer`의
+    %p 절대 임계값 대신, `all_preds`(같은 평가 배치 안 wafer들의
+    pred_mean 전체) 안에서 이 wafer의 예측이 얼마나 낮은 백분위인지로
+    심각/위험/주의를 매긴다. 예측값 자체가 데이터셋마다 다르게 압축돼
+    있어도(§0 배경: 33~56%) 순위 분포는 데이터셋이 바뀌어도 안정적으로
+    유지된다 -- 목표(target)와 무관한 이유다.
+
+    `정상`은 이 함수가 매기지 않는다 -- 호출자가 여전히 `pred_lo >=
+    target`(절대 기준)으로 별도 판정한다(지시서 제약: "정상 항목은
+    기존대로 절대 기준을 유지해야 한다" -- 순위 방식이라도 "목표를
+    확실히 넘겼다"는 주장은 목표 자체를 기준으로 해야 의미가 있다).
+
+    sensitivity(0~1)는 알람 후보로 볼 비율의 상한을 정한다 -- s=0이면
+    하위 `ALARM_SHARE_MIN_PCT`(1%), s=1이면 하위 `ALARM_SHARE_MAX_PCT`
+    (10%)까지. 그 상한 안에서 30%/60%/100% 지점으로 심각/위험/주의를
+    3등분한다.
+    """
+    if not gate_passed:
+        return None
+    pct = float((all_preds <= pred_mean).mean() * 100.0)  # 낮을수록(순위가 낮을수록) 위험
+    base = ALARM_SHARE_MIN_PCT + sensitivity * (ALARM_SHARE_MAX_PCT - ALARM_SHARE_MIN_PCT)
+    if pct <= base * 0.3:
+        return "주의" if cap_at_caution else "심각"
+    if pct <= base * 0.6:
+        return "주의" if cap_at_caution else "위험"
+    if pct <= base:
+        return "주의"
     return None
 
 
@@ -370,6 +553,8 @@ def score_wafers(
     measured_ids: set[str] | None = None,
     target_sources: list[str] | None = None,
     lot_column: str = "Lot_ID",
+    cap_at_caution: bool = False,
+    mode: str = ALARM_CLASSIFY_MODE,
 ) -> list[WaferClassification]:
     """전체 eval wafer의 5분류 결과 (spec §B-1: "합이 평가 wafer 수와
     정확히 일치해야 한다" -- 개수를 거르지 않고 전부 반환한다. 알람만
@@ -382,8 +567,14 @@ def score_wafers(
     오히려 더 부정확했다), conformal 구간이 이미 그 불확실성을 폭으로
     반영한다. `measured_ids`가 주어지면 `measured` 필드에만 반영되고
     (§BC-1 "판정 결과가 아니라 사유 표시에만 쓴다", §BC-2 "사유 제시
-    불가" 표기), grade는 measured 여부와 무관하게 항상 `classify_wafer`로
-    계산한다.
+    불가" 표기), grade는 measured 여부와 무관하게 항상 계산한다.
+
+    지시서 작업 1(등급 분류: 절대 임계값 -> 순위 기반) -- `mode="rank"`
+    (기본값)면 `classify_wafer_by_rank`로, `mode="absolute"`면 기존
+    `classify_wafer`로 심각/위험/주의를 매긴다. 두 방식 모두 `정상`은
+    이 함수에서 `pred_lo >= target`(절대 기준)으로 직접 판정한다 --
+    순위 방식이라도 "정상"이라는 주장 자체는 목표를 기준으로 해야
+    의미가 있다(지시서 제약).
     """
     n = len(prediction.pred_mean)
     order = np.argsort(prediction.pred_mean)  # 오름차순: 가장 낮은 예측이 0번째
@@ -401,17 +592,27 @@ def score_wafers(
     for i in range(n):
         wafer_id = prediction.lot_wafer_id[i]
         measured = measured_ids is None or wafer_id in measured_ids
-        grade = classify_wafer(
-            float(prediction.pred_mean[i]), float(prediction.pred_lo[i]),
-            target=target, sensitivity=sensitivity, gate_passed=gate_passed,
-        )
+        pred_mean_i = float(prediction.pred_mean[i])
+        pred_lo_i = float(prediction.pred_lo[i])
+        if mode == "rank":
+            grade = classify_wafer_by_rank(
+                pred_mean_i, prediction.pred_mean,
+                sensitivity=sensitivity, gate_passed=gate_passed, cap_at_caution=cap_at_caution,
+            )
+            if grade is None and pred_lo_i >= target:
+                grade = "정상"
+        else:
+            grade = classify_wafer(
+                pred_mean_i, pred_lo_i,
+                target=target, sensitivity=sensitivity, gate_passed=gate_passed, cap_at_caution=cap_at_caution,
+            )
         results.append(
             WaferClassification(
                 lot_wafer_id=wafer_id,
                 lot_id=lot_ids[i],
                 grade=grade,
-                pred_mean=float(prediction.pred_mean[i]),
-                pred_lo=float(prediction.pred_lo[i]),
+                pred_mean=pred_mean_i,
+                pred_lo=pred_lo_i,
                 pred_hi=float(prediction.pred_hi[i]),
                 risk_percentile=float(percentile[i]),
                 measured=measured,
@@ -470,6 +671,88 @@ def cross_validate_auc(
     )
     aucs = [a for a in results if a is not None]
     return aucs if aucs else None
+
+
+def _oof_predict(x: pd.DataFrame, y: pd.Series, groups: pd.Series, *, n_splits: int = 5) -> np.ndarray:
+    """랏 단위 GroupKFold out-of-fold 예측. `compute_step_auc_profile`
+    전용 헬퍼 -- `compute_holdout_predictions`와 달리 conformal q/잔차는
+    필요 없고 AUC 계산용 예측값만 있으면 되므로 더 가볍게 잘라냈다."""
+    gkf = GroupKFold(n_splits=n_splits)
+    oof = np.full(len(x), np.nan)
+    for fold, (tr_idx, ev_idx) in enumerate(gkf.split(x, groups=groups)):
+        model = HistGradientBoostingRegressor(max_iter=GBDT_MAX_ITER, random_state=fold)
+        model.fit(x.iloc[tr_idx], y.iloc[tr_idx])
+        oof[ev_idx] = model.predict(x.iloc[ev_idx])
+    return oof
+
+
+def compute_step_auc_profile(
+    train_df: pd.DataFrame,
+    features: list[str],
+    *,
+    target_col: str = FINAL_YIELD_COLUMN,
+    group_col: str = "Lot_ID",
+    n_splits: int = 5,
+    bad_quantile: float = BAD_LABEL_QUANTILE,
+    step_grid: list[int] = STEP_GRID,
+) -> dict[int, float] | None:
+    """지시서 작업 3(스텝별 신뢰도 게이트) -- `STEP_GRID`의 각 스텝까지만
+    허용한(그보다 뒤 스텝은 마스킹한) 특징 행렬로 랏 단위 GroupKFold OOF
+    AUC를 계산한다. `fit_bootstrap_models`가 적합 시점에 한 번만 호출해
+    `BootstrapModels.step_auc_profile`에 담아 둔다 -- max_step별 요청마다
+    다시 돌리면 격자 7개 x 5-fold = GBDT 35회 적합이라 무겁다.
+
+    "불량" 라벨 정의는 `cross_validate_auc`와 동일(Y 하위 `bad_quantile`
+    분위수, train 전체 기준 -- fold나 스텝 격자마다 다시 정의하지 않는다)
+    이라 스텝 격자 사이에도, 다른 AUC 지표와도 비교 가능하다.
+
+    Lot당 표본이 `n_splits`보다 적으면 None(표본 부족) -- 호출자는
+    `compute_holdout_predictions`가 None을 반환하는 경우와 같은 방식으로
+    처리한다.
+    """
+    valid = train_df[pd.to_numeric(train_df[target_col], errors="coerce").notna()]
+    if group_col not in valid.columns or valid[group_col].nunique() < n_splits:
+        return None
+
+    y = pd.to_numeric(valid[target_col], errors="coerce")
+    bad = (y <= y.quantile(bad_quantile)).astype(int)
+    groups = valid[group_col]
+
+    profile: dict[int, float] = {}
+    for n in step_grid:
+        x = prepare_feature_matrix(valid, features, max_step=n)
+        # HistGradientBoostingRegressor는 "일부" 결측은 네이티브로 처리하지만
+        # "전부" 결측인 컬럼은 이진화(binning) 단계에서 그대로 죽는다
+        # (분위수를 낼 값 자체가 없다) -- max_step이 작을수록 뒤 스텝
+        # 인자 전체가 이 마스킹으로 100% NaN이 되므로, 그런 컬럼은 애초에
+        # 넘기지 않는다(정보가 전혀 없는 컬럼이라 빼도 모델에 영향이
+        # 없다).
+        usable = [c for c in x.columns if x[c].notna().any()]
+        if not usable:
+            continue
+        oof = _oof_predict(x[usable], y, groups, n_splits=n_splits)
+        covered = ~np.isnan(oof)
+        if not covered.any() or bad[covered].nunique() < 2:
+            continue  # AUC undefined -- 이 격자점만 건너뛴다(전체를 포기하지 않는다)
+        profile[n] = float(roc_auc_score(bad[covered], -oof[covered]))
+    return profile if profile else None
+
+
+def gate_for_step(profile: dict[int, float] | None, max_step: int | None) -> tuple[bool | None, float | None]:
+    """지시서 작업 3 -- `max_step`에 해당하는(격자에 없으면 가장 가까운
+    격자점의) AUC와 게이트 통과 여부를 반환한다. `max_step=None`이면 가장
+    큰 격자점(전체 스텝에 가장 가까운 값)을 쓴다. 보간하지 않는다 --
+    격자 사이의 AUC는 실측한 적이 없다.
+
+    `profile`이 None(표본 부족으로 애초에 산출 불가)이면 (None, None) --
+    호출자는 이를 "신뢰도를 알 수 없다"로 다뤄야 한다(§A-2와 같은 원칙:
+    모르면 통과시키지 않는다).
+    """
+    if not profile:
+        return None, None
+    step = max(profile) if max_step is None else min(profile, key=lambda k: abs(k - max_step))
+    auc = profile[step]
+    return auc >= AUC_GATE, auc
 
 
 def cross_validate_transfer_auc(

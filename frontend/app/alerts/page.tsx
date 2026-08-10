@@ -51,6 +51,12 @@ const ALARM_VISIBLE_ROWS = 7;
 const ALARM_YIELD_SCALE_MIN = 60;
 const ALARM_YIELD_SCALE_MAX = 100;
 
+// 지시서 작업 4(분포 이동 감지) -- src/analysis/distribution_shift.py의
+// MISSING_RATE_GAP_WARNING과 반드시 같은 값을 유지한다(문구는 프런트가
+// 만들지만 임계값은 백엔드가 계산해 내려주므로, 이 값 자체는 표시
+// 조건에만 쓴다 -- 서버가 계산한 gap 수치와 비교하는 로컬 상수다).
+const DISTRIBUTION_SHIFT_MISSING_RATE_WARNING = 0.2;
+
 /** spec §E-3 헤더 배지 -- 클릭하면 상세 패널이 열린다. */
 function ReliabilityBadge({
   reliability,
@@ -237,6 +243,11 @@ function AlertsContent() {
   const [evalDataset, setEvalDataset] = useState("test");
   const [targetYield, setTargetYield] = useState(DEFAULT_TARGET_YIELD);
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY);
+  // 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- null이면 전체
+  // 스텝(기존 동작). 서버가 다시 예측해야 하는 값이라(모델 재학습은
+  // 없지만 predict가 다시 필요하다) target/sensitivity처럼 클라이언트
+  // 재계산이 아니라 "조회" 버튼으로 다시 불러온다.
+  const [maxStep, setMaxStep] = useState<number | null>(null);
   // AA-4: DEFAULT_SENSITIVITY(0.2)가 "오경보 최소" 프리셋과 같은 값이라
   // 첫 로딩 시 그 프리셋이 선택된 상태로 보여야 한다 -- 기본값과
   // 어느 프리셋도 활성이 아닌 상태로 어긋나면 안 된다.
@@ -285,7 +296,7 @@ function AlertsContent() {
       setError("");
       try {
         const [dataResponse, reliabilityResponse] = await Promise.all([
-          getAlertsData(trainDataset, evalDs),
+          getAlertsData(trainDataset, evalDs, maxStep),
           getReliability(trainDataset, evalDs).catch(() => null),
         ]);
         setAlarmsState((previous) => ({
@@ -304,7 +315,7 @@ function AlertsContent() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [trainDataset, evalDataset, setAlarmsState],
+    [trainDataset, evalDataset, maxStep, setAlarmsState],
   );
 
   // 재접속/새로고침 + 첫 방문을 한 이펙트가 함께 처리한다 -- predictions/
@@ -365,14 +376,22 @@ function AlertsContent() {
   // 원시 예측치를 목표 수율·민감도로 즉시 재분류한다 (spec §A-3). 민감도
   // 슬라이더를 실제 트레이드오프로 (spec §CA-1) -- 판정은 점추정
   // (pred_mean) 기준이라 sigma를 더 이상 넘기지 않는다.
+  // 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step 예측일 때만 적용한다.
+  // max_step_auc_gate_passed가 true로 확실히 확인되지 않는 한(표본 부족
+  // 등으로 null인 경우도 포함) 보수적으로 캡을 켠다 -- 이 코드베이스의
+  // 다른 "표본 부족" 처리(§A-2 등)와 같은 원칙: 모르면 가장 강한 등급을
+  // 내주지 않는다.
+  const capAtCaution = data?.effective_max_step != null && data.max_step_auc_gate_passed !== true;
+
   const classified = useMemo<ClassifiedWafer[]>(() => {
     if (!data) return [];
     return classifyAll(data.predictions, {
       target: targetYieldForClassify,
       sensitivity: sensitivityForClassify,
       gatePassed: data.display_prediction_allowed,
+      capAtCaution,
     });
-  }, [data, targetYieldForClassify, sensitivityForClassify]);
+  }, [data, targetYieldForClassify, sensitivityForClassify, capAtCaution]);
 
   const classSummary = useMemo(
     () => summarizeClasses(classified, data?.total_wafers ?? 0),
@@ -476,6 +495,26 @@ function AlertsContent() {
         {reliability?.target_fallback_message && (
           <p className="analysisFallbackNotice">{reliability.target_fallback_message}</p>
         )}
+        {/* 지시서 작업 4(분포 이동 감지) -- AUC 게이트를 대체하지 않는
+            참고 배너. level이 "high"일 때만 보여준다(경고 피로를 막는다
+            -- low/medium까지 매번 띄우면 사용자가 무시하게 된다). */}
+        {reliability?.distribution_shift?.level === "high" && (
+          <p className="reliabilityLowWarning">
+            ⚠ 학습 데이터와 평가 데이터의 인자 분포가 크게 다릅니다 (중앙 이동{" "}
+            {reliability.distribution_shift.median?.toFixed(2)}σ, 최대{" "}
+            {reliability.distribution_shift.worst_feature} {reliability.distribution_shift.max?.toFixed(2)}σ). 다른
+            공정 조건의 데이터일 수 있으며 예측 신뢰도가 낮습니다.
+          </p>
+        )}
+        {reliability?.distribution_shift != null
+          && reliability.distribution_shift.missing_rate_gap != null
+          && reliability.distribution_shift.missing_rate_gap >= DISTRIBUTION_SHIFT_MISSING_RATE_WARNING && (
+          <p className="reliabilityLowWarning">
+            ⚠ {reliability.distribution_shift.missing_rate_worst_feature}의 계측률이 학습·평가 데이터 사이에{" "}
+            {(reliability.distribution_shift.missing_rate_gap * 100).toFixed(0)}%p 차이 납니다. 계측 환경이 다른
+            데이터일 수 있습니다.
+          </p>
+        )}
         <LastRunNote createdAt={alarmsState?.createdAt} />
         <FallbackModeBadge />
       </section>
@@ -505,7 +544,25 @@ function AlertsContent() {
               disabled={isRestoring}
             />
           </div>
+          <div className="alertsQueryRow2">
+            <MaxStepField
+              value={maxStep}
+              onChange={setMaxStep}
+              disabled={isRestoring}
+              stepAuc={data?.effective_max_step === maxStep ? data?.max_step_auc ?? null : null}
+            />
+          </div>
         </div>
+        {/* 지시서 작업 2/3: 이 응답이 실제로 어느 max_step 기준인지(방금
+            바꾼 슬라이더 값이 아니라 "조회"를 눌러 실제로 반영된 값)와
+            그 스텝의 참고용 신뢰도(AUC)를 함께 보여준다. */}
+        {data?.effective_max_step != null && (
+          <p className="sectionCaption">
+            Step {data.effective_max_step} 이전 기준 판정
+            {data.max_step_auc != null && ` · 신뢰도 AUC ${data.max_step_auc.toFixed(2)} (참고용)`}
+            {data.max_step_auc == null && " · 신뢰도 AUC 산출 불가 (표본 부족, 참고용)"}
+          </p>
+        )}
         {/* DG그룹/HD그룹: 서버에 저장된 목표·민감도를 복원하기 전에는 값을
             만질 수 없게 막는다 -- 기본값이 잠깐 보였다가 저장값으로 튀는
             혼란을 막는다. `!hydrated`만으로는 부족했다(HD-2 진단) --
@@ -874,6 +931,65 @@ function TargetYieldField({
         />
         <span>%</span>
       </div>
+    </div>
+  );
+}
+
+const MAX_STEP_LIMIT = 30;
+
+// 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- target/sensitivity와
+// 달리 값을 바꿔도 즉시 재계산되지 않는다: 서버가 마스킹된 특징으로
+// 다시 predict해야 하므로("조회" 버튼을 눌러야 반영된다). 체크를 끄면
+// 전체 스텝(기존 동작, max_step=null)으로 돌아간다.
+function MaxStepField({
+  value,
+  onChange,
+  disabled,
+  stepAuc,
+}: {
+  value: number | null;
+  onChange: (value: number | null) => void;
+  disabled?: boolean;
+  // 지금 입력 중인 값(아직 "조회"를 누르지 않은 값) 기준 참고 AUC --
+  // 서버 응답이 실제로 이 값을 반영했을 때만 넘겨준다(app이 데이터
+  // fetch 이전 낡은 AUC를 보여주지 않도록).
+  stepAuc: number | null;
+}) {
+  const enabled = value != null;
+  return (
+    <div className="alertsSettingField">
+      <span className="alertsSettingLabel">
+        <label>
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.checked ? MAX_STEP_LIMIT : null)}
+          />{" "}
+          특정 스텝까지의 정보만 사용
+        </label>
+      </span>
+      {enabled && (
+        <div className="alertsTargetInputRow" title="이 스텝 이후 인자는 미계측으로 간주해 예측합니다">
+          <input
+            type="range" min={1} max={MAX_STEP_LIMIT} step={1}
+            value={value}
+            onChange={(event) => onChange(Number(event.target.value))}
+            disabled={disabled}
+          />
+          <input
+            key={value}
+            type="number" min={1} max={MAX_STEP_LIMIT} step={1}
+            defaultValue={value}
+            onBlur={(event) => onChange(Number(event.target.value))}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onChange(Number((event.target as HTMLInputElement).value));
+            }}
+            disabled={disabled}
+          />
+          <span>Step{stepAuc != null && ` · AUC ${stepAuc.toFixed(2)}`}</span>
+        </div>
+      )}
     </div>
   );
 }

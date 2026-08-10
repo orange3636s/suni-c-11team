@@ -285,6 +285,15 @@ class AlertsDataResponse(BaseModel):
     # interval_conformal_q보다 훨씬 좁다. None이면 웨이퍼 q와 같은 이유
     # (랏 수 부족)로 낼 수 없었다는 뜻.
     interval_conformal_q_agg: float | None = None
+    # 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- 이 응답이 어느
+    # max_step 기준으로 계산됐는지. None이면 전체 스텝(마스킹 없음)이다.
+    effective_max_step: int | None = None
+    # 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step이 주어졌을 때만
+    # 채워진다(STEP_GRID 중 가장 가까운 격자점의 OOF AUC와 게이트 통과
+    # 여부). 둘 다 None이면 표본 부족으로 산출 불가이거나 max_step
+    # 자체가 없는 것이다.
+    max_step_auc: float | None = None
+    max_step_auc_gate_passed: bool | None = None
     target_provenance: dict[str, Any] | None = None
     external_delivery_suppressed_reason: str | None = None
 
@@ -595,6 +604,18 @@ RELIABILITY_THRESHOLDS_DISCLAIMER = (
 )
 
 
+class DistributionShiftSchema(BaseModel):
+    """지시서 작업 4(분포 이동 감지) -- train 대비 eval의 인자 분포 이동.
+    AUC 게이트를 대체하지 않는 경고용 참고 지표다."""
+
+    median: float | None
+    max: float | None
+    worst_feature: str | None
+    level: str  # "low" | "medium" | "high" | "unknown"
+    missing_rate_gap: float | None
+    missing_rate_worst_feature: str | None
+
+
 class ReliabilityResponse(BaseModel):
     """종합 신뢰성 등급 (spec 알람 판정 GBDT 전환 §E, 알람 신뢰도 게이트 §D-3).
 
@@ -626,6 +647,8 @@ class ReliabilityResponse(BaseModel):
     thresholds_disclaimer: str = RELIABILITY_THRESHOLDS_DISCLAIMER
     target_fallback_tier: str  # "per_target" | "final_yield_only" | "unanalyzable"
     target_fallback_message: str | None
+    # 지시서 작업 4(분포 이동 감지) -- 계산 불가(인자 표본 부족 등)면 None.
+    distribution_shift: DistributionShiftSchema | None = None
 
 
 class PreprocessingModeResultSchema(BaseModel):

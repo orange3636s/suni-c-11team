@@ -285,8 +285,16 @@ export function getAlarms(
   return getJson(`/api/alarms?${params.toString()}`);
 }
 
-export function getAlertsData(trainDataset: string, evalDataset: string): Promise<AlertsDataResponse> {
-  return getJson(`/api/alarms/predictions?${new URLSearchParams({ train: trainDataset, eval: evalDataset }).toString()}`);
+// 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- maxStep을 생략하면
+// 기존 동작과 완전히 같다(전체 스텝 기준).
+export function getAlertsData(
+  trainDataset: string,
+  evalDataset: string,
+  maxStep?: number | null,
+): Promise<AlertsDataResponse> {
+  const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
+  if (maxStep != null) params.set("max_step", String(maxStep));
+  return getJson(`/api/alarms/predictions?${params.toString()}`);
 }
 
 export function getReliability(dataset: string, evalDataset: string): Promise<ReliabilityResponse> {

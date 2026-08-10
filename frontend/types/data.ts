@@ -309,6 +309,21 @@ export type ReliabilityResponse = {
   thresholds_disclaimer: string;
   target_fallback_tier: "per_target" | "final_yield_only" | "unanalyzable";
   target_fallback_message: string | null;
+  // 지시서 작업 4(분포 이동 감지) -- train 대비 eval의 인자 분포 이동.
+  // AUC 게이트를 대체하지 않는 참고 지표. null이면 계산 불가(표본 부족)
+  // 이거나 train==eval이라 비교 자체를 건너뛴 경우다.
+  distribution_shift: DistributionShiftReport | null;
+};
+
+export type DistributionShiftLevel = "low" | "medium" | "high" | "unknown";
+
+export type DistributionShiftReport = {
+  median: number | null;
+  max: number | null;
+  worst_feature: string | null;
+  level: DistributionShiftLevel;
+  missing_rate_gap: number | null;
+  missing_rate_worst_feature: string | null;
 };
 
 // -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
@@ -414,6 +429,13 @@ export type AlertsDataResponse = {
   // 과대평가한다(랏 블록 부트스트랩으로 별도 산출, 항상 웨이퍼 q보다
   // 훨씬 좁다). null이면 웨이퍼 q와 같은 이유(랏 수 부족)로 못 낸 것.
   interval_conformal_q_agg: number | null;
+  // 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- 이 응답이 어느
+  // max_step 기준인지. null이면 전체 스텝(마스킹 없음)이다.
+  effective_max_step: number | null;
+  // 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step이 주어졌을 때만
+  // 채워진다. 둘 다 null이면 표본 부족이거나 max_step이 없는 것이다.
+  max_step_auc: number | null;
+  max_step_auc_gate_passed: boolean | null;
   target_provenance: TargetProvenance | null;
   external_delivery_suppressed_reason: string | null;
 };
