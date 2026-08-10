@@ -15,6 +15,8 @@ import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 // out of sync with this one.
 export const navigationItems = [
   { label: "모니터링", href: "/monitoring", icon: "monitor" },
+  // WH: Config별 트리맵 -- 모니터링에서 분리한 설비 구성 트리맵 전용 탭.
+  { label: "Config별 트리맵", href: "/config-treemap", icon: "treemap" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "수율 예측", href: "/alerts", icon: "alert" },
   { label: "즐겨찾기", href: "/favorites", icon: "star" },
@@ -343,6 +345,7 @@ function ThemeOptionsList({ theme, onSelect }: { theme: ThemePreference; onSelec
 function NavIcon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
     monitor: <><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /><path d="m6 12 3-3 3 2 4-5" /></>,
+    treemap: <><rect x="3" y="3" width="10" height="9" rx="1" /><rect x="15" y="3" width="6" height="5" rx="1" /><rect x="15" y="10" width="6" height="11" rx="1" /><rect x="3" y="14" width="10" height="7" rx="1" /></>,
     analysis: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /><path d="M8 11h6" /><path d="M11 8v6" /></>,
     alert: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
     star: <path d="M12 2.5 15.09 9l7.16.6-5.45 4.73L18.5 21 12 17.27 5.5 21l1.7-6.67L1.75 9.6 8.91 9 12 2.5Z" />,
