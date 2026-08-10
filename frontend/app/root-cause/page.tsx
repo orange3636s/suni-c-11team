@@ -8,8 +8,6 @@ import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
-import CurrentDatasetLabel from "@/components/CurrentDatasetLabel";
-import FallbackModeBadge from "@/components/FallbackModeBadge";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
 import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import ParetoChart from "@/components/ParetoChart";
@@ -385,6 +383,20 @@ function RootCauseContent() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, analysis]);
+
+  // NB-2: "다시 분석" 버튼을 없앤 뒤에도 이 화면은 스스로 채워져야 한다
+  // -- 보통은 부트스트랩/자동 갱신 스냅샷이 채운 analysis(W-1 대체
+  // 채움, AnalysisStateProvider 참고)가 위 이펙트로 즉시 반영되지만,
+  // 그마저 아직 없는 진짜 콜드 상태(스냅샷도 저장된 결과도 없음)에서는
+  // 이 화면이 직접 한 번 실행해 채운다. 그동안 진행 바(진행 상태 표시,
+  // NB-2 유지 대상)가 보인다. syncedFromRestore와 마찬가지로 한 번만.
+  const autoRanOnce = useRef(false);
+  useEffect(() => {
+    if (!hydrated || autoRanOnce.current || analysis || runState !== "idle") return;
+    autoRanOnce.current = true;
+    void runAnalysis();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, analysis, runState]);
 
   // RD-2: 모델 분석 팝업에서 데이터셋을 바꾸면(activate-dataset ->
   // 스냅샷 갱신 -> analysis.dataset 변경) 이 화면의 라벨도 따라간다 --
@@ -777,51 +789,22 @@ function RootCauseContent() {
           trainFilename={training?.performance?.source_filename ?? null}
           evalFilename={automationSnapshot?.source?.eval_dataset_filename ?? null}
         />
-        <FallbackModeBadge />
       </section>
 
-      <section className="uploadCard">
-        <div className="rcControlBar" style={{ gridTemplateColumns: "minmax(220px,1fr)" }}>
-          {/* RD-2: 데이터는 모델 분석이 정한다 -- 이 화면에서 바꾸지
-              않는다. [변경]은 모델 분석 팝업을 연다. */}
-          <CurrentDatasetLabel label="분석 대상" datasetId={datasetId} onOpenAnalysisPanel={() => setAnalysisPanelOpen(true)} />
-        </div>
-        <DatasetMismatchWarning mismatch={datasetMismatch} />
-      </section>
+      {/* NB-1/NB-2: "분석 대상 [변경]" 카드와 "다시 분석" 실행 버튼을
+          제거했다 -- 파일 첨부·분석 실행은 모델 분석·자동화 팝업으로
+          일원화됐다. datasetMismatch는 즐겨찾기 딥링크(?dataset=)가 현재
+          분석과 다른 데이터셋을 가리키는 경우에도 발생하므로(선택
+          카드와 무관) 계속 보여준다. */}
+      <DatasetMismatchWarning mismatch={datasetMismatch} />
 
       <section className="uploadCard">
         <div className="paretoRunBar">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h2 style={{ margin: 0, fontSize: "var(--fs-title)" }}>원인 분석 실행</h2>
+              <h2 style={{ margin: 0, fontSize: "var(--fs-title)" }}>원인 분석</h2>
               <LastRunNote createdAt={analysis?.createdAt} />
             </div>
-            {/* 기능 설명("타깃 5개 각각의…")은 삭제했다(이전 지시서 G의
-                삭제 기준 -- 지워도 화면의 숫자를 못 읽게 되지 않는다).
-                "완료된 결과입니다…"는 실행 전/후를 구분해주는 상태
-                안내라 유지한다. 삼항이 아니라 조건부 렌더인 이유: 실행
-                전에는 <p> 자체가 없어야 빈 여백이 남지 않는다. */}
-            {runState === "done" && (
-              <p style={{ margin: "4px 0 0", fontSize: "var(--fs-body)", color: "var(--text-secondary)" }}>
-                완료된 결과입니다. 데이터셋을 바꾸면 다시 실행해야 합니다.
-              </p>
-            )}
-          </div>
-          <div style={{ display: "flex", alignItems: "center" }}>
-            {/* W-5: 스냅샷(자동 갱신 파이프라인 산출물)이 이미 있으면 "안
-                누르면 아무것도 없다"는 인상을 주지 않도록 보조 액션(테두리
-                버튼)으로 낮춘다 -- 화면당 채워진 버튼은 1개만 유지한다.
-                반대로 스냅샷도 결과도 없으면(부트스트랩 실패 등) 이
-                버튼이 유일한 복구 경로이므로 채워진 스타일로 눈에 띄게
-                둔다. */}
-            <button
-              type="button"
-              className={automationSnapshot || runState === "done" ? "button secondary" : "button"}
-              disabled={runState === "running"}
-              onClick={() => void runAnalysis()}
-            >
-              {runState === "running" ? "분석 중..." : runState === "error" ? "다시 시도" : "다시 분석"}
-            </button>
           </div>
         </div>
         {dispatchNotifyError && (
@@ -853,22 +836,24 @@ function RootCauseContent() {
                 </details>
               )}
             </div>
-            <button type="button" className="button" onClick={() => void runAnalysis()}>다시 시도</button>
+            <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
           </div>
         )}
         {/* 지시서 AJ: 서버에 저장된 분석 결과가 있었지만 낡은 버전이거나
             (예: PARETO_TOP_N 5->10) 그 이후 모델이 재학습돼 폐기된 경우 --
             runState는 여전히 "idle"이라 위 두 블록과는 겹치지 않는다.
-            조용히 빈 화면만 두지 않고 이유와 재실행 경로를 알려준다. */}
+            조용히 빈 화면만 두지 않고 이유와 재실행 경로를 알려준다.
+            NB-3: 이 화면에는 더 이상 재실행 버튼이 없으므로, 모델
+            분석·자동화 팝업으로 안내한다. */}
         {runState === "idle" && analysisSnapshotStale && (
           <div className="analysisErrorBox" role="alert">
             <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
             <div className="analysisErrorBody">
               <p className="analysisErrorMessage">
-                저장된 분석 결과가 이전 버전이라 불러오지 않았습니다. 원인 분석을 다시 실행해 주세요.
+                저장된 분석 결과가 이전 버전이라 불러오지 않았습니다. 모델 분석·자동화에서 파일을 업로드하거나 SQL을 갱신하세요.
               </p>
             </div>
-            <button type="button" className="button" onClick={() => void runAnalysis()}>원인 분석 실행</button>
+            <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
           </div>
         )}
         {/* 지시서 CB: 저장된 학습/분석/알람 결과가 이미 삭제된 데이터셋을
@@ -880,10 +865,10 @@ function RootCauseContent() {
             <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
             <div className="analysisErrorBody">
               <p className="analysisErrorMessage">
-                이전에 선택한 데이터셋이 더 이상 없어 train으로 전환했습니다. 원인 분석을 다시 실행해 주세요.
+                이전에 선택한 데이터셋이 더 이상 없어 train으로 전환했습니다. 모델 분석·자동화에서 파일을 업로드하거나 SQL을 갱신하세요.
               </p>
             </div>
-            <button type="button" className="button" onClick={() => void runAnalysis()}>원인 분석 실행</button>
+            <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
           </div>
         )}
       </section>
@@ -996,8 +981,8 @@ function RootCauseContent() {
                   ? "공정 인자의 유효 계측 표본이 부족합니다."
                   : "현재 데이터에서 순위를 계산할 수 있는 인자가 없습니다."}
               </p>
-              <p className="noChartStats">모델 상태와 데이터의 R/D/Config 계측값을 확인한 뒤 다시 분석해 주세요.</p>
-              <button type="button" className="button" onClick={() => void runAnalysis()}>다시 분석</button>
+              <p className="noChartStats">모델 상태와 데이터의 R/D/Config 계측값을 확인한 뒤 모델 분석·자동화에서 파일을 업로드하거나 SQL을 갱신하세요.</p>
+              <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
             </section>
           ) : (
             <>

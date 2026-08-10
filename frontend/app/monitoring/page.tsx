@@ -7,7 +7,6 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import CoverageBlock from "@/components/CoverageBlock";
 import DashboardShell from "@/components/DashboardShell";
 import DataLimitationDiagnostics from "@/components/DataLimitationDiagnostics";
-import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import { ApiResponseError, triggerRefresh } from "@/lib/api";
 import { buildMonitoringSnapshot, type MonitoringSnapshot } from "@/lib/monitoringSource";
@@ -134,7 +133,6 @@ export default function MonitoringPage() {
                 trainFilename={training?.performance?.source_filename ?? null}
                 evalFilename={refreshSnapshot?.source?.eval_dataset_filename ?? null}
               />
-              <FallbackModeBadge />
             </p>
           )}
           {manualRefreshError && <p className="notifyFieldError">{manualRefreshError}</p>}

@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import CurrentDatasetLabel from "@/components/CurrentDatasetLabel";
 import { HScrollTableBody, TableCaption, TableToolbar, useTableSearchSort, type SortOption } from "@/components/DataTablePanel";
 import DashboardShell from "@/components/DashboardShell";
-import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { dispatchYieldUpdateNotification, getNotificationSettings, getYieldPrediction } from "@/lib/api";
@@ -229,21 +227,12 @@ function AlertsContent() {
           trainFilename={training?.performance?.source_filename ?? null}
           evalFilename={snapshot?.source?.eval_dataset_filename ?? null}
         />
-        <FallbackModeBadge />
       </div>
 
-      <section className="resultCard">
-        <div className="rcControlBar">
-          <CurrentDatasetLabel label="예측 대상" datasetId={evalDataset} onOpenAnalysisPanel={() => setAnalysisPanelOpen(true)} />
-          <button type="button" className="button secondary" onClick={() => data && downloadCsv(data, sorted)} disabled={!data}>
-            CSV 내보내기
-          </button>
-          <button type="button" className="button secondary" onClick={openNotifyDialog} disabled={!data}>
-            알림 전송
-          </button>
-        </div>
-      </section>
-
+      {/* NB-1/NB-3: "예측 대상 [변경]" 카드를 제거했다 -- 파일 첨부·분석
+          실행은 모델 분석·자동화 팝업으로 일원화됐다. CSV 내보내기·알림
+          전송 버튼은 표 카드 상단(TableToolbar의 extra 슬롯)으로
+          옮겼다. */}
       {loading ? (
         <p className="emptyMessage">불러오는 중…</p>
       ) : error ? (
@@ -257,7 +246,10 @@ function AlertsContent() {
         </section>
       ) : !data || data.candidates.length === 0 ? (
         <section className="resultCard">
-          <p className="emptyMessage">판정 가능한 wafer가 없습니다.</p>
+          <p className="emptyMessage">
+            분석 데이터가 없습니다. 모델 분석·자동화에서 파일을 업로드하세요.{" "}
+            <button type="button" className="button secondary sm" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
+          </p>
         </section>
       ) : (
         <>
@@ -269,6 +261,16 @@ function AlertsContent() {
               onSortChange={setSort}
               sortOptions={SORT_OPTIONS}
               placeholder="LOT_WF_ID 검색"
+              extra={
+                <>
+                  <button type="button" className="button secondary" onClick={() => data && downloadCsv(data, sorted)} disabled={!data}>
+                    CSV 내보내기
+                  </button>
+                  <button type="button" className="button secondary" onClick={openNotifyDialog} disabled={!data}>
+                    알림 전송
+                  </button>
+                </>
+              }
             />
             <HScrollTableBody rows={10} minWidth={1640}>
               <table className="dataTable ypTable">
