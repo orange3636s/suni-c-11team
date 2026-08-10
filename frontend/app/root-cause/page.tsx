@@ -11,7 +11,7 @@ import DashboardShell from "@/components/DashboardShell";
 import CurrentDatasetLabel from "@/components/CurrentDatasetLabel";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
-import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
+import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import ParetoChart, { buildParetoSummaryText } from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
@@ -32,7 +32,6 @@ import {
   getDatasetSchema,
   getFavorites,
   getMeasurementExpansion,
-  getScreeningHeatmap,
   getScreeningPareto,
   getScreeningScatter,
   getScreeningScatterCategorical,
@@ -44,6 +43,7 @@ import type {
   ConfidenceTier,
   DatasetSchemaResponse,
   FavoriteSnapshot,
+  HeatmapResponse,
   MethodComparison,
   ParetoRankingItem,
   ParetoRankingResponse,
@@ -58,7 +58,12 @@ import type {
 const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
-const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중", "산점도·Box Plot 준비 중", "히트맵 집계 중", "계측 확대 시뮬레이션 중"];
+const EMPTY_HEATMAP_CACHE: Record<string, HeatmapResponse> = {};
+// TA그룹: 히트맵은 더 이상 이 진행 단계를 막지 않는다 -- CorrelationHeatmap이
+// 카드 자체의 로딩 상태로 독립적으로 조회하고(analysis.heatmap 캐시에
+// 저장), 여기서 미리 fire-and-forget으로 불러 두던 호출은 결과를 어디에도
+// 쓰지 않는 중복 요청이었다.
+const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중", "산점도·Box Plot 준비 중", "계측 확대 시뮬레이션 중"];
 
 type ColorMode = ScatterColorMode;
 type RunState = "idle" | "running" | "error" | "done";
@@ -486,6 +491,7 @@ function RootCauseContent() {
         pointsComplete: false,
         measurementExpansion: null,
         targetProvenance,
+        heatmap: {},
       });
       setAnalysisDataset(datasetId);
 
@@ -514,11 +520,6 @@ function RootCauseContent() {
       });
 
       setRunStageIndex(3);
-      const heatmapPromise = getScreeningHeatmap(datasetId, "spearman").catch((error) => {
-        console.warn("히트맵 캐시 준비 실패", error);
-      });
-
-      setRunStageIndex(4);
       const measurementPromise = getMeasurementExpansion(datasetId)
         .then((measurementExpansion) => {
           setAnalysis((previous) => previous && previous.dataset === datasetId
@@ -535,14 +536,14 @@ function RootCauseContent() {
           return null;
         });
 
-      const [, , measurementExpansion] = await Promise.all([scatterPromise, heatmapPromise, measurementPromise]);
+      const [, measurementExpansion] = await Promise.all([scatterPromise, measurementPromise]);
       setRunState("done");
       // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 신뢰도 게이트·
       // 중복 발송 방지·연결된 채널 유무는 전부 서버(dispatch_alarm_notifications)
       // 가 판단한다: 이 호출은 그저 "지금 막 분석이 끝났다"는 신호일 뿐이고,
       // 실패해도 분석 결과 화면에는 아무 영향이 없어야 한다.
       void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {
-        setDispatchNotifyError("알림 발송에 실패했습니다. 알림 기록 탭에서 채널 연결 상태를 확인해 주세요.");
+        setDispatchNotifyError("알림 발송에 실패했습니다. 수율 예측 탭에서 채널 연결 상태를 확인해 주세요.");
       });
       // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
       // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
@@ -821,6 +822,13 @@ function RootCauseContent() {
             없으면(analysis가 null) LastRunNote가 스스로 아무것도 렌더하지
             않는다. */}
         <LastRunNote createdAt={analysis?.createdAt} />
+        {/* TD-2: "세 화면 상단" -- 페이지 제목 바로 아래 있는 이 인스턴스에만
+            붙인다(837행 부근의 실행 바 안 LastRunNote는 상단이 아니라 실행
+            버튼 옆의 보조 표시라 중복 렌더하지 않는다). */}
+        <TrainingAnalysisDataNote
+          trainFilename={training?.performance?.source_filename ?? null}
+          evalFilename={automationSnapshot?.source?.eval_dataset_filename ?? null}
+        />
         <FallbackModeBadge />
       </section>
 
@@ -945,6 +953,8 @@ function RootCauseContent() {
         onActiveTargetChange={selectTarget}
         onHeatmapCellSelect={handleHeatmapSelect}
         criterionControl={<ChartCriterionToggle value={chartCriterion} onChange={setChartCriterion} />}
+        heatmapInitialCache={analysis?.heatmap ?? EMPTY_HEATMAP_CACHE}
+        onHeatmapCacheUpdate={(cache) => setAnalysis((previous) => (previous ? { ...previous, heatmap: cache } : previous))}
       />
 
       {analysisVisible && (

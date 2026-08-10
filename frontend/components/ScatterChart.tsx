@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import InterpretationCard, { type InterpretationRow } from "@/components/InterpretationCard";
 import { factorAxisLabel, targetAxisLabel } from "@/lib/chartLabels";
+import { evaluateCurve, fitDefectRateCurve } from "@/lib/defectRateCurve";
 import { parseConfig } from "@/lib/constants";
 import { niceTicksFitted } from "@/lib/niceTicks";
 import { measureTextWidth } from "@/lib/textMeasure";
@@ -611,9 +612,12 @@ type TrendHover = {
   screenY: number;
   dataX: number;
   dataY: number;
-  ciLo: number;
-  ciHi: number;
-  n: number;
+  // TD-3: 곡선 모드(fallbackReason == null)에서는 신뢰구간·구간 wafer 수
+  // 개념이 없다(구간이 아니라 연속 함수이므로) -- null이면 툴팁이 그
+  // 행을 그리지 않는다. 기존 구간 평균 불량률(폴백) 모드는 값을 그대로 채운다.
+  ciLo: number | null;
+  ciHi: number | null;
+  n: number | null;
 };
 
 type LineHover = { key: string; x: number; y: number };
@@ -1037,6 +1041,31 @@ export default function ScatterChart({
     [floatingLabels, isNarrowChart],
   );
 
+  // TD-3: "구간 평균 불량률" 꺾은선 대신, F 검정으로 차수를 고른 1·2차
+  // 다항 곡선을 그린다 -- data.points에서 순수 프런트에서 재계산하며
+  // (추가 API 호출 없음), 최적 중심/권장 구간(백엔드 값)에는 전혀
+  // 영향을 주지 않는다. n<30/R²<0.02/x 고유값<5/특이 행렬이면
+  // fallbackReason이 채워지고, 그때만 기존 data.bins 꺾은선을 그대로
+  // 그린다(계산 자체는 손대지 않는다).
+  const curveFit = useMemo(() => fitDefectRateCurve(data.points), [data.points]);
+
+  const curvePathD = useMemo(() => {
+    if (curveFit.fallbackReason != null) return "";
+    const [lo, hi] = curveFit.domain;
+    if (!(hi > lo)) return "";
+    const STEPS = 48;
+    const parts: string[] = [];
+    for (let i = 0; i <= STEPS; i += 1) {
+      const xVal = lo + ((hi - lo) * i) / STEPS;
+      const yVal = evaluateCurve(curveFit, xVal);
+      const sx = plotX(xVal);
+      const sy = yScale(yVal);
+      parts.push(`${i === 0 ? "M" : "L"}${sx},${sy}`);
+    }
+    return parts.join(" ");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curveFit, plotWidth, plotHeight, view, boxBins]);
+
   const trendPath = useMemo(() => {
     if (!data.bins.length) return { segments: [] as { d: string; dashed: boolean }[], band: "", markers: [] as { x: number; y: number }[] };
     const points = data.bins.map((b) => [plotX(b.x_mean), yScale(b.y_mean)] as const);
@@ -1276,9 +1305,18 @@ export default function ScatterChart({
 
   function handleTrendMouseMove(event: React.MouseEvent<SVGRectElement>) {
     const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect || !data.bins.length) return;
+    if (!rect) return;
     const relativeX = event.clientX - rect.left - MARGIN.left;
     const dataX = xDomain[0] + (relativeX / plotWidth) * (xDomain[1] - xDomain[0]);
+    if (curveFit.fallbackReason == null) {
+      const [lo, hi] = curveFit.domain;
+      if (!(hi > lo)) return;
+      const clampedX = Math.min(Math.max(dataX, lo), hi);
+      const dataY = evaluateCurve(curveFit, clampedX);
+      setTrendHover({ screenX: xScale(clampedX), screenY: yScale(dataY), dataX: clampedX, dataY, ciLo: null, ciHi: null, n: null });
+      return;
+    }
+    if (!data.bins.length) return;
     const bins = data.bins;
     let ciLo: number, ciHi: number, dataY: number, n: number;
     if (dataX <= bins[0].x_mean) {
@@ -1610,10 +1648,21 @@ export default function ScatterChart({
               later-drawn line. */}
           {displayLines.map((line) => renderLineBody(line))}
 
-          {/* confidence band + trend curve -- above every reference line.
-              Segments touching a sparse (outlier-widened) bin render
-              dashed instead of solid (spec §3-4). */}
-          {trendVisible && data.bins.length > 0 && (
+          {/* TD-3: 불량률 곡선 -- F 검정으로 차수를 고른 1·2차 다항 곡선.
+              폴백(fallbackReason 있음: 표본 부족/설명력 낮음/x 고유값
+              부족/특이 행렬)일 때만 예전 구간 평균 꺾은선(data.bins
+              기반, 신뢰구간 밴드 포함)을 그대로 그린다 -- 계산은 손대지
+              않았다. */}
+          {trendVisible && curveFit.fallbackReason == null && curvePathD && (
+            <path
+              d={curvePathD}
+              className="scatterTrendLine"
+              style={{ stroke: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }}
+              strokeDasharray={view === "box" ? "5 4" : undefined}
+              fill="none"
+            />
+          )}
+          {trendVisible && curveFit.fallbackReason != null && data.bins.length > 0 && (
             <>
               {view === "scatter" && (
                 <path d={trendPath.band} className="scatterTrendBand" style={{ fill: theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light }} />
@@ -1853,10 +1902,19 @@ export default function ScatterChart({
           />
           <LegendCard
             icon={<IconTrendLine color={theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light} />}
-            label="구간 평균 불량률"
+            label={curveFit.fallbackReason == null ? "불량률 곡선" : "구간 평균 불량률"}
+            // TD-3: 폴백이 아니면 R²·채택 차수를, 폴백이면 사유를 메타
+            // 텍스트로 보여준다 (2자리 소수, "1차"/"2차").
+            desc={
+              curveFit.fallbackReason ??
+              `R²=${curveFit.r2.toFixed(2)} (${curveFit.degree === 2 ? "2차" : "1차"})`
+            }
             onClick={() => setTrendVisible((v) => !v)}
             active={trendVisible}
-            title="구간 평균 불량률"
+            title={
+              curveFit.fallbackReason ??
+              `R²=${curveFit.r2.toFixed(2)} (${curveFit.degree === 2 ? "2차" : "1차"})`
+            }
           />
         </div>
       </div>
@@ -1888,9 +1946,18 @@ export default function ScatterChart({
       {trendHover && !pointHover && (
         <div className="heatmapTooltip" style={{ left: MARGIN.left + trendHover.screenX + 14, top: MARGIN.top + trendHover.screenY + 14 }}>
           <strong>{factorAxisLabel(data.axis.x_label)} = {trendHover.dataX.toFixed(1)}</strong>
-          <div className="heatmapTooltipRow"><span>구간 평균 불량률</span><b>{trendHover.dataY.toFixed(2)}%</b></div>
-          <div className="heatmapTooltipRow"><span>95% 신뢰구간</span><b>{trendHover.ciLo.toFixed(2)} ~ {trendHover.ciHi.toFixed(2)}</b></div>
-          <div className="heatmapTooltipRow"><span>이 구간 wafer 수</span><b>{trendHover.n.toLocaleString()}</b></div>
+          <div className="heatmapTooltipRow">
+            <span>{curveFit.fallbackReason == null ? "불량률 곡선" : "구간 평균 불량률"}</span>
+            <b>{trendHover.dataY.toFixed(2)}%</b>
+          </div>
+          {/* TD-3: 폴백(구간 평균) 모드에만 신뢰구간·구간 wafer 수 개념이
+              있다 -- 다항 곡선은 구간이 아니라 연속 함수라 두 행을 생략한다. */}
+          {trendHover.ciLo != null && trendHover.ciHi != null && (
+            <div className="heatmapTooltipRow"><span>95% 신뢰구간</span><b>{trendHover.ciLo.toFixed(2)} ~ {trendHover.ciHi.toFixed(2)}</b></div>
+          )}
+          {trendHover.n != null && (
+            <div className="heatmapTooltipRow"><span>이 구간 wafer 수</span><b>{trendHover.n.toLocaleString()}</b></div>
+          )}
         </div>
       )}
 

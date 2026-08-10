@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
+import { evaluateCurve, fitDefectRateCurve, type CurveFitResult } from "@/lib/defectRateCurve";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { RelationShape, ScreeningScatterResponse } from "@/types/data";
@@ -26,6 +27,23 @@ const POINT_COLOR = { light: "#0E306D", dark: "#7BA3E8" };
 
 function formatNum(v: number): string {
   return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
+}
+
+/** Samples the fitted curve across its observed x-domain into an SVG
+ * polyline path -- shared math (lib/defectRateCurve), per-panel pixel
+ * scale (this file). Each mini chart already fetches its own target's
+ * points independently, so this is naturally "its own" fit already. */
+function buildCurvePathD(fit: CurveFitResult, xScale: (v: number) => number, yScale: (v: number) => number): string {
+  const [lo, hi] = fit.domain;
+  if (!(hi > lo)) return "";
+  const STEPS = 48;
+  const parts: string[] = [];
+  for (let i = 0; i <= STEPS; i += 1) {
+    const x = lo + ((hi - lo) * i) / STEPS;
+    const y = evaluateCurve(fit, x);
+    parts.push(`${i === 0 ? "M" : "L"}${xScale(x)},${yScale(y)}`);
+  }
+  return parts.join(" ");
 }
 
 // A target that "dominates" needs its |rho| to clear the runner-up by this
@@ -270,7 +288,7 @@ export default function CompareAcrossTargetsModal({
         <div className="compareModalFooter">
           <div className="compareModalLegend">
             {optimalCenter != null && <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light }} /> 최적 중심 ({formatNum(optimalCenter)})</span>}
-            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 구간 평균 불량률</span>
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 불량률 곡선</span>
           </div>
         </div>
       </div>
@@ -324,6 +342,9 @@ function MiniChart({
   const yTicks = useMemo(() => [yDomain[0], yDomain[1]], [yDomain]);
 
   const optimalCenter = data?.optimal_center ?? null;
+  // TD-3: 이 패널의 데이터(해당 타깃만)로 자체 재적합한다 -- 5개 패널이
+  // 서로 다른 타깃의 점을 쓰므로 이미 "그룹별 재적합"에 해당한다.
+  const curveFit = useMemo(() => (data ? fitDefectRateCurve(data.points) : null), [data]);
 
   function handleMouseMove(event: React.MouseEvent<SVGRectElement>) {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -388,14 +409,23 @@ function MiniChart({
               <line x1={xScale(optimalCenter)} x2={xScale(optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
             )}
 
-            {data.bins.length > 0 && (
+            {/* TD-3: 이 타깃 데이터로 재적합한 불량률 곡선 -- 폴백이면
+                기존 구간 평균 꺾은선을 그대로 그린다(계산 불변). */}
+            {curveFit && curveFit.fallbackReason == null && (
+              <path d={buildCurvePathD(curveFit, xScale, yScale)} fill="none" stroke={inferredColor} strokeWidth={2} opacity={trendOpacity}>
+                <title>{`R²=${curveFit.r2.toFixed(2)} (${curveFit.degree === 2 ? "2차" : "1차"})`}</title>
+              </path>
+            )}
+            {(!curveFit || curveFit.fallbackReason != null) && data.bins.length > 0 && (
               <path
                 d={data.bins.map((b, i) => `${i === 0 ? "M" : "L"}${xScale(b.x_mean)},${yScale(b.y_mean)}`).join(" ")}
                 fill="none"
                 stroke={inferredColor}
                 strokeWidth={2}
                 opacity={trendOpacity}
-              />
+              >
+                {curveFit?.fallbackReason && <title>{curveFit.fallbackReason}</title>}
+              </path>
             )}
 
             {hover && (

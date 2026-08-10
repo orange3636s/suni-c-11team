@@ -956,7 +956,7 @@ class RuntimeStore:
         return status["snapshot"] is not None and not status["stale_version"]
 
     # -- AG: 업로드로 활성화된 "수동 평가 데이터셋" ------------------------
-    # 원인 분석·알림 기록에서 새 파일을 올리면 이 값이 채워지고,
+    # 원인 분석·수율 예측에서 새 파일을 올리면 이 값이 채워지고,
     # `src.automation.refresh._resolve_source`가 SQL/폴백보다 먼저
     # 이 값을 본다 -- 주기 잡이 도는 동안에도 사용자가 올린 파일이
     # 그대로 유지된다("자동 갱신으로 복귀"를 누르기 전까지).
@@ -1041,7 +1041,7 @@ class RuntimeStore:
         channels: dict[str, Any],
         source: str | None = None,
     ) -> None:
-        """차단된 경우에도 기록한다 -- "왜 안 보냈는지"가 알림 기록
+        """차단된 경우에도 기록한다 -- "왜 안 보냈는지"가 수율 예측
         화면에서 보여야 한다. `source`(EB그룹)는 이 사이클이 어느 데이터
         출처(수동 업로드/폴백 데모/None=SQL 자동 갱신)에서 나온 것인지
         -- 나중에 "이 알람이 왜 왔지"를 추적할 수 있게 남긴다."""

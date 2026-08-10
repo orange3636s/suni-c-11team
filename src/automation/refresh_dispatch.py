@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # 이 개수를 넘는 신규 알람은 "대량 발생"으로 기록한다 -- 실제 메시지는
 # senders.py가 이미 상위 5건 + "외 N건"으로 요약하므로(모든 발송 경로가
 # 공유하는 형식) 별도 포맷을 새로 만들지 않는다. 여기서는 이 사이클이
-# 대량이었다는 사실 자체를 기록해 알림 기록 화면에서 구분할 수 있게 한다.
+# 대량이었다는 사실 자체를 기록해 수율 예측 화면에서 구분할 수 있게 한다.
 NEW_ALARM_SUMMARY_THRESHOLD = 10
 HOURLY_SEND_BUDGET = 6
 _BUDGET_META_ALERT_STATE_KEY = "automation:hourly_budget_meta_alert_hour"

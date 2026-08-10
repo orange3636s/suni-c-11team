@@ -119,7 +119,7 @@ def validate_dataset(
         return DatasetValidation(blocking_errors=blocking_errors, schema=schema)
 
     # AG-5: 타깃(Y) 열이 없어도 차단하지 않는다 -- 업로드 연동(원인
-    # 분석·알림 기록에서 새 파일을 올리는 것)은 대부분 "평가 데이터셋"
+    # 분석·수율 예측에서 새 파일을 올리는 것)은 대부분 "평가 데이터셋"
     # 용도라 Y가 없는 게 정상이다. 학습 전용 업로드(`/api/train/jobs`)는
     # 이 함수를 쓰지 않고 별도 검증(src/data_validation.py)을 거치므로
     # 여기서 풀어도 학습 경로에는 영향이 없다. 대신 경고로 남겨 "학습에는

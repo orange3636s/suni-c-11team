@@ -174,7 +174,7 @@ def disconnect_channel(channel: str) -> dict[str, Any]:
 
 
 def _target_sensitivity_from_payload(payload: dict[str, Any] | None) -> tuple[float, float]:
-    """A-3: 알림 기록 탭(알람 삼각형과 같은 화면)에 저장된 목표 수율·
+    """A-3: 수율 예측 탭(알람 삼각형과 같은 화면)에 저장된 목표 수율·
     민감도를 읽어온다 -- 발송이 이 값을 무시하고 항상 기본값(88.0/0.2)을
     쓰면 알림 이력·원인 분석·발송 세 곳의 판정 기준이 어긋난다. 저장된
     적이 없으면(키 없음) 기존 기본값을 그대로 쓴다.

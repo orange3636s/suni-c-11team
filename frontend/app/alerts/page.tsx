@@ -12,7 +12,7 @@ import {
 } from "@/components/DataTablePanel";
 import DashboardShell from "@/components/DashboardShell";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
-import { LastRunNote } from "@/components/LastRunNote";
+import { LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { getAlertsRanking } from "@/lib/api";
 import type { AlertCandidate, AlertCellColor, AlertRankingResponse } from "@/types/data";
@@ -76,14 +76,14 @@ function downloadCsv(data: AlertRankingResponse) {
 
 export default function AlertsPage() {
   return (
-    <DashboardShell activeItem="알림 기록">
+    <DashboardShell activeItem="수율 예측">
       <AlertsContent />
     </DashboardShell>
   );
 }
 
 function AlertsContent() {
-  const { snapshot, alarms } = useAnalysisState();
+  const { snapshot, alarms, training } = useAnalysisState();
   const { setAnalysisPanelOpen } = usePanelState();
   const [topN, setTopN] = useState(DEFAULT_TOP_N);
   const [data, setData] = useState<AlertRankingResponse | null>(null);
@@ -130,11 +130,15 @@ function AlertsContent() {
   return (
     <div className="rcPage">
       <div className="pageHeading">
-        <h1>알림 기록</h1>
+        <h1>수율 예측</h1>
         <p className="sectionCaption">
           수율(y) 낮은 순입니다. 신뢰도는 실측 모드는 1.0, 예측 모드는 핵심 인자의 파레토 기여율만큼 인정해 합산한 값입니다.
         </p>
         {data && <LastRunNote createdAt={snapshot?.created_at} />}
+        <TrainingAnalysisDataNote
+          trainFilename={training?.performance?.source_filename ?? null}
+          evalFilename={snapshot?.source?.eval_dataset_filename ?? null}
+        />
         <FallbackModeBadge />
       </div>
 

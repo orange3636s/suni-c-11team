@@ -8,7 +8,7 @@ import DashboardShell from "@/components/DashboardShell";
 import EvidenceBand from "@/components/EvidenceBand";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
 import FmeaTable from "@/components/FmeaTable";
-import { DatasetMismatchWarning, LastRunNote } from "@/components/LastRunNote";
+import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
 import MeasurementExpansionCard from "@/components/MeasurementExpansionCard";
 import RecommendedActions from "@/components/RecommendedActions";
 import { classifyMargin } from "@/lib/alertsClassify";
@@ -53,7 +53,12 @@ export default function MonitoringPage() {
   // 일어났으면) 재조회하지 않고 캐시를 그대로 쓴다. 캐시는
   // AnalysisStateProvider에 있어 탭을 옮겼다 돌아와도(페이지 언마운트)
   // 살아남는다 -- 하드 새로고침(조건 ③)만 이 컨텍스트 자체를 초기화한다.
-  const { hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome, refreshRunning } = useAnalysisState();
+  const {
+    hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome, refreshRunning,
+    // TD-2: 컨텍스트의 자동 갱신 스냅샷 -- 이 화면에는 이미 같은 이름의
+    // 지역 useState(모니터링 요약 스냅샷)가 있어 별칭으로 받는다.
+    snapshot: refreshSnapshot,
+  } = useAnalysisState();
   // AF그룹: 모니터링은 읽기 전용이 원칙이므로 이 버튼은 자동 갱신을
   // 기다리지 않을 때의 보조 수단이다 -- 채워진 primary가 아니라 테두리
   // 버튼으로 둔다. 클릭은 주기 잡과 같은 파이프라인(POST /api/state/refresh
@@ -171,6 +176,10 @@ export default function MonitoringPage() {
           {snapshot?.createdAt && (
             <p className="sectionCaption">
               <LastRunNote createdAt={snapshot.createdAt} /> · {snapshot.dataset}
+              <TrainingAnalysisDataNote
+                trainFilename={training?.performance?.source_filename ?? null}
+                evalFilename={refreshSnapshot?.source?.eval_dataset_filename ?? null}
+              />
               <FallbackModeBadge />
             </p>
           )}
@@ -269,7 +278,7 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
   const gapLo = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predHi : null;
   const gapHi = queue.yieldSummary && targetYield != null ? targetYield - queue.yieldSummary.predLo : null;
 
-  // E-4: SUMMARY가 쓰는 alarmsRecord(알림 기록에서 저장한 판정 결과)와
+  // E-4: SUMMARY가 쓰는 alarmsRecord(수율 예측에서 저장한 판정 결과)와
   // 현재 조회 중인 snapshot.dataset이 다르면, 서로 다른 데이터셋의
   // 숫자를 섞어 보여주는 것이다 -- 다른 화면들처럼 경고를 띄운다.
   const datasetMismatch =
@@ -291,12 +300,12 @@ function SummaryBlock({ snapshot, queue }: { snapshot: MonitoringSnapshot; queue
         }}
         actions={[
           { label: "원인 분석 다시 실행", href: "/root-cause" },
-          { label: "알림 기록에서 변경", href: "/alerts" },
+          { label: "수율 예측에서 변경", href: "/alerts" },
         ]}
       />
 
       {!queue.yieldSummary || targetYield == null ? (
-        <p className="sectionCaption">예측 없음 — 알림 기록 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>
+        <p className="sectionCaption">예측 없음 — 수율 예측 탭에서 목표 수율을 설정하면 예상 구간이 표시됩니다.</p>
       ) : (
         <div className="yieldGapSection">
           <div className="yieldGapHeaderRow">

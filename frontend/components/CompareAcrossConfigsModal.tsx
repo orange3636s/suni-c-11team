@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
 import { getScreeningScatter } from "@/lib/api";
 import { effectSizeTierFromRho, TIER_TOOLTIP } from "@/lib/confidenceTier";
+import { evaluateCurve, fitDefectRateCurve, type CurveFitResult } from "@/lib/defectRateCurve";
 import { parseConfig, type ConfigParts } from "@/lib/constants";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -180,6 +181,22 @@ function computeGroupWindow(points: { x: number; y: number }[]): {
   return { bins, optimalCenter: bins[minIdx].x_mean, rangeLo: bins[lo].x_lo, rangeHi: bins[hi].x_hi };
 }
 
+/** Samples the fitted curve across its observed x-domain and turns it into
+ * an SVG polyline path in this panel's own pixel space -- 48 steps is
+ * plenty smooth at this panel size (320x260, spec: "충분히 매끄럽게"). */
+function buildCurvePathD(fit: CurveFitResult, xScale: (v: number) => number, yScale: (v: number) => number): string {
+  const [lo, hi] = fit.domain;
+  if (!(hi > lo)) return "";
+  const STEPS = 48;
+  const parts: string[] = [];
+  for (let i = 0; i <= STEPS; i += 1) {
+    const x = lo + ((hi - lo) * i) / STEPS;
+    const y = evaluateCurve(fit, x);
+    parts.push(`${i === 0 ? "M" : "L"}${xScale(x)},${yScale(y)}`);
+  }
+  return parts.join(" ");
+}
+
 type GroupStat = {
   key: string;
   points: ScatterPoint[];
@@ -190,6 +207,10 @@ type GroupStat = {
   rangeLo: number | null;
   rangeHi: number | null;
   insufficientN: boolean;
+  // TD-3: 이 그룹만의 점으로 재적합한 곡선 -- 전체(비층화) 곡선을
+  // 복사하지 않는다(지시서: "Trellis는 그룹별로 재적합하라 -- 전체
+  // 곡선을 복사하면 비교가 무의미하다").
+  curveFit: CurveFitResult | null;
 };
 
 function buildGroupStat(key: string, points: ScatterPoint[]): GroupStat {
@@ -197,10 +218,11 @@ function buildGroupStat(key: string, points: ScatterPoint[]): GroupStat {
   const rho = spearmanRho(points);
   const insufficientN = n < MIN_GROUP_N;
   if (insufficientN) {
-    return { key, points, n, rho, bins: [], optimalCenter: null, rangeLo: null, rangeHi: null, insufficientN };
+    return { key, points, n, rho, bins: [], optimalCenter: null, rangeLo: null, rangeHi: null, insufficientN, curveFit: null };
   }
   const window = computeGroupWindow(points);
-  return { key, points, n, rho, ...window, insufficientN };
+  const curveFit = fitDefectRateCurve(points.map((p) => ({ x: p.x, y: p.y })));
+  return { key, points, n, rho, ...window, insufficientN, curveFit };
 }
 
 export default function CompareAcrossConfigsModal({
@@ -423,7 +445,7 @@ export default function CompareAcrossConfigsModal({
           <div className="compareModalLegend">
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? GRAY.dark : GRAY.light }} /> 전체 최적 중심 (층화 전)</span>
             <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? TEXT_COLOR.dark : TEXT_COLOR.light }} /> 그룹별 최적 중심</span>
-            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 구간 평균 불량률</span>
+            <span><i className="compareLegendSwatch" style={{ background: theme === "dark" ? INFERRED_COLOR.dark : INFERRED_COLOR.light }} /> 불량률 곡선</span>
           </div>
         </div>
       </div>
@@ -544,14 +566,23 @@ function TrellisPanel({
             <line x1={xScale(group.optimalCenter)} x2={xScale(group.optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.4} strokeDasharray="4 3" />
           )}
 
-          {!group.insufficientN && group.bins.length > 0 && (
+          {/* TD-3: 그룹별로 재적합한 곡선(curveFit) -- 폴백(표본 부족 등)
+              이면 기존 12분위 구간 평균 꺾은선을 그대로 그린다. */}
+          {!group.insufficientN && group.curveFit && group.curveFit.fallbackReason == null && (
+            <path d={buildCurvePathD(group.curveFit, xScale, yScale)} fill="none" stroke={inferredColor} strokeWidth={1.8} opacity={0.9}>
+              <title>{`R²=${group.curveFit.r2.toFixed(2)} (${group.curveFit.degree === 2 ? "2차" : "1차"})`}</title>
+            </path>
+          )}
+          {!group.insufficientN && (!group.curveFit || group.curveFit.fallbackReason != null) && group.bins.length > 0 && (
             <path
               d={group.bins.map((b, i) => `${i === 0 ? "M" : "L"}${xScale(b.x_mean)},${yScale(b.y_mean)}`).join(" ")}
               fill="none"
               stroke={inferredColor}
               strokeWidth={1.8}
               opacity={0.9}
-            />
+            >
+              {group.curveFit?.fallbackReason && <title>{group.curveFit.fallbackReason}</title>}
+            </path>
           )}
         </g>
       </svg>

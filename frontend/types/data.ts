@@ -573,17 +573,22 @@ export type FmeaTablePayload = {
   target_provenance: TargetProvenance | null;
 };
 
-export type HeatmapMetric = "spearman" | "eps2";
 export type HeatmapKind = "numeric" | "categorical";
-export type ConfigHeatmapLevel = "model" | "eq" | "chamber";
 
 export type HeatmapResponse = {
   dataset_id: string;
-  metric: HeatmapMetric;
+  /** 항상 "eps2" -- TC-4: 더 이상 spearman/eps2 토글이 없다. 하위 호환을
+   * 위해 필드만 남긴다. */
+  metric: "eps2";
   kind: HeatmapKind;
   features: string[];
   targets: string[];
+  /** 셀 농도/표시 숫자 -- 항상 ε²(설명력, 부호 없음). U자 관계도 여기서
+   * 진하게 나온다. */
   values: Array<Array<number | null>>;
+  /** 셀 색상(빨강/파랑) 방향에만 쓰는 부호 있는 스피어만 상관계수 --
+   * categorical 보기는 방향이 정의되지 않아 전부 null. */
+  rho: Array<Array<number | null>>;
   n: number[][];
   q: Array<Array<number | null>>;
   significant: boolean[][];
@@ -737,7 +742,7 @@ export type LatestStateResponse = {
 // -- J-3/J-4: 자동 갱신 파이프라인 스냅샷 --------------------------------
 
 export type RefreshSnapshotSource = {
-  // AG-3: "manual"은 원인 분석·알림 기록에서 업로드해 활성화한 평가
+  // AG-3: "manual"은 원인 분석·수율 예측에서 업로드해 활성화한 평가
   // 데이터셋 -- "자동 갱신으로 복귀"를 누르기 전까지 주기 잡도 이 값을
   // 그대로 쓴다.
   mode: "sql" | "fallback" | "manual";

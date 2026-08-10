@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 // HP-HMI 디자인의 시그니처 컴포넌트 -- 모델이 낸 모든 수치 아래에 같은
 // 형태의 구간 트랙을 깔아 "점이 아니라 범위"임을 화면 문법으로 반복한다
 // (지시서 §E, 보정 지시서 §I-1). 원래 모니터링 SUMMARY 전용
-// `YieldGapBar`였던 것을 알림 기록 알람 목록에서도 그대로 재사용하기
+// `YieldGapBar`였던 것을 수율 예측 알람 목록에서도 그대로 재사용하기
 // 위해 스케일(scaleMin/scaleMax)과 목표선(target) 유무를 props로 뺐다 --
 // 계산 로직 자체는 그대로다.
 //

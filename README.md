@@ -78,7 +78,7 @@ train.CSV 기준 타깃별 1위 인자:
 
 ### 3. SPC 관리한계 (인자별 이탈 판정)
 
-인자별로 **X 자신의 산포**에서 관리한계를 산출합니다(train.CSV 기준). Y를 참조하지 않습니다. 이 관리한계는 산점도 참조선, JSON 보고서/SUNI 챗봇의 `control_limits`·`alarms`(개별 인자가 정상 범위를 벗어난 wafer 목록)에 쓰입니다 — 아래 "5. 웨이퍼 수율 예측 알람"이 쓰는 알림 기록 탭의 판정 기준과는 다른, 별개의 파이프라인입니다.
+인자별로 **X 자신의 산포**에서 관리한계를 산출합니다(train.CSV 기준). Y를 참조하지 않습니다. 이 관리한계는 산점도 참조선, JSON 보고서/SUNI 챗봇의 `control_limits`·`alarms`(개별 인자가 정상 범위를 벗어난 wafer 목록)에 쓰입니다 — 아래 "5. 웨이퍼 수율 예측 알람"이 쓰는 수율 예측 탭의 판정 기준과는 다른, 별개의 파이프라인입니다.
 
 ```
 UCL(LCL) = Q3(Q1) ± 1.5 × IQR   ← 알람 기준(IQR×1.5)
@@ -117,7 +117,7 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 ### 5. 웨이퍼 수율 예측 알람 (GBDT + conformal)
 
-위 1~4는 인자 단위 통계 분석입니다. 이와 별개로 `GET /api/alarms`·`GET /api/alarms/predictions`(알림 기록 탭)가 쓰는 독립된 파이프라인이 있습니다(`src/analysis/alarm_gbdt.py`) — "이 인자 값이 평소와 다른가"(SPC)가 아니라 **"이 wafer의 최종 수율(Y)이 목표에 미달할 것 같은가"를 직접 예측**합니다.
+위 1~4는 인자 단위 통계 분석입니다. 이와 별개로 `GET /api/alarms`·`GET /api/alarms/predictions`(수율 예측 탭)가 쓰는 독립된 파이프라인이 있습니다(`src/analysis/alarm_gbdt.py`) — "이 인자 값이 평소와 다른가"(SPC)가 아니라 **"이 wafer의 최종 수율(Y)이 목표에 미달할 것 같은가"를 직접 예측**합니다.
 
 - **모델**: 선정 인자가 아니라 전체 R+D 인자(88개)를 특징으로 쓰는 `HistGradientBoostingRegressor` 부트스트랩 앙상블(30회). 점추정(`pred_mean`)은 이 앙상블 평균만 씁니다.
 - **예측 구간(conformal)**: train을 랏 단위 `GroupKFold(5)`로 나눈 out-of-fold 잔차의 90분위를 여유(`q`)로 써서 `pred_mean ± q`를 냅니다. 웨이퍼 한 장 단위 여유는 test.CSV 기준 약 **±5.6%p**(구간 폭 약 11%p)입니다.
@@ -130,14 +130,14 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 4개 탭. 좌측 접이식 사이드바 + 우측 SUNI AI 어시스턴트 패널. 첫 접속 시 두 패널 모두 펼쳐진 상태로 시작하며, 접힘/펼침 상태는 쿠키에 저장되어 다음 방문에도 유지됩니다. 모델 학습은 더 이상 별도 탭이 아니라 사이드바 하단(`모델 학습·자동화 / 알림 설정 / 화면 모드` 순) 버튼으로 여는 팝업입니다 — 최근 학습 정보 3줄, SQL 호스트·포트, Refresh 주기, 파일 첨부·수동 학습 실행을 담습니다. 재학습(수동·자동 공통)은 기존 모델보다 홀드아웃 R²가 `PROMOTION_TOLERANCE`(0.005)보다 크게 나쁘면 승격되지 않는 게이트를 거치며, 게이트 미달로 교체되지 않았을 때는 그 사실이 팝업에 표시됩니다.
 
-**자동화.** `AUTO_INGEST_DIR`을 설정하면 그 디렉터리에 놓인 새 CSV를 주기적으로(Refresh 주기) 폴링해 Y 컬럼 유무로 갈라 처리합니다 — Y가 있으면 학습, 없으면 평가 데이터셋으로 등록해 원인 분석·알림 기록·모니터링 스냅샷을 갱신합니다(`src/automation/ingest.py`). 이와 별개로 리프레시 파이프라인(`src/automation/refresh.py`)이 같은 주기로 데이터 취득 → (신규 데이터일 때만) 재학습+승격 게이트 → 예측 → 원인분석 → 알람 판정 → 모니터링 스냅샷 저장을 한 번에 수행합니다. **SQL 연동은 구현되어 있습니다** — 모델 학습 팝업에 저장한 접속 정보(host/port/db/user)와 서버 환경변수(`AUTO_INGEST_DB_DRIVER`, `DB_PASSWORD`, `AUTO_INGEST_QUERY`, 선택적으로 `AUTO_INGEST_CURSOR_COLUMN`)가 모두 갖춰지고 실제 접속·조회에 성공해야 SQL 모드로 동작하며, 하나라도 빠지거나 접속·조회가 실패하면(10초 타임아웃 포함) 예외 없이 곧장 내장 폴백(train.CSV/test.CSV)으로 전환합니다(`src/automation/sql_source.py`). DB 엔진은 코드에 고정하지 않고 SQLAlchemy dialect+driver 문자열을 그대로 씁니다. 알림 발송은 매일 09:00·13:00(KST, APScheduler `CronTrigger`)과 "분석 실행 직후" 중 저장된 발송 시점에 해당할 때만 나가며, 알람 신뢰도가 "낮음"이면 통째로 스킵하고, 자동 갱신 경로는 추가로 시간당 발송 예산(6건)과 이전 스냅샷 대비 신규 알람만 보내는 필터를 거칩니다. 수동 업로드 모드는 연속 업로드가 연속 발송이 되지 않도록 10분 최소 간격을 둡니다.
+**자동화.** `AUTO_INGEST_DIR`을 설정하면 그 디렉터리에 놓인 새 CSV를 주기적으로(Refresh 주기) 폴링해 Y 컬럼 유무로 갈라 처리합니다 — Y가 있으면 학습, 없으면 평가 데이터셋으로 등록해 원인 분석·수율 예측·모니터링 스냅샷을 갱신합니다(`src/automation/ingest.py`). 이와 별개로 리프레시 파이프라인(`src/automation/refresh.py`)이 같은 주기로 데이터 취득 → (신규 데이터일 때만) 재학습+승격 게이트 → 예측 → 원인분석 → 알람 판정 → 모니터링 스냅샷 저장을 한 번에 수행합니다. **SQL 연동은 구현되어 있습니다** — 모델 학습 팝업에 저장한 접속 정보(host/port/db/user)와 서버 환경변수(`AUTO_INGEST_DB_DRIVER`, `DB_PASSWORD`, `AUTO_INGEST_QUERY`, 선택적으로 `AUTO_INGEST_CURSOR_COLUMN`)가 모두 갖춰지고 실제 접속·조회에 성공해야 SQL 모드로 동작하며, 하나라도 빠지거나 접속·조회가 실패하면(10초 타임아웃 포함) 예외 없이 곧장 내장 폴백(train.CSV/test.CSV)으로 전환합니다(`src/automation/sql_source.py`). DB 엔진은 코드에 고정하지 않고 SQLAlchemy dialect+driver 문자열을 그대로 씁니다. 알림 발송은 매일 09:00·13:00(KST, APScheduler `CronTrigger`)과 "분석 실행 직후" 중 저장된 발송 시점에 해당할 때만 나가며, 알람 신뢰도가 "낮음"이면 통째로 스킵하고, 자동 갱신 경로는 추가로 시간당 발송 예산(6건)과 이전 스냅샷 대비 신규 알람만 보내는 필터를 거칩니다. 수동 업로드 모드는 연속 업로드가 연속 발송이 되지 않도록 10분 최소 간격을 둡니다.
 
 - **모니터링**(`/monitoring`) — 가장 최근 원인 분석 결과 요약 홈. 마지막 실행 시각, 예상 수율 갭(고정 스케일 막대, 웨이퍼가 아니라 집계 conformal 여유 기준), 유의 인자 표, 실행 과제/실험 확인 대상/확인 필요 대상 3분류 액션 목록(빈 레일에는 이유와 근거 숫자를 함께 표시), 계측 확대 제안, Config 트리맵. 화면 자체는 아무 계산도 새로 실행하지 않고 이미 저장된 결과만 보여주며, 원인 분석 재실행·재학습·명시적 새로고침 전까지는 탭을 오가도 재조회하지 않습니다
-- **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형 ρ/ε² · 범주형 ε², `보기` 토글로 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
-- **알림 기록**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 알림 기록 목록(세로 스크롤 영역에 전체를 렌더링 — 초기 노출 행 수만 7행이며 더 볼 방법이 없던 문제를 고쳤다, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기. 알람 신뢰도 게이트를 통과하지 못하면 심각/위험/주의 카드는 "0장"이 아니라 "게이트 미달"로 표시되고, 게이트는 통과했지만 알람이 0건이면 "왜 0건인지"(전 wafer 목표 이상 / 미분류 다수 / 민감도가 낮음) 사유를 함께 보여줍니다 — 숫자만 보고 "알람 없음 = 안전"으로 오독하지 않도록 판정 불가 상태를 명시합니다
+- **원인 분석**(`/root-cause`) — "원인 분석 실행" → 상관관계 히트맵(수치형은 R,D vs Y1~Y5 -- 셀 농도 ε²·색상 방향 ρ 부호를 항상 함께 표시, 범주형은 Config vs Y1~Y5 -- ε²만, `보기` 토글로 수치형/범주형 전환) + 타깃(Y1~Y5)별 Pareto 상위 10개 + 산점도/Box Plot. 각 인자 카드의 `보기` 토글로 Pareto·Scatter Plot·Box Plot을 전환하고(Pareto가 별도 섹션이 아니라 카드 안에 통합), `비교` 토글로 "Y1~Y5 비교"·"장비별 Trellis"(Model/EQ/Chamber 분할) 모달을 엽니다. 산점도는 드래그로 사각 영역을 선택하면 평균·중앙값·최솟값·최댓값 통계 박스가 뜨고, 카드 헤더의 별(☆) 버튼으로 즐겨찾기에 저장할 수 있습니다
+- **수율 예측**(`/alerts`) — 판정 대상(eval) 선택·목표 수율·민감도·조회가 한 카드에 통합되어 있고(정상범위 기준 데이터셋은 최근 학습 모델을 자동으로 따름), 판정 결과(심각/위험/주의/정상/판별불가 카운트) 카드, 수율 예측 목록(세로 스크롤 영역에 전체를 렌더링 — 초기 노출 행 수만 7행이며 더 볼 방법이 없던 문제를 고쳤다, `해설` 버튼으로 SUNI에게 질문), CSV 내려받기. 알람 신뢰도 게이트를 통과하지 못하면 심각/위험/주의 카드는 "0장"이 아니라 "게이트 미달"로 표시되고, 게이트는 통과했지만 알람이 0건이면 "왜 0건인지"(전 wafer 목표 이상 / 미분류 다수 / 민감도가 낮음) 사유를 함께 보여줍니다 — 숫자만 보고 "알람 없음 = 안전"으로 오독하지 않도록 판정 불가 상태를 명시합니다
 - **즐겨찾기**(`/favorites`) — 원인 분석에서 저장한 그래프를 최신순 카드 그리드로 모아 보여줍니다. 점 데이터는 저장하지 않고 저장된 조건(데이터셋·타깃·인자·뷰 종류)으로 다시 조회해 썸네일을 그립니다. 카드 클릭 시 해당 인자의 원인 분석 화면으로 이동합니다
 
-원인 분석·모니터링·알림 기록 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
+원인 분석·모니터링·수율 예측 세 화면 모두 제목 아래에 같은 `LastRunNote` 컴포넌트로 마지막 실행 시각을 표시합니다(24시간이 지나면 "하루가 지났습니다"가 붙습니다).
 
 데이터셋은 각 탭의 선택 UI에서 CSV를 업로드해 추가할 수 있고(`POST /api/datasets`), 내장 2종(train/test)과 함께 목록에 표시됩니다.
 
@@ -147,11 +147,11 @@ test.CSV 기준 개선 권장 레코드는 254건이며(관리한계 이탈로 �
 
 - Upstage Solar API(OpenAI 호환 스펙)를 스트리밍(SSE)으로 호출합니다(`api/routes/chat.py`)
 - `report` 모드(예시: "분석 보고서 생성" 버튼, 메시지에 "보고서" 등 키워드 포함): 6개 섹션(요약/불량 유형별 소견/장비 구성 소견/관리 대역 제안/한계/확인 필요 사항)으로 구성된 공정 보고서를 생성합니다
-- `chat` 모드(그 외 자유 입력): 3~5문장으로 답합니다. 알람 개별 건(예: 특정 wafer의 알람)에 대한 질문에도 해당 레코드를 근거로 답하고, 알림 기록 탭의 conformal 예측 구간·판정 체계(점추정+민감도 컷, 5분류, 미분류 2사유)·대시보드 기능처럼 이번 분석 JSON에는 없는 시스템 동작 지식도 프롬프트에 실린 배경 지식으로 답합니다(`recommendations` 필드는 존재하지 않습니다 -- 권장 구간은 각 인자의 `window`에만 있습니다)
+- `chat` 모드(그 외 자유 입력): 3~5문장으로 답합니다. 알람 개별 건(예: 특정 wafer의 알람)에 대한 질문에도 해당 레코드를 근거로 답하고, 수율 예측 탭의 conformal 예측 구간·판정 체계(점추정+민감도 컷, 5분류, 미분류 2사유)·대시보드 기능처럼 이번 분석 JSON에는 없는 시스템 동작 지식도 프롬프트에 실린 배경 지식으로 답합니다(`recommendations` 필드는 존재하지 않습니다 -- 권장 구간은 각 인자의 `window`에만 있습니다)
 - 두 모드 모두 `/api/analysis/context`가 만드는 동일한 분석 결과 JSON(타깃별 1위 인자, 관리한계, 권장 구간, 챔버 교호작용, 알람 레코드, config 스크리닝, 한계)을 근거로 답하며, 시스템 프롬프트(`prompts/report_system.md`, `prompts/chat_system.md`)가 **숫자 생성 금지, 인과 표현 금지, "값을 조정하라" 같은 설정값 표현 금지**를 명시적으로 규정합니다
 - `confidence`(신뢰도)는 LLM이 아니라 코드가 판정한 값을 그대로 따르게 합니다 — 판정 근거가 부족한 인자에 LLM이 임의로 관리 대역을 만들어내지 못하게 하는 장치입니다
 - 원인 분석이 아직 실행되지 않은 상태의 질문은 LLM을 호출하지 않고 백엔드가 즉시 안내 메시지로 응답합니다
-- 화면과 챗봇의 역할 분담 원칙(I-1): **서사적 해석·배경 설명은 챗봇, 판정 기준·게이트 상태·표본 한계는 화면.** 예전 원칙("화면 내 해석 설명은 전부 챗봇으로 이관")은 챗봇이 opt-in이라는 점을 놓쳤다 — "이 삼각형은 목표 85.0 기준이고 알림 기록의 91.0과 다르다" 같은 정보를 챗봇을 열어야만 알 수 있게 하면, 챗봇을 클릭하지 않은 사용자가 잘못된 판단을 내린다. 이 원칙에 따라 다음은 화면에 유지한다(삭제 대상 아님): 알람 마커 판정 기준 표기, 신뢰도 게이트 배너, "예측 수율 절대값은 정확도가 낮아 구간으로 표시합니다" 안내, 계측률·표본 수 표기. 그 외 배경 설명·정성적 소견(계측률 한계, 인과 아님, 근거 부족 등급의 의미, 정밀도·재현율이 추정치라는 점 등)은 `LIMITATIONS`(`src/analysis/report.py`)로 옮겨 챗봇 컨텍스트에 실리며, "이 분석의 한계는?" 프리셋 질문으로 확인할 수 있습니다
+- 화면과 챗봇의 역할 분담 원칙(I-1): **서사적 해석·배경 설명은 챗봇, 판정 기준·게이트 상태·표본 한계는 화면.** 예전 원칙("화면 내 해석 설명은 전부 챗봇으로 이관")은 챗봇이 opt-in이라는 점을 놓쳤다 — "이 삼각형은 목표 85.0 기준이고 수율 예측의 91.0과 다르다" 같은 정보를 챗봇을 열어야만 알 수 있게 하면, 챗봇을 클릭하지 않은 사용자가 잘못된 판단을 내린다. 이 원칙에 따라 다음은 화면에 유지한다(삭제 대상 아님): 알람 마커 판정 기준 표기, 신뢰도 게이트 배너, "예측 수율 절대값은 정확도가 낮아 구간으로 표시합니다" 안내, 계측률·표본 수 표기. 그 외 배경 설명·정성적 소견(계측률 한계, 인과 아님, 근거 부족 등급의 의미, 정밀도·재현율이 추정치라는 점 등)은 `LIMITATIONS`(`src/analysis/report.py`)로 옮겨 챗봇 컨텍스트에 실리며, "이 분석의 한계는?" 프리셋 질문으로 확인할 수 있습니다
 - 환경변수: `UPSTAGE_API_KEY`, `UPSTAGE_BASE_URL`(기본 `https://api.upstage.ai/v1`), `UPSTAGE_MODEL`(기본 `solar-pro3`). 키는 백엔드 프로세스에만 두며 프런트 번들에는 절대 노출하지 않습니다(`NEXT_PUBLIC_` 접두사 미사용)
 - API 키가 설정되지 않은 환경에서는 `/api/chat`이 503과 안내 메시지를 반환하며 서버 자체는 정상 동작합니다
 
@@ -289,8 +289,8 @@ AUTO_INGEST_CURSOR_COLUMN=
 - CSV 검증·전처리(현재 UI에서는 호출하지 않는 독립 엔드포인트): `POST /api/validate`, `POST /api/preprocess`
 - 학습: `POST /api/train`(동기), `POST /api/train/jobs`(비동기) + `GET /api/train/jobs/{job_id}`
 - 모델: `GET /api/models`, `GET /api/models/{model_id}`, `GET /api/models/{model_id}/references`, `DELETE /api/models/{model_id}`, `GET /api/models/performance`, `GET /api/models/promotion-history`(승격 게이트 통과 여부와 무관한 학습 시도 이력), `GET /api/model/latest`
-- 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical`, `config_level: model|eq|chamber` 파라미터로 수치형/범주형 보기 전환), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
-- SPC 참조·웨이퍼 알람: `GET /api/control-ranges`(인자별 SPC 관리한계, 산점도 참조선·보고서 `control_limits`에 씀), `GET /api/alarms`(`target`·`sensitivity` 선택 파라미터 -- 원인 분석 탭의 알람 삼각형이 알림 기록 탭에서 저장한 값을 그대로 넘겨 두 화면의 판정 기준을 일치시킨다. 생략하면 기본값 85.0/0.20), `GET /api/alarms/predictions`(응답에서 `holdout`/`factor_bands`/`measurement_bias` 필드는 삭제됨 -- 렌더하는 화면이 없으면서 요청마다 GroupKFold 5회 GBDT 적합을 다시 돌려 알림 기록 탭을 열 때마다 수십 초가 걸렸다. `interval_conformal_q`(웨이퍼 단위 conformal 여유)와 별개로 `interval_conformal_q_agg`(집계 여유, 랏 블록 부트스트랩 산출)를 함께 내려준다 -- SUMMARY 등 평균을 낼 때는 반드시 이 값을 쓴다)
+- 인자 스크리닝: `GET /api/screening/pareto`, `GET /api/screening/heatmap`(`kind: numeric|categorical` 파라미터로 수치형/범주형 보기 전환 -- 수치형은 ε²(농도)·ρ(색상 방향)를 한 응답에 함께 낸다), `GET /api/screening/scatter`, `GET /api/screening/scatter/categorical`
+- SPC 참조·웨이퍼 알람: `GET /api/control-ranges`(인자별 SPC 관리한계, 산점도 참조선·보고서 `control_limits`에 씀), `GET /api/alarms`(`target`·`sensitivity` 선택 파라미터 -- 원인 분석 탭의 알람 삼각형이 수율 예측 탭에서 저장한 값을 그대로 넘겨 두 화면의 판정 기준을 일치시킨다. 생략하면 기본값 85.0/0.20), `GET /api/alarms/predictions`(응답에서 `holdout`/`factor_bands`/`measurement_bias` 필드는 삭제됨 -- 렌더하는 화면이 없으면서 요청마다 GroupKFold 5회 GBDT 적합을 다시 돌려 수율 예측 탭을 열 때마다 수십 초가 걸렸다. `interval_conformal_q`(웨이퍼 단위 conformal 여유)와 별개로 `interval_conformal_q_agg`(집계 여유, 랏 블록 부트스트랩 산출)를 함께 내려준다 -- SUMMARY 등 평균을 낼 때는 반드시 이 값을 쓴다)
 - 분석 보고서: `GET /api/analysis/report`(다운로드용 JSON, 현재 UI에는 다운로드 버튼 없음), `GET /api/analysis/context`(SUNI 챗봇 컨텍스트용), `GET /api/analysis/measurement-expansion`, `GET /api/analysis/reliability`, `GET /api/training/preprocessing-comparison`
 - SUNI 챗봇: `POST /api/chat`(SSE 스트리밍, `mode: "report" | "chat"`)
 - 탭 상태 저장(재접속 시 최근 결과 복원): `GET /api/state/latest`, `POST /api/state/training`, `POST /api/state/analysis`, `POST /api/state/alarms`

@@ -3,7 +3,6 @@ import type {
   AlertRankingResponse,
   AlertsDataResponse,
   CategoricalScatterResponse,
-  ConfigHeatmapLevel,
   ConfigTreemapResponse,
   DatasetListResponse,
   DatasetSchemaResponse,
@@ -13,7 +12,6 @@ import type {
   FavoriteRecord,
   FavoriteSnapshot,
   HeatmapKind,
-  HeatmapMetric,
   HeatmapResponse,
   LatestAlarmsPayload,
   LatestAnalysisPayload,
@@ -278,7 +276,7 @@ export function getAlarms(
 ): Promise<AlarmListResponse> {
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
   if (options?.grade) params.set("grade", options.grade);
-  // 지시서: 원인 분석 탭의 알람 삼각형이 알림 기록에서 저장한 목표
+  // 지시서: 원인 분석 탭의 알람 삼각형이 수율 예측에서 저장한 목표
   // 수율·민감도를 그대로 넘겨 두 화면의 판정 기준을 일치시킨다.
   // 생략하면(최초 실행 등 저장된 값이 없을 때) 백엔드 기본값을 쓴다.
   if (options?.target != null) params.set("target", String(options.target));
@@ -298,8 +296,8 @@ export function getAlertsData(
   return getJson(`/api/alarms/predictions?${params.toString()}`);
 }
 
-// RE-1: y 오름차순 상위 N건 -- 알림 기록 화면이 쓰는 유일한 판정
-// 엔드포인트다(위 getAlertsData/구 5분류 체계는 더 이상 알림 기록에서
+// RE-1: y 오름차순 상위 N건 -- 수율 예측 화면이 쓰는 유일한 판정
+// 엔드포인트다(위 getAlertsData/구 5분류 체계는 더 이상 수율 예측에서
 // 호출하지 않는다).
 export function getAlertsRanking(trainDataset: string, evalDataset: string, topN: number): Promise<AlertRankingResponse> {
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset, top_n: String(topN) });
@@ -320,15 +318,12 @@ export function getPromotionHistory(limit = 5): Promise<PromotionHistoryResponse
   return getJson(`/api/models/promotion-history?${new URLSearchParams({ limit: String(limit) }).toString()}`);
 }
 
-export function getScreeningHeatmap(
-  dataset: string,
-  metric: HeatmapMetric,
-  kind?: HeatmapKind,
-  configLevel?: ConfigHeatmapLevel,
-): Promise<HeatmapResponse> {
-  const params = new URLSearchParams({ dataset, metric });
+// TC-4: metric 토글이 사라졌다 -- numeric 보기는 항상 ε²(농도)+rho(방향)를
+// 함께 받는다. TC-3: categorical 보기도 계층(config_level) 선택 없이 항상
+// 원본 Config 조합 그대로다.
+export function getScreeningHeatmap(dataset: string, kind?: HeatmapKind): Promise<HeatmapResponse> {
+  const params = new URLSearchParams({ dataset });
   if (kind) params.set("kind", kind);
-  if (configLevel) params.set("config_level", configLevel);
   return getJson(`/api/screening/heatmap?${params.toString()}`);
 }
 
@@ -434,7 +429,7 @@ export function triggerRefresh(): Promise<{ triggered: boolean }> {
   return postJson("/api/state/refresh", {}, 10_000);
 }
 
-// AG-1: 원인 분석·알림 기록에서 새 파일을 업로드하면 부른다 -- 그
+// AG-1: 원인 분석·수율 예측에서 새 파일을 업로드하면 부른다 -- 그
 // 데이터셋을 활성 평가 데이터셋으로 바꾸고 스냅샷 파이프라인을 1회
 // 실행한다. 화면별 개별 재분석은 만들지 않는다.
 export function activateDataset(datasetId: string): Promise<{ activated: boolean; dataset_id: string }> {
