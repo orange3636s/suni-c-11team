@@ -90,21 +90,34 @@ def run_refresh_pipeline(*, dispatch: bool = True) -> None:
 
 
 def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
-    """SC-2단계("Config별 트리맵"): 타깃 하이드레이션 + 스키마 파싱을
-    먼저 데워둔다 -- Config별 트리맵을 포함해 원인 분석 탭의 모든
-    scatter/heatmap 카드가 공유하는 선행 조건이다. 이제는 파이프라인의
-    2단계로서 *동기적으로* 호출되어 원자성 게이트 역할도 겸한다(이 단계가
-    실패하면 스냅샷을 저장하지 않는다 -- SC-3 "넷 다 성공해야 교체").
+    """SC-2단계("Config별 트리맵"): 타깃 하이드레이션 + 스키마 파싱 +
+    상관관계 히트맵을 먼저 데워둔다 -- Config별 트리맵을 포함해 원인 분석
+    탭의 모든 scatter/heatmap 카드가 공유하는 선행 조건이다. 이제는
+    파이프라인의 2단계로서 *동기적으로* 호출되어 원자성 게이트 역할도
+    겸한다(이 단계가 실패하면 스냅샷을 저장하지 않는다 -- SC-3 "넷 다
+    성공해야 교체").
 
     Deliberately narrow: only the SHARED prerequisites (target hydration,
-    parsed schema). Individual scatter cards themselves are intentionally
-    NOT precomputed here -- "개별 산점도는 워밍업 대상에서 제외".
+    parsed schema, heatmap). Individual scatter cards themselves are
+    intentionally NOT precomputed here -- "개별 산점도는 워밍업 대상에서 제외".
+
+    E-4(perf): 히트맵(`_cached_heatmap`, ~5.7초 @ train 10k)은 예전에
+    이 워밍업 대상이 아니었다 -- 원인 분석 탭 첫 진입에서 그 5.7초를
+    그대로 물었다. `_cached_schema`를 데우는 김에 같은 자리에서 데운다.
     """
-    from api.routes.analysis import _cached_schema, _hydrated_targets_or_409
+    from api.routes.analysis import TARGET_HYDRATION_VERSION, _cached_heatmap, _cached_schema, _hydrated_targets_or_409
 
     hydrated = _hydrated_targets_or_409(eval_dataset_id)
-    dataset_version = hydrated.provenance.dataset_version
+    provenance = hydrated.provenance
+    dataset_version = provenance.dataset_version
     _cached_schema(eval_dataset_id, dataset_version)
+    _cached_heatmap(
+        eval_dataset_id,
+        dataset_version,
+        provenance.model_id or "measured-only",
+        provenance.model_version or "none",
+        TARGET_HYDRATION_VERSION,
+    )
 
 
 def _fmea_stage(eval_dataset_id: str, errors: list[str]) -> tuple[dict[str, Any] | None, str | None]:

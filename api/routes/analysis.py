@@ -669,16 +669,50 @@ def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, An
     }
 
 
+REPORT_PAYLOAD_CACHE_DATASETS = 4
+
+
+@lru_cache(maxsize=REPORT_PAYLOAD_CACHE_DATASETS)
+def _cached_report_payload(
+    dataset: str,
+    dataset_version: str,
+    eval_dataset_version: str,
+    model_version: str,
+) -> dict[str, Any]:
+    # E-3(perf): 버전 인자 셋은 캐시 키에만 쓰인다(del 아래) --
+    # `_cached_schema`의 docstring이 설명하는 것과 같은 패턴: 학습/평가
+    # 데이터셋이 재업로드되거나 챔피언 모델이 바뀌면 다른 키가 되어 자동
+    # 무효화되고, 옛 항목은 명시적 삭제 없이 maxsize LRU로 밀려난다.
+    # `/api/analysis/context`(챗봇 컨텍스트)가 메시지마다 이 함수를
+    # 거치므로, 두 번째 메시지부터는 report.py의 select_primary_factor/
+    # select_fdr_significant_factors 재계산(0.64초 x 10회 = 6.4초)이
+    # 사라진다.
+    del dataset_version, eval_dataset_version, model_version
+    return _build_report_payload_uncached(dataset)
+
+
 def _build_report_payload(dataset: str) -> dict[str, Any]:
     """The one function backing both /api/analysis/report (JSON download)
     and /api/analysis/context (SUNI chatbot context) -- same dict, so the
     chatbot never narrates a number the download button wouldn't also show.
     """
+    train_view = _hydrated_targets_or_409(dataset)
+    eval_view = _hydrated_targets_or_409(REPORT_EVAL_DATASET_ID)
+    return _cached_report_payload(
+        dataset,
+        train_view.provenance.dataset_version,
+        eval_view.provenance.dataset_version,
+        train_view.provenance.model_version or "none",
+    )
+
+
+def _build_report_payload_uncached(dataset: str) -> dict[str, Any]:
     registry = get_dataset_registry()
     train_view = _hydrated_targets_or_409(dataset)
     eval_view = _hydrated_targets_or_409(REPORT_EVAL_DATASET_ID)
     train_meta = registry.get_summary(dataset) or {}
     eval_meta = registry.get_summary(REPORT_EVAL_DATASET_ID) or {}
+    provenance = train_view.provenance
     report = build_analysis_report(
         train_view.dataframe,
         eval_view.dataframe,
@@ -688,6 +722,11 @@ def _build_report_payload(dataset: str) -> dict[str, Any]:
         eval_meta=eval_meta,
         app_version=APP_VERSION,
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+        # E-3(perf): report.py:231,244가 select_primary_factor/select_fdr_
+        # significant_factors로 직접 재랭킹하는 대신, 원인 분석 탭과 같은
+        # `_cached_ranked_rows_versioned`(analysis.py:342) 결과를 재사용하게
+        # 한다 -- analysis.py:576 `_alarm_factors`가 이미 쓰는 것과 같은 캐시.
+        ranked_rows_provider=lambda target: list(_ranked_rows_for_provenance(dataset, target, provenance)),
     )
     report.setdefault("meta", {})["target_provenance"] = {
         "train": train_view.provenance.as_dict(),

@@ -19,7 +19,7 @@ Two factor sets are deliberately different and never conflated:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -49,11 +49,20 @@ from src.analysis.screening.quantile_profile import quantile_bins
 from src.analysis.screening.schema import Schema, parse_schema
 from src.analysis.screening.selector import (
     ParetoFactor,
+    _row_to_factor,
     benjamini_hochberg,
     effective_confidence_tier,
     select_fdr_significant_factors,
     select_primary_factor,
 )
+
+# E-3(perf): `_top_factor_per_target`/`_alarm_engine_factors`가 이 시그니처의
+# 콜백을 받으면(챗봇/보고서 라우트가 넘기는 캐시된 랭킹, 아래 참고)
+# select_primary_factor/select_fdr_significant_factors의 88-인자 재계산을
+# 건너뛰고 이미 나온 순위 행을 재사용한다. 콜백이 없으면(테스트 등 이
+# 모듈을 단독으로 호출하는 경로) 기존처럼 직접 계산한다 -- 동작은 항상
+# 동일하고, 캐시는 순수 성능 최적화다.
+RankedRowsProvider = Callable[[str], list[dict[str, Any]]]
 
 REPORT_INCLUSION_P_THRESHOLD = 0.05
 BINNED_PROFILE_BINS = 12
@@ -221,27 +230,44 @@ def _eval_result(eval_df: pd.DataFrame, control_range: ControlRange, factor: Par
     }
 
 
-def _top_factor_per_target(train_df: pd.DataFrame, schema: Schema, target: str) -> ParetoFactor | None:
+def _top_factor_per_target(
+    train_df: pd.DataFrame,
+    schema: Schema,
+    target: str,
+    ranked_rows_provider: RankedRowsProvider | None = None,
+) -> ParetoFactor | None:
     """The single strongest (highest-eps2) factor for `target` across the
     full R+D+Config pool, included only if it clears the report's own raw
     p<0.05 bar. This is the report's own narrative-inclusion rule -- a
     different, deliberately non-interchangeable concept from the alarm
     engine's factor set below (see module docstring).
     """
-    factor = select_primary_factor(train_df, schema, target)
+    if ranked_rows_provider is not None:
+        rows = ranked_rows_provider(target)
+        factor = _row_to_factor(train_df, target, rows[0]) if rows else None
+    else:
+        factor = select_primary_factor(train_df, schema, target)
     if factor is None or factor.p_value >= REPORT_INCLUSION_P_THRESHOLD:
         return None
     return factor
 
 
-def _alarm_engine_factors(train_df: pd.DataFrame, schema: Schema) -> list[ParetoFactor]:
+def _alarm_engine_factors(
+    train_df: pd.DataFrame,
+    schema: Schema,
+    ranked_rows_provider: RankedRowsProvider | None = None,
+) -> list[ParetoFactor]:
     """The existing BH-FDR (q<0.05) factor set already used by
     /api/alarms and /api/alarms/predictions -- reused as-is so the report's
     alarm numbers always agree with the live alarm log.
     """
     factors: list[ParetoFactor] = []
     for target in schema.target_cols:
-        factors.extend(select_fdr_significant_factors(train_df, schema, target))
+        if ranked_rows_provider is not None:
+            rows = ranked_rows_provider(target)
+            factors.extend(_row_to_factor(train_df, target, row) for row in rows if row["significant"])
+        else:
+            factors.extend(select_fdr_significant_factors(train_df, schema, target))
     return factors
 
 
@@ -255,6 +281,14 @@ def build_analysis_report(
     eval_meta: dict[str, Any],
     app_version: str,
     generated_at: str,
+    # E-3(perf): target -> 이미 계산된 랭킹 행을 돌려주는 콜백.
+    # api/routes/analysis.py의 `_build_report_payload`가 `_cached_ranked_
+    # rows_versioned`로 채워 넘긴다 -- 원인 분석 탭이 이미 계산해 둔 것과
+    # 완전히 같은 순위(같은 파라미터)이므로, 여기서 select_primary_factor/
+    # select_fdr_significant_factors로 88개 인자를 타깃마다 다시 채점하지
+    # 않는다(0.64초 x 10회 = 6.4초/요청). 생략하면(예: 테스트가 이 함수를
+    # 단독으로 부르는 경우) 기존처럼 직접 계산한다.
+    ranked_rows_provider: RankedRowsProvider | None = None,
 ) -> dict[str, Any]:
     schema = parse_schema(train_df)
 
@@ -269,7 +303,7 @@ def build_analysis_report(
     raw_targets: list[dict[str, Any]] = []
     chamber_p_values: list[float] = []
     for target in schema.target_cols:
-        factor = _top_factor_per_target(train_df, schema, target)
+        factor = _top_factor_per_target(train_df, schema, target, ranked_rows_provider)
         if factor is None:
             raw_targets.append({"target": target, "factor": None})
             continue
@@ -374,7 +408,7 @@ def build_analysis_report(
             {"target": target, "target_stats": _target_stats(train_df, target), "factors": factor_entries}
         )
 
-    alarm_factors = _alarm_engine_factors(train_df, schema)
+    alarm_factors = _alarm_engine_factors(train_df, schema, ranked_rows_provider)
     control_ranges = [compute_control_range(train_df, factor) for factor in alarm_factors]
     alarms_by_feature = {cr.feature: evaluate_alarms(eval_df, cr) for cr in control_ranges}
     verdicts = summarize_wafer_status(eval_df, control_ranges, alarms_by_feature)
