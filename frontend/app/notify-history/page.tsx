@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import DashboardShell from "@/components/DashboardShell";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
+import { PageHeaderMeta } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { getNotifyHistory } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
@@ -54,6 +55,12 @@ export default function NotifyHistoryPage() {
             않습니다).
             <FallbackModeBadge />
           </p>
+          {/* T9-2: 이 화면의 항목들은 각자의 발송 시점 데이터셋으로 만들어졌다
+              (아래 표의 "시각" 열이 항목별 실제 발송 시각이다) -- 헤더의
+              시각·파일명은 "지금 이 화면이 조회 기준으로 삼는" 현재 분석을
+              가리킬 뿐이므로 "마지막 실행"이 아니라 "현재 분석 기준"이라고
+              부른다. */}
+          <PageHeaderMeta label="현재 분석 기준" />
         </section>
 
         {error && <p className="errorMessage">{error}</p>}

@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "upload_limits.yaml"
-DEFAULT_LIMITS = {"max_upload_size_mb": 15, "max_row_count": 50000}
+DEFAULT_LIMITS = {"max_upload_size_mb": 150, "max_row_count": 200000}
 
 
 @lru_cache(maxsize=1)

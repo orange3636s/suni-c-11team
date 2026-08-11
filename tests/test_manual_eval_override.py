@@ -101,6 +101,11 @@ def test_manual_mode_saves_snapshot_without_dispatching(monkeypatch: pytest.Monk
         "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
     })
     monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
+    # T8-1: "2/8 모델 추론" 단계가 이제 명시적으로 하이드레이션을 부른다
+    # (예전에는 _fmea_stage 안에 숨어 있었다) -- 이 테스트는 승인 모델이
+    # 없는 store를 쓰므로, 그 단계를 따로 무력화하지 않으면 실제
+    # hydrate_targets가 409를 던진다.
+    monkeypatch.setattr("api.routes.analysis._hydrated_targets_or_409", lambda dataset_id: None)
     monkeypatch.setattr(refresh, "_fmea_stage", lambda eid, e: (None, None))
     monkeypatch.setattr(refresh, "_action_priority_stage", lambda t, e: (None, None))
     monkeypatch.setattr(refresh, "_warmup_common_prerequisites", lambda eid: None)

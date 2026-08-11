@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
+import { PageHeaderMeta } from "@/components/LastRunNote";
+import SampleNotice from "@/components/SampleNotice";
 import { CONFIG_SCREENING_PASS_COUNT, CONFIG_SCREENING_TEST_COUNT } from "@/lib/fmeaFormat";
 import { getConfigTreemap, getDatasetSchema } from "@/lib/api";
 import type { ConfigTreemapResponse } from "@/types/data";
@@ -81,6 +83,9 @@ export default function ConfigTreemapPage() {
   const stepData = cache[step];
   const isLoading = loadingStep === step;
   const anySignificant = stepData ? TARGETS.some((t) => stepData[t]?.significant) : false;
+  // T2: 다섯 타깃이 같은 표본을 쓰므로(같은 dataset_version) 아무거나
+  // 하나에서 고지를 읽으면 충분하다.
+  const sampleInfo = stepData ? (TARGETS.map((t) => stepData[t]?.sample_info).find(Boolean) ?? null) : null;
 
   return (
     <DashboardShell activeItem="Config별 트리맵">
@@ -88,6 +93,8 @@ export default function ConfigTreemapPage() {
         <div className="pageHeading">
           <h1>Config별 트리맵</h1>
           <p>스텝 하나를 고르면 Model → EQ → Chamber 조합별 Y1~Y5 평균 불량률을 한 번에 봅니다.</p>
+          <PageHeaderMeta />
+          <SampleNotice sampleInfo={sampleInfo} />
         </div>
 
         <section className="resultCard">

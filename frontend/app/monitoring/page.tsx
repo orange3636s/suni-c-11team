@@ -6,7 +6,7 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import CoverageBlock from "@/components/CoverageBlock";
 import DashboardShell from "@/components/DashboardShell";
 import DataLimitationDiagnostics from "@/components/DataLimitationDiagnostics";
-import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
+import { DatasetMismatchWarning, PageHeaderMeta } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { buildMonitoringSnapshot, type MonitoringSnapshot } from "@/lib/monitoringSource";
 
@@ -17,9 +17,6 @@ export default function MonitoringPage() {
   // 살아남는다 -- 하드 새로고침(조건 ③)만 이 컨텍스트 자체를 초기화한다.
   const {
     hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome,
-    // TD-2: 컨텍스트의 자동 갱신 스냅샷 -- 상단 "분석 데이터" 파일명
-    // 표기에만 쓴다.
-    snapshot: refreshSnapshot,
   } = useAnalysisState();
   const { setAnalysisPanelOpen } = usePanelState();
   // A-9: alarms.createdAt도 캐시 키에 포함해야 한다 -- 알림 이력에서
@@ -91,15 +88,7 @@ export default function MonitoringPage() {
               [분석 시작] 하나로 일원화됐다. */}
           <h1>모니터링 홈</h1>
           <p>엔지니어가 오늘 결정할 수 있는 것만 보여줍니다 — 조치 우선순위, 조치 가능 범위, 이 화면을 얼마나 믿을 수 있는가.</p>
-          {snapshot?.createdAt && (
-            <p className="sectionCaption">
-              <LastRunNote createdAt={snapshot.createdAt} /> · {snapshot.dataset}
-              <TrainingAnalysisDataNote
-                trainFilename={training?.performance?.source_filename ?? null}
-                evalFilename={refreshSnapshot?.source?.eval_dataset_filename ?? null}
-              />
-            </p>
-          )}
+          <PageHeaderMeta />
         </div>
 
         {loading ? (

@@ -500,6 +500,18 @@ export type ParetoRankingItem = {
   cumulative_pct: number;
 };
 
+// 작업지시 T2: 20,000행을 넘는 데이터셋은 인자 순위/히트맵/트리맵 계산에
+// 로트 단위 표본을 쓴다 -- null이면 전량 기준, 아니면 화면에 "N행 중
+// M행 표본" 고지를 띄운다(숫자를 조용히 표본으로 바꾸고 말 안 하는 걸
+// 막기 위해 반드시 표시한다, SampleNotice 컴포넌트).
+export type SampleInfo = {
+  is_sampled: boolean;
+  original_rows: number;
+  sampled_rows: number;
+  lot_count: number | null;
+  seed: number;
+};
+
 export type ParetoRankingResponse = {
   dataset_id: string;
   target: string;
@@ -513,6 +525,7 @@ export type ParetoRankingResponse = {
   model_available?: boolean;
   factor_measurement_insufficient?: boolean;
   target_provenance: TargetProvenance | null;
+  sample_info?: SampleInfo | null;
 };
 
 // FMEA 분석표 (모니터링 홈, 작업 지시서 WE) -- 백엔드가 타깃별 파레토
@@ -627,6 +640,7 @@ export type HeatmapResponse = {
   scale: { min: number; max: number };
   excluded_configs: number;
   target_provenance: TargetProvenance | null;
+  sample_info?: SampleInfo | null;
 };
 
 export type TargetPerformance = {
@@ -891,6 +905,15 @@ export type AnalysisProgress = {
   index: number;
   total: number;
   analysis_id: string;
+  // 작업지시 T5/T8-3: 단계 전환마다(그리고 오래 걸리는 단계 안에서는
+  // 주기적으로) 갱신된다 -- 프런트는 이 값이 오래되면(60초) 서버 프로세스가
+  // 죽었다고 판단해 "중단되었습니다" 배너로 전환한다. 구버전 서버가 이
+  // 필드 없이 응답할 수 있어 옵셔널로 둔다.
+  heartbeat_at?: string | null;
+  // 작업지시 T7-2: 배너에 "· 100,000행 · 약 2분 예상"을 붙이는 데 쓴다.
+  // 대략적인 추정치이지 정밀한 SLA가 아니다.
+  row_count?: number | null;
+  estimated_seconds?: number | null;
 };
 
 export type SnapshotMetaResponse = {
@@ -969,5 +992,6 @@ export type ConfigTreemapResponse = {
   // 모니터링/원인분석/수율예측과 같은 값이면 같은 분석 회차다. 스냅샷이
   // 없으면 null.
   analysis_id: string | null;
+  sample_info?: SampleInfo | null;
 };
 

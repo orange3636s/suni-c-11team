@@ -321,6 +321,14 @@ def ensure_usable_champion(store: RuntimeStore) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # T5/T8-3: 방금 새로 뜬 프로세스에는 정의상 진행 중인 "분석 시작"
+    # 파이프라인이 있을 수 없다 -- 있다면 그건 죽은 이전 프로세스(OOM
+    # 강제 재시작 등)가 남긴 고아 진행 상태다. 그대로 두면 화면에 "분석
+    # 진행 중… (N/8)"이 영구히 남는다.
+    try:
+        RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).clear_orphaned_analysis_progress_on_boot()
+    except Exception:
+        logger.exception("부팅 시 고아 analysis_progress 정리 실패")
     try:
         recover_interrupted_training_jobs()
     except Exception:

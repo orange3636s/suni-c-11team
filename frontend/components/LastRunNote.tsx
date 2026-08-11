@@ -1,16 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { formatLastRun, isStaleResult } from "@/lib/timeFormat";
 
 /** "마지막 실행 2026-08-06 08:05 · 하루가 지났습니다" (spec §5-1/§5-2) --
  * never disappears on its own; a 24h-stale result still renders, just
- * with the extra note appended. */
-export function LastRunNote({ createdAt }: { createdAt: string | null | undefined }) {
+ * with the extra note appended. `label`은 기본 "마지막 실행"이지만, 알림
+ * 기록처럼 이 시각이 "지금 화면의 기준"이지 "이 항목이 실행된 시각"이
+ * 아닌 화면은 T9-2에 따라 "현재 분석 기준"으로 바꿔 부른다(개별 항목은
+ * 각자의 발송 시각을 따로 표시하므로 헤더와 혼동되지 않는다). */
+export function LastRunNote({
+  createdAt,
+  label = "마지막 실행",
+}: {
+  createdAt: string | null | undefined;
+  label?: string;
+}) {
   if (!createdAt) return null;
   return (
     <span className="lastRunNote">
-      마지막 실행 {formatLastRun(createdAt)}
+      {label} {formatLastRun(createdAt)}
       {isStaleResult(createdAt) && <span className="lastRunStale"> · 하루가 지났습니다</span>}
     </span>
   );
@@ -46,6 +56,30 @@ export function TrainingAnalysisDataNote({
         </span>
       )}
     </span>
+  );
+}
+
+/** 작업지시 T9: 여섯 화면(모니터링/원인분석/수율예측/Config별 트리맵/
+ * 알림 기록/즐겨찾기) 제목 아래에 "마지막 실행 14:10 · test · 학습 데이터
+ * train_config.csv · 분석 데이터 test_remove_y.CSV"를 동일한 구분자·순서로
+ * 보여준다. 세 화면이 이미 이 조합을 각자 미세하게 다르게 조립하고 있어
+ * (구분자 유무, 데이터셋 id 표시 여부) 하나로 합친다 -- `AnalysisStateProvider`에서
+ * 직접 읽으므로 호출부는 prop을 넘기지 않는다(새 API 호출 없음).
+ * `created_at`이 없으면(분석 미실행) 아무것도 렌더하지 않는다 -- 빈
+ * 구분자만 남는 것을 막는다. `label`(T9-2)은 알림 기록처럼 "마지막
+ * 실행"이 아니라 "현재 분석 기준"으로 불러야 하는 화면을 위한 오버라이드
+ * -- 그 화면들의 개별 항목은 각자의 실제 발송 시각을 따로 표시한다. */
+export function PageHeaderMeta({ label }: { label?: string } = {}) {
+  const { snapshot, training } = useAnalysisState();
+  if (!snapshot?.created_at) return null;
+  return (
+    <p className="sectionCaption pageHeaderMeta">
+      <LastRunNote createdAt={snapshot.created_at} label={label} /> · {snapshot.source.eval_dataset}
+      <TrainingAnalysisDataNote
+        trainFilename={training?.performance?.source_filename ?? null}
+        evalFilename={snapshot.source.eval_dataset_filename}
+      />
+    </p>
   );
 }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
 import FallbackModeBadge from "@/components/FallbackModeBadge";
+import { PageHeaderMeta } from "@/components/LastRunNote";
 import ParetoChart from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart from "@/components/ScatterChart";
@@ -25,11 +26,16 @@ function noop() {}
 
 export default function FavoritesPage() {
   const router = useRouter();
-  const { training } = useAnalysisState();
+  const { training, snapshot } = useAnalysisState();
   // DE그룹: 카드에 저장된 championVersion과 비교할 "현재" 챔피언 -- 학습
   // 기록이 아직 없으면 null이라, 저장된 값이 있어도 비교 대상이 없으므로
   // 배지를 붙이지 않는다(둘 다 모르는 상태와 "달라졌다"는 다르다).
   const currentChampionVersion = training?.performance.model_id ?? null;
+  // T9-2: 저장된 카드는 저장 시점의 데이터셋으로 만들어졌는데, 지금은
+  // 항상 "현재" datasetId로 다시 조회한다(코드리뷰 C-14 미해결 결함) --
+  // 헤더에 "현재 분석 기준" 데이터셋을 보여주면 이 불일치가 카드별로
+  // 눈에 보이게 된다.
+  const currentDatasetId = snapshot?.source.eval_dataset ?? null;
   const [items, setItems] = useState<FavoriteRecord[] | null>(null);
   const [error, setError] = useState("");
 
@@ -75,6 +81,7 @@ export default function FavoritesPage() {
           원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.
           <FallbackModeBadge />
         </p>
+        <PageHeaderMeta label="현재 분석 기준" />
       </section>
 
       {error && <p className="errorMessage">{error}</p>}
@@ -90,6 +97,7 @@ export default function FavoritesPage() {
               key={item.favorite_id}
               item={item}
               currentChampionVersion={currentChampionVersion}
+              currentDatasetId={currentDatasetId}
               onOpen={() => openInRootCause(item)}
               onDelete={() => handleDelete(item.favorite_id)}
             />
@@ -103,11 +111,13 @@ export default function FavoritesPage() {
 function FavoriteCard({
   item,
   currentChampionVersion,
+  currentDatasetId,
   onOpen,
   onDelete,
 }: {
   item: FavoriteRecord;
   currentChampionVersion: string | null;
+  currentDatasetId: string | null;
   onOpen: () => void;
   onDelete: () => void;
 }) {
@@ -118,6 +128,10 @@ function FavoriteCard({
   const isStale = Boolean(
     snapshot.championVersion && currentChampionVersion && snapshot.championVersion !== currentChampionVersion,
   );
+  // T9-2: 저장 시점 데이터셋과 현재 분석 기준 데이터셋이 다르면, 이
+  // 썸네일은 카드가 저장될 때와 다른 데이터를 다시 조회해 그리고 있다는
+  // 뜻이다(위 currentDatasetId 주석 참고).
+  const isDatasetStale = Boolean(currentDatasetId && snapshot.dataset !== currentDatasetId);
   // G-3: 카드 전체(썸네일+본문)를 하나의 키보드 조작 대상으로 합친다 --
   // 삭제 버튼과 형제로 두어야 하므로(버튼 중첩 불가) <button>이 아니라
   // div + role="button"을 쓴다. Enter/Space 둘 다 처리한다.
@@ -149,6 +163,11 @@ function FavoriteCard({
           <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
           {snapshot.interpretation && <p className="favoriteCardInterpretation">{snapshot.interpretation}</p>}
           {isStale && <span className="favoriteCardStaleBadge">이전 분석 기준</span>}
+          {isDatasetStale && (
+            <span className="favoriteCardStaleBadge" title={`저장 시점 데이터셋: ${snapshot.dataset}`}>
+              다른 데이터셋으로 저장됨
+            </span>
+          )}
         </div>
       </div>
     </article>

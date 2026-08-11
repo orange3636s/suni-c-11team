@@ -15,9 +15,33 @@ import re
 
 import pandas as pd
 
+from src.analysis.screening.schema import parse_schema
+
 ID_COLUMN = "Lot_Wafer_ID"
 LOT_COLUMN = "Lot_ID"
 WAFER_SLOT_COLUMN = "Wafer_Slot"
+
+# T3-1: Y/Y1~Y5는 float64로 유지한다 -- `Y = 100 - ΣYi` 항등식 검증(허용오차
+# 1e-6)이 float32 반올림 오차에서 깨질 수 있다. 그 외 R/D 계측값은 계측
+# 정밀도가 소수 2자리라 float32로 낮춰도 정보 손실이 없다(메모리 절반).
+_KEEP_FLOAT64_COLUMNS = frozenset({"Y", "Y1", "Y2", "Y3", "Y4", "Y5"})
+
+
+def _downcast_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """100,000행 규모에서 스크리닝/히트맵/트리맵이 물고 있는 DataFrame의
+    메모리를 줄인다 (작업지시 T3-1). R/D 계측 컬럼은 float64 -> float32,
+    Config 컬럼은 값 종류가 수십 개뿐이라 category dtype으로 -- 둘 다
+    한 번(로드 시점)만 계산해 이후 모든 소비처(스크리닝/히트맵/학습)가
+    같은 절감을 공유한다."""
+    schema = parse_schema(df)
+    for column in (*schema.r_cols, *schema.d_cols):
+        if column in _KEEP_FLOAT64_COLUMNS:
+            continue
+        if pd.api.types.is_float_dtype(df[column]):
+            df[column] = df[column].astype("float32")
+    for column in schema.config_cols:
+        df[column] = df[column].astype("category")
+    return df
 
 # Step{n}_Config and Step{n}_EQ are the same concept -- the step's
 # equipment configuration (Model/Equipment/Chamber) -- under a different
@@ -94,6 +118,7 @@ def normalize_dataset(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]
     had_lot_id = LOT_COLUMN in df.columns
     df = _normalize_config_columns(df)
     df, failed_count = _parse_lot_wafer_id(df)
+    df = _downcast_dtypes(df)
     return df, {
         "lot_id_parsed": (not had_lot_id) and LOT_COLUMN in df.columns,
         "lot_id_parse_failed_count": failed_count,

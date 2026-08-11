@@ -9,7 +9,8 @@ import ConfidenceBadge from "@/components/ConfidenceBadge";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
-import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
+import { DatasetMismatchWarning, LastRunNote, PageHeaderMeta } from "@/components/LastRunNote";
+import SampleNotice from "@/components/SampleNotice";
 import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
@@ -148,7 +149,7 @@ function RootCauseContent() {
   // GET /api/state/latest.
   const {
     analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice,
-    snapshot: automationSnapshot, training,
+    training,
   } = useAnalysisState();
   // DE그룹: 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언)을 함께
   // 담는다 -- 이후 재학습/재승격으로 model_id가 바뀌면 "이전 분석 기준"
@@ -645,17 +646,10 @@ function RootCauseContent() {
           <br />
           권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
         </p>
-        {/* 지시서 U-2: 마지막 분석 실행 시각 -- 회색 설명 바로 아래, 이력이
-            없으면(analysis가 null) LastRunNote가 스스로 아무것도 렌더하지
-            않는다. */}
-        <LastRunNote createdAt={analysis?.createdAt} />
-        {/* TD-2: "세 화면 상단" -- 페이지 제목 바로 아래 있는 이 인스턴스에만
-            붙인다(837행 부근의 실행 바 안 LastRunNote는 상단이 아니라 실행
-            버튼 옆의 보조 표시라 중복 렌더하지 않는다). */}
-        <TrainingAnalysisDataNote
-          trainFilename={training?.performance?.source_filename ?? null}
-          evalFilename={automationSnapshot?.source?.eval_dataset_filename ?? null}
-        />
+        {/* 작업지시 T9: 여섯 화면 공통 헤더 메타(마지막 실행·데이터셋·
+            학습/분석 데이터 파일명) -- 837행 부근의 실행 바 안 LastRunNote는
+            상단이 아니라 실행 버튼 옆의 보조 표시라 중복 렌더하지 않는다. */}
+        <PageHeaderMeta />
       </section>
 
       {/* SF-1: "분석 대상 [변경]" 카드와 "다시 분석" 실행 버튼, 그리고
@@ -700,6 +694,8 @@ function RootCauseContent() {
           이 분석은 실측값이 없는 항목을 모델 예측값으로 보완해 계산했습니다. 예측값 기반 관계는 실제 공정 원인과 다를 수 있으므로 공정 검증과 함께 사용해 주세요. 모델 {analysis.targetProvenance.model_version ?? analysis.targetProvenance.model_id ?? "정보 없음"} · 예측 {analysis.targetProvenance.predicted_target_cells.toLocaleString()}셀 · 실측/예측 혼합 행 {analysis.targetProvenance.mixed_rows.toLocaleString()}개
         </p>
       )}
+
+      {analysisVisible && <SampleNotice sampleInfo={activeParetoResponse?.sample_info} />}
 
       <HeatmapParetoSection
         datasetId={datasetId}

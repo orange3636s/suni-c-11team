@@ -28,6 +28,7 @@ api/routes/monitoring.py) 건드리지 않았다 -- 지운 것은 이 히트맵 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 
@@ -65,6 +66,9 @@ class HeatmapData:
     gate_excluded: list[list[bool]] = field(default_factory=list)
     scale: dict[str, float] = field(default_factory=dict)
     excluded_configs: int = 0
+    # 작업지시 T2: 표본으로 계산됐으면 채워진다(호출부가 build_heatmap 이후
+    # 덧붙인다 -- 이 모듈 자체는 표본 여부를 모른다).
+    sample_info: dict[str, Any] | None = None
 
 
 def _pairwise_n_rho_eps2(df: pd.DataFrame, feature: str, target: str) -> tuple[int, float | None, float | None]:

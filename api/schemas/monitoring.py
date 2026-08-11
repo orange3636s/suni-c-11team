@@ -38,3 +38,6 @@ class ConfigTreemapResponse(BaseModel):
     # analysis_id -- 모니터링/원인분석/수율예측과 같은 값이면 네 화면이
     # 같은 분석 회차를 보고 있다는 뜻이다. 스냅샷이 없으면 null.
     analysis_id: str | None = None
+    # 작업지시 T2: 20,000행 초과 데이터셋은 로트 단위 표본으로 집계했다는
+    # 고지 -- None이면 전량 기준.
+    sample_info: dict | None = None

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from api.routes.analysis import _hydrated_targets_or_409
 from api.schemas.monitoring import ConfigTreemapResponse
 from api.settings import settings
+from src.analysis.sampling import ANALYSIS_SAMPLE_MAX_ROWS, stratified_sample
 from src.analysis.screening.effect_size import eps2_categorical
 from src.analysis.screening.schema import FINAL_YIELD_COLUMN, Schema, parse_schema
 from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, DEFAULT_MIN_N_CATEGORICAL, benjamini_hochberg
@@ -25,8 +26,14 @@ def get_config_treemap(dataset: str, step: int = Query(..., ge=1), target: str =
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target은 Y1~Y5 중 하나여야 합니다.")
 
     hydrated = _hydrated_targets_or_409(dataset)
-    df = hydrated.dataframe
-    schema = parse_schema(df)
+    # T2: 그룹 평균/분위수만 필요하므로 20,000행 초과 데이터셋은 로트
+    # 단위 표본을 쓴다 -- schema 파싱은 컬럼 이름만 보므로 표본 여부와
+    # 무관하다(전체 df로 그대로 판단).
+    schema = parse_schema(hydrated.dataframe)
+    df, sample_info = stratified_sample(
+        hydrated.dataframe, max_rows=ANALYSIS_SAMPLE_MAX_ROWS, dataset_version=hydrated.provenance.dataset_version
+    )
+    sample_info_dict = sample_info.as_dict() if sample_info.is_sampled else None
     analysis_id = _current_analysis_id()
     config_column = f"Step{step}_Config"
     if config_column not in schema.config_cols:
@@ -42,6 +49,7 @@ def get_config_treemap(dataset: str, step: int = Query(..., ge=1), target: str =
             "empty_reason": f"{config_column} 컬럼이 없어 설비 구성을 집계할 수 없습니다.",
             "target_provenance": hydrated.provenance.as_dict(),
             "analysis_id": analysis_id,
+            "sample_info": sample_info_dict,
         }
 
     valid = df[[config_column, target]].dropna()
@@ -76,6 +84,7 @@ def get_config_treemap(dataset: str, step: int = Query(..., ge=1), target: str =
         "empty_reason": None if groups else f"{config_column}에 집계 가능한 값이 없습니다.",
         "target_provenance": hydrated.provenance.as_dict(),
         "analysis_id": analysis_id,
+        "sample_info": sample_info_dict,
     }
 
 

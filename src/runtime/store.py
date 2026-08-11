@@ -60,6 +60,10 @@ def _per_target_r2_regressions(
 # 수율 예측도 함께 계산해 캐시한다 -- 옛 스냅샷에는 이 키가 없다.
 REFRESH_SNAPSHOT_SCHEMA_VERSION = 6
 REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
+# 작업지시 T4: 파이프라인 재시작 시 이어하기 판정용 체크포인트 -- 화면이
+# 읽는 REFRESH_SNAPSHOT_STATE_KEY와 별개다(아래 save_refresh_checkpoint
+# 독스트링 참고).
+REFRESH_CHECKPOINT_STATE_KEY = "automation:refresh_checkpoint"
 
 # SA~SF: 4화면 원자적 분석 진행 상태 -- "분석 시작"이 도는 동안 네 화면이
 # 같은 진행 표시("분석 진행 중… (2/4) 원인 분석")를 보여줄 수 있게
@@ -997,6 +1001,34 @@ class RuntimeStore:
             }
         return {"snapshot": raw, "stale_version": False}
 
+    # -- 작업지시 T4: 파이프라인 단계별 체크포인트 -------------------------
+    #
+    # "화면이 보는" `REFRESH_SNAPSHOT_STATE_KEY`와는 별개의 키다 -- SC-3의
+    # "넷 다 성공해야 교체" 원자성 원칙은 그대로 지킨다(화면은 여전히
+    # 완주한 분석만 본다). 이 체크포인트는 오직 파이프라인 자기 자신이
+    # "재시작 후 이미 끝낸 단계를 건너뛸 수 있는지" 판단하는 데만 쓴다 --
+    # 3단계까지 갔다가 죽으면, 재시작 후 같은 입력(analysis_id)으로 다시
+    # 돌릴 때 1~3단계를 다시 계산하지 않고 체크포인트에서 그대로 가져온다.
+
+    def save_refresh_checkpoint(self, analysis_id: str, stage_key: str, fields: dict[str, Any]) -> None:
+        current = self.get_refresh_checkpoint(analysis_id)
+        completed = list((current or {}).get("completed_stages") or [])
+        if stage_key not in completed:
+            completed.append(stage_key)
+        merged = {**(current or {}), **fields, "analysis_id": analysis_id, "completed_stages": completed}
+        self.set_app_state(REFRESH_CHECKPOINT_STATE_KEY, merged)
+
+    def get_refresh_checkpoint(self, analysis_id: str) -> dict[str, Any] | None:
+        """`analysis_id`가 일치할 때만 돌려준다 -- 입력(데이터셋/모델
+        버전)이 바뀌었으면 옛 체크포인트는 무의미하다."""
+        checkpoint = self.get_app_state(REFRESH_CHECKPOINT_STATE_KEY)
+        if checkpoint is None or checkpoint.get("analysis_id") != analysis_id:
+            return None
+        return checkpoint
+
+    def clear_refresh_checkpoint(self) -> bool:
+        return self.delete_app_state(REFRESH_CHECKPOINT_STATE_KEY)
+
     def get_refresh_snapshot_meta(self) -> dict[str, Any] | None:
         """프런트의 가벼운 폴링 엔드포인트용 -- `created_at`만 반환하고
         본문 전체는 꺼내지 않는다."""
@@ -1144,12 +1176,54 @@ class RuntimeStore:
             results.append(value)
         return results
 
-    # -- SC/SF-3: "분석 시작"(4화면 원자적 파이프라인) 진행 상태 ----------
+    # -- SC/SF-3: "분석 시작"(8단계 원자적 파이프라인) 진행 상태 ----------
+    #
+    # 작업지시 T5/T8-3: 프로세스가 죽으면(OOM 등으로 컨테이너가 강제
+    # 재시작되면) 이 값을 지우는 정상 종료 경로(`clear_analysis_progress`)가
+    # 실행될 기회 자체가 없다 -- DB에는 "진행 중… (3/8)"가 그대로 남아
+    # 프런트 배너가 영원히 "진행 중"을 보여준다. `heartbeat_at`을 함께
+    # 저장해, 프런트가 이 값이 오래되면(60초, `ANALYSIS_PROGRESS_STALE_SECONDS`)
+    # 스스로 "중단됨"으로 판정할 수 있게 한다 -- 서버가 능동적으로 지우지
+    # 않아도 화면이 거짓을 보여주지 않는다. 부팅 시점(`api/main.py`
+    # lifespan)에도 무조건 청소한다 -- 새로 뜬 프로세스에 "진행 중"인
+    # 파이프라인이 있을 수는 없다.
 
-    def set_analysis_progress(self, *, stage: str, index: int, total: int, analysis_id: str) -> None:
+    def set_analysis_progress(
+        self,
+        *,
+        stage: str,
+        index: int,
+        total: int,
+        analysis_id: str,
+        row_count: int | None = None,
+        estimated_seconds: int | None = None,
+    ) -> None:
+        # T7-2: row_count/estimated_seconds는 옵셔널이다 -- 부트스트랩 등
+        # 행 수를 아직 모르는 호출부는 생략해도 된다(배너는 그 값이 없으면
+        # 행수/예상 소요 문구를 그냥 붙이지 않는다).
         self.set_app_state(
             ANALYSIS_PROGRESS_STATE_KEY,
-            {"stage": stage, "index": index, "total": total, "analysis_id": analysis_id},
+            {
+                "stage": stage,
+                "index": index,
+                "total": total,
+                "analysis_id": analysis_id,
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                "row_count": row_count,
+                "estimated_seconds": estimated_seconds,
+            },
+        )
+
+    def touch_analysis_progress_heartbeat(self) -> None:
+        """단계 전환 없이 하트비트만 갱신한다 -- 한 단계가 오래 걸릴 때
+        (예: 100,000행 전량 수율 예측) 그 안에서 주기적으로 불러 배너가
+        "중단됨"으로 오판하지 않게 한다."""
+        current = self.get_analysis_progress()
+        if current is None:
+            return
+        self.set_app_state(
+            ANALYSIS_PROGRESS_STATE_KEY,
+            {**current, "heartbeat_at": datetime.now(timezone.utc).isoformat()},
         )
 
     def get_analysis_progress(self) -> dict[str, Any] | None:
@@ -1157,6 +1231,13 @@ class RuntimeStore:
 
     def clear_analysis_progress(self) -> bool:
         return self.delete_app_state(ANALYSIS_PROGRESS_STATE_KEY)
+
+    def clear_orphaned_analysis_progress_on_boot(self) -> None:
+        """`api/main.py`의 lifespan이 기동 시 1회 부른다 -- 방금 새로 뜬
+        프로세스에는 정의상 진행 중인 파이프라인이 있을 수 없으므로(있다면
+        그건 죽은 이전 프로세스가 남긴 고아 상태다) 무조건 지운다."""
+        if self.clear_analysis_progress():
+            logger.warning("analysis_progress: 부팅 시 고아 진행 상태를 정리했습니다.")
 
     # -- SD: 자동화(주기 SQL 수율 예측 발송) 설정 --------------------------
     # "모델 학습" 슬롯(`training`)과 분리된 전용 슬롯 -- SD-1 팝업이 읽고

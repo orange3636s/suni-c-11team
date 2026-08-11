@@ -1,14 +1,26 @@
 # Upload safety limits for Railway's 512MB/1vCPU free-tier plan.
 #
-# A CSV inflates roughly 3.4x once loaded into a pandas DataFrame (measured:
-# 7.6MB bundled train.CSV -> 26.3MB in memory). Raised from 15MB to 20MB to
-# fit the two wider bundled datasets added alongside train/test (11.8MB /
-# 112 cols and 16.7MB / 189 cols) -- measured screening runs against both
-# stayed safe (26.7MB and 41.6MB peak DataFrame size, +23MB and +0MB extra
-# RSS during a full screening pass), well under the 512MB ceiling.
-max_upload_size_mb: 20
-# A secondary guard independent of file size: a very wide but short file
-# could pass the byte-size check yet still carry an unexpectedly large
-# row count. 50,000 rows measured at ~218MB peak RSS / 9.5s screening --
-# still safe, but large enough to warn about rather than silently eat.
-max_row_count: 50000
+# 작업지시 "1만~10만 행 분석이 끊기지 않게 하기" T1: 10,000행(7.6MB)을
+# 넘는 파일이 20MB 하드 한도에 막혀 업로드 자체가 실패했다(26,000행부터
+# 거부, 100,000행/76MB는 확실히 거부). 100,000행 x 102열 CSV가 ~76MB로
+# 실측됐으므로 여유를 두고 150MB로 올린다. 이 한도를 안전하게 올릴 수
+# 있는 이유는 두 가지 대책이 함께 들어갔기 때문이다:
+#   1) 업로드 자체를 청크 단위로 디스크에 스트리밍한다(src/runtime/
+#      datasets.py DatasetRegistry.upload_from_path, api/routes/
+#      datasets.py) -- 파일 전체를 메모리에 한 번에 올리지 않는다.
+#   2) 분석(스크리닝/히트맵/트리맵/권장구간)은 20,000행 표본 상한을 쓴다
+#      (src/analysis/sampling.py) -- 업로드 크기가 커져도 분석 단계의
+#      피크 메모리는 20,000행 기준으로 고정된다. 수율 예측/모델 추론만
+#      전량을 그대로 처리한다(웨이퍼별 순위가 산출물이라 표본을 쓸 수
+#      없다) -- 100,000행 전량 기준 피크 RSS 423MB 실측, float32/category
+#      다운캐스트(T3)로 그보다 낮아진다.
+max_upload_size_mb: 150
+# 원래는 "권장 상한"으로 경고만 했다 -- 그 결과 50,000행을 넘는 파일이
+# 통과된 뒤 분석 단계에서 OOM으로 죽는 것이 "분석이 끊긴다"의 실제
+# 정체였다. 이제 하드 차단이다(src/runtime/datasets.py validate_dataset
+# -> blocking_errors). 200,000행이면 위 두 대책 아래에서도 안전하게
+# 처리 가능한 상한으로 넉넉히 잡았다(분석 자체는 20,000행 표본으로
+# 고정되므로 200,000행이든 100,000행이든 분석 단계 비용은 거의 같다 --
+# 이 한도는 사실상 "스트리밍 업로드 + 수율 예측 전량 처리"가 감당할 수
+# 있는 상한을 보수적으로 잡은 값이다).
+max_row_count: 200000

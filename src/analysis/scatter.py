@@ -16,6 +16,7 @@ import pandas as pd
 
 from src.analysis.control_range import ControlRange, compute_control_range
 from src.analysis.recommendations import compute_factor_recommendation
+from src.analysis.sampling import SCATTER_POINT_MAX_ROWS
 from src.analysis.screening.quantile_profile import DEFAULT_BINS, quantile_bins
 from src.analysis.screening.selector import ParetoFactor, effective_confidence_tier
 from src.analysis.window_methods import compare_methods
@@ -179,6 +180,12 @@ def build_scatter_data(
         }
         for row in frame.itertuples(index=False)
     ]
+    if len(points) > SCATTER_POINT_MAX_ROWS:
+        # T2: 그 이상은 화면에서 겹쳐 안 보인다 -- 찍는 점만 균등 간격으로
+        # 줄인다. 통계량(n/eps2/outside_count/기준선)은 전부 위에서 이미
+        # 전체 frame 기준으로 계산을 마쳤으니 이 아래로는 영향이 없다.
+        stride = len(points) / SCATTER_POINT_MAX_ROWS
+        points = [points[int(i * stride)] for i in range(SCATTER_POINT_MAX_ROWS)]
 
     # 관리한계(iqr_lo/iqr_hi)는 더 이상 화면에 그리지 않는다. 나머지
     # 참고선(mean/q1/q3/s3/s6)은 이미 화면에서 렌더되지 않던 값들이라

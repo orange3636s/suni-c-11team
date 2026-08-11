@@ -34,6 +34,7 @@ from src.analysis.control_range import (
 )
 from src.analysis.report import build_analysis_report, build_chat_context
 from src.analysis.rounding import round_floats
+from src.analysis.sampling import ANALYSIS_SAMPLE_MAX_ROWS, SampleInfo, stratified_sample
 from src.analysis.scatter import build_categorical_data, build_scatter_data
 from src.analysis.screening.fmea import build_fmea_table
 from src.analysis.screening.heatmap import HeatmapData, build_heatmap
@@ -134,6 +135,27 @@ def _cached_schema(dataset_id: str, dataset_version: str) -> Any:
     del dataset_version  # part of the cache key only, see docstring above
     df = get_dataset_registry().get_dataframe(dataset_id)
     return parse_schema(df)
+
+
+ANALYSIS_SAMPLE_CACHE_DATASETS = 2
+
+
+@lru_cache(maxsize=ANALYSIS_SAMPLE_CACHE_DATASETS)
+def _cached_analysis_sample(dataset_id: str, dataset_version: str) -> tuple[pd.DataFrame, SampleInfo]:
+    """작업지시 T2: 인자 순위(스크리닝/히트맵)만 필요한 단계는 하이드레이션된
+    전체 데이터가 아니라 이 로트 단위 층화 표본을 쓴다 -- `_cached_ranked_rows_versioned`와
+    `_cached_heatmap`이 둘 다 이 함수를 거치므로 같은 (dataset_id,
+    dataset_version)에는 항상 같은 표본이 나온다(원인 분석 탭과 학습 탭이
+    바이트 단위로 같은 결과를 봐야 한다는 기존 불변식이 표본 도입 후에도
+    유지된다). 시드가 `dataset_version` 해시로 고정되므로 같은 데이터셋을
+    다시 분석해도 같은 표본이 나온다.
+
+    수율 예측(`build_yield_prediction_table`)·모델 추론(`hydrate_targets`)·
+    데이터 한계 진단(MNAR/분산 분해)은 이 캐시를 거치지 않는다 -- 절대
+    표본을 쓰면 안 되는 경로다(sampling.py 모듈 docstring 참고).
+    """
+    df = _hydrated_targets_or_409(dataset_id).dataframe
+    return stratified_sample(df, max_rows=ANALYSIS_SAMPLE_MAX_ROWS, dataset_version=dataset_version)
 
 
 def _single_flight(fn):
@@ -288,9 +310,11 @@ def _cached_heatmap(
     # 무한정 커지지 않는다. NG-1: categorical 보기를 제거해 kind 분기와
     # 그만큼의 캐시 슬롯도 함께 없앴다.
     del model_id, model_version, hydration_version
-    df = _hydrated_targets_or_409(dataset_id).dataframe
+    df, sample_info = _cached_analysis_sample(dataset_id, dataset_version)
     schema = _cached_schema(dataset_id, dataset_version)
-    return build_heatmap(df, schema)
+    heatmap = build_heatmap(df, schema)
+    heatmap.sample_info = sample_info.as_dict() if sample_info.is_sampled else None
+    return heatmap
 
 
 @router.get("/screening/heatmap", response_model=HeatmapResponse)
@@ -333,6 +357,7 @@ def get_screening_heatmap(dataset: str = "train") -> dict[str, Any]:
         "scale": {"min": heatmap.scale["min"], "max": heatmap.scale["max"]},
         "excluded_configs": heatmap.excluded_configs,
         "target_provenance": provenance.as_dict(),
+        "sample_info": heatmap.sample_info,
     }
 
 
@@ -354,8 +379,11 @@ def _cached_ranked_rows_versioned(
     # results -- this cache is exactly what guarantees that, not just a
     # performance nicety. Dataset content is immutable once a dataset_id
     # exists (see the heatmap cache's docstring for why that's safe).
-    del dataset_version, model_id, model_version, hydration_version
-    df = _hydrated_targets_or_409(dataset_id).dataframe
+    del model_id, model_version, hydration_version
+    # T2: 인자 순위만 필요하므로 20,000행 초과 데이터셋은 로트 단위 표본을
+    # 쓴다 -- 히트맵과 같은 `_cached_analysis_sample`을 거치므로 같은
+    # (dataset_id, dataset_version)이면 항상 같은 표본이다.
+    df, _sample_info = _cached_analysis_sample(dataset_id, dataset_version)
     schema = parse_schema(df)
     if target not in schema.target_cols:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{target}' 타깃을 찾을 수 없습니다.")
@@ -381,6 +409,7 @@ def _cached_ranked_rows(dataset_id: str, target: str) -> tuple[dict, ...]:
 def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
     t0 = time.perf_counter()
     hydrated = _hydrated_targets_or_409(dataset_id)
+    _sampled_df, sample_info = _cached_analysis_sample(dataset_id, hydrated.provenance.dataset_version)
     hits_before = _cached_ranked_rows_versioned.cache_info().hits
     ranked = list(_ranked_rows_for_provenance(dataset_id, target, hydrated.provenance))
     cached = _cached_ranked_rows_versioned.cache_info().hits > hits_before
@@ -430,6 +459,7 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
         "model_available": bool(hydrated.provenance.model_id) or not hydrated.provenance.uses_predictions,
         "factor_measurement_insufficient": len(ranked) == 0,
         "target_provenance": hydrated.provenance.as_dict(),
+        "sample_info": sample_info.as_dict() if sample_info.is_sampled else None,
     }
 
 
@@ -503,6 +533,12 @@ def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
     from src.analysis.data_limitations import compute_mode_variance_share
 
     hydrated = _hydrated_targets_or_409(train_dataset_id)
+    # T2: 인자 랭킹(`_ranked_rows_for_provenance`)은 내부적으로 표본을
+    # 쓰지만, `build_action_priority_table`에는 일부러 전량 `df`를 그대로
+    # 넘긴다 -- 이 표는 `total_wafers`/`out_of_range_count` 같은 실제
+    # 웨이퍼 카운트를 산출하므로, 표본을 넘기면 "몇 장을 구제할 수
+    # 있는지"가 표본 크기 기준으로 축소돼 나온다(수율 예측과 같은 이유로
+    # 표본을 쓰면 안 되는 경로).
     df = hydrated.dataframe
     schema = parse_schema(df)
     usable_targets = [t for t in FAIL_RATE_TARGETS if t in schema.target_cols]

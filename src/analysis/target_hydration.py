@@ -29,7 +29,12 @@ FINAL_YIELD_COLUMN = "Y"
 ALL_TARGETS = (FINAL_YIELD_COLUMN, *FAIL_RATE_TARGETS)
 TARGET_HYDRATION_VERSION = "target-hydration-v1"
 TARGET_FORMULA_TOLERANCE = 0.001
-_CACHE_MAXSIZE = 8
+# T3-3: 개수가 아니라 캐시가 들고 있는 총 행 수로 정원을 잰다 -- 업로드
+# 상한이 200,000행으로 오른 뒤로는(작업지시 T1) "최대 8개"가 최악의 경우
+# 8 x 200,000행짜리 하이드레이션 결과를 동시에 물고 있는 걸 허용해
+# 캐시 정원의 의미가 없어진다. 20,000행 표본(T2) 기준 데이터셋
+# 10개 분량을 유지할 수 있는 여유로 잡았다.
+_CACHE_MAX_ROWS = 200_000
 
 
 class TargetHydrationError(RuntimeError):
@@ -353,7 +358,12 @@ def hydrate_targets(
             return _view_with_cache_flag(cached, cache_hit=True)
     logger.info("target_hydration cache miss dataset=%s model=%s", dataset_id, model_id)
 
-    hydrated = dataframe.copy(deep=True)
+    # T3-2: 얕은 복사 -- 바뀌는 건 아래 루프가 재할당하는 타깃 컬럼뿐이다.
+    # `df[col] = ...`는 그 컬럼의 블록만 새로 만들 뿐 원본(`dataframe`,
+    # 레지스트리가 캐시로 들고 있는 프레임)의 다른 컬럼 배열을 건드리지
+    # 않으므로, deep=True였을 때와 안전성은 동일하면서 100,000행에서
+    # 손대지 않는 나머지 ~90개 컬럼의 복사를 아낀다.
+    hydrated = dataframe.copy(deep=False)
     for target in ALL_TARGETS:
         hydrated[target] = numeric_original[target]
 
@@ -450,8 +460,10 @@ def hydrate_targets(
     with _CACHE_LOCK:
         _CACHE[cache_key] = result
         _CACHE.move_to_end(cache_key)
-        while len(_CACHE) > _CACHE_MAXSIZE:
-            _CACHE.popitem(last=False)
+        total_rows = sum(len(cached.dataframe) for cached in _CACHE.values())
+        while total_rows > _CACHE_MAX_ROWS and len(_CACHE) > 1:
+            _, evicted = _CACHE.popitem(last=False)
+            total_rows -= len(evicted.dataframe)
     return result
 
 
@@ -468,4 +480,8 @@ def invalidate_target_hydration_cache(dataset_id: str | None = None) -> int:
 
 def target_hydration_cache_info() -> dict[str, int]:
     with _CACHE_LOCK:
-        return {"size": len(_CACHE), "maxsize": _CACHE_MAXSIZE}
+        return {
+            "size": len(_CACHE),
+            "total_rows": sum(len(cached.dataframe) for cached in _CACHE.values()),
+            "max_rows": _CACHE_MAX_ROWS,
+        }

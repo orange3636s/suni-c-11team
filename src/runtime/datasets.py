@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import io
 import logging
+import os
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 import pandas as pd
@@ -137,8 +140,15 @@ def validate_dataset(
         warnings.append("표본이 부족해 인자 선정 결과를 신뢰하기 어렵습니다.")
     elif row_count < UNSTABLE_ROW_COUNT_THRESHOLD:
         warnings.append("인자 선정이 불안정할 수 있습니다.")
+    # T1-2: 예전에는 경고만 하고 통과시켰다 -- 그 결과 하드 한도(50,000행)
+    # 근처 파일이 업로드는 성공하고서 분석 단계에서 OOM으로 죽었다("끊긴다"의
+    # 정체). 업로드 시점에 명확히 거부하는 편이 낫다.
     if row_count > max_row_count():
-        warnings.append(f"행 수가 많습니다 ({row_count:,}행, 권장 상한 {max_row_count():,}행). 처리 시간과 메모리 사용량이 늘어날 수 있습니다.")
+        blocking_errors.append(
+            f"행 수가 너무 많습니다 ({row_count:,}행, 최대 {max_row_count():,}행). "
+            "파일을 나눠서 업로드해 주세요."
+        )
+        return DatasetValidation(blocking_errors=blocking_errors, warnings=warnings, schema=schema)
 
     # Lot_ID may have been derived from Lot_Wafer_ID just now (spec §2-2)
     # rather than having existed in the source file -- either way, if it's
@@ -193,7 +203,15 @@ def validate_dataset(
 # (see analysis.py's heatmap-cache docstring for why that's safe), so no
 # invalidation key is needed there.
 _BUNDLED_CACHE_SIZE = len(BUNDLED_DATASET_FILES)
-_UPLOADED_CACHE_SIZE = 8  # small LRU; bounds memory across a long-running process
+# T3-3: `lru_cache(maxsize=8)` bounded the *count* of cached uploads, not
+# their combined size. That was fine while uploads capped out around
+# 50,000 rows, but T1 raised the upload limit to 200,000 rows -- 8 cached
+# frames at that size would be several GB, well past Railway's 512MB
+# free-tier ceiling. Bound by total cached row count instead (LRU-evicted),
+# so the cache stays small regardless of how large any single upload is.
+_UPLOADED_CACHE_MAX_ROWS = 200_000
+_uploaded_cache_lock = threading.Lock()
+_uploaded_cache: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
 
 
 @lru_cache(maxsize=_BUNDLED_CACHE_SIZE)
@@ -204,11 +222,32 @@ def _read_bundled_csv(path_str: str, mtime_ns: int, size: int) -> pd.DataFrame:
     return normalized
 
 
-@lru_cache(maxsize=_UPLOADED_CACHE_SIZE)
 def _read_uploaded_csv(path_str: str) -> pd.DataFrame:
+    with _uploaded_cache_lock:
+        cached = _uploaded_cache.get(path_str)
+        if cached is not None:
+            _uploaded_cache.move_to_end(path_str)
+            return cached
     raw = pd.read_csv(path_str)
     normalized, _ = normalize_dataset(raw)
+    with _uploaded_cache_lock:
+        _uploaded_cache[path_str] = normalized
+        _uploaded_cache.move_to_end(path_str)
+        total_rows = sum(len(df) for df in _uploaded_cache.values())
+        while total_rows > _UPLOADED_CACHE_MAX_ROWS and len(_uploaded_cache) > 1:
+            _, evicted = _uploaded_cache.popitem(last=False)
+            total_rows -= len(evicted)
     return normalized
+
+
+def _read_uploaded_csv_cache_clear() -> None:
+    with _uploaded_cache_lock:
+        _uploaded_cache.clear()
+
+
+# H-3③(위 delete()의 docstring 참고): 기존 호출부가 lru_cache의
+# `.cache_clear()` 관례에 기대고 있어 그대로 속성으로 붙여준다.
+_read_uploaded_csv.cache_clear = _read_uploaded_csv_cache_clear
 
 
 class DatasetRegistry:
@@ -290,11 +329,70 @@ class DatasetRegistry:
         return f"uploaded:{dataset_id}:{stat.st_mtime_ns}:{stat.st_size}"
 
     def upload(self, filename: str, content: bytes) -> dict[str, Any]:
+        """Bytes-in-memory path -- used by callers that already build the CSV
+        in memory (SQL fetch-from-db, yield_dispatch), not by the browser
+        upload route (that streams to disk via `upload_from_path` instead,
+        see T1-3: a 150MB browser upload must never sit fully in memory
+        twice at once -- once as the raw bytes, once as the parsed
+        DataFrame)."""
+
+        def _load() -> tuple[pd.DataFrame, dict[str, object]]:
+            return parse_uploaded_csv(content)
+
+        return self._finalize_upload(
+            filename,
+            size_bytes=len(content),
+            load=_load,
+            persist=lambda dest: dest.write_bytes(content),
+        )
+
+    def upload_from_path(self, filename: str, tmp_path: Path) -> dict[str, Any]:
+        """T1-3: counterpart to `upload()` for a file already streamed to
+        disk in chunks by the route handler -- `tmp_path` holds the raw
+        bytes, so this never holds the full upload in memory as `bytes` at
+        all, only the parsed DataFrame. On success `tmp_path` is moved (not
+        copied) into the registry's storage; on failure it's left in place
+        for the caller to clean up."""
+        size_bytes = tmp_path.stat().st_size
+
+        def _load() -> tuple[pd.DataFrame, dict[str, object]]:
+            try:
+                df = pd.read_csv(tmp_path)
+            except Exception as exc:
+                raise DatasetValidationError([f"CSV 파싱에 실패했습니다: {exc}"]) from exc
+            if df.shape[1] == 0:
+                raise DatasetValidationError(["컬럼이 없는 CSV입니다."])
+            return normalize_dataset(df)
+
+        def _persist(dest: Path) -> None:
+            os.replace(tmp_path, dest)
+
+        return self._finalize_upload(filename, size_bytes=size_bytes, load=_load, persist=_persist)
+
+    def _finalize_upload(
+        self,
+        filename: str,
+        *,
+        size_bytes: int,
+        load: Callable[[], tuple[pd.DataFrame, dict[str, object]]],
+        persist: Callable[[Path], None],
+    ) -> dict[str, Any]:
         import gc
 
+        if size_bytes > max_upload_size_bytes():
+            actual_mb = size_bytes / (1024 * 1024)
+            return {
+                "success": False,
+                "dataset_id": None,
+                "blocking_errors": [f"파일이 너무 큽니다 (최대 {max_upload_size_mb()}MB). 현재 {actual_mb:.1f}MB"],
+                "warnings": [],
+                "unmapped_columns": [],
+            }
+
+        df: pd.DataFrame | None = None
         try:
             try:
-                df, normalization_report = parse_uploaded_csv(content)
+                df, normalization_report = load()
             except DatasetValidationError as exc:
                 return {
                     "success": False,
@@ -317,7 +415,7 @@ class DatasetRegistry:
 
             dataset_id = uuid4().hex
             stored_name = f"{dataset_id}.csv"
-            (self.upload_root / stored_name).write_bytes(content)
+            persist(self.upload_root / stored_name)
             lot_min, lot_max, lot_count = _lot_summary(df)
             self.store.create_dataset(
                 dataset_id=dataset_id,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
@@ -42,23 +43,41 @@ def list_datasets() -> dict[str, Any]:
     return {"items": items}
 
 
+UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1MB
+
+
 @router.post("", response_model=DatasetUploadResponse)
 async def upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
     filename = file.filename or ""
     if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV 파일만 업로드할 수 있습니다.")
     limit_bytes = max_upload_size_bytes()
-    content = await file.read(limit_bytes + 1)
-    if len(content) > limit_bytes:
-        actual_mb = len(content) / (1024 * 1024)
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"파일이 너무 큽니다 (최대 {max_upload_size_mb()}MB). 현재 {actual_mb:.1f}MB",
-        )
-    # CSV parsing + full-dataframe validation is CPU-bound; run off the
-    # event loop so a large upload doesn't stall every other request on
-    # this single-worker process.
-    return await run_in_threadpool(get_dataset_registry().upload, filename, content)
+    registry = get_dataset_registry()
+    # T1-3: 150MB까지 허용하는 만큼, 전체 바이트를 한 번에 메모리에 올리지
+    # 않는다(그러면 raw bytes + pandas 파싱 중 팽창이 동시에 겹친다) --
+    # 1MB 청크로 디스크에 스트리밍하며 한도 초과를 즉시 감지해 중단한다.
+    tmp_path = registry.upload_root / f".upload-{uuid4().hex}.tmp"
+    try:
+        total = 0
+        with tmp_path.open("wb") as handle:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit_bytes:
+                    actual_mb = total / (1024 * 1024)
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"파일이 너무 큽니다 (최대 {max_upload_size_mb()}MB). 현재 {actual_mb:.1f}MB",
+                    )
+                handle.write(chunk)
+        # CSV parsing + full-dataframe validation is CPU-bound; run off the
+        # event loop so a large upload doesn't stall every other request on
+        # this single-worker process.
+        return await run_in_threadpool(registry.upload_from_path, filename, tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @router.delete("/{dataset_id}", response_model=DatasetDeleteResponse)

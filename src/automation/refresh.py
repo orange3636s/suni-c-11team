@@ -17,15 +17,27 @@ SD그룹 이후 이 파이프라인은 더 이상 APScheduler 주기 잡이 아�
 
 각 단계는 독립적으로 try/except하고, 실패는 로그 + 스냅샷의 `errors`
 배열에 남긴다(단, `except`로 삼키고 성공한 척하지 않는다 -- 화면에
-실패가 보여야 한다). SC-3: 4단계(모니터링/Config별 트리맵/원인분석/
-수율예측) 중 하나라도 완전히 실패하면 스냅샷을 저장하지 않는다("원자적
-저장 -- 넷 다 성공해야 교체").
+실패가 보여야 한다). SC-3: 4화면(모니터링/Config별 트리맵/원인분석/
+수율예측)의 데이터 중 하나라도 완전히 실패하면 스냅샷을 저장하지 않는다
+("원자적 저장 -- 넷 다 성공해야 교체").
+
+작업지시 T8-1: 진행 표시(`analysis_progress`)는 화면 4개보다 세분화된
+8단계다 -- "모니터링 홈"이라는 라벨 하나가 서로 다른 데이터셋에 대한
+두 개의 무거운 계산(FMEA + 조치 우선순위)을 가리던 문제를 고친다.
+T4: 각 단계 결과는 `RuntimeStore.save_refresh_checkpoint`에도 남는다 --
+화면이 보는 최종 스냅샷과는 별개로, 파이프라인이 죽었다가 같은 입력으로
+재시작됐을 때 이미 끝낸 단계를 다시 계산하지 않기 위해서다(`analysis_id`가
+이제 실행 시각이 아니라 데이터셋+모델 버전의 해시라 "같은 입력 = 같은
+analysis_id"가 성립한다).
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -40,6 +52,99 @@ REFRESH_JOB_ID = "auto_refresh"
 FALLBACK_TRAIN_DATASET = "train"
 FALLBACK_EVAL_DATASET = "test"
 TARGETS = ("Y1", "Y2", "Y3", "Y4", "Y5")
+
+# T8-1: 8단계 진행 표시. 순서가 곧 화면에 뜨는 (index/total)이다.
+STAGE_ORDER = (
+    "resolve",
+    "hydrate_eval",
+    "fmea",
+    "action_priority",
+    "treemap_warmup",
+    "pareto",
+    "yield_prediction",
+    "save",
+)
+STAGE_LABELS = {
+    "resolve": "데이터 확인",
+    "hydrate_eval": "모델 추론 (분석 데이터)",
+    "fmea": "데이터 한계 진단",
+    "action_priority": "조치 우선순위 (학습 데이터)",
+    "treemap_warmup": "Config별 트리맵",
+    "pareto": "원인 분석",
+    "yield_prediction": "수율 예측",
+    "save": "저장",
+}
+TOTAL_STAGES = len(STAGE_ORDER)
+# T5/T8-3: 이 주기로 하트비트를 갱신한다 -- 프런트의 60초 정지 판정보다
+# 충분히 촘촘해야 정상 실행 중에 "중단됨"으로 오판하지 않는다.
+HEARTBEAT_INTERVAL_SECONDS = 10.0
+
+
+def _set_stage(
+    store: RuntimeStore,
+    stage_key: str,
+    analysis_id: str,
+    *,
+    row_count: int | None = None,
+    estimated_seconds: int | None = None,
+) -> None:
+    index = STAGE_ORDER.index(stage_key) + 1
+    store.set_analysis_progress(
+        stage=STAGE_LABELS[stage_key],
+        index=index,
+        total=TOTAL_STAGES,
+        analysis_id=analysis_id,
+        row_count=row_count,
+        estimated_seconds=estimated_seconds,
+    )
+
+
+def _estimate_total_seconds(row_count: int) -> int:
+    """T7-2: 화면에 "약 N분 예상"을 보여주기 위한 대략적인 추정치다 --
+    정밀한 SLA가 아니라 "끊긴 게 아니라 원래 이 정도 걸린다"를 체감시키는
+    용도. T2(표본 상한)로 대부분 단계는 행 수와 거의 무관해졌지만, 수율
+    예측·모델 추론은 여전히 전량 O(n)이라 행 수에 비례해 늘어난다."""
+    return 20 + max(0, row_count) // 1500
+
+
+@contextmanager
+def _heartbeat_during_pipeline(store: RuntimeStore):
+    """T5/T8-3: 파이프라인이 도는 내내(단계 하나가 몇 초가 걸리든) 백그라운드
+    스레드가 주기적으로 하트비트를 갱신한다 -- 프로세스가 죽으면 이 스레드도
+    함께 죽으므로, 하트비트가 멈춘다는 것 자체가 "죽었다"는 신호가 된다."""
+    stop = threading.Event()
+
+    def _tick() -> None:
+        while not stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                store.touch_analysis_progress_heartbeat()
+            except Exception:
+                logger.exception("auto_refresh: 하트비트 갱신 실패")
+
+    thread = threading.Thread(target=_tick, name="auto_refresh-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+
+
+def _compute_analysis_id(registry: DatasetRegistry, eval_dataset_id: str, train_dataset_id: str, store: RuntimeStore) -> str:
+    """T8-1/T4: 실행 시각(`now_iso`) 대신 입력의 해시를 쓴다 -- 같은
+    데이터셋·같은 모델로 다시 돌리면 항상 같은 analysis_id가 나오므로,
+    죽었다가 재시작된 실행이 체크포인트를 "내 것"으로 알아볼 수 있다."""
+    try:
+        eval_version = registry.content_version(eval_dataset_id)
+    except Exception:
+        eval_version = "unknown"
+    try:
+        train_version = registry.content_version(train_dataset_id)
+    except Exception:
+        train_version = "unknown"
+    model_id = _current_champion_id(store) or "none"
+    raw = f"{eval_dataset_id}:{eval_version}:{train_dataset_id}:{train_version}:{model_id}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 # AF/AG: 주기 잡(APScheduler)과 수동 최신화 버튼·업로드 연동이 전부 이
 # 함수 하나를 호출한다 -- 두 경로가 동시에 들어와도 파이프라인이 두 번
@@ -84,7 +189,12 @@ def run_refresh_pipeline(*, dispatch: bool = True) -> None:
         except Exception:
             # 개별 단계는 각자 try/except하지만, 예상하지 못한 예외가 여기까지
             # 올라오면 스케줄러 자체가 죽지 않도록 마지막 방어선에서 삼킨다.
+            # T8-3: MemoryError를 포함한 어떤 예외든(개별 단계가 던지지 않은
+            # 예상 밖 실패까지) 진행 상태를 지우지 않고는 빠져나가지 않는다 --
+            # 안 지우면 화면에 "분석 진행 중… (N/8)"이 영원히 남는다.
             logger.exception("auto_refresh: 파이프라인 실행 중 예기치 않은 오류")
+        finally:
+            store.clear_analysis_progress()
     finally:
         _refresh_lock.release()
 
@@ -203,107 +313,193 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
     errors: list[str] = []
     registry = _dataset_registry(store)
     now_iso = datetime.now(timezone.utc).isoformat()
-    analysis_id = now_iso
 
-    # -- 1. 데이터 소스 해석 (J-1) -----------------------------------
-    mode, train_dataset_id, eval_dataset_id, source_row_count = _resolve_source(store, registry, errors)
+    with _heartbeat_during_pipeline(store):
+        # -- 1/8 데이터 확인 --------------------------------------------
+        mode, train_dataset_id, eval_dataset_id, source_row_count = _resolve_source(store, registry, errors)
+        analysis_id = _compute_analysis_id(registry, eval_dataset_id, train_dataset_id, store)
+        checkpoint = store.get_refresh_checkpoint(analysis_id)
+        completed = set((checkpoint or {}).get("completed_stages") or [])
+        if checkpoint:
+            logger.info("auto_refresh: 체크포인트 발견(analysis_id=%s) -- 완료 단계 %s", analysis_id, sorted(completed))
+        # T7-2: 이후 모든 단계 배너에 "N행 · 약 M분 예상"을 함께 싣는다.
+        estimated_seconds = _estimate_total_seconds(source_row_count)
 
-    # -- 2. 현재 챔피언 정보만 읽는다 (RB-3) -- 이 파이프라인은 학습을
-    # 트리거하지 않는다. 학습은 모델 학습 팝업의 수동 업로드로만
-    # 일어난다.
-    model_meta = _current_model_meta(store)
+        def _stage(stage_key: str) -> None:
+            _set_stage(store, stage_key, analysis_id, row_count=source_row_count, estimated_seconds=estimated_seconds)
 
-    try:
-        registry.get_dataframe(eval_dataset_id)
-    except Exception:
-        logger.exception("auto_refresh: 평가 데이터셋 로드 실패")
-        errors.append(f"평가 데이터셋({eval_dataset_id})을 불러오지 못했습니다.")
-        return
+        _stage("resolve")
+        t_stage = time.perf_counter()
+        # -- 현재 챔피언 정보만 읽는다 (RB-3) -- 이 파이프라인은 학습을
+        # 트리거하지 않는다. 학습은 모델 학습 팝업의 수동 업로드로만
+        # 일어난다.
+        model_meta = _current_model_meta(store)
+        try:
+            registry.get_dataframe(eval_dataset_id)
+        except Exception:
+            logger.exception("auto_refresh: 평가 데이터셋 로드 실패")
+            errors.append(f"평가 데이터셋({eval_dataset_id})을 불러오지 못했습니다.")
+            return
+        logger.info("auto_refresh[1/8 데이터 확인] %.1fs", time.perf_counter() - t_stage)
 
-    latest = get_latest_state(store)
-    train_dataset_for_analysis = (
-        (latest.get("alarms") or {}).get("train_dataset") if latest.get("alarms") else None
-    ) or FALLBACK_TRAIN_DATASET
+        latest = get_latest_state(store)
+        train_dataset_for_analysis = (
+            (latest.get("alarms") or {}).get("train_dataset") if latest.get("alarms") else None
+        ) or FALLBACK_TRAIN_DATASET
 
-    # -- SC-3: 4단계 -- 하나라도 완전히 실패하면 스냅샷을 저장하지 않고
-    # (기존 스냅샷 보존) 진행 상태를 지운다("원자적 저장").
-    store.set_analysis_progress(stage="모니터링 홈", index=1, total=4, analysis_id=analysis_id)
-    fmea, fmea_error = _fmea_stage(eval_dataset_id, errors)
-    action_priority, action_priority_error = _action_priority_stage(train_dataset_for_analysis, errors)
+        # -- 2/8 모델 추론 (분석 데이터) -----------------------------------
+        # T8-1: 예전에는 이 하이드레이션이 3단계(FMEA) 안에서 처음
+        # 일어나 "1/4 모니터링 홈"이라는 라벨 뒤에 숨어 있었다 -- 별도
+        # 단계로 떼어내 진행 표시가 실제로 움직이게 한다.
+        _stage("hydrate_eval")
+        t_stage = time.perf_counter()
+        try:
+            from api.routes.analysis import _hydrated_targets_or_409
 
-    store.set_analysis_progress(stage="Config별 트리맵", index=2, total=4, analysis_id=analysis_id)
-    try:
-        _warmup_common_prerequisites(eval_dataset_id)
-    except Exception:
-        logger.exception("auto_refresh: Config별 트리맵 선행 조건 계산 실패 -- 스냅샷 저장 생략")
-        errors.append("Config별 트리맵 계산에 실패했습니다.")
-        store.clear_analysis_progress()
-        return
+            _hydrated_targets_or_409(eval_dataset_id)
+        except Exception:
+            logger.exception("auto_refresh: 분석 데이터 모델 추론 실패 -- 스냅샷 저장 생략")
+            errors.append("분석 데이터 모델 추론에 실패했습니다.")
+            return
+        logger.info("auto_refresh[2/8 모델 추론] %.1fs", time.perf_counter() - t_stage)
 
-    store.set_analysis_progress(stage="원인 분석", index=3, total=4, analysis_id=analysis_id)
-    pareto_by_target, target_provenance, failed_targets = _pareto_stage(eval_dataset_id, errors)
-    if not pareto_by_target:
-        errors.append("모든 타깃의 인자 스크리닝이 실패했습니다.")
-        logger.warning("auto_refresh: 원인분석 전 타깃 실패 -- 스냅샷 저장 생략")
-        store.clear_analysis_progress()
-        return
-    if failed_targets:
-        errors.append(f"일부 타깃 스크리닝 실패: {', '.join(failed_targets)}")
+        # -- 3/8 데이터 한계 진단 -------------------------------------------
+        _stage("fmea")
+        if "fmea" in completed:
+            fmea, fmea_error = checkpoint.get("fmea"), checkpoint.get("fmea_error")
+            logger.info("auto_refresh[3/8 데이터 한계 진단] 체크포인트 재사용")
+        else:
+            t_stage = time.perf_counter()
+            fmea, fmea_error = _fmea_stage(eval_dataset_id, errors)
+            logger.info("auto_refresh[3/8 데이터 한계 진단] %.1fs", time.perf_counter() - t_stage)
+            store.save_refresh_checkpoint(analysis_id, "fmea", {"fmea": fmea, "fmea_error": fmea_error})
 
-    store.set_analysis_progress(stage="수율 예측", index=4, total=4, analysis_id=analysis_id)
-    yield_table = _yield_prediction_stage(registry, train_dataset_for_analysis, eval_dataset_id, errors)
-    if yield_table is None:
-        logger.warning("auto_refresh: 수율 예측 계산 실패 -- 스냅샷 저장 생략")
-        store.clear_analysis_progress()
-        return
+        # -- 4/8 조치 우선순위 (학습 데이터) ---------------------------------
+        # T8-2: train.CSV가 바뀌지 않는 한 순위/권장구간은 이미 프로세스
+        # 전역 캐시(`_ranked_rows_for_provenance`/`compare_methods`)로
+        # 사실상 즉시 반환되지만(analysis.py의 _action_priority_payload
+        # 독스트링 참고), 재시작으로 그 캐시까지 날아간 경우를 위해
+        # 체크포인트로 한 번 더 방어한다.
+        _stage("action_priority")
+        if "action_priority" in completed:
+            action_priority = checkpoint.get("action_priority")
+            action_priority_error = checkpoint.get("action_priority_error")
+            logger.info("auto_refresh[4/8 조치 우선순위] 체크포인트 재사용")
+        else:
+            t_stage = time.perf_counter()
+            action_priority, action_priority_error = _action_priority_stage(train_dataset_for_analysis, errors)
+            logger.info("auto_refresh[4/8 조치 우선순위] %.1fs", time.perf_counter() - t_stage)
+            store.save_refresh_checkpoint(
+                analysis_id,
+                "action_priority",
+                {"action_priority": action_priority, "action_priority_error": action_priority_error},
+            )
 
-    from src.analysis.yield_prediction import serialize_yield_prediction_table
+        # -- 5/8 Config별 트리맵 (선행 조건 워밍업) --------------------------
+        _stage("treemap_warmup")
+        t_stage = time.perf_counter()
+        try:
+            _warmup_common_prerequisites(eval_dataset_id)
+        except Exception:
+            logger.exception("auto_refresh: Config별 트리맵 선행 조건 계산 실패 -- 스냅샷 저장 생략")
+            errors.append("Config별 트리맵 계산에 실패했습니다.")
+            return
+        logger.info("auto_refresh[5/8 Config별 트리맵] %.1fs", time.perf_counter() - t_stage)
 
-    analysis_block = {
-        "paretoByTarget": pareto_by_target,
-        "fmea": fmea,
-        "fmeaError": fmea_error,
-        "actionPriority": action_priority,
-        "actionPriorityError": action_priority_error,
-        "target_provenance": target_provenance,
-        "yieldPrediction": serialize_yield_prediction_table(
-            yield_table, train_dataset_id=train_dataset_for_analysis, eval_dataset_id=eval_dataset_id
-        ),
-    }
+        # -- 6/8 원인 분석 -----------------------------------------------
+        _stage("pareto")
+        if "pareto" in completed:
+            pareto_by_target = checkpoint.get("pareto_by_target") or {}
+            target_provenance = checkpoint.get("target_provenance")
+            failed_targets = checkpoint.get("failed_targets") or []
+            logger.info("auto_refresh[6/8 원인 분석] 체크포인트 재사용")
+        else:
+            t_stage = time.perf_counter()
+            pareto_by_target, target_provenance, failed_targets = _pareto_stage(eval_dataset_id, errors)
+            logger.info("auto_refresh[6/8 원인 분석] %.1fs", time.perf_counter() - t_stage)
+            if pareto_by_target:
+                store.save_refresh_checkpoint(
+                    analysis_id,
+                    "pareto",
+                    {
+                        "pareto_by_target": pareto_by_target,
+                        "target_provenance": target_provenance,
+                        "failed_targets": failed_targets,
+                    },
+                )
+        if not pareto_by_target:
+            errors.append("모든 타깃의 인자 스크리닝이 실패했습니다.")
+            logger.warning("auto_refresh: 원인분석 전 타깃 실패 -- 스냅샷 저장 생략")
+            return
+        if failed_targets:
+            errors.append(f"일부 타깃 스크리닝 실패: {', '.join(failed_targets)}")
 
-    # AG: 헤더·모니터링이 "수동 · uploaded_0809.csv"처럼 파일명을 보여줄
-    # 수 있게, eval_dataset_id뿐 아니라 원본 파일명도 스냅샷에 싣는다.
-    eval_dataset_filename = None
-    try:
-        eval_summary = registry.get_summary(eval_dataset_id)
-        eval_dataset_filename = eval_summary["original_filename"] if eval_summary else None
-    except Exception:
-        logger.exception("auto_refresh: 평가 데이터셋 파일명 조회 실패")
+        # -- 7/8 수율 예측 ------------------------------------------------
+        # T2: 절대 표본을 쓰지 않는다 -- 웨이퍼별 순위가 산출물이라
+        # 체크포인트로도 건너뛰지 않는다(매번 전량 재계산).
+        _stage("yield_prediction")
+        t_stage = time.perf_counter()
+        yield_table = _yield_prediction_stage(registry, train_dataset_for_analysis, eval_dataset_id, errors)
+        logger.info("auto_refresh[7/8 수율 예측] %.1fs", time.perf_counter() - t_stage)
+        if yield_table is None:
+            logger.warning("auto_refresh: 수율 예측 계산 실패 -- 스냅샷 저장 생략")
+            return
 
-    snapshot = {
-        "created_at": now_iso,
-        "analysis_id": analysis_id,
-        "source": {
-            "mode": mode,
-            "train_dataset": train_dataset_id,
-            "eval_dataset": eval_dataset_id,
-            "eval_dataset_filename": eval_dataset_filename,
-            "row_count": source_row_count,
-        },
-        "model": model_meta,
-        "analysis": analysis_block,
-        # 알람 등급(심각/위험/주의)·게이트 판정 파이프라인은 폐기됐다 --
-        # 어떤 화면도 이 두 블록의 내용(counts/items_top/gate_passed/
-        # predicted_yield/gap)을 더 이상 렌더링하지 않는 것으로 확인했다
-        # (알림 발송은 수율 예측 갱신 파이프라인, 아래로 대체).
-        # 스냅샷 스키마의 키 자체는 다른 소비처가 존재를 가정할 수 있어
-        # 유지하되, 내용은 빈 상태로 남긴다.
-        "alarms": None,
-        "monitoring": {"predicted_yield": None, "gap": None, "gap_pareto": [], "treemap": None},
-        "errors": errors,
-    }
-    store.save_refresh_snapshot(snapshot)
-    store.clear_analysis_progress()
+        # -- 8/8 저장 -----------------------------------------------------
+        _stage("save")
+        from src.analysis.yield_prediction import serialize_yield_prediction_table
+
+        analysis_block = {
+            "paretoByTarget": pareto_by_target,
+            "fmea": fmea,
+            "fmeaError": fmea_error,
+            "actionPriority": action_priority,
+            "actionPriorityError": action_priority_error,
+            "target_provenance": target_provenance,
+            "yieldPrediction": serialize_yield_prediction_table(
+                yield_table, train_dataset_id=train_dataset_for_analysis, eval_dataset_id=eval_dataset_id
+            ),
+        }
+
+        # AG: 헤더·모니터링이 "수동 · uploaded_0809.csv"처럼 파일명을 보여줄
+        # 수 있게, eval_dataset_id뿐 아니라 원본 파일명도 스냅샷에 싣는다.
+        eval_dataset_filename = None
+        try:
+            eval_summary = registry.get_summary(eval_dataset_id)
+            eval_dataset_filename = eval_summary["original_filename"] if eval_summary else None
+        except Exception:
+            logger.exception("auto_refresh: 평가 데이터셋 파일명 조회 실패")
+
+        snapshot = {
+            "created_at": now_iso,
+            "analysis_id": analysis_id,
+            "source": {
+                "mode": mode,
+                "train_dataset": train_dataset_id,
+                "eval_dataset": eval_dataset_id,
+                "eval_dataset_filename": eval_dataset_filename,
+                "row_count": source_row_count,
+            },
+            "model": model_meta,
+            "analysis": analysis_block,
+            # 알람 등급(심각/위험/주의)·게이트 판정 파이프라인은 폐기됐다 --
+            # 어떤 화면도 이 두 블록의 내용(counts/items_top/gate_passed/
+            # predicted_yield/gap)을 더 이상 렌더링하지 않는 것으로 확인했다
+            # (알림 발송은 수율 예측 갱신 파이프라인, 아래로 대체).
+            # 스냅샷 스키마의 키 자체는 다른 소비처가 존재를 가정할 수 있어
+            # 유지하되, 내용은 빈 상태로 남긴다.
+            "alarms": None,
+            "monitoring": {"predicted_yield": None, "gap": None, "gap_pareto": [], "treemap": None},
+            "errors": errors,
+        }
+        store.save_refresh_snapshot(snapshot)
+        # T4: 화면이 보는 스냅샷이 이제 이 회차를 온전히 반영하므로,
+        # 재시작-이어하기용 체크포인트는 더 이상 필요 없다.
+        store.clear_refresh_checkpoint()
+    # T5/T8-3: `run_refresh_pipeline`의 바깥 try/finally가
+    # `clear_analysis_progress()`를 반드시 호출하므로 여기서 따로
+    # 지우지 않는다(이 함수의 모든 return 경로 -- 성공/부분 실패 모두
+    # -- 가 그 finally를 통과한다).
     # ZB-2: 콜드 스타트 부트스트랩(`_run_bootstrap`)이 한 번 실패하면
     # `bootstrap_status`가 store에 "failed"로 영구히 남는다 -- 그 이후의
     # [분석 시작]이 스냅샷 저장에 성공해도 아무도 그 상태를 지우지 않아

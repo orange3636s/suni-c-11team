@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { HScrollTableBody, TableCaption, TableToolbar, useTableSearchSort, type SortOption } from "@/components/DataTablePanel";
 import DashboardShell from "@/components/DashboardShell";
-import { LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
+import { PageHeaderMeta } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { dispatchYieldUpdateNotification, getNotificationSettings, getYieldPrediction } from "@/lib/api";
 import type {
@@ -134,7 +134,7 @@ export default function AlertsPage() {
 }
 
 function AlertsContent() {
-  const { snapshot, alarms, training } = useAnalysisState();
+  const { snapshot, alarms } = useAnalysisState();
   const { setAnalysisPanelOpen } = usePanelState();
   const [data, setData] = useState<YieldPredictionResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -222,11 +222,7 @@ function AlertsContent() {
           이 모델은 상위 20장 적중률 95%로 순위는 정확하지만, 예측값 자체의 오차는 큽니다(R² 0.12). 절대값이 아니라 검토 우선순위로
           활용하세요.
         </p>
-        {data && <LastRunNote createdAt={snapshot?.created_at} />}
-        <TrainingAnalysisDataNote
-          trainFilename={training?.performance?.source_filename ?? null}
-          evalFilename={snapshot?.source?.eval_dataset_filename ?? null}
-        />
+        <PageHeaderMeta />
       </div>
 
       {/* SF-1: "예측 대상 [변경]" 카드를 제거했다 -- 파일 첨부·분석

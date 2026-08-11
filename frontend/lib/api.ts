@@ -63,6 +63,11 @@ const DEFAULT_TIMEOUT_MS = 90_000;
 // 여전히 상한선이 있는 것과 없는 것의 차이가 핵심이지, 정확한 값은
 // 중요하지 않다(연결이 끊기면 결국 이 시간 안에 끝난다는 게 중요하다).
 const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+// 작업지시 T7-1: 대용량(최대 200,000행) 데이터셋에서 원인 분석/수율 예측
+// 조회(스크리닝 히트맵·산점도·순위표)가 90초를 넘을 수 있다 -- 이 세
+// 엔드포인트에만 넉넉한 타임아웃을 준다. 전역 기본값(90초)은 그대로 둔다
+// -- 죽은 요청을 다른 화면까지 오래 붙들게 하고 싶지 않다.
+const ANALYSIS_QUERY_TIMEOUT_MS = 180_000;
 
 // E-3: getJson/postJson에만 있던 AbortController+타임아웃을 업로드·삭제·
 // 즐겨찾기 등 나머지 raw fetch 호출에도 공통으로 적용한다 -- 이게 없으면
@@ -260,11 +265,11 @@ export function getDatasetSchema(datasetId: string): Promise<DatasetSchemaRespon
 }
 
 export function getScreeningScatter(dataset: string, target: string, feature: string): Promise<ScreeningScatterResponse> {
-  return getJson(`/api/screening/scatter?${new URLSearchParams({ dataset, target, feature }).toString()}`);
+  return getJson(`/api/screening/scatter?${new URLSearchParams({ dataset, target, feature }).toString()}`, ANALYSIS_QUERY_TIMEOUT_MS);
 }
 
 export function getScreeningScatterCategorical(dataset: string, target: string, feature: string): Promise<CategoricalScatterResponse> {
-  return getJson(`/api/screening/scatter/categorical?${new URLSearchParams({ dataset, target, feature }).toString()}`);
+  return getJson(`/api/screening/scatter/categorical?${new URLSearchParams({ dataset, target, feature }).toString()}`, ANALYSIS_QUERY_TIMEOUT_MS);
 }
 
 // VA~VD: y(=100 − Σ Y1~Y5) 오름차순 전체 목록(신뢰도==0 웨이퍼 제외) --
@@ -273,7 +278,7 @@ export function getScreeningScatterCategorical(dataset: string, target: string, 
 // 중에는 상위 10 제한을 해제해야 하므로 서버가 미리 자르면 안 된다).
 export function getYieldPrediction(trainDataset: string, evalDataset: string): Promise<YieldPredictionResponse> {
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
-  return getJson(`/api/alerts/ranking?${params.toString()}`);
+  return getJson(`/api/alerts/ranking?${params.toString()}`, ANALYSIS_QUERY_TIMEOUT_MS);
 }
 
 export function getModelPerformance(): Promise<ModelPerformanceResponse> {
@@ -291,7 +296,7 @@ export function getPromotionHistory(limit = 5): Promise<PromotionHistoryResponse
 // 조회한다.
 export function getScreeningHeatmap(dataset: string): Promise<HeatmapResponse> {
   const params = new URLSearchParams({ dataset });
-  return getJson(`/api/screening/heatmap?${params.toString()}`);
+  return getJson(`/api/screening/heatmap?${params.toString()}`, ANALYSIS_QUERY_TIMEOUT_MS);
 }
 
 // `topN`은 백엔드의 PARETO_TOP_N(10) 기본값을 그대로 쓴다 -- 원인 분석 탭은

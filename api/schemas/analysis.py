@@ -38,6 +38,9 @@ class ParetoRankingResponse(BaseModel):
     model_available: bool = False
     factor_measurement_insufficient: bool = False
     target_provenance: dict[str, Any] | None = None
+    # 작업지시 T2: 20,000행 초과 데이터셋은 로트 단위 표본으로 인자 순위를
+    # 계산했다는 고지 -- None이면 전량 기준.
+    sample_info: dict[str, Any] | None = None
 
 
 class ScatterPointSchema(BaseModel):
@@ -185,6 +188,9 @@ class HeatmapResponse(BaseModel):
     scale: HeatmapScaleSchema
     excluded_configs: int
     target_provenance: dict[str, Any] | None = None
+    # 작업지시 T2: 20,000행 초과 데이터셋은 로트 단위 표본으로 계산됐다는
+    # 고지 -- None이면 전량 기준.
+    sample_info: dict[str, Any] | None = None
 
 
 class ControlRangeSchema(BaseModel):
