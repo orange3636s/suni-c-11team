@@ -124,7 +124,9 @@ def test_fallback_below_threshold_counts_as_measurement_gap_not_reliable():
 
 
 def test_all_ranks_unmeasured_gives_no_factor():
-    """VA-3: "전부 미계측"이면 해당 (웨이퍼, 타깃)의 핵심 인자는 None이다."""
+    """XG: "전부 미계측"이어도 예측에 실제로 쓴 인자는 없다(rank_used=None,
+    measured=False) -- 다만 1위 인자를 참고용으로 채워 "이 인자를 계측하면
+    예측이 정확해진다"를 보여준다(빈칸 대신)."""
     train_df = _fallback_frame()
     eval_df = train_df.copy()
     eval_df.loc[eval_df.index[:5], ["Step1_R1", "Step2_R1", "Step3_R1", "Y1"]] = np.nan
@@ -133,9 +135,11 @@ def test_all_ranks_unmeasured_gives_no_factor():
     wafer = eval_df.iloc[0]["Lot_Wafer_ID"]
     candidate = next(c for c in table.candidates if c.lot_wafer_id == wafer)
     y1_cell = candidate.core_factors["Y1"]
-    assert y1_cell.feature is None
+    assert y1_cell.feature == "Step1_R1"
+    assert y1_cell.measured is False
     assert y1_cell.rank_used is None
-    assert y1_cell.contribution_pct is None
+    assert y1_cell.factor_value is None
+    assert y1_cell.contribution_pct is not None
     assert ("Y1", "Step1_R1") in candidate.reliability.unmeasured
 
 

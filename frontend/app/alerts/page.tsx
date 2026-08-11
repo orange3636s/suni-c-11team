@@ -7,6 +7,7 @@ import DashboardShell from "@/components/DashboardShell";
 import { PageHeaderMeta } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { dispatchYieldUpdateNotification, getNotificationSettings, getYieldPrediction } from "@/lib/api";
+import { DISPLAY_CONTRIBUTION_THRESHOLD_PCT } from "@/lib/chartSelection";
 import type {
   AlertCellColor,
   DispatchResponse,
@@ -16,7 +17,7 @@ import type {
   YieldReliabilityInfo,
 } from "@/types/data";
 
-// VA~VE: 수율 예측 -- 이 모델은 순위는 맞지만 값은 못 맞춘다(R² 0.12,
+// 수율 예측 -- 이 모델은 순위는 맞지만 값은 못 맞춘다(R² 0.12,
 // 상위 20장 적중 95%). 그래서 이 화면은 "순위 도구"이지 예측값 표시
 // 도구가 아니다 -- Y 열을 강조하지 않고, 미계측 웨이퍼는 순위에서
 // 뺀다(AUC 0.509 -- 무작위와 같다).
@@ -41,7 +42,7 @@ function directionText(cell: AlertCellColor): string | null {
 
 function cellTooltip(target: string, valuePct: number | undefined, cell: AlertCellColor | undefined): string {
   if (!cell) return target;
-  // YB-1: Y1~Y5는 비율(불량률) 값이지 편차가 아니므로 %가 맞다 --
+  // Y1~Y5는 비율(불량률) 값이지 편차가 아니므로 %가 맞다 --
   // %p는 편차·기대효과·감소량 같은 "차이" 값에만 쓴다.
   if (cell.shade === "measured") return `${target}  실측 ${valuePct != null ? valuePct.toFixed(2) : "-"}%`;
   const lines = [`${target}  예측 ${valuePct != null ? valuePct.toFixed(2) : "-"}%`];
@@ -55,29 +56,51 @@ function cellTooltip(target: string, valuePct: number | undefined, cell: AlertCe
   return lines.join("\n");
 }
 
-// VA-4: "Step18_R1 (82.5%)" -- 폴백으로 하위 인자를 쓰면 기여율이 낮게
-// 표시되므로 사용자가 근거 강도를 즉시 안다. 인자가 없으면 "—"(무채색).
+// 기여율 구간별 색 강도 -- DISPLAY_CONTRIBUTION_THRESHOLD_PCT(10%)가 색
+// 유무의 경계와 일치한다(신뢰도 카운트 기준과 동일한 상수를 공유).
+function coreFactorTierClass(pct: number): string {
+  if (pct >= 60) return "ypCoreFactorTierStrong";
+  if (pct >= 20) return "ypCoreFactorTierMedium";
+  if (pct >= DISPLAY_CONTRIBUTION_THRESHOLD_PCT) return "ypCoreFactorTierLight";
+  return "ypCoreFactorTierMuted";
+}
+
+// "Step18_R1 (82.5%)" -- 폴백으로 하위 인자를 쓰면 기여율이 낮게
+// 표시되므로 사용자가 근거 강도를 즉시 안다. 후보 인자 자체가 없으면
+// "—"(무채색). 1~5위가 전부 미계측이면 1위 인자를 회색 + "미계측"으로
+// 보여준다 -- 빈칸 대신 "이 인자를 계측하면 예측이 정확해진다"는 조치
+// 가능한 정보를 준다.
 function coreFactorCell(candidate: YieldCandidate, target: string) {
   const cell = candidate.core_factors[target];
   if (!cell || !cell.feature || cell.contribution_pct == null) {
     return <span className="ypCoreFactorEmpty">—</span>;
   }
+  if (!cell.measured) {
+    return (
+      <span className="ypCoreFactorUnmeasured" title="계측되지 않아 예측에 사용하지 않았습니다. 이 인자를 계측하면 정확도가 올라갑니다.">
+        {cell.feature} <span className="ypCoreFactorPct">({cell.contribution_pct.toFixed(1)}%)</span> 미계측
+      </span>
+    );
+  }
   const fallback = cell.rank_used != null && cell.rank_used > 1;
   return (
-    <span title={fallback ? `${cell.rank_used}위 인자로 폴백됨 (1위 인자 미계측)` : undefined}>
+    <span
+      className={coreFactorTierClass(cell.contribution_pct)}
+      title={fallback ? `${cell.rank_used}위 인자로 폴백됨 (1위 인자 미계측)` : undefined}
+    >
       {cell.feature} <span className="ypCoreFactorPct">({cell.contribution_pct.toFixed(1)}%)</span>
     </span>
   );
 }
 
-// VC-1/YG: 신뢰도 = (기여율 10% 이상 인자가 계측된 타깃 수) / 5.
+// 신뢰도 = (기여율 10% 이상 인자가 계측된 타깃 수) / 5.
 function reliabilityClassName(count: number): string {
   if (count === 0) return "ypReliabilityCell zero";
   if (count === 1) return "ypReliabilityCell low";
   return "ypReliabilityCell";
 }
 
-// VC-2: 숫자만으로는 어느 인자가 빠졌는지 모른다 -- 계측/미계측 타깃과
+// 숫자만으로는 어느 인자가 빠졌는지 모른다 -- 계측/미계측 타깃과
 // 그 인자명을 툴팁으로 보여준다.
 function reliabilityTooltip(info: YieldReliabilityInfo): string {
   const lines = [`계측 ${info.count}/5`];
@@ -94,7 +117,9 @@ function downloadCsv(data: YieldPredictionResponse, rows: YieldCandidate[]) {
     c.lot_id ?? "",
     ...FAIL_TARGETS.map((t) => {
       const cell = c.core_factors[t];
-      return cell?.feature && cell.contribution_pct != null ? `${cell.feature} (${cell.contribution_pct.toFixed(1)}%)` : "";
+      if (!cell?.feature || cell.contribution_pct == null) return "";
+      const suffix = cell.measured ? "" : " 미계측";
+      return `${cell.feature} (${cell.contribution_pct.toFixed(1)}%)${suffix}`;
     }),
     ...FAIL_TARGETS.map((t) => (c.y_components[t] != null ? c.y_components[t].toFixed(2) : "")),
     c.y.toFixed(2),
@@ -117,7 +142,7 @@ const SORT_OPTIONS: SortOption<YieldCandidate>[] = [
   { value: "lot_desc", label: "LOT_WF_ID 내림차순", compare: (a, b) => b.lot_wafer_id.localeCompare(a.lot_wafer_id) },
   { value: "reliability_desc", label: "신뢰도 순", compare: (a, b) => b.reliability.count - a.reliability.count },
   ...FAIL_TARGETS.map((target) => ({
-    // VB-5: "Yn 높은 순"은 불량률이 높은 순(손실이 크다) -- Y(수율)와
+    // "Yn 높은 순"은 불량률이 높은 순(손실이 크다) -- Y(수율)와
     // 방향이 반대다.
     value: `${target.toLowerCase()}_desc`,
     label: `${target} 높은 순`,
@@ -150,7 +175,7 @@ function AlertsContent() {
   const trainDataset = snapshot?.source.train_dataset ?? alarms?.trainDataset ?? "train";
   const evalDataset = snapshot?.source.eval_dataset ?? alarms?.evalDataset ?? "test";
 
-  // YD-2: 다이얼로그를 열 때마다 연결 상태를 새로 읽는다 -- 설정 패널에서
+  // 다이얼로그를 열 때마다 연결 상태를 새로 읽는다 -- 설정 패널에서
   // 방금 채널을 끊었을 수도 있으니 캐시된 값을 재사용하지 않는다.
   function openNotifyDialog() {
     setNotifyDialogOpen(true);
@@ -207,12 +232,18 @@ function AlertsContent() {
   );
 
   const searching = search.trim().length > 0;
-  // VB-2/VB-4: 기본은 상위 10, "전체 보기"로 확장. 검색 중에는 상위 10
+  // 기본은 상위 10, "전체 보기"로 확장. 검색 중에는 상위 10
   // 제한을 해제한다(찾는 웨이퍼가 100위여도 나와야 한다).
   const visible = searching || expanded ? sorted : sorted.slice(0, DEFAULT_VISIBLE);
 
   const fallback = data?.fallback_summary;
   const noneRatio = fallback && fallback.total_combinations > 0 ? (fallback.none_count / fallback.total_combinations) * 100 : null;
+  const rank1Count = fallback?.rank_counts["1"] ?? 0;
+  const fallbackRankCount = fallback
+    ? Object.entries(fallback.rank_counts)
+        .filter(([rank]) => rank !== "1")
+        .reduce((sum, [, count]) => sum + count, 0)
+    : 0;
 
   return (
     <div className="rcPage">
@@ -225,10 +256,6 @@ function AlertsContent() {
         <PageHeaderMeta />
       </div>
 
-      {/* SF-1: "예측 대상 [변경]" 카드를 제거했다 -- 파일 첨부·분석
-          실행은 모델 분석 팝업으로 일원화됐다. CSV 내보내기·알림
-          전송 버튼은 표 카드 상단(TableToolbar의 extra 슬롯)으로
-          옮겼다. */}
       {loading ? (
         <p className="emptyMessage">불러오는 중…</p>
       ) : error ? (
@@ -318,7 +345,7 @@ function AlertsContent() {
                             {c.y_components[t] != null ? `${c.y_components[t].toFixed(2)}%` : "-"}
                           </td>
                         ))}
-                        {/* VB-3: Y(합산값)에는 색을 쓰지 않는다. */}
+                        {/* Y(합산값)에는 색을 쓰지 않는다. */}
                         <td className="numCol">{c.y.toFixed(2)}%</td>
                         <td className={reliabilityClassName(c.reliability.count)} title={reliabilityTooltip(c.reliability)}>
                           {c.reliability.count}/5
@@ -348,8 +375,9 @@ function AlertsContent() {
             </div>
             {fallback && (
               <p className="tableCaption">
-                핵심 인자 폴백 -- 1위 계측 {fallback.rank_counts["1"] ?? 0}건 · 전체 미계측 {fallback.none_count}건
-                {noneRatio != null ? ` (${noneRatio.toFixed(0)}%)` : ""} · 웨이퍼 x 타깃 {fallback.total_combinations}조합 기준
+                {fallback.total_combinations.toLocaleString()}개 조합 ({data?.total_wafers.toLocaleString() ?? "-"} wafer x{" "}
+                {FAIL_TARGETS.length} 모드) 중 1위 인자 계측 {rank1Count.toLocaleString()}건 · 2~5위 폴백 {fallbackRankCount.toLocaleString()}건 ·
+                전부 미계측 {fallback.none_count.toLocaleString()}건{noneRatio != null ? ` (${noneRatio.toFixed(0)}%)` : ""}
               </p>
             )}
           </section>

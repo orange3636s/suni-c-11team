@@ -1,23 +1,20 @@
-"""수율 예측 화면(VA~VD) -- 순위는 맞지만 값은 못 맞추는 모델(R² 0.12,
-상위 20장 적중 95%)이라 이 화면은 "순위 도구"다. 정렬은 y(=100 − Σ
-Y1~Y5, hydrated_df가 이미 실측 우선으로 채운 값) 오름차순 하나뿐이다.
+"""수율 예측 화면 -- 순위는 맞지만 값은 못 맞추는 모델(R² 0.12, 상위
+20장 적중 95%)이라 이 화면은 "순위 도구"다. 정렬은 y(=100 − Σ Y1~Y5,
+hydrated_df가 이미 실측 우선으로 채운 값) 오름차순 하나뿐이다.
 
-VA-1/VA-3: 타깃별 핵심 인자는 파레토 차트가 이미 쓰는 기여율
-(selector.py의 contribution_pct)을 그대로 재사용하고, 웨이퍼·타깃마다
-계측된 가장 높은 순위(최대 5위까지)의 인자로 폴백한다.
+타깃별 핵심 인자는 파레토 차트가 이미 쓰는 기여율(selector.py의
+contribution_pct)을 그대로 재사용하고, 웨이퍼·타깃마다 계측된 가장 높은
+순위(최대 5위까지)의 인자로 폴백한다.
 
-VC-1: 신뢰도 = (기여율 CORE_FACTOR_CONTRIBUTION_MIN 이상 인자가 계측된
-타깃 수) / 5. 실측이 있는 타깃은 계측으로 센다(예측이 아니므로 근거가
-확실하다). VA-2 실측상 이 임계 이상은 대체로 타깃당 1위 인자뿐이라
-사실상 "1위 계측 수"와 같지만, 판정은 기여율로 한다 -- 다른
+신뢰도 = (기여율 CORE_FACTOR_CONTRIBUTION_MIN 이상 인자가 계측된 타깃
+수) / 5. 실측이 있는 타깃은 계측으로 센다(예측이 아니므로 근거가
+확실하다). 현재 데이터에서 이 임계 이상은 대체로 타깃당 1위 인자뿐이라
+사실상 "1위 계측 수"와 같지만, 판정은 반드시 기여율로 한다 -- 다른
 데이터셋에서 2위가 임계를 넘으면 자동으로 반영되어야 하기 때문이다.
-YG: 이전에는 20%였다("하지 말 것: 20% 임계를 낮추지 마라"는 주석이
-있었다) -- 작업 지시서가 명시적으로 10%로 낮추라고 요구해 그 결정을
-대체했다. 폐기 배경은 docs/decisions.md 참고.
 
-VD-1: 같은 임계로 권장사항이 두 갈래로 갈린다 -- 이상 계측된 타깃은
-구간 조정 제안(SPC/ML 권장 구간 재사용 + 2차 곡선 감소량), 미만인
-타깃은 계측 추가 제안(1위 인자명).
+같은 임계로 권장사항이 두 갈래로 갈린다 -- 이상 계측된 타깃은 구간
+조정 제안(SPC/ML 권장 구간 재사용 + 2차 곡선 감소량), 미만인 타깃은
+계측 추가 제안(1위 인자명).
 """
 
 from __future__ import annotations
@@ -39,21 +36,22 @@ from src.analysis.thresholds import CORE_FACTOR_CONTRIBUTION_MIN
 ID_COLUMN = "Lot_Wafer_ID"
 LOT_COLUMN = "Lot_ID"
 
-# VA-3: 5위까지만 본다 -- 그 아래는 기여율 1% 미만이라 의미가 없다.
+# 5위까지만 본다 -- 그 아래는 기여율 1% 미만이라 의미가 없다.
 MAX_FALLBACK_RANK = 5
-# VA-2/VC-1/VD-1이 공유하는 단일 임계 -- src/analysis/thresholds.py가
-# 유일한 소스다(YG/ZF-1). reliability_score.SHADE_MEDIUM_MIN은 값이
-# 우연히 같았을 뿐인 별개 개념(셀 농도 구간)이라 여기에 맞춰 바꾸지
-# 않는다 -- 그 상수를 건드리지 마라.
+# 핵심 인자 폴백·신뢰도·권장사항 분기가 공유하는 단일 임계 --
+# src/analysis/thresholds.py가 유일한 소스다.
+# reliability_score.SHADE_MEDIUM_MIN은 값이 우연히 같을 뿐인 별개
+# 개념(셀 농도 구간)이라 여기에 맞춰 바꾸지 않는다 -- 그 상수를
+# 건드리지 마라.
 CONTRIBUTION_THRESHOLD = CORE_FACTOR_CONTRIBUTION_MIN
-# VD-3: 실익 없는 조치를 권하지 않는다.
+# 실익 없는 조치를 권하지 않는다.
 MIN_MEANINGFUL_DECREASE_PCT = 0.05
-# VD-2: 여러 타깃이 조정 가능해도 최대 2개까지만 나열한다.
+# 여러 타깃이 조정 가능해도 최대 2개까지만 나열한다.
 MAX_ADJUSTMENT_ITEMS = 2
 
 @dataclass(frozen=True)
 class CoreFactorCell:
-    """VA-3/VA-4: 이 (웨이퍼, 타깃)에 대해 실제로 쓰인(폴백 포함) 인자.
+    """이 (웨이퍼, 타깃)에 대해 실제로 쓰인(폴백 포함) 인자.
     `rank_used`가 1보다 크면 폴백이 일어났다는 뜻이고, `contribution_pct`는
     그 폴백된 인자 자신의 기여율이다(1위보다 낮게 표시돼 근거 강도가
     바로 드러난다)."""
@@ -62,11 +60,16 @@ class CoreFactorCell:
     contribution_pct: float | None
     rank_used: int | None  # 1..5, 전부 미계측이면 None
     factor_value: float | None
+    # 1~5위가 전부 미계측이면 False -- 이때도 feature/contribution_pct는
+    # 1위 인자를 참고용으로 채운다("이 인자를 계측하면 예측이 정확해진다"를
+    # 보여주기 위함) -- 그래서 신뢰도 판정은 이 필드로만 실제 사용 여부를
+    # 구분해야 한다(contribution_pct 유무로 판정하면 안 된다).
+    measured: bool
 
 
 @dataclass(frozen=True)
 class ReliabilityInfo:
-    """VC-1/VC-2: n/5 신뢰도와, 툴팁이 쓰는 계측/미계측 타깃 상세."""
+    """n/5 신뢰도와, 툴팁이 쓰는 계측/미계측 타깃 상세."""
 
     count: int
     measured: tuple[tuple[str, str], ...]  # (target, feature-or-"실측")
@@ -75,7 +78,7 @@ class ReliabilityInfo:
 
 @dataclass(frozen=True)
 class Recommendation:
-    """VD-2: 조립된 권장사항 문장(줄바꿈으로 구분된 여러 줄)과, 어느
+    """조립된 권장사항 문장(줄바꿈으로 구분된 여러 줄)과, 어느
     타깃이 어느 갈래로 분류됐는지(테스트/발송 메시지가 재사용)."""
 
     text: str
@@ -89,15 +92,15 @@ class YieldCandidate:
     lot_id: str | None
     y: float
     y_components: dict[str, float]
-    cells: dict[str, dict[str, object]]  # VB-3: Y1~Y5 색상(기존 cell_color 재사용)
-    core_factors: dict[str, CoreFactorCell]  # VB-1: Y1핵심인자..Y5핵심인자
+    cells: dict[str, dict[str, object]]  # Y1~Y5 색상(cell_color 재사용)
+    core_factors: dict[str, CoreFactorCell]  # Y1핵심인자..Y5핵심인자
     reliability: ReliabilityInfo
     recommendation: Recommendation
 
 
 @dataclass(frozen=True)
 class FallbackSummary:
-    """VA-3: "58%가 전부 미계측이다" 같은 화면에 드러낼 통계."""
+    """폴백 순위 분포 -- "58%가 전부 미계측이다" 같은, 화면에 드러낼 통계."""
 
     rank_counts: dict[int, int]
     none_count: int
@@ -106,8 +109,8 @@ class FallbackSummary:
 
 @dataclass(frozen=True)
 class YieldPredictionTable:
-    candidates: list[YieldCandidate]  # 신뢰도>=1, y 오름차순(기본 정렬) -- VB-2
-    unmeasured_wafer_ids: list[str]  # 신뢰도==0 -- VB-2/VE-1: 별도 블록
+    candidates: list[YieldCandidate]  # 신뢰도>=1, y 오름차순(기본 정렬)
+    unmeasured_wafer_ids: list[str]  # 신뢰도==0 -- 별도 블록으로 표시
     total_wafers: int
     fallback_summary: FallbackSummary
     primary_factors: dict[str, ParetoFactor | None] = field(default_factory=dict)  # 타깃별 1위(참고/발송용)
@@ -117,7 +120,7 @@ def serialize_yield_prediction_table(
     table: "YieldPredictionTable", *, train_dataset_id: str, eval_dataset_id: str
 ) -> dict:
     """`YieldPredictionTable`(frozen dataclass)을 `GET /api/alerts/ranking`
-    응답과 동일한 JSON-safe dict로 변환한다. SC그룹: "모델 분석" 파이프라인이
+    응답과 동일한 JSON-safe dict로 변환한다. "모델 분석" 파이프라인이
     스냅샷에 캐시하는 값과 라이브 조회 응답이 같은 모양이어야 프런트가
     출처를 구분하지 않고 그대로 렌더링할 수 있다 -- 한 곳(여기)에서만
     만든다."""
@@ -138,6 +141,7 @@ def serialize_yield_prediction_table(
                         "contribution_pct": cell.contribution_pct,
                         "rank_used": cell.rank_used,
                         "factor_value": cell.factor_value,
+                        "measured": cell.measured,
                     }
                     for target, cell in c.core_factors.items()
                 },
@@ -165,18 +169,31 @@ def serialize_yield_prediction_table(
 
 
 def _rank5_factors(train_df: pd.DataFrame, schema: Schema) -> dict[str, list[ParetoFactor]]:
-    return {target: select_top_factors(train_df, schema, target, limit=MAX_FALLBACK_RANK) for target in FAIL_RATE_TARGETS}
+    """폴백 사다리(타깃당 최대 5순위)는 수치형(R/D) 인자만 올린다 --
+    각 셀이 `float(factor_value)`·곡선 적합(`_curve`)·권장구간
+    (`compute_factor_recommendation`)을 모두 요구하는데 Config(범주형)에는
+    셋 다 정의되지 않는다(fmea.py도 같은 이유로 Config를 제외한다).
+
+    Config는 실제로 상위 5위 안에 들어온다(train.CSV 기준 Y2 4위 =
+    Step10_Config) -- 순위에서 자연히 밀려나기를 기대할 수 없으므로 반드시
+    명시적으로 걸러야 한다. 기여율/순위 자체는 여전히 R+D+Config 전체 풀
+    기준이라 다른 화면과 같은 숫자를 본다.
+    """
+    return {
+        target: select_top_factors(
+            train_df, schema, target, limit=MAX_FALLBACK_RANK, exclude_kinds=("Config",)
+        )
+        for target in FAIL_RATE_TARGETS
+    }
 
 
-# YF/ZD (성능): 라이브 프로파일 결과 `_rank5_factors`(파레토 스코어링 5회,
-# 매번 eps2/quantile-bin/pearsonr 반복)가 요청마다 ~3.5초를 먹었다 --
-# train_df/schema에만 의존하고 eval 데이터셋과는 무관한데도 캐시가 전혀
-# 없어 같은 train 데이터셋으로 반복 조회해도 매번 다시 계산됐다(측정:
-# 콜드 6.4s, 웜(하이드레이션·compare_methods 캐시만 적용) 3.5s -- 그 3.5s가
-# 전부 이 함수였다). dataset_id는 재업로드로 내용이 바뀌어도 그대로일 수
-# 있어(YE가 test.CSV를 그대로 갈아 끼운 것처럼) 버전 문자열을 키에 함께
-# 넣는다 -- src/analysis/target_hydration.py, window_methods.py의
-# (dataset_id, dataset_version)/문자열 키 관례를 그대로 따른다.
+# `_rank5_factors`(파레토 스코어링 5회, 매번 Adjusted R²/quantile-bin/곡선
+# 적합 반복)는 요청당 ~3.5초가 드는 반면 train_df/schema에만 의존하고 eval
+# 데이터셋과는 무관하다 -- 그래서 train 데이터셋 단위로 캐시한다.
+# dataset_id는 같은 이름으로 재업로드하면 내용이 바뀌어도 그대로일 수
+# 있으므로 버전 문자열을 키에 반드시 함께 넣는다(빠뜨리면 갱신된
+# 데이터셋에 낡은 인자 순위가 나간다) -- src/analysis/target_hydration.py,
+# window_methods.py의 (dataset_id, dataset_version) 키 관례와 같다.
 _FACTOR_CACHE_MAXSIZE = 4
 _factor_cache: "OrderedDict[tuple[str, str], dict[str, list[ParetoFactor]]]" = OrderedDict()
 _factor_cache_lock = RLock()
@@ -282,15 +299,23 @@ def build_yield_prediction_table(
                         contribution_pct=factor.contribution_pct,
                         rank_used=rank,
                         factor_value=float(value),
+                        measured=True,
                     )
                     rank_counts[rank] += 1
                     break
             if chosen is None:
-                chosen = CoreFactorCell(feature=None, contribution_pct=None, rank_used=None, factor_value=None)
+                top_factor = ranked_factors[target][0] if ranked_factors[target] else None
+                chosen = CoreFactorCell(
+                    feature=top_factor.feature if top_factor else None,
+                    contribution_pct=top_factor.contribution_pct if top_factor else None,
+                    rank_used=None,
+                    factor_value=None,
+                    measured=False,
+                )
                 none_count += 1
             core_factors[target] = chosen
 
-        # VC-1.
+        # 신뢰도 n/5 집계.
         reliability_count = 0
         measured_detail: list[tuple[str, str]] = []
         unmeasured_detail: list[tuple[str, str]] = []
@@ -300,7 +325,7 @@ def build_yield_prediction_table(
                 reliability_count += 1
                 measured_detail.append((target, core.feature or "실측"))
                 continue
-            if core.contribution_pct is not None and core.contribution_pct >= CONTRIBUTION_THRESHOLD:
+            if core.measured and core.contribution_pct is not None and core.contribution_pct >= CONTRIBUTION_THRESHOLD:
                 reliability_count += 1
                 measured_detail.append((target, core.feature or "-"))
             else:
@@ -310,11 +335,11 @@ def build_yield_prediction_table(
         lot_wafer_id = str(row[ID_COLUMN]) if ID_COLUMN in hydrated_df.columns else str(idx)
 
         if reliability_count == 0:
-            # VB-2/VE-1: 미계측 웨이퍼는 판정 목록에 넣지 않고 별도 블록으로.
+            # 미계측 웨이퍼는 판정 목록에 넣지 않고 별도 블록으로.
             unmeasured_ids.append(lot_wafer_id)
             continue
 
-        # VB-3: Y1~Y5 색상 -- 기존 cell_color 재사용(1위 인자 기준 방향/농도).
+        # Y1~Y5 색상 -- cell_color 재사용(1위 인자 기준 방향/농도).
         cells: dict[str, dict[str, object]] = {}
         for target in FAIL_RATE_TARGETS:
             target_factor = primary_factors.get(target)
@@ -352,32 +377,32 @@ def build_yield_prediction_table(
         meaningful = [item for item in adjustable if item[5] >= MIN_MEANINGFUL_DECREASE_PCT]
         top_adjustments = meaningful[:MAX_ADJUSTMENT_ITEMS]
 
-        # YC-3: 화살표 축약형 한 줄 -- "Step16_R1 73.2 → 55.6~63.4 · Y2 −2.1%p".
+        # 화살표 축약형 한 줄 -- "Step16_R1 73.2 → 55.6~63.4 · Y2 −2.1%p".
         # 감소량 큰 순으로 이미 정렬돼 있다(위 adjustable.sort).
         lines: list[str] = []
         for target, feature, current_value, lo, hi, decrease in top_adjustments:
             lines.append(f"{feature} {current_value:.1f} → {lo:.1f}~{hi:.1f} · {target} −{decrease:.1f}%p")
         if adjustable and not meaningful:
-            # VD-3: 실익 0.05%p 미만 -- 실익 없는 조치를 권하지 않는다.
+            # 실익 0.05%p 미만 -- 실익 없는 조치를 권하지 않는다.
             lines.append("개선 여지가 거의 없습니다.")
 
-        # VD-4: 폴백으로 하위 인자를 쓰고 있어도 1위가 미계측이면 제안 대상.
+        # 폴백으로 하위 인자를 쓰고 있어도 1위가 미계측이면 제안 대상.
         # 이미 실측인 타깃은 "예측이 부정확하다"는 문구가 성립하지 않으므로
         # 제외한다. top1이 없는(그 타깃에 후보 인자 자체가 없는) 경우도
-        # "핵심 인자가 아예 없다"는 뜻이므로 YC-5 대상에 포함한다(이전에는
-        # 조용히 건너뛰어 행 전체가 "—"만 남았다).
+        # "핵심 인자가 아예 없다"는 뜻이므로 제안 대상에 포함한다 -- 조용히
+        # 건너뛰면 행 전체가 "—"만 남는다.
         deficient_targets: list[tuple[str, str | None]] = []
         for target in FAIL_RATE_TARGETS:
             if target_measured[target]:
                 continue
             core = core_factors[target]
-            eligible = core.contribution_pct is not None and core.contribution_pct >= CONTRIBUTION_THRESHOLD
+            eligible = core.measured and core.contribution_pct is not None and core.contribution_pct >= CONTRIBUTION_THRESHOLD
             if eligible:
                 continue
             top1 = primary_factors.get(target)
             deficient_targets.append((target, top1.feature if top1 is not None else None))
 
-        # YC-2/YC-5: 타깃별로 자기 인자를 괄호로 묶어 한 줄로 -- 인자가
+        # 타깃별로 자기 인자를 괄호로 묶어 한 줄로 -- 인자가
         # 아예 없는 타깃은 괄호 없이 타깃명만(계측할 대상 자체가 없다는
         # 뜻이라 인자를 지어내지 않는다).
         if deficient_targets:
@@ -404,7 +429,7 @@ def build_yield_prediction_table(
             )
         )
 
-    candidates.sort(key=lambda c: c.y)  # VB-2 기본: Y 낮은 순
+    candidates.sort(key=lambda c: c.y)  # 기본 정렬: Y 낮은 순
 
     fallback_summary = FallbackSummary(
         rank_counts=rank_counts,
