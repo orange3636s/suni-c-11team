@@ -11,7 +11,7 @@ import { usePanelState } from "@/components/PanelStateProvider";
 import { buildMonitoringSnapshot, type MonitoringSnapshot } from "@/lib/monitoringSource";
 
 export default function MonitoringPage() {
-  // 지시서 K-3: 원인 분석·학습 결과가 그대로면(무효화 조건 ①②가 안
+  // 원인 분석·학습 결과가 그대로면(무효화 조건 ①②가 안
   // 일어났으면) 재조회하지 않고 캐시를 그대로 쓴다. 캐시는
   // AnalysisStateProvider에 있어 탭을 옮겼다 돌아와도(페이지 언마운트)
   // 살아남는다 -- 하드 새로고침(조건 ③)만 이 컨텍스트 자체를 초기화한다.
@@ -19,10 +19,10 @@ export default function MonitoringPage() {
     hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome,
   } = useAnalysisState();
   const { setAnalysisPanelOpen } = usePanelState();
-  // A-9: alarms.createdAt도 캐시 키에 포함해야 한다 -- 알림 이력에서
+  // alarms.createdAt도 캐시 키에 포함해야 한다 -- 알림 이력에서
   // 목표 수율·민감도를 바꾸면(alerts/page.tsx가 alarms.createdAt을
   // 갱신) 이 화면의 요약도 새 기준으로 다시 계산해야 하는데, 이 키가
-  // 빠지면 옛 캐시가 그대로 적중해 버린다.
+  // 빠지면 낡은 캐시가 그대로 적중해 버린다.
   const cacheKey = `${analysis?.createdAt ?? ""}|${training?.createdAt ?? ""}|${alarms?.createdAt ?? ""}`;
   const cached = monitoringHome && monitoringHome.cacheKey === cacheKey ? monitoringHome : null;
 
@@ -55,9 +55,9 @@ export default function MonitoringPage() {
           setMonitoringHome({ cacheKey, snapshot: snap });
         })
         .catch(() => {
-          // A-9: 서버가 잠깐 죽으면 loading이 영구 true로 남아 무한
-          // 로딩처럼 보였다 -- 실패도 명시적인 상태로 남기고 재시도
-          // 버튼을 보여준다.
+          // 조회가 실패해도 loading은 반드시 내려야 한다 -- 안 그러면
+          // 서버가 잠깐 죽었을 때 무한 로딩처럼 보인다. 실패는 명시적인
+          // 상태로 남기고 재시도 버튼을 보여준다.
           if (cancelled) return;
           setLoading(false);
           setLoadError(true);
@@ -70,7 +70,7 @@ export default function MonitoringPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, cacheKey, retryToken, analysis, alarms]);
 
-  // WG: "데이터셋 불일치 경고"는 유지한다 -- 블록③(데이터 한계)이 쓰는
+  // 데이터셋 불일치 경고 -- 블록③(데이터 한계)이 쓰는
   // alarmsRecord(수율 예측에서 저장한 판정 결과)와 현재 조회 중인
   // snapshot.dataset이 다르면, 서로 다른 데이터셋의 숫자를 섞어 보여주는
   // 것이다. 두 값은 서로 다른 탭(원인 분석/수율 예측)이 독립적으로
@@ -84,8 +84,6 @@ export default function MonitoringPage() {
     <DashboardShell activeItem="모니터링 홈">
       <div className="rcPage">
         <div className="pageHeading">
-          {/* SF-1: "최신화" 버튼 제거 -- 모든 실행은 모델 분석 팝업의
-              [분석 시작] 하나로 일원화됐다. */}
           <h1>모니터링 홈</h1>
           <p>엔지니어가 오늘 결정할 수 있는 것만 보여줍니다 — 조치 우선순위, 조치 가능 범위, 이 화면을 얼마나 믿을 수 있는가.</p>
           <PageHeaderMeta />
@@ -128,9 +126,8 @@ export default function MonitoringPage() {
               ]}
             />
 
-            {/* 모니터링 홈 재설계(작업 지시서): 여섯 블록을 셋으로 줄였다.
-                ① 조치 우선순위 ② 조치 가능 범위 ③ 이 화면을 얼마나
-                믿을 수 있나(데이터 한계). 트리맵은 별도 탭(WH)에 남는다. */}
+            {/* 세 블록 구성 -- ① 조치 우선순위 ② 조치 가능 범위
+                ③ 이 화면을 얼마나 믿을 수 있나(데이터 한계). */}
             <ActionPriorityBlock data={snapshot.actionPriority} error={snapshot.actionPriorityError} />
             <CoverageBlock data={snapshot.actionPriority} error={snapshot.actionPriorityError} />
             <DataLimitationDiagnostics fmea={snapshot.fmea} actionPriority={snapshot.actionPriority} />

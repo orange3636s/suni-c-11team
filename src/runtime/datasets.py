@@ -40,12 +40,10 @@ MIN_FACTOR_OBSERVATIONS = 100
 ID_COLUMN = "Lot_Wafer_ID"
 LOT_COLUMN = "Lot_ID"
 
-# Display order is explicit and fixed (spec §1) -- never sorted by name or
-# size. train.CSV stays the default selection.
-# 지시서 CB: mentorship_dataset_final/v7_killing_event는 구버전 스키마라
-# 삭제했다 -- final은 Y = 100 - (Y1+...+Y5) 항등식이 깨져 있고(잔차 최대
-# 203), v7_killing_event는 Config 대신 Eq 컬럼을 쓰는 189컬럼 이전
-# 형식이라 현재 파이프라인의 스키마 가정과 맞지 않는다.
+# Display order is explicit and fixed -- never sorted by name or size.
+# train.CSV stays the default selection. 번들 데이터셋은 Y = 100 -
+# (Y1+...+Y5) 항등식이 성립하고 Config 컬럼 체계를 쓰는 것만 넣는다 --
+# 현재 파이프라인의 스키마 가정이 그 두 가지에 의존한다.
 BUNDLED_DATASET_FILES = {
     "train": "train.CSV",
     "test": "test_remove_y.CSV",
@@ -121,7 +119,7 @@ def validate_dataset(
     if blocking_errors:
         return DatasetValidation(blocking_errors=blocking_errors, schema=schema)
 
-    # AG-5: 타깃(Y) 열이 없어도 차단하지 않는다 -- 업로드 연동(원인
+    # 타깃(Y) 열이 없어도 차단하지 않는다 -- 업로드 연동(원인
     # 분석·수율 예측에서 새 파일을 올리는 것)은 대부분 "평가 데이터셋"
     # 용도라 Y가 없는 게 정상이다. 학습 전용 업로드(`/api/train/jobs`)는
     # 이 함수를 쓰지 않고 별도 검증(src/data_validation.py)을 거치므로
@@ -140,9 +138,9 @@ def validate_dataset(
         warnings.append("표본이 부족해 인자 선정 결과를 신뢰하기 어렵습니다.")
     elif row_count < UNSTABLE_ROW_COUNT_THRESHOLD:
         warnings.append("인자 선정이 불안정할 수 있습니다.")
-    # T1-2: 예전에는 경고만 하고 통과시켰다 -- 그 결과 하드 한도(50,000행)
-    # 근처 파일이 업로드는 성공하고서 분석 단계에서 OOM으로 죽었다("끊긴다"의
-    # 정체). 업로드 시점에 명확히 거부하는 편이 낫다.
+    # 행 수 상한은 경고가 아니라 차단이어야 한다 -- 통과시키면 한도 근처
+    # 파일이 업로드는 성공하고서 분석 단계에서 OOM으로 죽는다. 업로드
+    # 시점에 명확히 거부한다.
     if row_count > max_row_count():
         blocking_errors.append(
             f"행 수가 너무 많습니다 ({row_count:,}행, 최대 {max_row_count():,}행). "
@@ -150,7 +148,7 @@ def validate_dataset(
         )
         return DatasetValidation(blocking_errors=blocking_errors, warnings=warnings, schema=schema)
 
-    # Lot_ID may have been derived from Lot_Wafer_ID just now (spec §2-2)
+    # Lot_ID may have been derived from Lot_Wafer_ID just now
     # rather than having existed in the source file -- either way, if it's
     # missing entirely (couldn't be parsed for a single row) GroupKFold is
     # still impossible and gets the same existing warning. A *partial*
@@ -203,12 +201,11 @@ def validate_dataset(
 # (see analysis.py's heatmap-cache docstring for why that's safe), so no
 # invalidation key is needed there.
 _BUNDLED_CACHE_SIZE = len(BUNDLED_DATASET_FILES)
-# T3-3: `lru_cache(maxsize=8)` bounded the *count* of cached uploads, not
-# their combined size. That was fine while uploads capped out around
-# 50,000 rows, but T1 raised the upload limit to 200,000 rows -- 8 cached
-# frames at that size would be several GB, well past Railway's 512MB
-# free-tier ceiling. Bound by total cached row count instead (LRU-evicted),
-# so the cache stays small regardless of how large any single upload is.
+# Bound the cache by total cached row count (LRU-evicted), never by the
+# *count* of cached uploads: with a 200,000-row upload limit, 8 cached
+# frames would be several GB, well past Railway's 512MB free-tier ceiling.
+# Bounding by rows keeps the cache small regardless of how large any single
+# upload is.
 _UPLOADED_CACHE_MAX_ROWS = 200_000
 _uploaded_cache_lock = threading.Lock()
 _uploaded_cache: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
@@ -245,8 +242,8 @@ def _read_uploaded_csv_cache_clear() -> None:
         _uploaded_cache.clear()
 
 
-# H-3③(위 delete()의 docstring 참고): 기존 호출부가 lru_cache의
-# `.cache_clear()` 관례에 기대고 있어 그대로 속성으로 붙여준다.
+# 호출부가 lru_cache의 `.cache_clear()` 관례에 기대므로 같은 이름의
+# 속성으로 붙여준다(위 delete()의 docstring 참고).
 _read_uploaded_csv.cache_clear = _read_uploaded_csv_cache_clear
 
 
@@ -332,7 +329,7 @@ class DatasetRegistry:
         """Bytes-in-memory path -- used by callers that already build the CSV
         in memory (SQL fetch-from-db, yield_dispatch), not by the browser
         upload route (that streams to disk via `upload_from_path` instead,
-        see T1-3: a 150MB browser upload must never sit fully in memory
+        because a 150MB browser upload must never sit fully in memory
         twice at once -- once as the raw bytes, once as the parsed
         DataFrame)."""
 
@@ -347,7 +344,7 @@ class DatasetRegistry:
         )
 
     def upload_from_path(self, filename: str, tmp_path: Path) -> dict[str, Any]:
-        """T1-3: counterpart to `upload()` for a file already streamed to
+        """Counterpart to `upload()` for a file already streamed to
         disk in chunks by the route handler -- `tmp_path` holds the raw
         bytes, so this never holds the full upload in memory as `bytes` at
         all, only the parsed DataFrame. On success `tmp_path` is moved (not
@@ -441,7 +438,7 @@ class DatasetRegistry:
                 "lot_min": lot_min,
                 "lot_max": lot_max,
                 "lot_count": lot_count,
-                # AG-2: 프런트가 "이 파일에는 Y 계열이 있습니다" 안내를
+                # 프런트가 "이 파일에는 Y 계열이 있습니다" 안내를
                 # 띄울지 결정하는 데 쓴다 -- 경고 문구를 문자열로 매칭하지
                 # 않도록 별도 필드로 내려준다.
                 "has_target_columns": bool(inspect_target_status(df).present_columns),
@@ -464,16 +461,16 @@ class DatasetRegistry:
         if path.is_file():
             path.unlink()
         self.store.delete_dataset(dataset_id)
-        # H-3③: `_read_uploaded_csv`는 파일 경로로 lru_cache된다 -- 삭제
+        # `_read_uploaded_csv`는 파일 경로로 lru_cache된다 -- 삭제
         # 후 같은 stored_path로 새 파일이 올라오면(업로드 파일명이 겹치는
-        # 경우) 캐시가 옛 DataFrame을 계속 돌려준다. `lru_cache`는 키
+        # 경우) 캐시가 낡은 DataFrame을 계속 돌려준다. `lru_cache`는 키
         # 하나만 지우는 API가 없으므로 전체를 비운다 (업로드 캐시는
         # 최대 8개뿐이라 비용이 작다).
         _read_uploaded_csv.cache_clear()
         invalidate_target_hydration_cache(dataset_id)
         # A deleted dataset's saved 학습/원인 분석/사전 알람 results would
         # otherwise keep pointing a selector at data that no longer exists
-        # (spec §3-5) -- best-effort, deletion itself already succeeded above.
+        # -- best-effort, deletion itself already succeeded above.
         try:
             invalidate_state_for_dataset(self.store, dataset_id)
         except Exception:

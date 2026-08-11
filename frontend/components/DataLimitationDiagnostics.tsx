@@ -2,7 +2,7 @@
 
 import type { ActionPriorityPayload, FmeaTablePayload } from "@/types/data";
 
-/** 데이터 한계 진단 (모니터링 홈, 작업 지시서 WL) -- 조치 블록 바로
+/** 데이터 한계 진단 (모니터링 홈) -- 조치 블록 바로
  * 다음에 둔다("계측을 늘려야 한다"의 근거가 여기 있다). 계측 편향(MNAR)
  * 과 분산 분해를 한 블록에 나란히, 둘 다 상시 표시한다(접지 않는다).
  * 분산 분해 하단의 불량모드별 변동 기여는 fmea(eval 기준)가 아니라

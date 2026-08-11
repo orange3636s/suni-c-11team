@@ -120,9 +120,8 @@ def _resolve_dataset_upload_dir(raw_value: str | None) -> Path:
     return (PROJECT_ROOT / configured_path).resolve()
 
 
-# TA-2: `_storage_default`(볼륨 자동 감지)를 덮어쓸 수 있는 경로 환경변수
-# 전부. 기동 로그(TA-3)가 어느 경로가 명시적으로 덮어써졌는지 표시하는 데
-# 쓴다.
+# `_storage_default`(볼륨 자동 감지)를 덮어쓸 수 있는 경로 환경변수 전부.
+# 기동 로그가 어느 경로를 명시적으로 덮어썼는지 표시하는 데 쓴다.
 STORAGE_ENV_VARS: dict[str, str] = {
     "model_dir": "MODEL_DIR",
     "runtime_db_path": "RUNTIME_DB_PATH",
@@ -213,7 +212,7 @@ class Settings:
     upstage_model: str = field(
         default_factory=lambda: os.environ.get("UPSTAGE_MODEL", "solar-pro3").strip()
     )
-    # 알림 연동 (알람 알림 연동 §C) -- 전부 선택값이다. 설정되지 않으면 해당
+    # 알림 연동 -- 전부 선택값이다. 설정되지 않으면 해당
     # 채널은 "연결하기"를 눌러도 안내 메시지만 뜨고 실제 발송은 되지 않는다
     # (봇 토큰/SMTP 자격 증명 없이 발송을 시도하면 사용자가 원인을 알 수 없는
     # 실패를 겪는다).
@@ -238,7 +237,7 @@ class Settings:
     smtp_from_email: str | None = field(
         default_factory=lambda: os.environ.get("SMTP_FROM_EMAIL", "").strip() or None
     )
-    # 인증 메일의 확인 링크가 가리킬 주소 -- A-7: `/api/notify/gmail/verify`는
+    # 인증 메일의 확인 링크가 가리킬 주소 -- `/api/notify/gmail/verify`는
     # FastAPI 라우트일 뿐 Next.js에 대응하는 페이지/rewrite가 없으므로,
     # 프런트엔드 오리진을 기본값으로 쓰면 메일 링크가 Next 404로 간다.
     # 명시적으로 설정되지 않았으면 None으로 두고, 호출부(api/routes/notify.py)가
@@ -246,7 +245,7 @@ class Settings:
     notify_verify_base_url: str | None = field(
         default_factory=lambda: os.environ.get("NOTIFY_VERIFY_BASE_URL", "").strip() or None
     )
-    # SD그룹: 자동화(주기 SQL 수율 예측 발송)의 SQL 데이터 소스 -- 팹마다
+    # 자동화(주기 SQL 수율 예측 발송)의 SQL 데이터 소스 -- 팹마다
     # DB 엔진이 달라(PostgreSQL/MySQL/MSSQL/Oracle 등) 특정 드라이버를
     # 코드에 고정하지 않는다. `db_driver`는 SQLAlchemy dialect+driver
     # 접두사(예: "postgresql+psycopg2", "mssql+pyodbc")이고, 실제 접속
@@ -318,7 +317,7 @@ class Settings:
         }
 
     def storage_directory_status(self) -> dict[str, bool]:
-        """TA-4: 5개 저장 경로 전부의 쓰기 가능 여부. 기동 시 1회 확인용."""
+        """5개 저장 경로 전부의 쓰기 가능 여부. 기동 시 1회 확인용."""
         return {
             "model_dir": self.model_directory_ready(),
             "runtime_db_path": _ensure_writable_dir(self.runtime_db_path.parent),
@@ -330,7 +329,7 @@ class Settings:
         }
 
     def bundled_data_conflict(self) -> str | None:
-        """TB-2: 볼륨 마운트가 내장 데이터(data/bundled)를 가리면 진단 메시지를,
+        """볼륨 마운트가 내장 데이터(data/bundled)를 가리면 진단 메시지를,
         아니면 None을 반환한다."""
         mount = self.volume_mount_path
         if not mount:

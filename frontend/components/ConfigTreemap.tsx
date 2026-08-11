@@ -7,14 +7,14 @@ import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ConfigTreemapGroup, ConfigTreemapResponse } from "@/types/data";
 
-// n이 이 미만인 타일은 회색 처리하고 색을 칠하지 않는다 (지시서 §4③
-// "표본 부족"). TC-6: 30을 실측했더니 test.CSV 기준 조합의 56.7%가
-// 회색이 되어 트리맵이 거의 비어 보였다 -- 25로 낮추면 43.2%로 절반
+// n이 이 미만인 타일은 "표본 부족"으로 회색 처리하고 색을 칠하지 않는다.
+// 25는 실측으로 고른 값이다 -- test.CSV 기준으로 임계가 30이면 조합의
+// 56.7%가 회색이 되어 트리맵이 거의 비어 보이고, 25면 43.2%로 절반
 // 미만이다. src/analysis/screening/selector.py의
 // DEFAULT_MIN_N_CATEGORICAL과 같은 값을 유지한다.
 const MIN_TILE_N = 25;
 // 고정 ±3%p 스케일 -- 관측 최대/최소로 자동 정규화하면 0.9%p 차이가
-// 새빨갛게 렌더되어 없는 신호를 만든다 (지시서 §4③ "색 스케일 규칙").
+// 새빨갛게 렌더되어 없는 신호를 만든다.
 const COLOR_SPAN_PP = 3;
 
 type ParsedGroup = ConfigTreemapGroup & { model: string; eq: string; chamber: string };
@@ -49,7 +49,7 @@ function colorForMean(mean: number, overallMean: number, theme: "light" | "dark"
   return t < 0.5 ? lerpColor(green, center, t / 0.5) : lerpColor(center, red, (t - 0.5) / 0.5);
 }
 
-// Z-3: 타일이 채색되면(FDR 통과 시에만) 배경이 빨강~중립~초록 그라디언트를
+// 타일이 채색되면(FDR 통과 시에만) 배경이 빨강~중립~초록 그라디언트를
 // 오간다 -- 고정 텍스트색으로는 중앙 근처에서 대비가 무너진다. 셀 배경의
 // 실제 밝기를 보고 매 타일마다 어두운/밝은 글자를 고른다(YIQ luma).
 function lumaOf(hex: string): number {
@@ -62,11 +62,11 @@ function textColorForTile(backgroundHex: string): string {
 
 type HoverState = { group: ParsedGroup; x: number; y: number } | null;
 
-/** 작업 지시서 WH: Config별 트리맵 탭의 트리맵 하나(타깃 하나 담당) --
- * 스텝·타깃 선택기는 페이지 상단에 하나만 두고(WH-2) 이 컴포넌트는
- * 이미 조회된 `data`를 그리기만 한다. `loading`이면 새로 그리지 않고
- * 기존 데이터를 불투명도만 낮춰 보여준다(WH-4: "조회 중 이전 트리맵을
- * 지우지 말고 불투명도만 낮춰라"). */
+/** Config별 트리맵 탭의 트리맵 하나(타깃 하나 담당) --
+ * 스텝·타깃 선택기는 페이지 상단에 하나만 두고 이 컴포넌트는 이미
+ * 조회된 `data`를 그리기만 한다. `loading`이면 새로 그리지 않고 직전
+ * 데이터를 불투명도만 낮춰 보여준다 -- 조회 중 트리맵을 지우면 화면이
+ * 매 조회마다 비어 보인다. */
 export default function ConfigTreemap({
   target,
   step,
@@ -78,7 +78,7 @@ export default function ConfigTreemap({
   step: number;
   data: ConfigTreemapResponse | null;
   loading: boolean;
-  // B-3: 스텝 선택 드롭다운은 다섯 트리맵이 함께 쓰는 컨트롤이라 카드
+  // 스텝 선택 드롭다운은 다섯 트리맵이 함께 쓰는 컨트롤이라 카드
   // 자체는 모른다 -- 부모(config-treemap/page.tsx)가 첫 번째(Y1) 카드에만
   // 넘겨서 같은 컨트롤이 다섯 번 반복되지 않게 한다.
   headerRight?: ReactNode;

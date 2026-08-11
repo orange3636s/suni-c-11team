@@ -13,7 +13,7 @@ function useDebouncedValue(value: string, delay: number): string {
   return debounced;
 }
 
-// Shared search+sort state for the alarm/recommendation tables (spec §4) --
+// Shared search+sort state for the alarm/recommendation tables --
 // both tables need identical client-side filtering, debounce, and tie-break
 // behavior, so this is the one place that logic lives.
 export function useTableSearchSort<T>(
@@ -110,7 +110,7 @@ export function ScrollTableBody({ children, rows = 10 }: { children: ReactNode; 
   );
 }
 
-// Horizontal-scroll variant of ScrollTableBody (spec PART C): same
+// Horizontal-scroll variant of ScrollTableBody: same
 // vertical-scroll/sticky-header shell, plus table-layout:auto (so no
 // column ellipsis-truncates), a horizontally scrolling body once content
 // exceeds `minWidth`, and a sticky first column so the row identity

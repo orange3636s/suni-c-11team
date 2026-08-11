@@ -4,10 +4,10 @@
 // 담당한다.
 import type { ActionPriorityRow, RelationShape } from "@/types/data";
 
-// MA-2/MG-4: Config(범주형) 인자를 잠재 원인 목록에서 배제한 근거 --
-// README/챗봇 컨텍스트 문서가 이미 밝힌 수치를 그대로 재사용한다(하드
-// 코딩된 새 값이 아니다). config-treemap 탭의 "유의 조합 없음" 안내와
-// 모니터링 홈 문서화가 이 두 상수를 공유한다.
+// Config(범주형) 인자를 잠재 원인 목록에서 배제하는 근거 수치 --
+// 스크리닝 600건 중 통과 0건. README/챗봇 컨텍스트 문서와 같은 값이며,
+// config-treemap 탭의 "유의 조합 없음" 안내와 모니터링 홈 문서화가 이 두
+// 상수를 공유한다.
 export const CONFIG_SCREENING_TEST_COUNT = 600;
 export const CONFIG_SCREENING_PASS_COUNT = 0;
 
@@ -38,9 +38,9 @@ export function formatNumber(value: number | null, digits = 1): string {
   return value.toFixed(digits);
 }
 
-// 지시서 KA-2: 구분자를 en dash(–)에서 물결(~)로 바꾼다 -- en dash는
-// 음수 부호와 시각적으로 혼동된다("50.7–69.4"가 스크롤/줄바꿈 등으로
-// 하한이 가려지면 "–69.4"처럼 음수로 보인다).
+// 구간 구분자로 en dash(–)가 아니라 물결(~)을 쓴다 -- en dash는 음수
+// 부호와 시각적으로 혼동된다("50.7–69.4"가 스크롤/줄바꿈 등으로 하한이
+// 가려지면 "–69.4"처럼 음수로 보인다).
 export function rangeText(item: Pick<ActionPriorityRow, "range_lo" | "range_hi">): string {
   if (item.range_lo == null && item.range_hi == null) return "-";
   if (item.range_lo != null && item.range_hi != null) {

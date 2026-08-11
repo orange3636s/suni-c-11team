@@ -35,7 +35,7 @@ class DatasetUploadResponse(BaseModel):
     lot_min: str | None = None
     lot_max: str | None = None
     lot_count: int | None = None
-    # AG-2: Y 계열 감지 여부 -- 프런트가 "학습에 사용하려면 모델 학습·
+    # Y 계열 감지 여부 -- 프런트가 "학습에 사용하려면 모델 학습·
     # 자동화에서 실행하세요" 안내를 띄울지 결정한다.
     has_target_columns: bool = False
     target_status: dict[str, Any] | None = None

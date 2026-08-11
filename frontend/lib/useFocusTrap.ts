@@ -5,7 +5,7 @@ import { useEffect, useRef, type RefObject } from "react";
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** G-4: SettingsPanel/TrainingPanel/AiPanel(오버레이) 세 모달이 공유하는
+/** SettingsPanel/TrainingPanel/AiPanel(오버레이) 세 모달이 공유하는
  * 포커스 트랩 -- 열릴 때 컨테이너 안 첫 포커스 가능 요소로 이동시키고,
  * Tab 순환을 컨테이너 밖으로 나가지 않게 막고, 닫힐 때(active가
  * false로 바뀔 때) 열기 전 포커스였던 요소로 되돌린다. Esc로 닫는

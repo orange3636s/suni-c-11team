@@ -6,7 +6,7 @@ import { HScrollTableBody } from "@/components/DataTablePanel";
 import { formatNumber, formatPct, formatSignedPp, isOutOfRange, rangeText } from "@/lib/fmeaFormat";
 import type { ActionPriorityPayload, ActionPriorityRow } from "@/types/data";
 
-// MB-5: 기대 회수가 이 값 미만이면 흐리게(실익 낮음) -- 백엔드
+// 기대 회수가 이 값 미만이면 흐리게(실익 낮음) -- 백엔드
 // (src/analysis/action_priority.py의 MIN_MEANINGFUL_EXPECTED_RECOVERY_PP)
 // 와 값을 맞춘다. 판정 자체는 `row.dimmed`로 서버가 이미 내려주므로,
 // 이 상수는 화면에는 쓰지 않는다(문서화 목적으로만 남긴다).
@@ -16,7 +16,7 @@ const SORT_OPTIONS = [
 ] as const;
 type SortValue = (typeof SORT_OPTIONS)[number]["value"];
 
-// MB-2: "결함 수가 늘수록 Y3 손실이 늘어난다"류 한 줄 설명 -- 백엔드가
+// "결함 수가 늘수록 Y3 손실이 늘어난다"류 한 줄 설명 -- 백엔드가
 // 이미 계산해 보낸 relation_shape(구조화된 값)을 문장으로 바꾸는
 // 순수 포맷팅이다(수치 계산이 아니다, fmeaFormat.ts의 RELATION_LABEL과
 // 같은 성격).
@@ -94,7 +94,7 @@ function ActionPriorityRowView({
   );
 }
 
-/** MB: 모니터링 홈 블록① 조치 우선순위 -- 타깃별 파레토 기여율 10%
+/** 모니터링 홈 블록① 조치 우선순위 -- 타깃별 파레토 기여율 10%
  * 이상인 인자를 기대 회수(회수 폭 × 손실 비중) 순으로 보여준다. 계산은
  * 전부 백엔드(src/analysis/action_priority.py, train.CSV 기준)에서
  * 끝났으므로 이 컴포넌트는 정렬 선택과 표시만 한다. */

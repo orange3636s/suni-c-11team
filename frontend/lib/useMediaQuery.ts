@@ -37,8 +37,8 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-// Named breakpoints matching spec's table (모바일 레이아웃 전환 §B-2) -- kept
-// as constants so every callsite uses the exact same cutoff CSS also uses.
+// Named breakpoints for the mobile layout switch -- kept as constants so
+// every callsite uses the exact same cutoff CSS also uses.
 export const BREAKPOINT_TABBAR_MAX = "(max-width: 1023px)";
 export const BREAKPOINT_MOBILE_MAX = "(max-width: 767px)";
 

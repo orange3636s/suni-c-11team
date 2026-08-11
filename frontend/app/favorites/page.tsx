@@ -26,14 +26,13 @@ function noop() {}
 export default function FavoritesPage() {
   const router = useRouter();
   const { training, snapshot } = useAnalysisState();
-  // DE그룹: 카드에 저장된 championVersion과 비교할 "현재" 챔피언 -- 학습
+  // 카드에 저장된 championVersion과 비교할 "현재" 챔피언 -- 학습
   // 기록이 아직 없으면 null이라, 저장된 값이 있어도 비교 대상이 없으므로
   // 배지를 붙이지 않는다(둘 다 모르는 상태와 "달라졌다"는 다르다).
   const currentChampionVersion = training?.performance.model_id ?? null;
-  // T9-2: 저장된 카드는 저장 시점의 데이터셋으로 만들어졌는데, 지금은
-  // 항상 "현재" datasetId로 다시 조회한다(코드리뷰 C-14 미해결 결함) --
-  // 헤더에 "현재 분석 기준" 데이터셋을 보여주면 이 불일치가 카드별로
-  // 눈에 보이게 된다.
+  // 저장된 카드는 저장 시점의 데이터셋으로 만들어졌지만 썸네일은 항상
+  // "현재" datasetId로 다시 조회한다(알려진 한계) -- 헤더에 "현재 분석
+  // 기준" 데이터셋을 보여주면 이 불일치가 카드별로 눈에 보이게 된다.
   const currentDatasetId = snapshot?.source.eval_dataset ?? null;
   const [items, setItems] = useState<FavoriteRecord[] | null>(null);
   const [error, setError] = useState("");
@@ -63,7 +62,7 @@ export default function FavoritesPage() {
 
   function openInRootCause(item: FavoriteRecord) {
     const { snapshot } = item;
-    // B-5: dataset을 함께 실어야 한다 -- 안 실으면 원인 분석은 현재
+    // dataset을 함께 실어야 한다 -- 안 실으면 원인 분석은 현재
     // 선택된(즐겨찾기와 무관한) 데이터셋으로 조회해, train에서 저장한
     // 카드를 test가 선택된 상태에서 열면 같은 인자명의 다른 데이터셋
     // 차트가 경고 없이 표시된다.
@@ -118,17 +117,17 @@ function FavoriteCard({
   onDelete: () => void;
 }) {
   const { snapshot } = item;
-  // DE그룹: 저장 시점 챔피언이 있고(즐겨찾기가 이 필드를 지원하기 전에
-  // 만들어졌으면 null), 현재 챔피언도 알고 있는데, 둘이 다르면 저장된
-  // 해석이 최신 모델과 어긋날 수 있다는 뜻이다.
+  // 저장 시점 챔피언이 있고(이 필드가 없는 오래된 카드는 null), 현재
+  // 챔피언도 알고 있는데, 둘이 다르면 저장된 해석이 최신 모델과 어긋날
+  // 수 있다는 뜻이다.
   const isStale = Boolean(
     snapshot.championVersion && currentChampionVersion && snapshot.championVersion !== currentChampionVersion,
   );
-  // T9-2: 저장 시점 데이터셋과 현재 분석 기준 데이터셋이 다르면, 이
+  // 저장 시점 데이터셋과 현재 분석 기준 데이터셋이 다르면, 이
   // 썸네일은 카드가 저장될 때와 다른 데이터를 다시 조회해 그리고 있다는
   // 뜻이다(위 currentDatasetId 주석 참고).
   const isDatasetStale = Boolean(currentDatasetId && snapshot.dataset !== currentDatasetId);
-  // G-3: 카드 전체(썸네일+본문)를 하나의 키보드 조작 대상으로 합친다 --
+  // 카드 전체(썸네일+본문)를 하나의 키보드 조작 대상으로 합친다 --
   // 삭제 버튼과 형제로 두어야 하므로(버튼 중첩 불가) <button>이 아니라
   // div + role="button"을 쓴다. Enter/Space 둘 다 처리한다.
   function handleOpenKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -152,7 +151,7 @@ function FavoriteCard({
         <div className="favoriteCardThumb">
           <FavoriteThumbnail snapshot={snapshot} />
         </div>
-        {/* DE-1: 카드에 남기는 정보는 썸네일·제목·시각·해석 넷뿐이다 --
+        {/* 카드에 남기는 정보는 썸네일·제목·시각·해석 넷뿐이다 --
             인자 메타(n·기여율·p-value 등)는 넣지 않는다. */}
         <div className="favoriteCardBody">
           <h3>{snapshot.feature} vs {snapshot.target} · {VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}</h3>

@@ -10,7 +10,7 @@ type DatasetSelectorProps = {
   value: string;
   onChange: (datasetId: string) => void;
   onDatasetsLoaded?: (datasets: DatasetSummary[]) => void;
-  // AG-1: 드롭다운에서 기존 항목을 고르는 것과 달리, "새 파일을
+  // 드롭다운에서 기존 항목을 고르는 것과 달리, "새 파일을
   // 업로드"했을 때만 호출된다 -- 원인 분석·수율 예측은 이 콜백에서
   // 업로드된 파일을 활성 평가 데이터셋으로 전환한다(다른 화면도 같이
   // 갱신). 즐겨찾기 등 다른 화면에서 재사용해도 이 콜백을 넘기지 않으면
@@ -52,7 +52,7 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The menu itself lives in a portal outside `containerRef` (spec §1-4),
+  // The menu itself lives in a portal outside `containerRef`,
   // so an outside-click check needs to also exempt clicks landing inside
   // the portaled menu -- otherwise every option click would immediately
   // read as "outside" and close the menu before onSelect fires.
@@ -70,8 +70,7 @@ export default function DatasetSelector({ label, value, onChange, onDatasetsLoad
       if (event.key === "Escape") setOpen(false);
     }
     // Simplest correct response to a scroll/resize while open: close,
-    // rather than track and re-measure a moving anchor (spec §1-4 allows
-    // either).
+    // rather than track and re-measure a moving anchor.
     function handleScrollOrResize() {
       setOpen(false);
     }

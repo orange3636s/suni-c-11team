@@ -10,7 +10,7 @@ type PendingChatRequest = { message: string; mode: ChatMode; nonce: number };
 type PanelStateValue = {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (value: BoolUpdater) => void;
-  // 모바일 반응형 패치 S-1: ≤767px에서 사이드바가 오프캔버스 드로어로
+  // ≤767px에서 사이드바가 오프캔버스 드로어로
   // 바뀐다 -- 열림/닫힘은 sidebarCollapsed(≥768px 전용, 아이콘 레일
   // 접힘)와 별개 상태다. 세션 간 지속할 이유가 없어(매번 닫힌 채로
   // 시작) 쿠키에 쓰지 않는다.
@@ -18,16 +18,15 @@ type PanelStateValue = {
   setSidebarDrawerOpen: (value: BoolUpdater) => void;
   aiPanelOpen: boolean;
   setAiPanelOpen: (value: BoolUpdater) => void;
-  // 설정 패널 신설 §A-3: 챗봇 패널과 동시에 열리지 않는다 -- 둘 중 하나를
+  // 챗봇 패널과 동시에 열리지 않는다 -- 둘 중 하나를
   // 열면 다른 하나는 자동으로 닫힌다 (아래 setter들이 서로를 닫는다).
   settingsPanelOpen: boolean;
   setSettingsPanelOpen: (value: BoolUpdater) => void;
-  // 지시서 L-1: 모델 학습 팝업도 설정·챗봇 패널과 상호 배타적이다.
+  // 모델 학습 팝업도 설정·챗봇 패널과 상호 배타적이다.
   trainingPanelOpen: boolean;
   setTrainingPanelOpen: (value: BoolUpdater) => void;
-  // RA-1: 모델 학습·자동화가 둘로 나뉘면서 생긴 두 번째 팝업(모델
-  // 분석·자동화) -- trainingPanelOpen과도 서로 배타적이다(동시에 열리지
-  // 않는다).
+  // 모델 분석·자동화 팝업 -- trainingPanelOpen과도 서로 배타적이다
+  // (동시에 열리지 않는다).
   analysisPanelOpen: boolean;
   setAnalysisPanelOpen: (value: BoolUpdater) => void;
   // The dataset id that 원인 분석 last completed for, or null if no
@@ -125,8 +124,8 @@ export default function PanelStateProvider({
     });
   }, []);
 
-  // RA-1: 모델 분석·자동화 팝업 -- 챗봇/설정/모델 학습 팝업과 상호
-  // 배타적이다(같은 규칙을 그대로 따른다).
+  // 모델 분석·자동화 팝업 -- 챗봇/설정/모델 학습 팝업과 상호
+  // 배타적이다.
   const setAnalysisPanelOpen = useCallback((value: BoolUpdater) => {
     setAnalysisPanelOpenState((previous) => {
       const next = typeof value === "function" ? value(previous) : value;

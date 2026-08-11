@@ -12,7 +12,7 @@ a curve.
 Whichever wins ("adopted") is what everywhere else in the app -- alarm
 log, 개선 권장 목록, the single canonical `optimal_center` -- uses; the
 loser is kept only so the frontend can render it for side-by-side
-comparison, never to drive alarms (spec §2-2).
+comparison, never to drive alarms.
 
 Bootstrap resampling (60 reps) estimates how much a method's window
 width jitters under resampling; a method whose boundary moves a lot
@@ -42,10 +42,10 @@ ML_MIN_LEAF_FRACTION = 0.10
 MIN_ROWS_FOR_ML = 20
 
 # Per-run cache for the 120-fit (60 bootstrap reps x 2 methods) comparison
-# -- spec §2-5: computed once per analysis run, never recomputed just
-# because a scatter chart got reopened. Keyed by (dataset_id, feature,
-# target) (H-2: not id(train_df) -- see compare_methods' docstring for
-# why object identity is unsafe here). Bounded + LRU-evicted so a
+# -- computed once per analysis run, never recomputed just because a
+# scatter chart got reopened. Keyed by (dataset_id, feature, target);
+# never `id(train_df)` -- see compare_methods' docstring for why object
+# identity is unsafe here. Bounded + LRU-evicted so a
 # long-running process doesn't grow this unboundedly across dataset
 # reloads/uploads.
 _CACHE_MAXSIZE = 256
@@ -112,9 +112,8 @@ def _spc_raw_window(x: pd.Series, y: pd.Series) -> RawWindow | None:
     reimplemented so "SPC" never disagrees with what's already on
     screen.
     """
-    # TC-5: SPC 경로는 기존 12구간 고정을 유지한다 (recommendations.py의
-    # 같은 결정과 동일한 이유 -- 알람 판정에 쓰이는 window라 조용히
-    # 바뀌면 안 된다).
+    # SPC 경로는 12구간 고정이다(recommendations.py와 같은 이유 -- 알람
+    # 판정에 쓰이는 window라 구간 수에 따라 조용히 바뀌면 안 된다).
     bins = quantile_bins(x, y, bins=DEFAULT_BINS)
     if not bins:
         return None
@@ -272,17 +271,16 @@ def compare_methods(
     factor's IQR*1.5 control limits (fixed, method-independent -- spec
     §2-3), `None` on a monotonic factor's non-alarming side.
 
-    `cache_key`, when given, memoizes the full comparison (spec §2-5) --
-    pass `(dataset_id, feature, target)` so repeat callers (a reopened
-    scatter chart, the alarm/recommendation endpoints all touching the
-    same factor within one analysis run) hit the cache instead of
-    rerunning the 120-fit bootstrap. H-2: this used to be
-    `(id(train_df), feature, target)` -- `id()` is only unique among
-    currently-alive objects, so if `train_df` (itself an lru_cache'd
-    DataFrame, see src/runtime/datasets.py) gets evicted and a later
-    reload for a *different* dataset happens to reuse the same freed
-    memory address, a stale cache entry could silently be returned for
-    the wrong dataset. A string dataset_id has no such collision.
+    `cache_key`, when given, memoizes the full comparison -- pass
+    `(dataset_id, feature, target)` so repeat callers (a reopened scatter
+    chart, the alarm/recommendation endpoints all touching the same factor
+    within one analysis run) hit the cache instead of rerunning the
+    120-fit bootstrap. The key must use the string `dataset_id`, never
+    `id(train_df)`: `id()` is only unique among currently-alive objects,
+    so if `train_df` (itself an lru_cache'd DataFrame, see
+    src/runtime/datasets.py) gets evicted and a later reload for a
+    *different* dataset reuses the same freed memory address, a stale
+    cache entry is silently returned for the wrong dataset.
     """
     if cache_key is not None:
         cached = _cache_get(cache_key)

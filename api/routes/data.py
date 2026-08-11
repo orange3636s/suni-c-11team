@@ -601,7 +601,7 @@ async def train_model(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Y1~Y5 타깃 열이 없어 학습할 수 없습니다.",
         )
-    # 작업지시(Config 하이드레이션 실패 수정) §6: `test_config.csv`처럼
+    # `test_config.csv`처럼
     # Y/Y1~Y5 컬럼은 존재하지만 값이 전량 결측인 평가 전용 파일(정답이
     # 제거된 파일)을 학습용으로 올리면 위 컬럼 존재 검사는 통과하고도
     # 학습이 불가능하다 -- 명확한 안내로 막는다("분석 데이터로 등록하라"가
@@ -656,10 +656,9 @@ async def train_model(
     _report_training_progress("모델 저장", 90)
 
     created_at = datetime.now().astimezone()
-    # ND-5: 명명 규칙 통일 -- LGBM_<타깃>_<타임스탬프> (타깃은 이 번들이
-    # 최종적으로 산출하는 FINAL_YIELD_COLUMN="Y"). 마이크로초까지 남긴 건
-    # 기존 SCREENING_GBDT_* 관례와 같다 -- 같은 초에 여러 학습 Job이
-    # 끝나도 모델 ID가 충돌하지 않아야 한다.
+    # 명명 규칙 -- LGBM_<타깃>_<타임스탬프> (타깃은 이 번들이 최종적으로
+    # 산출하는 FINAL_YIELD_COLUMN="Y"). 마이크로초까지 남기는 이유는 같은
+    # 초에 여러 학습 Job이 끝나도 모델 ID가 충돌하면 안 되기 때문이다.
     model_id = f"LGBM_Y_{created_at.strftime('%Y%m%d_%H%M%S_%f')}"
     hybrid_result = build_hybrid_training_result(
         evaluation,
@@ -684,8 +683,8 @@ async def train_model(
     _report_training_progress("학습 결과 정리", 98)
 
     # Switch the active pointer only after the saved bundle is complete.
-    # RB-4: 승격 게이트는 제거됐다 -- 학습이 성공하면 무조건 교체하되,
-    # 지표가 나빠졌으면 그 사실을 reason에 남겨 침묵 교체가 되지 않게 한다.
+    # 학습이 성공하면 승격 게이트 없이 무조건 교체하되, 지표가 나빠졌으면
+    # 그 사실을 reason에 남겨 침묵 교체가 되지 않게 한다.
     # Any failure above leaves the previous active model untouched.
     training_store = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
     training_store.promote_if_better(
@@ -705,11 +704,11 @@ async def train_model(
             "final_y_metrics": hybrid_result.metadata["final_y_metrics"],
         },
     )
-    # SB-4/SC-4: 학습 후 자동으로 재분석하지 않는다("사용자가 정한다") --
-    # 다만 방금 모델이 바뀌어 기존 스냅샷이 활성 모델 기준으로 무효화된
+    # 학습 후 자동으로 재분석하지 않는다("사용자가 정한다") --
+    # 다만 방금 모델이 바뀌어 직전 스냅샷이 활성 모델 기준으로 무효화된
     # 상태(`has_valid_snapshot() == False`, `stale_model`)라면 네 화면이
     # 완전히 빈 채로 방치되지 않도록 한 번, 조용히(오류 배너 없이 진행
-    # 표시만) 복구 실행한다 -- 기존에 유효한 분석이 남아 있는 경우(모델을
+    # 표시만) 복구 실행한다 -- 유효한 분석이 남아 있는 경우(모델을
     # 갱신했지만 아직 무효화되지 않은 경우는 없다: `stale_model` 판정은
     # 즉시 적용된다)에는 이 분기 자체가 실행되지 않고, 대신 팝업이
     # "재분석 권유" 배너만 보여준다.
@@ -722,7 +721,7 @@ async def train_model(
             threading.Thread(target=run_refresh_pipeline, daemon=True, name="post-train-recovery").start()
     except Exception:
         logger.exception("학습 후 스냅샷 복구 실행 트리거 실패")
-    # ND-4: 보관 정책 -- 방금 승격된 모델을 포함해 최근 3세트만 남긴다.
+    # 보관 정책 -- 방금 승격된 모델을 포함해 최근 3세트만 남긴다.
     # 저장은 이미 끝났으므로 여기서 실패해도 학습 자체의 성공 여부에는
     # 영향을 주지 않는다 -- 베스트 에포트.
     try:
@@ -835,12 +834,12 @@ async def train_model(
 
 @router.post("/train/bundled", response_model=TrainResponse)
 async def train_bundled() -> TrainResponse:
-    """B-10-3: 학습 쪽 "내장 데이터로 되돌리기"는 분석 쪽과 의미가 다르다
+    """학습 쪽 "내장 데이터로 되돌리기"는 분석 쪽과 의미가 다르다
     -- 등록을 지우는 상태가 없고(학습은 업로드 즉시 학습·챔피언 교체가
     끝나는 구조), 되돌리는 유일한 방법은 내장 train.CSV로 재학습하는
-    것뿐이다. 새 학습 파이프라인을 만들지 않고, 콜드 스타트 부트스트랩
+    것뿐이다. 별도 학습 파이프라인을 두지 않고, 콜드 스타트 부트스트랩
     (`api.main._train_bootstrap_champion`)과 같은 방식으로 내장 파일을
-    UploadFile로 감싸 기존 `train_model`을 그대로 재사용한다.
+    UploadFile로 감싸 `train_model`을 그대로 재사용한다.
     """
     train_path = settings.bundled_dataset_dir / BUNDLED_DATASET_FILES["train"]
     if not train_path.is_file():
@@ -943,12 +942,12 @@ def get_models() -> ModelListResponse:
 
 @router.get("/models/promotion-history")
 def get_promotion_history(limit: int = 20) -> dict[str, Any]:
-    """자동 수집 파이프라인 §2-2 -- 학습 성공 시마다 기록되는 승격 이력.
-    RB-4로 승격 게이트가 제거되어 학습이 성공하면 무조건 교체되므로,
-    이 목록은 항상 promoted=True이고 reason에 지표 변화(저하 포함 여부)만
-    남는다. 모델 학습·자동화 팝업의 "최근 학습" 줄이 이 reason을 보여준다.
+    """학습 성공 시마다 기록되는 승격 이력. 승격 게이트가 없어 학습이
+    성공하면 무조건 교체되므로, 이 목록은 항상 promoted=True이고 reason에
+    지표 변화(저하 포함 여부)만 남는다. 모델 학습·자동화 팝업의 "최근
+    학습" 줄이 이 reason을 보여준다.
 
-    A-4: `/models/{model_id}` 라우트보다 반드시 먼저 등록돼야 한다 --
+    `/models/{model_id}` 라우트보다 반드시 먼저 등록돼야 한다 --
     FastAPI는 등록 순서대로 매칭하므로, 뒤에 오면 "promotion-history"가
     model_id로 잡혀 InvalidModelIdError 404가 나며 이 엔드포인트가 영구히
     죽는다.

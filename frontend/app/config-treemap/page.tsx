@@ -14,11 +14,11 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 
 type StepCache = Record<number, Record<string, ConfigTreemapResponse | null>>;
 
-/** Config별 트리맵 탭 (작업 지시서 WH) -- 모니터링에서 분리한 설비 구성
- * 트리맵. Y1~Y5 다섯 트리맵을 세로로 일렬 배치하고, 스텝 선택은 첫
+/** Config별 트리맵 탭 -- 설비 구성 트리맵 전용 화면.
+ * Y1~Y5 다섯 트리맵을 세로로 일렬 배치하고, 스텝 선택은 첫
  * 카드(Y1)의 헤더에 하나만 둔다 -- 다섯 개가 함께 바뀐다(같은 컨트롤이
  * 다섯 번 반복되지 않도록 ConfigTreemap의 `headerRight` slot으로 넘긴다).
- * 다섯 응답을 Promise.all로 한 번에 묶어 스텝별로 캐시한다(WH-4) --
+ * 다섯 응답을 Promise.all로 한 번에 묶어 스텝별로 캐시한다 --
  * 스텝을 다시 선택해도 재조회하지 않는다. */
 export default function ConfigTreemapPage() {
   const { analysis } = useAnalysisState();
@@ -63,7 +63,7 @@ export default function ConfigTreemapPage() {
     let cancelled = false;
     setLoadingStep(step);
     window.localStorage.setItem(`config-treemap-step:${datasetId}`, String(step));
-    // WH-4: 다섯 타깃을 Promise.all로 한 번에 묶어 요청한다 -- 스텝
+    // 다섯 타깃을 Promise.all로 한 번에 묶어 요청한다 -- 스텝
     // 변경 시 5회가 아니라 1묶음(내부적으로는 5개 fetch가 동시에
     // 나가지만, UI는 한 번의 로딩 상태로 취급한다).
     void Promise.all(

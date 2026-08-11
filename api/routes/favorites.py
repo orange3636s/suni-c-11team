@@ -37,7 +37,7 @@ def create_favorite(body: FavoriteCreateRequest) -> dict:
 
 @router.get("", response_model=FavoriteListResponse)
 def list_favorites() -> dict:
-    # 최신순 (지시서 J-3) -- RuntimeStore.list_favorites가 이미
+    # 최신순 -- RuntimeStore.list_favorites가 이미
     # created_at DESC로 정렬해 내려준다.
     return {"items": _store().list_favorites()}
 

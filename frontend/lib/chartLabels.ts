@@ -1,11 +1,10 @@
 /** Both backend axis labels are one meaningful token followed by
  * descriptive filler the chart doesn't need to repeat -- the factor's
  * "{feature} (Step N · kind)" and the target's "{target} 불량률 (%)"
- * both reduce to their first space-separated word. One primitive so
- * x-axis and y-axis labels can't drift apart the way x-axis alone did
- * previously (the categorical box-plot's xaxis title was fixed while its
- * own file's yaxis title was missed, since there was no shared helper to
- * route either through).
+ * both reduce to their first space-separated word. Both axis helpers
+ * route through this one primitive so the two can't drift apart -- fixing
+ * a title on one axis without the other is exactly what a per-file helper
+ * invites.
  */
 function firstToken(raw: string): string {
   return raw.split(" ")[0];

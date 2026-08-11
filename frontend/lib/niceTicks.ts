@@ -1,6 +1,6 @@
 /** Heckbert's "nice numbers" step selection -- ticks land on 1/2/5 x 10^n
- * step multiples (spec §8: 1/2/5/10/20/50...) instead of naive even
- * division of the domain, so labels read as round numbers. */
+ * step multiples (1/2/5/10/20/50...) instead of naive even division of
+ * the domain, so labels read as round numbers. */
 function niceNum(range: number, round: boolean): number {
   if (!Number.isFinite(range) || range <= 0) return 1;
   const exponent = Math.floor(Math.log10(range));
@@ -43,7 +43,7 @@ export function niceTicks(domain: readonly [number, number], targetCount: number
 
 /** Picks a tick set whose *actual* count lands in [minCount, maxCount]
  * and whose labels don't overlap across `pixelSpan` -- or gets as close
- * to that as the 1/2/5/10 step grid allows (spec §8).
+ * to that as the 1/2/5/10 step grid allows.
  *
  * `niceTicks(domain, requestedCount)` doesn't reliably return
  * `requestedCount` ticks -- the step it rounds to comes off a coarse
@@ -55,7 +55,7 @@ export function niceTicks(domain: readonly [number, number], targetCount: number
  * and from those prefers the densest one that doesn't overlap. If none
  * land in-band at all (the grid can skip straight from 6 to 11 ticks for
  * some spans), it searches every candidate instead so overlap-safety
- * still wins over hitting the band exactly (spec: "겹치면 한 단계 줄인다").
+ * still wins over hitting the band exactly ("겹치면 한 단계 줄인다").
  * `measureLabelSize` decides what "overlap" means along this axis: label
  * *width* for a horizontal axis with centered text, or a fixed label
  * *height* for a vertical axis of stacked horizontal text -- the caller

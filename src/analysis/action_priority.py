@@ -1,12 +1,10 @@
-"""MB/MC: 모니터링 홈 블록①(조치 우선순위)·블록②(조치 가능 범위)의
-공통 산출.
+"""모니터링 홈 블록①(조치 우선순위)·블록②(조치 가능 범위)의 공통 산출.
 
 두 블록 모두 같은 원천에서 나온다 -- 타깃별 파레토 기여율
 (CORE_FACTOR_CONTRIBUTION_MIN, 지금은 10%) 이상인 인자를 전부 남기고,
 `src/analysis/screening/fmea.py`가 이미 계산하는 권장구간·구간 밖
-평균 손실(`defect_rate_deviation_pct`)을 그대로 재사용한다. 다만 FMEA는
-eval 데이터셋 기준이었던 반면, 이 블록은 항상 **train.CSV 기준**이다
-(작업 지시서 MB-6: "train.CSV 기준"으로 검증하라고 명시) -- 조치
+평균 손실(`defect_rate_deviation_pct`)을 그대로 재사용한다. 다만 FMEA가
+eval 데이터셋 기준인 반면 이 블록은 항상 **train.CSV 기준**이다 -- 조치
 우선순위는 "이 인자를 이 구간으로 관리하면 얼마나 회수되는가"를 묻는
 학습 데이터 기반의 안정적 판단이지, 지금 보고 있는 eval 배치마다
 흔들리는 값이어선 안 된다.
@@ -26,17 +24,16 @@ import pandas as pd
 from src.analysis.screening.fmea import build_fmea_table
 from src.analysis.yield_prediction import FAIL_RATE_TARGETS
 
-# MB-5: 기대 회수가 이 값 미만이면 "실익 낮음"으로 흐리게 표시한다(숨기지
+# 기대 회수가 이 값 미만이면 "실익 낮음"으로 흐리게 표시한다(숨기지
 # 않는다).
 MIN_MEANINGFUL_EXPECTED_RECOVERY_PP = 0.1
-# MC-4 캡션의 "10%p 늘리면" 가정 -- 다른 계측 확대 가정(EXTRA_MEASUREMENT_RATE,
-# 이제는 삭제된 measurement_expansion.py에도 같은 10%p를 썼다)과 값을
-# 맞췄을 뿐, 그 모듈에 대한 의존은 없다(그 파일의 시뮬레이션 자체는
-# MA-3로 삭제됐다 -- 이건 훨씬 단순한 비례 추정이다).
+# 블록② 캡션의 "10%p 늘리면" 가정. 이 값 하나만 바꾸면 캡션 문구와
+# 추정치가 함께 움직인다 -- 추정은 부트스트랩이 아니라 "계측된 것 중
+# 구간 밖 비율"의 단순 비례 확장이다.
 COVERAGE_INCREASE_ASSUMPTION_PP = 10.0
-# 이 폭 미만이면(절대값) "회수 폭이 작아서" 실익이 낮다고 설명한다 --
-# MB-5 배경. width_pp 자체가 없거나(권장구간 산출 불가) 비중이 낮은
-# 경우와 구분되는 세 번째 사유.
+# 이 폭 미만이면(절대값) "회수 폭이 작아서" 실익이 낮다고 설명한다.
+# width_pp 자체가 없거나(권장구간 산출 불가) 비중이 낮은 경우와
+# 구분되는 세 번째 사유다.
 LOW_WIDTH_THRESHOLD_PP = 1.0
 LOW_SHARE_THRESHOLD_PCT = 10.0
 
@@ -71,7 +68,7 @@ class ActionPriorityTable:
     rows: list[ActionPriorityRow]  # 기대 회수(expected_recovery_pp) 내림차순
     no_qualifying_factor: list[NoQualifyingTarget]
     total_wafers: int
-    # MC-4: 계측을 COVERAGE_INCREASE_ASSUMPTION_PP만큼 늘리면 새로
+    # 계측을 COVERAGE_INCREASE_ASSUMPTION_PP만큼 늘리면 새로
     # 드러날 것으로 추정되는 조치 대상(구간 밖) wafer 수 -- 추적 중인
     # 인자들의 평균 "계측된 것 중 구간 밖 비율"을 새로 계측될 wafer에도
     # 그대로 적용한다고 가정한 비례 추정.

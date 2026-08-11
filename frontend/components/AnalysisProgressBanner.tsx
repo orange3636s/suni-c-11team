@@ -18,7 +18,7 @@ function formatRowsAndEta(progress: AnalysisProgress): string {
   return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
 }
 
-/** SF-3: "모델 분석"([분석 시작])이 실행 중이면 네 화면(모니터링 홈·
+/** "모델 분석"([분석 시작])이 실행 중이면 네 화면(모니터링 홈·
  * Config별 트리맵·원인 분석·수율 예측) 모두 같은 진행 표시를 본다 --
  * 어느 화면에 있든 같은 상태를 보여준다는 원칙에 따라 각 페이지 상단에
  * 동일하게 삽입한다. 오류 배너가 아니라 진행 표시만 보여준다("하지 말

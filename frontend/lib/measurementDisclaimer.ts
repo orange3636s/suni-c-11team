@@ -1,9 +1,9 @@
 import type { DatasetSchemaResponse } from "@/types/data";
 
-// 계측률이 높으면(스펙 §A-1과 동일한 60% 기준, src/analysis/report.py의
-// _measurement_rate_limitation과 동일한 문구 전환 규칙) "일부만 대상"이라는
-// 표현이 과장이므로 문구를 바꾼다. 학습/원인분석 탭이 같은 문구를 쓰므로
-// 여기 하나로 모은다 (spec 문구 전수 검토 §A-1).
+// 계측률이 높으면 "일부만 대상"이라는 표현이 과장이므로 문구를 바꾼다.
+// 60% 기준과 문구 전환 규칙은 src/analysis/report.py의
+// _measurement_rate_limitation과 같은 값으로 유지해야 한다. 학습/원인분석
+// 탭이 같은 문구를 쓰므로 여기 하나로 모은다.
 const HIGH_MEASUREMENT_RATE_THRESHOLD = 60;
 
 export function measurementRateDisclaimer(schema: DatasetSchemaResponse | null): string {

@@ -2,7 +2,7 @@
 
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 
-// 작업 지시서 WK-2: "N/M단계" 표시 -- api/main.py `_run_bootstrap`이
+// "N/M단계" 표시 -- api/main.py `_run_bootstrap`이
 // `store.set_bootstrap_status`에 싣는 stage 문자열과 순서가 같아야 한다.
 // 그 3개가 실제 파이프라인의 전부다(가짜 진행률을 만들지 않는다는 이
 // 코드베이스의 원칙과 정면으로 부딪히지 않도록, 실재하지 않는 4번째
@@ -15,7 +15,7 @@ const BOOTSTRAP_STAGES = ["데이터 확인 중", "학습 중", "평가 · 원�
 // 불가능 케이스(내장 학습 데이터 자체가 없음)로 취급한다.
 const BOOTSTRAP_FAILURE_REASON_DATA_MISSING = "bundled_train_data_missing";
 
-/** W-4: 첫 기동 부트스트랩(스냅샷이 아직 없을 때 서버가 1회 학습+분석을
+/** 첫 기동 부트스트랩(스냅샷이 아직 없을 때 서버가 1회 학습+분석을
  * 돌리는 동안) 진행 상태 -- DashboardShell이 셸 레벨에서 한 번만
  * 렌더한다(위 .degradedStateBanner와 같은 원칙: 페이지마다 따로 넣으면
  * 빠뜨리는 화면이 생긴다). 스냅샷이 이미 있으면(bootstrapStatus가 null이거나
@@ -26,7 +26,7 @@ export default function BootstrapStatusBanner() {
   const { bootstrapStatus } = useAnalysisState();
   if (!bootstrapStatus || bootstrapStatus.status === "done") return null;
 
-  // NE-3: SQL 미연결로 내장 데이터를 쓰는 것은 정상 경로이므로 그 자체를
+  // SQL 미연결로 내장 데이터를 쓰는 것은 정상 경로이므로 그 자체를
   // 실패로 취급하지 않는다 -- 여기 도달하는 "failed"는 내장 데이터
   // 분석 자체가 깨진 문제다.
   //
@@ -37,7 +37,7 @@ export default function BootstrapStatusBanner() {
   //   - 그 외(reason 없음): api/main.py의 런타임 복구 훅(ensure_usable_
   //     champion)이 다음 요청에서 자동으로 재시도하므로, 사실상 일시적
   //     실패로 남는 경우가 드물다 -- 그래도 지금 이 화면이 보이고 있다면
-  //     지시서 원칙대로 새 문구를 지어내지 않고 기존 일반 문구를 유지한다.
+  //     원인을 지어내지 않고 일반 문구를 그대로 보여준다.
   if (bootstrapStatus.status === "failed") {
     if (bootstrapStatus.reason === BOOTSTRAP_FAILURE_REASON_DATA_MISSING) {
       return (
@@ -54,7 +54,7 @@ export default function BootstrapStatusBanner() {
   }
 
   // 진행 단계(stage)를 알면 실제 단계 번호(N/M)를 붙이고, 모르면
-  // 지시서 원칙대로 가짜 진행률 없이 "첫 분석 진행 중"만 보여준다.
+  // 가짜 진행률 없이 "첫 분석 진행 중"만 보여준다.
   const stageIndex = bootstrapStatus.stage ? BOOTSTRAP_STAGES.indexOf(bootstrapStatus.stage) : -1;
   const stagePrefix = stageIndex >= 0 ? `(${stageIndex + 1}/${BOOTSTRAP_STAGES.length}단계) ` : "";
   const label = bootstrapStatus.stage

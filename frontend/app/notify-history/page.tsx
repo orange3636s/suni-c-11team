@@ -8,7 +8,7 @@ import { getNotifyHistory } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
 import type { NotifyHistoryItem } from "@/types/data";
 
-// SE그룹: 발송된 알림의 내용을 다시 볼 수 있는 화면 -- 사용자가 알림을
+// 발송된 알림의 내용을 다시 볼 수 있는 화면 -- 사용자가 알림을
 // 받고 접속했을 때 여기서 확인한다. 발송/건너뜀 모두 최신순으로 보여주고,
 // 행을 열면 발송 당시의 메시지 원문을 그대로 펼친다(재계산하지 않는다).
 export default function NotifyHistoryPage() {
@@ -53,7 +53,7 @@ export default function NotifyHistoryPage() {
             발송된 알림과 건너뛴 이력을 최신순으로 모아 봅니다. 메시지는 발송 당시의 원문을 그대로 보관합니다(재계산하지
             않습니다).
           </p>
-          {/* T9-2: 이 화면의 항목들은 각자의 발송 시점 데이터셋으로 만들어졌다
+          {/* 이 화면의 항목들은 각자의 발송 시점 데이터셋으로 만들어졌다
               (아래 표의 "시각" 열이 항목별 실제 발송 시각이다) -- 헤더의
               시각·파일명은 "지금 이 화면이 조회 기준으로 삼는" 현재 분석을
               가리킬 뿐이므로 "마지막 실행"이 아니라 "현재 분석 기준"이라고
@@ -63,9 +63,8 @@ export default function NotifyHistoryPage() {
 
         {error && <p className="errorMessage">{error}</p>}
 
-        {/* B-5: 원인 분석의 분석-없음 안내(analysisErrorBox)와 같은 모양으로
-            통일한다 -- 버튼이 문장 안에 섞여 있던 이전 모양은 이 화면만
-            달랐다. */}
+        {/* 원인 분석의 분석-없음 안내와 같은 모양을 쓴다 -- 오류가 아니라
+            빈 상태이므로 analysisErrorBox 모양에 role="status"를 준다. */}
         {items && items.length === 0 && (
           <div className="analysisErrorBox" role="status">
             <div className="analysisErrorBody">

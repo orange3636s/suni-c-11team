@@ -7,14 +7,14 @@ import { activateDataset, ApiResponseError, deactivateDataset, fetchFromDb, trig
 import { formatLastRun } from "@/lib/timeFormat";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 
-// SC그룹: "모델 분석" 팝업 -- 네 화면(모니터링 홈·Config별 트리맵·원인
+// "모델 분석" 팝업 -- 네 화면(모니터링 홈·Config별 트리맵·원인
 // 분석·수율 예측)을 한 번에 갱신하는 [분석 시작]의 유일한 진입점이다.
 // SQL 연결·refresh time·자동화 on/off는 "알림·자동화 설정"(SettingsPanel)
-// 으로 옮겨갔다 -- 이 팝업은 "어떤 데이터로 분석할지"만 다룬다.
+// 이 담당한다 -- 이 팝업은 "어떤 데이터로 분석할지"만 다룬다.
 //
-// SC-2/SC-3: 데이터 소스 등록(파일 선택/데이터베이스에서 불러오기)과
-// 실제 분석 실행([분석 시작])을 분리했다 -- 등록은 즉시 반영되지만,
-// 네 화면 계산은 사용자가 [분석 시작]을 눌러야 시작된다.
+// 데이터 소스 등록(파일 선택/데이터베이스에서 불러오기)과 실제 분석
+// 실행([분석 시작])은 별개다 -- 등록은 즉시 반영되지만, 네 화면 계산은
+// 사용자가 [분석 시작]을 눌러야 시작된다.
 
 function sourceLabel(mode: "sql" | "fallback" | "manual" | undefined): string {
   if (mode === "manual") return "수동 등록 (업로드 또는 데이터베이스)";

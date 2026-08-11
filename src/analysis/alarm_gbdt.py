@@ -1,20 +1,15 @@
 """R+D 인자 기반 GBDT 특징 준비 + 예측 구간 conformal 캘리브레이션.
 
-옛 알람 판정(등급 심각/위험/주의, AUC 신뢰도 게이트, 부트스트랩 앙상블
-예측)은 전부 폐기됐다 -- 알림은 이제 수율 예측 갱신 파이프라인
-(`src/notifications/yield_update_dispatch.py`)이 전담하며, 그 판정은
-등급이 아니라 `src/analysis/yield_prediction.py`의 순위 기반 표다.
-
-이 모듈에 남은 것은 두 그룹뿐이다:
+두 그룹으로 나뉜다:
   - `feature_columns`/`step_of`/`prepare_feature_matrix`: 전체 R+D 인자를
-    GBDT 특징 행렬로 준비하는 공용 유틸(§A-1의 설계 결정 -- 선정 인자가
-    아니라 전체 R+D 인자를 쓰고, 결측 마스크 컬럼을 만들지 않는다. LGBM은
-    NaN을 네이티브로 처리한다). `preprocessing_compare.py`가 특징 목록을
-    재사용한다.
+    GBDT 특징 행렬로 준비하는 공용 유틸 -- 선정 인자가 아니라 전체 R+D
+    인자를 쓰고(다변량이 핵심이다), 결측 마스크 컬럼을 만들지 않는다
+    (LGBM이 NaN을 네이티브로 처리한다). `preprocessing_compare.py`가
+    특징 목록을 재사용한다.
   - `compute_holdout_predictions`: 랏 단위 GroupKFold out-of-fold 잔차로
     conformal margin(q)을 내는 함수 -- `src/analysis/report.py`의 SUNI
     챗봇 컨텍스트(`/api/analysis/context`)가 "예측 구간 폭이 약
-    ±{q:.1f}%p" 캐비어트 문장에 여전히 쓴다.
+    ±{q:.1f}%p" 캐비어트 문장에 쓴다.
 
 `random_state`는 GroupKFold의 fold 번호로 고정한다 -- 같은 입력이면
 새로고침해도 항상 같은 결과가 나온다.
@@ -34,14 +29,14 @@ from sklearn.model_selection import GroupKFold
 FINAL_YIELD_COLUMN = "Y"
 GBDT_MAX_ITER = 200
 
-# 예측 구간 conformal 캘리브레이션 (spec "예측 구간 캘리브레이션 + 미분류
-# 사유 분리" §BA) -- 목표 포함률. q(홀드아웃 |잔차| 분위수)는 이 값 기준
-# 분위수를 쓴다. 서버 상수로만 조절한다 -- UI는 만들지 않는다(§BA-3).
+# 예측 구간 conformal 캘리브레이션의 목표 포함률. q(홀드아웃 |잔차|
+# 분위수)는 이 값 기준 분위수를 쓴다. 서버 상수로만 조절한다 -- UI는
+# 만들지 않는다.
 CONFORMAL_TARGET_COVERAGE = 0.90
 
 
 def feature_columns(schema) -> list[str]:
-    """spec §A-1: "전체 R+D 인자를 쓴다. 선정 인자가 아니라 다변량이 핵심이다."
+    """전체 R+D 인자를 쓴다 -- 선정 인자가 아니라 다변량이 핵심이다.
     Config은 범주형이라 제외 -- 회귀 트리 특징으로 원-핫 없이 넣을 수 없다.
     """
     return [*schema.r_cols, *schema.d_cols]
@@ -67,9 +62,8 @@ def prepare_feature_matrix(
     뿐이고 그 자체가 이미 네이티브로 처리된다.
 
     `max_step`이 주어지면 그보다 뒤 스텝의 인자는(df에 값이 있어도) 전부
-    NaN으로 가린다. 현재 이 모듈의 유일한 호출부(`compute_holdout_predictions`)는
-    `max_step`을 쓰지 않지만, 과거 스텝별 마스킹 기능과의 호환을 위해
-    파라미터는 남겨 둔다.
+    NaN으로 가린다 -- "이 스텝까지만 알고 있을 때"를 재현하는 용도다.
+    이 모듈의 유일한 호출부(`compute_holdout_predictions`)는 넘기지 않는다.
     """
     out = pd.DataFrame(index=df.index)
     for f in features:
@@ -85,8 +79,8 @@ class HoldoutPredictions:
     actual_y: np.ndarray
     pred_point: np.ndarray
     residual_std: float
-    # conformal margin q -- |실제 - OOF 예측|의 `coverage` 분위수(spec
-    # §BA-1). `pred_mean ± conformal_q`가 이론적으로 정규성을 가정하는
+    # conformal margin q -- |실제 - OOF 예측|의 `coverage` 분위수.
+    # `pred_mean ± conformal_q`가 이론적으로 정규성을 가정하는
     # `residual_std` 기반 ±1.645σ 근사보다 분포 가정 없이 목표 포함률을
     # 보장한다(conformal prediction).
     conformal_q: float
@@ -104,14 +98,14 @@ def compute_holdout_predictions(
     n_splits: int = 5,
     coverage: float = CONFORMAL_TARGET_COVERAGE,
 ) -> HoldoutPredictions | None:
-    """예측 구간 conformal 캘리브레이션 (spec §BA-1) -- train을 LOT 기준
+    """예측 구간 conformal 캘리브레이션 -- train을 LOT 기준
     GroupKFold로 잘라 매 wafer가 자신이 속하지 않은 fold의 모델로만
     예측되게 한(out-of-fold) 점추정치를 모으고, `|실제 - OOF 예측|`의
     `coverage` 분위수(기본 90%)를 conformal margin `q`로 낸다.
 
     랏 단위로 나누는 것이 핵심이다 -- wafer 단위로 나누면 같은 랏이
     학습·검증 양쪽에 섞여 잔차가 과소평가된다(캘리브레이션이 다시
-    무너진다, spec §BA-1 "랏 단위 분할 필수").
+    무너진다).
 
     Lot당 표본이 `n_splits`보다 적으면 None (표본 부족).
     """

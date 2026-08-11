@@ -28,9 +28,9 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 type ChipIconKind = "chart" | "help" | "alert" | "info";
 type ExampleChip = { icon: ChipIconKind; text: string };
 
-// HC그룹: 프리셋을 네 갈래(해석/기준/한계/기능)로 나눈다 -- 이전에는
-// 데이터 해석 질문만 있어서 판정 기준·한계·기능을 물어봐도 되는지
-// 사용자가 몰랐다. 카테고리마다 아이콘을 고정 배정한다(해석 chart,
+// 프리셋을 네 갈래(해석/기준/한계/기능)로 나눈다 -- 해석 질문만 보여주면
+// 판정 기준·한계·기능도 물어봐도 되는지 사용자가 알 수 없다.
+// 카테고리마다 아이콘을 고정 배정한다(해석 chart,
 // 기준 help, 한계 alert, 기능 info) -- 두 마퀴 행에 두 카테고리씩
 // 묶어 방향(좌/우)이 서로 다른 질문 성격을 나타내게 한다. 마퀴는
 // 뷰포트 폭만큼만 동시에 보이므로(320px 패널 기준 한 행에 2~3개) 총
@@ -65,10 +65,10 @@ const MARQUEE_ROW_2: ExampleChip[] = [
 ];
 // api/routes/chat.py의 REPORT_KEYWORDS와 반드시 같은 키워드 집합을
 // 유지한다 -- "요약해줘"·"정리해줘"는 후속 질문에서도 흔히 쓰이는 일반
-// 동사라 report 모드로 잘못 분류되던 원인이었다.
+// 동사라 여기에 넣으면 report 모드로 잘못 분류된다.
 const REPORT_KEYWORD_PATTERN = /보고서|리포트|report/i;
 // Reveals streamed text one character per tick regardless of how large the
-// underlying network chunk was (spec §5-3: "한 글자씩 이어 붙인다").
+// underlying network chunk was -- 한 글자씩 이어 붙인다.
 const TYPEWRITER_INTERVAL_MS = 14;
 const AUTO_SCROLL_THRESHOLD_PX = 40;
 // api/routes/chat.py의 HISTORY_TURNS * 2와 반드시 같은 값이어야 한다 --
@@ -89,13 +89,13 @@ export default function AiPanel({
 }) {
   const { analysisDataset, pendingChatRequest, clearPendingChatRequest, setAiPanelOpen } = usePanelState();
   const reducedMotion = usePrefersReducedMotion();
-  // ≥1024px: unchanged floating circle<->320px panel (spec §B-5 row 1).
+  // ≥1024px: floating circle <-> 320px side panel.
   // 768~1023px: overlay drawer, 768px 이하로는 못 내려간다 -- see CSS.
   // ≤767px: full-screen drawer.
   const isTabBarLayout = useIsTabBarLayout();
   const isMobileLayout = useIsMobileLayout();
   const layout: "desktop" | "overlay" | "fullscreen" = isMobileLayout ? "fullscreen" : isTabBarLayout ? "overlay" : "desktop";
-  // G-4: 오버레이/전체화면일 때만 진짜 모달이다 -- 데스크톱은 항상 떠 있는
+  // 오버레이/전체화면일 때만 진짜 모달이다 -- 데스크톱은 항상 떠 있는
   // 도킹 패널이라 포커스를 가두면 평소 페이지 탐색이 막힌다.
   const isDrawer = layout !== "desktop";
   const panelRef = useRef<HTMLElement | null>(null);
@@ -107,7 +107,7 @@ export default function AiPanel({
   const [lastRequest, setLastRequest] = useState<{ message: string; mode: ChatMode } | null>(null);
 
   // Locks background scroll while the drawer covers the screen (spec
-  // §B-5: "열리면 뒤 본문 스크롤을 잠근다") -- desktop's fixed-width side
+  // "열리면 뒤 본문 스크롤을 잠근다") -- desktop's fixed-width side
   // panel never scrolls the body regardless, so this only ever applies
   // for overlay/fullscreen.
   useEffect(() => {
@@ -119,7 +119,7 @@ export default function AiPanel({
     };
   }, [layout, open]);
 
-  // G-4: 오버레이/전체화면일 때만 모달로 동작한다(데스크톱은 항상 떠 있는
+  // 오버레이/전체화면일 때만 모달로 동작한다(데스크톱은 항상 떠 있는
   // 도킹 패널이라 Esc로 닫히면 안 된다) -- SettingsPanel/TrainingPanel과
   // 같은 조건으로 Esc를 처리한다.
   useEffect(() => {
@@ -163,18 +163,18 @@ export default function AiPanel({
     messagesStateRef.current = messages;
   }, [messages]);
 
-  // HC-2: 대화가 시작되면 프리셋 영역을 접는다 -- 이미 질문한 뒤에는
+  // 대화가 시작되면 프리셋 영역을 접는다 -- 이미 질문한 뒤에는
   // 그 자리를 차지할 이유가 없다. welcome 메시지 하나만 있는 상태를
   // "아직 대화를 시작하지 않음"으로 본다.
   const conversationStarted = messages.some((message) => message.id !== WELCOME_ID);
 
   // Measures the floating chip block's real rendered height so the message
-  // list can reserve exactly that much room (spec: "하드코딩하지 마라") --
-  // a fixed guess would drift the moment the block's own content wraps
-  // differently (font scaling, browser zoom, translation-length changes).
-  // 대화가 시작돼 이 블록이 언마운트되면 관찰할 대상이 없다 -- 이전에
-  // 측정된 높이를 그대로 CSS 변수에 남겨두면 메시지 목록이 더 이상
-  // 존재하지 않는 프리셋 블록만큼 여백을 계속 예약해 공간을 낭비한다.
+  // list can reserve exactly that much room -- a hardcoded guess would
+  // drift the moment the block's own content wraps differently (font
+  // scaling, browser zoom, translation-length changes).
+  // 대화가 시작돼 이 블록이 언마운트되면 관찰할 대상이 없다 -- 마지막에
+  // 측정된 높이를 CSS 변수에 남겨두면 메시지 목록이 이미 사라진 프리셋
+  // 블록만큼 여백을 계속 예약해 공간을 낭비한다.
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
@@ -199,7 +199,7 @@ export default function AiPanel({
     };
   }, []);
 
-  // D-5: 데이터셋이 바뀌면 대화 히스토리를 이어가지 않는다 -- 최근 4턴이
+  // 데이터셋이 바뀌면 대화 히스토리를 이어가지 않는다 -- 최근 4턴이
   // 그대로 다음 요청에 실려 나가므로(HISTORY_MESSAGES), train에서 나눈
   // 문답이 test 재분석 후 질문의 맥락으로 딸려가 답이 오염된다. 최초
   // 마운트 값은 건드리지 않는다(그때는 "바뀐" 게 아니다).
@@ -236,7 +236,7 @@ export default function AiPanel({
     }
   }
 
-  // D-4: 에러 시 이미 받은 내용을 지우지 않는다 -- `flushText`는 아직
+  // 에러 시 이미 받은 내용을 지우지 않는다 -- `flushText`는 아직
   // 타자기 효과로 화면에 안 찍힌 채 큐에 남아 있던 문자들(진짜로 받은
   // 응답의 일부)이고, `errorText`가 있으면 텍스트를 통째로 교체하는
   // 대신 그 뒤에 덧붙인다. 성공 종료(`finalizeMessage(id, "done")`)는
@@ -300,15 +300,15 @@ export default function AiPanel({
 
       // Whether 원인 분석 has run is frontend-only session state
       // (analysisDataset) -- an empty dataset tells the backend to judge
-      // and answer that itself (spec 재지시: "분석이 실행되지 않은 상태면
-      // 백엔드가 판단해 안내 메시지를 응답한다"), so every send() always
+      // and answer that itself (분석이 실행되지 않은 상태면 백엔드가
+      // 판단해 안내 메시지를 응답한다), so every send() always
       // reaches /api/chat the same way regardless of entry point (typed
       // text or an example chip).
       cancelRef.current = streamChat(
         { message: text, mode, dataset: analysisDataset ?? "", history },
         {
           onDelta: (chunk) => {
-            // F-3: `chunk.split("")`은 UTF-16 서로게이트 쌍을 반으로
+            // `chunk.split("")`은 UTF-16 서로게이트 쌍을 반으로
             // 쪼개 이모지 등이 스트리밍 중 깨져 보인다 -- 코드 포인트
             // 단위로 순회하는 `Array.from`을 쓴다.
             queueRef.current.push(...Array.from(chunk));
@@ -319,7 +319,7 @@ export default function AiPanel({
           onError: (message, errorKind) => {
             doneRef.current = true;
             stopTypewriter();
-            // D-4: 큐에 남아 있던(아직 타자기로 안 찍힌) 문자도 실제로
+            // 큐에 남아 있던(아직 타자기로 안 찍힌) 문자도 실제로
             // 받은 응답이다 -- 버리지 않고 먼저 합친 뒤 에러를 덧붙인다.
             const remaining = queueRef.current.join("");
             queueRef.current = [];
@@ -379,7 +379,7 @@ export default function AiPanel({
   }
 
   // Overlay/fullscreen: the header's own SUNI button is the only way to
-  // open (spec §B-5) -- there is no floating circle to render while
+  // open -- there is no floating circle to render while
   // closed, unlike the desktop panel which stays visible collapsed.
   if (layout !== "desktop" && !open) return null;
 
@@ -403,7 +403,7 @@ export default function AiPanel({
                 <BackIcon />
               </button>
               <span className="aiPanelMobileTitle">SUNI AI 어시스턴트</span>
-              {/* 지시서 N-7: 어느 데이터셋 기준으로 답하는지 헤더에 항상 보인다. */}
+              {/* 어느 데이터셋 기준으로 답하는지 헤더에 항상 보인다. */}
               <span className="aiPanelCtx">CTX {analysisDataset ?? "미실행"}</span>
             </div>
           ) : (
@@ -500,18 +500,17 @@ export default function AiPanel({
                   </div>
                 );
               })}
-              {/* Keeps the last real message out of the mask's fade band
-                  (spec §8-5) -- without this, scrollTop=scrollHeight lands
-                  the final line exactly in the fully-transparent zone. */}
+              {/* Keeps the last real message out of the mask's fade band --
+                  without this, scrollTop=scrollHeight lands the final line
+                  exactly in the fully-transparent zone. */}
               <div aria-hidden="true" style={{ height: MESSAGE_LIST_BOTTOM_SPACER_PX, flex: "0 0 auto" }} />
               </div>
 
               {/* Floating block: marquee rows only -- "분석 보고서 생성" stays
                   attached to the welcome bubble above and scrolls with the
-                  conversation (spec A-1/A-2). HC-2: 대화가 시작되면(사용자가
-                  한 번이라도 메시지를 보내면) 이 블록은 더 이상 그리지
-                  않는다 -- 이미 질문한 뒤에는 프리셋이 자리를 차지할
-                  이유가 없다. */}
+                  conversation. 대화가 시작되면(사용자가 한 번이라도
+                  메시지를 보내면) 이 블록은 그리지 않는다 -- 이미 질문한
+                  뒤에는 프리셋이 자리를 차지할 이유가 없다. */}
               {!conversationStarted && (
                 <div className="aiPanelChipFloat" ref={chipFloatRef}>
                   <MarqueeRow
@@ -607,7 +606,7 @@ function MarqueeRow({
     <div className="aiPanelMarquee">
       <div className={`aiPanelMarqueeTrack ${direction === "right" ? "reverse" : ""}`}>
         {items.map((chip, index) => {
-          // F-3: 뒤 절반은 이음매를 감추기 위한 시각적 복제본이다 -- Tab
+          // 뒤 절반은 이음매를 감추기 위한 시각적 복제본이다 -- Tab
           // 키로 같은 칩을 두 번 지나가지 않도록 포커스/스크린리더에서
           // 뺀다.
           const isDuplicate = !reducedMotion && index >= chips.length;

@@ -1,9 +1,5 @@
-"""MA-3: '계측 확대 권고' 카드(요약 카드 3개 + 인자별 우선순위 표 +
-새 인자 발견 카드)는 모니터링 홈 재설계로 화면에서 사라졌다 -- 그
-카드 하나만을 위한 시뮬레이션(`compute_measurement_expansion` 등)도
-함께 지웠다. `_measured_any_mask`만 `src/analysis/screening/fmea.py`가
-여전히 쓴다("이 인자들 중 하나라도 계측된 wafer" 마스크는 FMEA의
-측정/상관 부족 집계에도 필요한 범용 유틸이라 남긴다).
+"""계측 마스크 유틸. `_measured_any_mask`("이 인자들 중 하나라도 계측된
+wafer")를 `src/analysis/screening/fmea.py`의 측정/상관 부족 집계가 쓴다.
 """
 
 from __future__ import annotations

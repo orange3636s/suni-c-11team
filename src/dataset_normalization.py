@@ -21,7 +21,7 @@ ID_COLUMN = "Lot_Wafer_ID"
 LOT_COLUMN = "Lot_ID"
 WAFER_SLOT_COLUMN = "Wafer_Slot"
 
-# T3-1: Y/Y1~Y5는 float64로 유지한다 -- `Y = 100 - ΣYi` 항등식 검증(허용오차
+# Y/Y1~Y5는 float64로 유지한다 -- `Y = 100 - ΣYi` 항등식 검증(허용오차
 # 1e-6)이 float32 반올림 오차에서 깨질 수 있다. 그 외 R/D 계측값은 계측
 # 정밀도가 소수 2자리라 float32로 낮춰도 정보 손실이 없다(메모리 절반).
 _KEEP_FLOAT64_COLUMNS = frozenset({"Y", "Y1", "Y2", "Y3", "Y4", "Y5"})
@@ -29,7 +29,7 @@ _KEEP_FLOAT64_COLUMNS = frozenset({"Y", "Y1", "Y2", "Y3", "Y4", "Y5"})
 
 def _downcast_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """100,000행 규모에서 스크리닝/히트맵/트리맵이 물고 있는 DataFrame의
-    메모리를 줄인다 (작업지시 T3-1). R/D 계측 컬럼은 float64 -> float32,
+    메모리를 줄인다. R/D 계측 컬럼은 float64 -> float32,
     Config 컬럼은 값 종류가 수십 개뿐이라 category dtype으로 -- 둘 다
     한 번(로드 시점)만 계산해 이후 모든 소비처(스크리닝/히트맵/학습)가
     같은 절감을 공유한다."""
@@ -59,8 +59,8 @@ _LOT_WAFER_RE = re.compile(r"^(?P<lot>.+?)W(?P<slot>\d+)$", re.IGNORECASE)
 def _normalize_config_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename Step{n}_EQ -> Step{n}_Config. If a dataset has both for the
     same step, _Config wins and the _EQ duplicate is dropped entirely
-    (spec §2-1: "같은 데이터셋에 _Config 와 _EQ 가 동시에 존재하면
-    _Config 를 우선하고, 중복 step은 하나만 쓴다").
+    -- 같은 데이터셋에 _Config 와 _EQ 가 동시에 존재하면 _Config 를
+    우선하고, 중복 step은 하나만 쓴다.
     """
     existing_config_steps = {
         match.group(1) for column in df.columns if (match := _CONFIG_COLUMN_RE.match(str(column)))
@@ -87,7 +87,7 @@ def _normalize_config_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _parse_lot_wafer_id(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """Derive Lot_ID/Wafer_Slot from Lot_Wafer_ID (e.g. "L001W01" ->
     Lot_ID="L001", Wafer_Slot=1) when a dataset doesn't already carry
-    Lot_ID as its own column (spec §2-2) -- GroupKFold and every
+    Lot_ID as its own column -- GroupKFold and every
     LOT-based summary need Lot_ID specifically, not just the combined
     wafer id. A dataset that already has Lot_ID is left untouched.
 

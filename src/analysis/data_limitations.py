@@ -50,7 +50,7 @@ class MnarRateRow:
 
 
 def build_mnar_rate_report(df: pd.DataFrame, factors: list[tuple[str, str]]) -> list[MnarRateRow]:
-    """WL-1: (target, feature) 쌍마다 전체 계측률과 최악 10% 계측률·배수를
+    """(target, feature) 쌍마다 전체 계측률과 최악 10% 계측률·배수를
     계산해 배수 내림차순으로 반환한다. 최악 10%를 정하려면 Y가 필요하다 --
     호출부가 이미 Y1~Y5가 채워진 프레임(FMEA가 쓰는 것과 같은 eval
     프레임)을 넘겨야 한다."""
@@ -75,7 +75,7 @@ def build_mnar_rate_report(df: pd.DataFrame, factors: list[tuple[str, str]]) -> 
 
 @dataclass(frozen=True)
 class VarianceDecomposition:
-    """WL-2: 랏 단위로 관리해도 못 잡는 변동의 크기 -- ICC(1,1) 하나만
+    """랏 단위로 관리해도 못 잡는 변동의 크기 -- ICC(1,1) 하나만
     보여주면 "0.007이 뭘 뜻하는지" 알 수 없어, 랏 개수 대비 무효과
     기댓값(1/랏당wafer수)을 함께 낸다."""
 
@@ -88,12 +88,12 @@ class VarianceDecomposition:
 
 
 def compute_variance_decomposition(df: pd.DataFrame, *, lot_column: str = "Lot_ID", target_column: str = "Y") -> VarianceDecomposition | None:
-    """WL-2: `between_lot_pct`는 의도적으로 편향 보정을 하지 않은 단순
+    """`between_lot_pct`는 의도적으로 편향 보정을 하지 않은 단순
     비율 var(랏평균)/var(Y)다 -- ANOVA로 표본 노이즈를 보정해 버리면(예:
     Shrout & Fleiss의 (MS_between-MS_within)/n0 보정) 랏 효과가 전혀 없는
     귀무가설 하에서도 이 값 자체가 그 보정으로 0 근처가 되어 버려,
     "무효과 기대값(1/랏당wafer수)과 비교했더니 비슷하더라"라는 이 차트의
-    핵심 논증(WL-2: "무효과 기대값이 없으면 차트가 거짓말을 한다")을 할
+    핵심 논증("무효과 기대값이 없으면 차트가 거짓말을 한다")을 할
     수 없다 -- 비교 대상 두 값이 같은 정의를 써야 그 비교가 의미 있다.
     실측 검증: train.CSV 기준 이 단순 비율이 4.49%로 무효과 기대값(1/25=
     4.0%)과 거의 같다(관측 코멘트의 근거).

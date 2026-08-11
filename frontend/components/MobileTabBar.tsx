@@ -6,14 +6,12 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { formatSidebarDot, navigationItems, SidebarStatusDot, type NavigationLabel } from "@/components/Sidebar";
 
-/** Replaces the left sidebar at ≤1023px (spec: JSON 보고서 버튼 제거 ·
- * 모바일 레이아웃 전환 §B-3) -- a floating navy pill bar, same visual
- * language as the sidebar (same background var, same radius), sticky
- * under the header. Text-only tabs (no icons -- spec: "좁은 폭에서 아이콘은
- * 공간만 차지한다"), horizontally scrollable, never wraps.
+/** Replaces the left sidebar at ≤1023px -- a floating navy pill bar, same
+ * visual language as the sidebar (same background var, same radius),
+ * sticky under the header. Text-only tabs (no icons -- 좁은 폭에서
+ * 아이콘은 공간만 차지한다), horizontally scrollable, never wraps.
  *
- * Rendered instead of <Sidebar> (conditional, not CSS-hidden -- spec
- * §B-3: "조건에 렌더링으로 처리한다. CSS로 숨기지 마라"), so there is no
+ * Rendered instead of <Sidebar> conditionally, never CSS-hidden, so there is no
  * collapse toggle here at all: the concept doesn't exist for a tab bar.
  */
 export default function MobileTabBar({ activeItem }: { activeItem: NavigationLabel }) {
@@ -27,7 +25,7 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
     setAnalysisPanelOpen,
   } = usePanelState();
   const { snapshot, training, notifications } = useAnalysisState();
-  // SA-1: 데스크톱 사이드바(Sidebar.tsx)와 같은 판정 규칙 -- 컴포넌트만
+  // 데스크톱 사이드바(Sidebar.tsx)와 같은 판정 규칙 -- 컴포넌트만
   // 다시 쓰고(SidebarStatusDot) 로직은 여기서 다시 계산한다(이 탭바는
   // 사이드바 대신 렌더되므로 같은 훅 인스턴스를 공유할 수 없다).
   const analysisStatus: "connected" | "offline" | "error" =
@@ -81,13 +79,13 @@ export default function MobileTabBar({ activeItem }: { activeItem: NavigationLab
             </Link>
           );
         })}
-        {/* 설정 패널 신설 §A-2: 좁은 폭에서는 사이드바 자체가 없으니 설정도
+        {/* 좁은 폭에서는 사이드바 자체가 없으니 설정도
             이 가로 탭바에 편입한다 (페이지 이동이 아니라 패널을 여는
             버튼이라 다른 탭들과 달리 <Link>가 아니다). */}
-        {/* 지시서 L-1: 데스크톱 사이드바 하단의 모델 학습 진입점을 좁은
-            폭에서도 열 수 있어야 한다 -- 이 탭바에는 사이드바 자체가
-            없으므로 설정과 같은 방식으로 편입한다. RA-1: 통합 버튼이
-            둘로 나뉘어 여기도 같이 나눈다. */}
+        {/* 데스크톱 사이드바 하단의 모델 학습 진입점을 좁은 폭에서도
+            열 수 있어야 한다 -- 이 탭바에는 사이드바 자체가 없으므로
+            설정과 같은 방식으로 편입한다. 모델 학습과 모델 분석은
+            사이드바에서와 마찬가지로 별개 버튼이다. */}
         <button
           type="button"
           className="mobileTab mobileTabButton"

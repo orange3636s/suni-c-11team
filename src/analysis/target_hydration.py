@@ -30,11 +30,11 @@ FINAL_YIELD_COLUMN = "Y"
 ALL_TARGETS = (FINAL_YIELD_COLUMN, *FAIL_RATE_TARGETS)
 TARGET_HYDRATION_VERSION = "target-hydration-v1"
 TARGET_FORMULA_TOLERANCE = 0.001
-# T3-3: 개수가 아니라 캐시가 들고 있는 총 행 수로 정원을 잰다 -- 업로드
-# 상한이 200,000행으로 오른 뒤로는(작업지시 T1) "최대 8개"가 최악의 경우
-# 8 x 200,000행짜리 하이드레이션 결과를 동시에 물고 있는 걸 허용해
-# 캐시 정원의 의미가 없어진다. 20,000행 표본(T2) 기준 데이터셋
-# 10개 분량을 유지할 수 있는 여유로 잡았다.
+# 개수가 아니라 캐시가 들고 있는 총 행 수로 정원을 잰다 -- 업로드 상한이
+# 200,000행이므로 "최대 8개" 같은 개수 기준은 최악의 경우 8 x 200,000행
+# 짜리 하이드레이션 결과를 동시에 물고 있는 것을 허용해 정원의 의미가
+# 없어진다. 20,000행 표본 기준 데이터셋 10개 분량을 유지할 수 있는
+# 여유로 잡았다.
 _CACHE_MAX_ROWS = 200_000
 
 
@@ -190,11 +190,11 @@ def _active_model(store: Any, model_dir: str | Path) -> tuple[Any, dict[str, Any
 
 
 def _screening_features(dataframe: pd.DataFrame, metadata: dict[str, Any], target: str, model: Any) -> tuple[pd.DataFrame, str | None]:
-    """작업지시(Config 하이드레이션 수정) T1: 학습(`src.ml.pipeline.build_features`)과
-    반드시 같은 `build_feature_frame`을 거친다 -- 예전에는 여기서 종류
-    구분 없이 전부 숫자로 강제 변환해, Config 인자가 대표로 뽑힌 타깃(예:
-    Y3/`Step10_Config`)에서 전량 NaN float32가 `category`로 학습된
-    LightGBM에 들어가 "승인 모델의 예측에 실패했습니다"가 났다.
+    """학습(`src.ml.pipeline.build_features`)과 반드시 같은
+    `build_feature_frame`을 거쳐야 한다. 종류 구분 없이 전부 숫자로 강제
+    변환하면, Config 인자가 대표로 뽑힌 타깃(예: Y3/`Step10_Config`)에서
+    전량 NaN float32가 `category`로 학습된 LightGBM에 들어가 "승인 모델의
+    예측에 실패했습니다"로 터진다.
     """
     details = (metadata.get("target_metrics") or {}).get(target) or {}
     raw_feature = details.get("feature")
@@ -297,9 +297,9 @@ def _predict_targets(dataframe: pd.DataFrame, loaded: Any) -> tuple[dict[str, np
 
 
 def _view_with_cache_flag(result: HydratedTargets, *, cache_hit: bool) -> HydratedTargets:
-    """UB-1 (perf): rebuilds only the provenance (a frozen dataclass, cheap
-    to reconstruct) with the correct `cache_hit` flag -- the dataframe
-    itself is never copied here anymore.
+    """Rebuilds only the provenance (a frozen dataclass, cheap to
+    reconstruct) with the correct `cache_hit` flag -- the dataframe itself
+    is never copied here.
 
     This used to be `_copy_result`, and it did `result.dataframe.copy(deep=True)`
     on *every* call, including cache HITS. That is exactly the anti-pattern
@@ -387,7 +387,7 @@ def hydrate_targets(
             return _view_with_cache_flag(cached, cache_hit=True)
     logger.info("target_hydration cache miss dataset=%s model=%s", dataset_id, model_id)
 
-    # T3-2: 얕은 복사 -- 바뀌는 건 아래 루프가 재할당하는 타깃 컬럼뿐이다.
+    # 얕은 복사 -- 바뀌는 건 아래 루프가 재할당하는 타깃 컬럼뿐이다.
     # `df[col] = ...`는 그 컬럼의 블록만 새로 만들 뿐 원본(`dataframe`,
     # 레지스트리가 캐시로 들고 있는 프레임)의 다른 컬럼 배열을 건드리지
     # 않으므로, deep=True였을 때와 안전성은 동일하면서 100,000행에서
