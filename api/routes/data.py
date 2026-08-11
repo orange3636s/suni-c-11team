@@ -532,7 +532,6 @@ async def train_model(
     train_ratio, validation_ratio, test_ratio = 70, 15, 15
     missing_indicator = False
     compare_missingness = False
-    ensemble_enabled = False
 
     split_ratios = (train_ratio, validation_ratio, test_ratio)
     if sum(split_ratios) != 100 or any(
@@ -684,11 +683,10 @@ async def train_model(
     logger.info("학습 모델 저장 완료")
     _report_training_progress("학습 결과 정리", 98)
 
-    # Switch the active pointer only after the saved bundle is complete, and
-    # only if it passes the promotion gate (지시서 I-4) -- an auto/manual
-    # retrain that's worse than the currently active model must NOT replace
-    # it silently, since that would shift alarm judgments without the user
-    # knowing. Any failure above leaves the previous active model untouched.
+    # Switch the active pointer only after the saved bundle is complete.
+    # RB-4: 승격 게이트는 제거됐다 -- 학습이 성공하면 무조건 교체하되,
+    # 지표가 나빠졌으면 그 사실을 reason에 남겨 침묵 교체가 되지 않게 한다.
+    # Any failure above leaves the previous active model untouched.
     training_store = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
     training_store.promote_if_better(
         model_id=model_id,
@@ -724,10 +722,9 @@ async def train_model(
             threading.Thread(target=run_refresh_pipeline, daemon=True, name="post-train-recovery").start()
     except Exception:
         logger.exception("학습 후 스냅샷 복구 실행 트리거 실패")
-    # ND-4: 보관 정책 -- 방금 승격된 모델(챔피언일 수도, 게이트에 밀린
-    # 후보일 수도 있다)을 포함해 최근 3세트만 남긴다. 저장은 이미
-    # 끝났으므로 여기서 실패해도 학습 자체의 성공 여부에는 영향을 주지
-    # 않는다 -- 베스트 에포트.
+    # ND-4: 보관 정책 -- 방금 승격된 모델을 포함해 최근 3세트만 남긴다.
+    # 저장은 이미 끝났으므로 여기서 실패해도 학습 자체의 성공 여부에는
+    # 영향을 주지 않는다 -- 베스트 에포트.
     try:
         enforce_model_retention(MODEL_DIR, active_model_id=model_id)
     except Exception:
@@ -946,9 +943,10 @@ def get_models() -> ModelListResponse:
 
 @router.get("/models/promotion-history")
 def get_promotion_history(limit: int = 20) -> dict[str, Any]:
-    """자동 수집 파이프라인 §2-2 -- 승격 여부와 무관하게 모든 학습 시도를
-    기록한 이력. 모델 학습·자동화 팝업의 "최근 학습" 줄이 이걸로 게이트
-    미달 사실("학습은 돌았는데 모델은 그대로")을 보여준다.
+    """자동 수집 파이프라인 §2-2 -- 학습 성공 시마다 기록되는 승격 이력.
+    RB-4로 승격 게이트가 제거되어 학습이 성공하면 무조건 교체되므로,
+    이 목록은 항상 promoted=True이고 reason에 지표 변화(저하 포함 여부)만
+    남는다. 모델 학습·자동화 팝업의 "최근 학습" 줄이 이 reason을 보여준다.
 
     A-4: `/models/{model_id}` 라우트보다 반드시 먼저 등록돼야 한다 --
     FastAPI는 등록 순서대로 매칭하므로, 뒤에 오면 "promotion-history"가

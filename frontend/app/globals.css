@@ -1721,9 +1721,6 @@ a{
   justify-content: center;
 }
 
-@media (max-width: 767px) {
-}
-
 .fieldGroup input,
 .tableTools input,
 .tableTools select{
@@ -3366,9 +3363,6 @@ html[data-theme="dark"] .savedModelList > button.active{
   --chart-moving-average: #b46d2d;
   --chart-warning: #a96208;
   --chart-critical: #b33a46;
-  --chart-alarm-severe: #DC2626;
-  --chart-alarm-danger: #EA580C;
-  --chart-alarm-caution: #CA8A04;
   --yield-improvement: #009a93;
   --yield-degradation: #ea002c;
   --pareto-bar: var(--measured);
@@ -4520,9 +4514,6 @@ select,
   stroke: var(--border-strong);
 }
 
-@media (max-width: 767px) {
-}
-
 .chartTooltip{
   padding: 11px 13px;
   border: 1px solid var(--border);
@@ -4964,8 +4955,7 @@ select,
 .modelUnavailableReason{ color: #c03737 !important; overflow-wrap: anywhere; }
 /* Y-2: 다크 오버라이드 누락 -- 어두운 채도색(#138a52/#a56a00/#c03737)이
    그대로면 다크 배경에서 대비가 부족하다. 이 앱이 이미 쓰는 배지 규약
-   (reliabilityBadge/confidenceBadge 등: 어두운 톤 -> 밝은 톤)을 그대로
-   따른다. */
+   (confidenceBadge 등: 어두운 톤 -> 밝은 톤)을 그대로 따른다. */
 html[data-theme="dark"] .modelCompatibility.compatible{ color: #34D399; }
 html[data-theme="dark"] .modelCompatibility.legacy{ color: #FBBF24; }
 html[data-theme="dark"] .modelCompatibility.incompatible,
@@ -5564,9 +5554,6 @@ html[data-theme="dark"]{
   --chart-moving-average: #d09658;
   --chart-warning: #d39a43;
   --chart-critical: #df727c;
-  --chart-alarm-severe: #F87171;
-  --chart-alarm-danger: #FB923C;
-  --chart-alarm-caution: #FACC15;
   --yield-improvement: #009a93;
   --yield-degradation: #ea002c;
   --pareto-bar: var(--measured);
@@ -8146,12 +8133,6 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 }
 .referenceOnlyRow{ color: var(--text-secondary, #6e6e73); }
 
-/* Severity badges for the pre-alert log -- 텍스트 폭에 맞춘다, 고정 폭을
-   주지 않는다 (spec §C-2). 열 쪽의 고정 min-width도 .col-severity에서
-   함께 제거한다 -- 배지가 좁아져도 열이 그대로 넓으면 소용없다. */
-.severityBadge{ display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: var(--radius-control); font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap; }
-.severityBadge::before{ content: ""; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-
 /* Dataset selector dropdown */
 .datasetSelector{ position: relative; display: inline-block; min-width: 260px; }
 /* RD-2: 데이터셋 셀렉터를 대체하는 표시 라벨 -- 선택 컨트롤이 아니라
@@ -8483,7 +8464,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 /* 범주형 보기: FDR 게이트를 통과하지 못한(q>=0.05) 셀 -- 검정은 됐지만
    신호가 없다는 뜻이라, "표본 부족"(.masked, 사선 패턴)과는 다른
    단색 회색으로 구분한다 (지시서 E). */
-.heatmapCell.gated{ background: var(--surface-tertiary); color: var(--text-muted); font-weight: 500; }
+
 /* QA-3: 상관계수는 그려지지만(n>=30) 종류별 표본 게이트(R>=100/D>=40)
    미달로 유의 인자 목록에는 없는 셀 -- 색은 그대로 두고(값 자체는
    유효하다) 점선 테두리만 덧대 히트맵과 유의 인자 판정이 어긋나는
@@ -8918,10 +8899,9 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 .methodComparisonReason{ margin: 12px 0 2px; font-size: var(--fs-sm); font-weight: 600; }
 .methodComparisonFootnote{ margin: 2px 0 0; font-size: var(--fs-micro); color: var(--text-secondary); }
 
-/* Bottom-of-card explanatory blurb under 알람 목록 table
-   (spec §7 재지시) -- same font-size/color as .alarmSummaryNote, but its
-   own class since this one always sits below the table/caption, wraps to
-   2-3 lines, and never breaks mid-Korean-word. */
+/* Bottom-of-card explanatory blurb under a results table (spec §7
+   재지시) -- own class since this one always sits below the
+   table/caption, wraps to 2-3 lines, and never breaks mid-Korean-word. */
 .tableDisclaimer{
   margin: 10px 2px 0; font-size: var(--fs-body); color: var(--text-secondary); line-height: 1.5;
   word-break: keep-all;
@@ -8929,7 +8909,6 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
      미지원 브라우저에서는 그냥 무시되고 기존 줄바꿈으로 폴백한다. */
   text-wrap: pretty;
 }
-
 
 /* Y1~Y5 비교 모달: 인자 하나 고정, 타깃 5개를 가로 1행으로 비교. */
 .compareModalBackdrop{
@@ -9468,25 +9447,16 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 }
 /* 지시서 S: 헤더 텍스트가 Wafer -> LOT_WF_ID로 길어져 줄바꿈되지 않도록
    최소 폭을 넓힌다. */
-.col-wafer{ min-width: 110px; }
+
 /* 배지 폭에 맞춰 열이 좁아진다 (spec §C-2) -- 고정 min-width 대신
    width:1%(table-layout:auto에서 "내용만큼만") + nowrap. */
 /* 지시서 O-4: 등급 배지와 다음 칸(사유)이 너무 붙어 보여 여유를 준다 --
    min-width로 배지가 줄바꿈되지 않을 폭을 확보하고, 오른쪽 여백을
    키워 다음 칸과 거리를 둔다. */
-.col-severity{ width: 1%; min-width: 76px; white-space: nowrap; padding-right: 22px; }
 
 /* DA그룹: 수율 예측 표 -- LOT_WF_ID·LOT이 식별자끼리 붙어 스캔되도록
    앞쪽에 두고, 나머지 칸은 내용에 맞춘 고정 폭, "사유"만 가변으로 남는
    공간을 전부 흡수한다(그래야 빈 여백이 사유란으로 몰린다). */
-.alarmListTable th,
-.alarmListTable td{ padding: 8px 9px; }
-.alarmListTable .col-wafer{ min-width: 96px; }
-.alarmListTable .col-lot{ min-width: 64px; }
-.alarmListTable .col-yield{ min-width: 150px; }
-.alarmListTable .col-severity{ min-width: 78px; }
-.alarmListTable .col-reason{ width: 100%; }
-.alarmListTable .col-explain{ min-width: 56px; }
 
 /* 지시서 H-3: 판정 원리·인자별 불량률 카드를 없애면서 이 구간 색상
    변수/트랙/스탯 CSS 전체를 삭제했다 (사용처가 그 두 카드뿐이었음).
@@ -9494,84 +9464,13 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
 .yieldBandCardTitle{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .yieldBandCardTitle h3{ margin: 0; font-size: var(--text-section, 15px); font-weight: 600; }
 
-/* ===================================================================
-   수율 예측 -- §A 설정 바 · §B 5분류 카드.
-   =================================================================== */
-
-/* 지시서 B: 조회 카드를 2줄로 재배치한다 -- 1줄(판정 대상·목표 수율·
-   조회 버튼)은 바닥선 정렬, 2줄(민감도, 그 자체로 한 줄)은 중앙선
-   정렬. 새 클래스는 이 카드 전용 레이아웃에만 쓰고, 컨트롤 자체의
-   폰트·높이는 기존 .alertsSettingLabel 등을 그대로 재사용한다. */
-.alertsQueryGrid{ display: flex; flex-direction: column; gap: 16px; }
-.alertsQueryRow1{
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 20px;
-  /* .alertsDatasetCaption이 absolute라 정상 흐름 높이에 안 잡힌다 --
-     겹치지 않을 여유를 아래에 남겨 둔다. */
-  margin-bottom: 4px;
-}
-.alertsQueryRow1 .fieldGroup{ min-width: 220px; gap: 6px; }
-/* 지시서 AG(이전) 유지: DatasetSelector는 .fieldGroup의 범용 라벨을
-   쓰므로, 같은 줄의 다른 컨트롤과 라벨 크기·간격을 여기서 맞춘다.
-   버튼(.button)의 min-height(38px, --compact-control-height)를 기준으로
-   DatasetSelector 트리거 높이도 맞춘다(기존 40px). */
-.alertsQueryRow1 .fieldGroup > span{ font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
-.alertsQueryRow1 .datasetSelectorButton{ min-height: var(--compact-control-height, 38px); font-size: var(--fs-body); }
-/* 지시서 B-2: "정상범위 기준: …" 캡션이 셀렉트 바로 아래 붙되, 그 줄의
-   높이로 잡히면 목표 수율·조회 버튼이 바닥선(flex-end) 기준으로 위로
-   들려 보인다 -- absolute로 흐름에서 빼서 이 블록만 늘어나게 한다. */
-.alertsDatasetBlock{ position: relative; display: flex; flex-direction: column; }
-.alertsDatasetCaption{ position: absolute; top: 100%; left: 0; margin: 4px 0 0; white-space: nowrap; }
-.alertsQueryButton{ margin-left: auto; }
-.alertsSettingField{ display: flex; flex-direction: column; gap: 6px; }
-.alertsTargetField{ min-width: 160px; }
-.alertsSettingLabel{ font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
-.alertsTargetInputRow{
-  display: flex; align-items: center; gap: 6px;
-  height: 38px; padding: 0 12px; border-radius: var(--radius-control);
-  border: 1px solid var(--border); background: var(--surface);
-  width: fit-content;
-}
-.alertsTargetInputRow input{
-  width: 72px; border: none; background: transparent; font-size: var(--fs-title); font-weight: 600;
-  font-variant-numeric: tabular-nums; color: var(--text-primary);
-}
-.alertsTargetInputRow input:focus{ outline: none; }
-.alertsTargetInputRow span{ font-size: var(--fs-body); color: var(--text-secondary); }
-
-/* 2줄: 민감도 -- 라벨·프리셋·슬라이더·값 칸이 전부 한 줄에서 세로
-   중앙 정렬된다(지시서 B-2). 좁은 화면에서 줄바꿈되더라도
-   .alertsGaugeGroup(슬라이더+값 칸)은 한 덩어리로 묶여 쪼개지지
-   않는다(지시서 B-4). */
-.alertsQueryRow2{ display: flex; }
-.alertsSensitivityField{ display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
-.alertsPresetRow{ display: flex; gap: 6px; flex-wrap: wrap; }
-/* 지시서 B-3: 프리셋 버튼은 .button.sm 수준(min-height 24px/padding 0
-   9px/font-size 11px)으로 줄인다. */
-.alertsPresetButton{
-  min-height: 24px; padding: 0 9px; border-radius: 8px; font-size: var(--fs-xs); font-weight: 600;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
-  cursor: pointer; transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
-}
-.alertsPresetButton:hover{ background: var(--surface-secondary, var(--surface-muted)); }
-.alertsPresetButton.active{ background: var(--accent); border-color: var(--accent); color: #fff; }
-
-.alertsGaugeGroup{ display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-/* 트랙 폭 고정 -- 남은 flex 공간을 채우지 않는다. 지시서 AI(이전): 값 칸을
-   넓히는 만큼(52px -> 66px) 트랙 상한을 줄여 둔다. */
-.alertsGaugeWrap{ flex: 0 1 auto; width: 180px; max-width: 200px; min-width: 140px; }
-.alertsGaugeHints{
-  display: flex; justify-content: space-between;
-  font-size: var(--fs-micro); color: var(--text-secondary); margin-bottom: 1px;
-}
-/* DA-3 버그 수정: 이 규칙이 예전에는 accent-color(브라우저 네이티브
-   채움·썸 렌더링)와 ::-webkit-slider-runnable-track/-moz-range-track의
-   커스텀 background를 동시에 걸고 있었다 -- 트랙 pseudo-element가 전체
-   트랙을 단색(var(--line))으로 덮어써 accent-color의 채움 표시가
-   지워지고, 채워진 부분과 미채움 부분 사이가 회색으로 끊겨 보이는
-   원인이었다. accent-color 하나만 쓰고 커스텀 트랙/썸은 전부 제거한다
-   -- 두 방식을 섞지 않는다(지시서: "섞으면 지금 증상이 그것이다").
-   .scatterScrubSlider(그룹 스크럽 슬라이더)도 이 클래스를 공유하므로
-   여기 한 곳만 고치면 두 슬라이더 모두 통일된다. */
+/* 수율 예측 화면이 목표 수율·민감도·5분류 카드 UI에서 순위 기반
+   표(§yp 클래스, 아래 참고)로 전면 재설계되며, 이 구간에 있던 조회
+   카드·5분류 카드 전용 CSS(§A/§B, 지시서 B/B-2~B-3)는 전부 사용처가
+   사라져 삭제했다. `.alertsGaugeSlider`/`.alertsPresetButton`만 예외로
+   남긴다 -- ScatterChart.tsx의 그룹 스크럽 슬라이더·리셋 버튼이
+   `scatterScrubSlider`/`scatterScrubResetButton`과 함께 이 두 클래스를
+   그대로 쓴다(슬라이더 트랙 이중 렌더링 버그 수정, 구 DA-3). */
 .alertsGaugeSlider{
   width: 100%; margin: 0; height: 18px;
   accent-color: var(--accent);
@@ -9582,89 +9481,13 @@ html[data-theme="dark"] .alertsGaugeSlider{ accent-color: #7ba3e8; }
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8; }
-.alertsGaugeEnds{
-  display: flex; justify-content: space-between;
-  font-size: var(--fs-micro); color: var(--text-secondary); margin-top: 1px;
-  font-variant-numeric: tabular-nums;
+.alertsPresetButton{
+  min-height: 24px; padding: 0 9px; border-radius: 8px; font-size: var(--fs-xs); font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+  cursor: pointer; transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
-/* 지시서 AI(이전)/B-5: "0.50" 네 글자 + 여백이 잘리지 않게 min-width를
-   52px -> 66px로 늘린다(고정 width가 아니라 min-width라 폰트를 줄이지
-   않고도 여유가 생긴다). tabular-nums는 이미 있었다 -- 값이 바뀌어도
-   폭이 흔들리지 않는다. 프리셋 버튼(24px)과 어울리게 높이를 26px로
-   맞춘다. */
-.alertsSensitivityNumber{
-  flex: 0 0 auto;
-  min-width: 66px; height: 26px; padding: 0 8px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--surface);
-  font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums;
-  color: var(--text-primary); text-align: center;
-}
-
-/* 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 슬라이더 옆
-   정밀도·재현율 표시. flex-basis 100%로 항상 자기 줄을 차지한다(다른
-   컨트롤과 같은 줄에서 줄바꿈되면 읽기 어렵다). */
-.alertsSensitivityEstimate{ flex-basis: 100%; margin: 2px 0 0; line-height: 1.5; }
-.alertsSensitivityEstimateWarning{ color: var(--sig-amber); font-weight: 600; }
-.alertsSensitivityEstimateNote{ color: var(--text-secondary); font-size: var(--fs-micro); }
-
-.alertsMismatchWarning{
-  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
-  padding: 12px 14px; border-radius: var(--radius-panel);
-  background: color-mix(in srgb, #F59E0B 12%, transparent);
-  border: 1px solid color-mix(in srgb, #F59E0B 35%, transparent);
-}
-.alertsMismatchWarning strong{ font-size: var(--fs-body); color: #92400E; }
-html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
-.alertsMismatchWarning p{ margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; }
-
-.alertsClassSection{ margin-top: 4px; }
-.alertsClassGrid{
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 10px 0 4px;
-}
-@media (max-width: 1023px){ .alertsClassGrid{ grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 479px){ .alertsClassGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.alertsClassCard{
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 14px 14px 12px; border-radius: var(--radius-panel);
-  border: 1.5px solid color-mix(in srgb, var(--class-color) 45%, var(--border));
-  background: color-mix(in srgb, var(--class-color) 7%, var(--surface));
-}
-.alertsClassCardHead{ display: flex; align-items: center; gap: 6px; }
-.alertsClassCardHead strong{ font-size: var(--fs-body); font-weight: 600; color: var(--class-color); }
-.alertsClassCardValue{ font-size: var(--fs-display); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.alertsClassCardPct{ font-size: var(--fs-xs); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.alertsClassCardYield{ font-size: var(--fs-xs); color: var(--text-secondary); margin-top: 2px; }
-/* C-1: 게이트 미달 시 알람 3등급 카드 -- 숫자 대신 "판정 불가"임을 밝힌다. */
-.alertsClassCardValueGated{ color: var(--text-secondary); }
-.alertsClassCardGatedBadge{
-  display: inline-flex; align-items: center; align-self: flex-start;
-  padding: 2px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600;
-  background: var(--warning-soft); color: var(--warning);
-}
-.alertsClassGridFoot{ margin-top: 8px; }
-.alertsGateNote{
-  margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.5;
-  background: var(--surface-secondary, var(--surface-muted)); color: var(--text-secondary);
-}
-/* 예측 구간 캘리브레이션 + 미분류 사유 분리 (spec §BB-1) -- 미분류 카드
-   안의 상관성 부족/계측 부족 내역. */
-.alertsClassCardBreakdown{ font-size: var(--fs-xs); color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
-/* spec §BA-4/§BD-1: 구간 신뢰도(실측 포함률) 표시 -- 눈에 띄되 경고는
-   아니므로 alertsGateNote와 같은 강조 배경은 쓰지 않는다. */
-.alertsCoverageNote{ margin-top: 6px; }
-
-.alertsAlarmListActions{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-/* 지시서 O-4: 등급 필터(라벨+select가 세로로 쌓이는 기본 .fieldGroup)와
-   CSV 버튼의 높이가 달라 보였다 -- 이 줄에서만 라벨을 옆으로 눕히고
-   select·button 높이를 같은 값으로 맞춘다. 새 클래스 없이 기존
-   .fieldGroup/.button을 이 컨테이너 안에서만 재정의한다. */
-.alertsAlarmListActions .fieldGroup{ flex-direction: row; align-items: center; gap: 8px; }
-.alertsAlarmListActions .fieldGroup select,
-.alertsAlarmListActions .button{ height: 34px; min-height: 34px; }
-
-@media (max-width: 767px){
-  .alertsQueryRow{ gap: 18px; }
-}
+.alertsPresetButton:hover{ background: var(--surface-secondary, var(--surface-muted)); }
+.alertsPresetButton.active{ background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ===================================================================
    SUNI C 헤더 로고 (spec §10). .headerContext now has 2 children (logo
@@ -9820,16 +9643,14 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
      클래스라 명시성이 더 높다) 를 이기려면 여기서도 같은 명시성으로
      같이 선언해야 한다 -- 안 그러면 .rcPage 안(모니터링/원인분석 등
      대부분의 실사용 카드)에서는 이 규칙이 조용히 무시된다. */
-  .panel-primary, .resultCard.panel-primary, .rcPage .resultCard.panel-primary,
-  .resultCard.alertsClassSection, .rcPage .resultCard.alertsClassSection{ padding: 12px 13px; }
+  .panel-primary, .resultCard.panel-primary, .rcPage .resultCard.panel-primary{ padding: 12px 13px; }
   .panel{ padding: 12px 13px; }
   .panel-quiet,
   .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet{ padding: 12px 13px; }
   .resultCard, .rcPage .resultCard{ padding: 12px 13px; }
 }
 @media (max-width: 479px){
-  .panel-primary, .resultCard.panel-primary, .rcPage .resultCard.panel-primary,
-  .resultCard.alertsClassSection, .rcPage .resultCard.alertsClassSection{ padding: 10px 11px; }
+  .panel-primary, .resultCard.panel-primary, .rcPage .resultCard.panel-primary{ padding: 10px 11px; }
   .panel{ padding: 10px 11px; }
   .panel-quiet,
   .resultCard.panel-quiet, .rcPage .resultCard.panel-quiet{ padding: 10px 11px; }
@@ -9988,9 +9809,6 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 
 /* -- 집계 카드 2x2 (사전 알람 로그, ≤767px) ------------------------------
    4개를 가로 1행으로 두면 너무 좁다 (spec §B-6). */
-@media (max-width: 767px){
-  .alarmSummaryGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 
 /* -- 터치 대상 최소 44x44px (spec §B-8) ---------------------------------
    Buttons/badges that were sized for a mouse cursor (severity/recommendation
@@ -9999,7 +9817,7 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
    density on larger screens -- min-height/min-width only, so a badge's
    text doesn't suddenly look oversized, just gets more breathing room. */
 @media (max-width: 767px){
-  .severityBadge,
+  
   .confidenceBadge,
   .explainButton,
   .mobileTab,
@@ -10028,37 +9846,9 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   .targetSegmentGroup::-webkit-scrollbar{ display: none; }
 }
 
-/* -- 알람/개선 권장 목록: 테이블 -> 카드형 전환 (≤767px, spec §B-6) -----
-   AlarmRow/RecommendationRow render as <tr> normally; alerts/page.tsx
-   additionally renders an .alarmCardList of <AlarmCard>/<RecommendationCard>
-   siblings and toggles which one is visible purely by width class here
-   (both are always in the DOM; CSS decides which is display:none) so no
-   duplicate data-fetch/state logic is needed per breakpoint. */
-/* 지시서 AF: 데스크톱 표와 마찬가지로 7건 이후도 스크롤로 볼 수 있어야
-   한다 -- 카드 리스트는 <table>이 아니라 sticky 헤더 개념이 없으므로
-   max-height + overflow-y만으로 충분하다. */
-.alarmCardList{ display: none; flex-direction: column; gap: 10px; max-height: 620px; overflow-y: auto; }
 @media (max-width: 767px){
   .tableHideOnMobile{ display: none; }
-  .alarmCardList{ display: flex; }
 }
-.alarmCard{
-  border: 1px solid var(--border-card, var(--border));
-  border-radius: var(--radius-panel);
-  padding: 12px 14px;
-  background: var(--surface-card, var(--surface));
-  display: flex; flex-direction: column; gap: 6px;
-}
-.alarmCardTopRow{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.alarmCardId{ font-size: var(--fs-body); font-weight: 600; }
-.alarmCardId a{ color: inherit; text-decoration: none; }
-.alarmCardMeta{ font-size: var(--fs-sm); color: var(--text-secondary); }
-.alarmCardStatsRow{
-  display: flex; flex-wrap: wrap; gap: 4px 12px;
-  font-size: var(--fs-sm); color: var(--text-primary);
-}
-.alarmCardStatsRow b{ font-weight: 600; }
-.alarmCardActions{ display: flex; justify-content: flex-end; margin-top: 2px; }
 
 /* -- 데이터 전처리 벤치마크 표: 카드 전환 없이 폰트·패딩만 축소
    (spec §B-6: "컬럼이 적으므로 카드 전환 없이") -------------------------- */
@@ -10132,21 +9922,6 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
   .button{ min-height: 32px; }
 }
 
-/* -- S-6: 근거 밴드(EvidenceBand.tsx의 .evidenceBand / monitoring/page.tsx
-   인라인 kebab-case .evidence-band 둘 다) -----------------------------
-   미니 밴드(96px)는 ≤767px에서 64px로 줄인다 -- 지우지 않는다(시그니처
-   요소). 라벨 폰트는 evidenceBandTick/evidenceBandTargetLabel 둘 다 이미
-   --fs-nano(9px)를 항상 쓰고 있어(모든 폭에서 동일) 이 항목은 이미
-   충족돼 있다 -- 별도 규칙 불필요(회귀 방지 확인만). ≤479px에서는 눈금
-   라벨을 양끝 2개만 남긴다(중간 라벨은 스케일 최소/최대와 겹쳐 읽기
-   어렵다 -- 목표선 라벨(.evidenceBandTargetLabel)은 눈금이 아니라 목표
-   지점 자체를 가리키는 별도 요소라 대상에서 뺀다). */
-@media (max-width: 767px){
-  .evidenceBand.mini, .evidence-band.mini{ width: 64px; }
-}
-@media (max-width: 479px){
-  .evidenceBandTick:not(:first-child):not(:last-child){ display: none; }
-}
 .meRowMuted{ color: var(--text-muted); }
 .meRowMuted td{ color: var(--text-muted); }
 .meRowFlagged{ background: var(--warning-soft); }
@@ -10177,7 +9952,6 @@ html[data-theme="dark"] .meSideEffectCard.reliability strong{ color: #22D3EE; }
 html[data-theme="dark"] .meSideEffectCard.falsePositive{ border-color: #34D399; }
 html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; }
 
-
 /* 1280px에서 한 줄에 들어가야 한다 (spec §A-1) -- keep-all만 쓴다.
    white-space: nowrap과 함께 쓰면 좁은 화면에서 텍스트가 잘린다. */
 .rootCauseIntro{ word-break: keep-all; }
@@ -10207,61 +9981,15 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   line-height: 1.65;
 }
 
-/* -- 알람 판정 GBDT 전환 -------------------------------------------------- */
-
-/* 알람 등급 배지 (spec §A-3/§B-1 색상 재사용: 심각 #DC2626, 위험 #EA580C,
-   주의 #CA8A04 -- 빈 삼각형은 테두리만 보이므로 밝은 노랑 대신 진한
-   황갈색을 쓴다). "개선 권고" 등급은 삭제됐다 (spec 알람 신뢰도 게이트
-   §B-1: 정밀도가 무작위 수준과 다르지 않았다). */
-.severityBadge-grade-severe{ background: rgba(220,38,38,.14); color: #DC2626; }
-.severityBadge-grade-severe::before{ background: #DC2626; }
-.severityBadge-grade-danger{ background: rgba(234,88,12,.14); color: #C2570A; }
-.severityBadge-grade-danger::before{ background: #EA580C; }
-.severityBadge-grade-caution{ background: rgba(202,138,4,.14); color: #9A6B03; }
-.severityBadge-grade-caution::before{ background: #CA8A04; }
-html[data-theme="dark"] .severityBadge-grade-severe{ color: #F87171; }
-html[data-theme="dark"] .severityBadge-grade-danger{ color: #FB923C; }
-html[data-theme="dark"] .severityBadge-grade-caution{ color: #FACC15; }
-
-/* 예측 구간 캘리브레이션 + 미분류 사유 분리 (spec §BC-2) -- 계측 없이
-   매겨진 등급을 사유 있는 알람과 시각적으로 구분한다(옅은 점선 테두리).
-   배지 안의 "*" 접미사와 함께 쓴다. */
-.severityBadge-unreasoned{ border: 1px dashed currentColor; opacity: .82; }
-
-/* DA-2: max-width가 사유 칸을 360px로 눌러 표 안에 빈 여백이 남던
-   원인이었다 -- .col-reason(width:100%)와 함께 남는 공간을 전부
-   흡수하도록 auto로 바꾼다. */
-.alarmReasonCell{ color: var(--text-secondary); font-size: var(--fs-sm); width: auto; }
-.alarmShareWarning{
-  margin: 10px 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
-  background: var(--warning-soft); color: var(--warning);
-}
-
 /* 종합 신뢰성 등급 (spec §E-3) */
 .pageHeadingTitleRow{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.reliabilityBadge{
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px;
-  font-size: var(--fs-sm); font-weight: 600; border: 1px solid; cursor: pointer; background: var(--surface);
-}
-.reliabilityBadge-high{ color: #0D9668; border-color: #0D9668; }
-.reliabilityBadge-medium{ color: #D97706; border-color: #D97706; }
-.reliabilityBadge-low{ color: #DC2626; border-color: #DC2626; }
-html[data-theme="dark"] .reliabilityBadge-high{ color: #34D399; border-color: #34D399; }
-html[data-theme="dark"] .reliabilityBadge-medium{ color: #FBBF24; border-color: #FBBF24; }
-html[data-theme="dark"] .reliabilityBadge-low{ color: #F87171; border-color: #F87171; }
 
 .reliabilityPanel{
   margin: 10px 0; padding: 14px 16px; border-radius: var(--radius-panel); border: 1px solid var(--border);
   background: var(--surface-secondary); max-width: 520px;
 }
 .reliabilityPanelHeader{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: var(--fs-body); color: var(--text-secondary); }
-.reliabilityGradeText{ font-size: var(--fs-title); font-weight: 600; }
-.reliabilityGradeText.grade-high{ color: #0D9668; }
-.reliabilityGradeText.grade-medium{ color: #D97706; }
-.reliabilityGradeText.grade-low{ color: #DC2626; }
-html[data-theme="dark"] .reliabilityGradeText.grade-high{ color: #34D399; }
-html[data-theme="dark"] .reliabilityGradeText.grade-medium{ color: #FBBF24; }
-html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
+
 .reliabilityTable{ width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .reliabilityTable td{ padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .reliabilityDeductions{ margin: 8px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; }
@@ -10277,18 +10005,8 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: #F87171; }
 
 /* 알람 신뢰도 게이트 안내 (spec 알람 신뢰도 게이트 §A-3) -- 빈 목록만
    보여주면 기능 오류로 오해하므로, 카드 형태로 사유를 설명한다. */
-.alarmGateBanner{
-  margin: 4px 0; padding: 16px 18px; border-radius: var(--radius-panel);
-  border: 1px solid color-mix(in srgb, var(--warning, #D97706) 30%, var(--border-card, rgba(0,0,0,.1)));
-  background: var(--warning-soft, color-mix(in srgb, #D97706 8%, transparent));
-}
-.alarmGateBanner strong{ display: block; font-size: var(--fs-body); margin-bottom: 8px; color: var(--text-primary); }
-.alarmGateBanner p{ margin: 0; font-size: var(--fs-body); line-height: 1.6; color: var(--text-secondary); }
-.alarmGateBannerScore{ margin-top: 10px !important; font-size: var(--fs-body); color: var(--text-primary) !important; }
 
 /* 신뢰성 상세 패널의 게이트 안내 행 (spec §D-3). */
-.reliabilityGateRow td{ color: var(--danger); font-size: var(--fs-sm); padding-top: 0 !important; border-bottom: none !important; }
-html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 
 /* ============================================================
    설정 패널 신설 -- §A 사이드바 2분할, §B Theme 아이콘, §C/§D 설정 패널,
@@ -10588,17 +10306,7 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 .notifyConditions{ display: flex; flex-direction: column; gap: 14px; }
 .notifyConditionsRow{ display: flex; flex-direction: column; gap: 6px; }
 .notifyConditionsLabel{ font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
-.notifyGradeToggles{ display: flex; gap: 8px; flex-wrap: wrap; }
-.notifyGradeToggle{
-  font: 500 12.5px var(--font-ui, inherit); min-height: 32px; padding: 0 14px; border-radius: var(--radius-control);
-  border: 1px solid var(--line); background: transparent;
-  color: var(--text-secondary); cursor: pointer;
-}
-.notifyGradeToggle:disabled{ opacity: .55; cursor: not-allowed; }
-.notifyReliabilityGateNote{
-  margin: 4px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
-  background: transparent; border: 1px solid var(--line); color: var(--text-secondary);
-}
+
 /* EB-5: 발송 정책 안내 -- 토글이 아니라 현재 정책을 보여주기만 하는
    정보성 문구라 위 게이트 안내와 같은 스타일을 쓴다. */
 .notifyDispatchPolicyNote{
@@ -10682,70 +10390,29 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 
 /* 지시서 K-1: 수율 갭 고정 스케일 막대. 트랙 폭은 항상 80~95% 스케일을
    나타낸다 -- 관측값에 맞춰 자동으로 넓어지거나 좁아지지 않는다. */
-.yieldGapSection{ margin: 4px 0 8px; }
-.yieldGapHeaderRow{ display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-.yieldGapMean{ font-size: var(--fs-title); font-weight: 600; font-variant-numeric: tabular-nums; }
-.yieldGapText{ font-size: var(--fs-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
 /* 근거 밴드 (지시서 §E, 보정 §I-1) -- EvidenceBand.tsx 공유 컴포넌트.
    SUMMARY(전체 폭, 라벨 포함)와 알람 목록 행(mini, 96px, 라벨 없음)이
    이 클래스들을 그대로 공유한다. */
-.evidenceBand{ padding: 0 4px; }
-.evidenceBand.mini{ width: 96px; padding: 0; margin-top: 4px; }
-.evidenceBandTrack{ position: relative; height: 3px; background: var(--line); }
+
 /* GA-5: 집계 구간(SUMMARY)은 웨이퍼 구간보다 훨씬 좁아(약 ±0.2%p) 고정
    스케일(80~95)에서 %폭이 선처럼 사라질 수 있다 -- 트랙 폭이 좁은
    화면에서도 채워진 구간이 항상 보이도록 최소 3px를 절대값으로
    보장한다(퍼센트 기반 최소폭만으로는 좁은 트랙에서 1px 밑으로
    내려간다). */
-.evidenceBandFill{ position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--inferred); }
-.evidenceBandBoundary{ position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--ink); opacity: .35; }
+
 /* Y-5/Y-6: --ink은 사이드바 전용 고정 남색이라 의도적으로 다크
    오버라이드가 없다(위 5605행 주석) -- 그런데 이 경계선은 사이드바가
    아니라 다크 패널 위의 얇은 마커라, 그대로 상속하면 #0e1621 35%가
    #252527 위에서 1.07:1(사실상 안 보임)이 된다. --ink 토큰 자체는
    건드리지 않고 이 규칙에서만 다크 전용 색을 준다(text-primary 35% =
    약 3.0:1). */
-html[data-theme="dark"] .evidenceBandBoundary{ border-left-color: var(--text-primary); }
-.evidenceBandTargetTick{ position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 1px solid var(--sig-amber); }
-.evidenceBandTargetLabel{
-  position: absolute; top: -18px; transform: translateX(-50%);
-  font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 500; color: var(--text-muted); white-space: nowrap;
-}
-/* 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-2) -- 판정선(현재
-   민감도의 "주의" 컷). 목표선(--sig-amber, 실선, 라벨 트랙 위쪽)과
-   시각적으로 구분되도록 강조색 점선을 트랙에 긋는다. HE그룹: 라벨
-   자체는 더 이상 트랙 바로 아래 독립 위치가 아니라, 눈금 라벨과 같은
-   충돌 회피 대열(.evidenceBandTicks, EvidenceBand.tsx의
-   layoutBelowTrackLabels)에 참여한다 -- 그래야 구간 폭이 좁아져
-   눈금과 가까워져도(GA그룹 이후 SUMMARY처럼) "판정선89.2"로 붙지
-   않는다. */
-.evidenceBandJudgmentTick{
-  position: absolute; top: -3px; bottom: -3px; width: 0;
-  border-left: 1px dashed var(--accent);
-}
-html[data-theme="dark"] .evidenceBandJudgmentTick{ border-left-color: #7ba3e8; }
-.evidenceBandJudgmentLabel{
-  position: absolute; top: 0; transform: translateX(-50%);
-  font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 500; color: var(--accent); white-space: nowrap;
-}
-html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
-.evidenceBandTicks{ position: relative; height: 28px; margin-top: 4px; }
-.evidenceBandTick{
-  position: absolute; top: 0; transform: translateX(-50%);
-  font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* F-2/HE-1: 인접 라벨이 겹칠 만큼 가까우면 둘째 줄로 내려 겹침
-   ("90.791.0")을 피한다 -- 전부 실제 값이므로 생략보다 두 줄 분리를
-   우선한다. 판정선 라벨도 같은 규칙을 공유한다(위 클래스 병기). */
-.evidenceBandTickRow2{ top: 14px; }
+
 /* HE-1 3순위: 2단 배치로도 자리가 안 나면(극단적으로 좁은 구간) 라벨
    텍스트 대신 작은 점만 남기고 값은 title 툴팁으로만 제공한다 -- 완전히
    숨기지 않고(추측하지 않는다는 원칙과 같은 이유로 "존재"는 표시) 위치는
    보존한다. */
-.evidenceBandTickDropped{
-  position: absolute; top: 4px; width: 4px; height: 4px; border-radius: 50%;
-  background: var(--text-muted); transform: translateX(-50%); cursor: help;
-}
+
 /* 보정 §I-1: 알람 목록 행에 미니 근거 밴드가 붙으며 행 높이가 늘었다 --
    고정 --scroll-row-h(기본 42px)를 이 표에서만 늘려 ALARM_VISIBLE_ROWS(7)가
    여전히 잘리지 않고 보이게 한다. .tableHideOnMobile은 이 페이지의 알람
@@ -10768,21 +10435,13 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 
 .numCol,
 .rcCellMeta,
-.yieldGapMean,
-.yieldGapText,
 .reliabilityTable .numCol,
 .scatterSelectionBoxTable td,
 .heatmapTooltip b,
 .heatmapTooltipRow b,
 .monitoringTreemapTileTitle,
 .monitoringTreemapTiles > button > span,
-.alertsClassCardValue,
-.alertsClassCardPct,
-.alertsClassCardYield,
 .analysisHistoryOptionMetrics,
-.reliabilityGradeText,
-.reliabilityBadge,
-.severityBadge,
 .confidenceBadge,
 .meRecommendationBadge{
   font-family: var(--font-data);
@@ -10987,8 +10646,9 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
 
 .ypUnmeasuredList{ margin: 8px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); word-break: break-word; }
 
-/* 계측 확대 제안(계측 큐) 권고 배지 -- "+N%p"는 게이트 미달(계측 부족)이라
-   신호색을 유지하고, "유지"는 정상 분류라 무채색. */
+/* 계측 확대 제안(계측 큐) 권고 배지 -- "+N%p"는 핵심 인자 미계측(신뢰도
+   n/5 미달)이라 신호색을 유지하고, "유지"는 이미 계측됐다는 뜻이라
+   무채색. */
 .meRecommendationBadge{
   display: inline-flex;
   align-items: center;
@@ -11006,39 +10666,6 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
   font-weight: 500;
 }
 
-/* 알람 등급/신뢰도/게이트 배지는 실제 이상·부족 신호이므로 색상은
-   유지하되, 형태만 채워진 pill -> 테두리로 통일한다. */
-.severityBadge{
-  border: 1px solid currentColor;
-  background: transparent;
-  border-radius: var(--radius-control);
-}
-.severityBadge-grade-severe{ background: transparent; color: var(--sig-red); border-width: 1.5px; }
-.severityBadge-grade-severe::before{ background: var(--sig-red); }
-.severityBadge-grade-danger{ background: transparent; color: var(--sig-red); }
-.severityBadge-grade-danger::before{ background: var(--sig-red); }
-.severityBadge-grade-caution{ background: transparent; color: var(--sig-amber); }
-.severityBadge-grade-caution::before{ background: var(--sig-amber); }
-
-.reliabilityBadge{ border-radius: var(--radius-control); background: transparent; }
-.reliabilityBadge-high{ color: var(--sig-green); border-color: var(--sig-green); }
-.reliabilityBadge-medium{ color: var(--sig-amber); border-color: var(--sig-amber); }
-.reliabilityBadge-low{ color: var(--sig-red); border-color: var(--sig-red); }
-html[data-theme="dark"] .reliabilityBadge-high{ color: var(--sig-green); border-color: var(--sig-green); }
-html[data-theme="dark"] .reliabilityBadge-medium{ color: var(--sig-amber); border-color: var(--sig-amber); }
-html[data-theme="dark"] .reliabilityBadge-low{ color: var(--sig-red); border-color: var(--sig-red); }
-.reliabilityGradeText.grade-high{ color: var(--sig-green); }
-.reliabilityGradeText.grade-medium{ color: var(--sig-amber); }
-.reliabilityGradeText.grade-low{ color: var(--sig-red); }
-html[data-theme="dark"] .reliabilityGradeText.grade-high{ color: var(--sig-green); }
-html[data-theme="dark"] .reliabilityGradeText.grade-medium{ color: var(--sig-amber); }
-html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: var(--sig-red); }
-
-.alertsClassCardGatedBadge{
-  border: 1px solid currentColor;
-  background: transparent;
-}
-
 /* ── C-3. 표 행 강조 제거: 행 배경 대신 첫 셀 굵기 + 배지로 표현 ──────── */
 .meRowFlagged{ background: none; }
 .meRowFlagged td:first-child{ font-weight: 600; }
@@ -11049,14 +10676,13 @@ html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: var(--sig-red); 
   background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--ink);
   border-radius: var(--radius-panel); padding: 16px 18px;
 }
-/* Y-5/Y-6: --ink은 사이드바 전용이라 다크에서 의도적으로 그대로다(위
-   evidenceBandBoundary와 같은 이유) -- 이 "위계 1" 식별 상단 선도 --panel
-   위에 얹히는 전경 요소라 그대로 상속하면 1.19:1(거의 안 보임)이 된다.
+/* Y-5/Y-6: --ink은 사이드바 전용이라 다크에서 의도적으로 그대로다 --
+   이 "위계 1" 식별 상단 선도 --panel 위에 얹히는 전경 요소라 그대로
+   상속하면 1.19:1(거의 안 보임)이 된다.
    라이트에서 ink가 흰 배경 위 ~15:1이었던 것과 같은 무게로,
    --text-primary(다크 ~14:1)를 쓴다. */
 html[data-theme="dark"] .panel-primary,
-html[data-theme="dark"] .resultCard.panel-primary,
-html[data-theme="dark"] .resultCard.alertsClassSection{
+html[data-theme="dark"] .resultCard.panel-primary{
   border-top-color: var(--text-primary);
 }
 .panel{
@@ -11071,8 +10697,7 @@ html[data-theme="dark"] .resultCard.alertsClassSection{
    선 + 4px radius + 그림자 없음)과 일치하므로, 위계 1/3만 명시적으로
    변형한다 -- SUMMARY/판정 결과 카드는 상단 굵은 선, 계측 큐 카드는
    옅은 테두리 + 투명 배경. */
-.resultCard.panel-primary,
-.resultCard.alertsClassSection{
+.resultCard.panel-primary{
   border-top: 2px solid var(--ink);
 }
 .resultCard.panel-quiet{
@@ -11081,16 +10706,6 @@ html[data-theme="dark"] .resultCard.alertsClassSection{
 }
 
 /* ── E. 근거 밴드: 모델 추정치 아래 동일한 구간 트랙 (3곳 공용) ──────── */
-.evidence-band .track{ position: relative; height: 3px; background: var(--line); }
-.evidence-band .band{ position: absolute; top: 0; bottom: 0; background: var(--inferred); }
-.evidence-band .band-measured{ position: absolute; top: 0; bottom: 0; background: var(--measured); }
-.evidence-band .tick{ position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--sig-amber); }
-.evidence-band .lab{
-  display: flex; justify-content: space-between;
-  font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted); margin-top: 3px;
-}
-.evidence-band.mini{ width: 96px; }
-.evidence-band.mini .lab{ display: none; }
 
 /* 보정 §I-1: 계측 우선순위의 "수율 기여" 0-채움 바는 근거 밴드가 아니다
    -- "어디부터 어디까지 불확실한가"(구간, 양끝이 열림)가 아니라 "얼마나

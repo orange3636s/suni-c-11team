@@ -11,7 +11,6 @@ from api.routes.datasets import get_dataset_registry
 from api.schemas.datasets import DatasetUploadResponse
 from api.schemas.state import (
     ActivateDatasetRequest,
-    AlarmsStateSaveRequest,
     AnalysisStateSaveRequest,
     LatestStateResponse,
     StateSaveResponse,
@@ -19,7 +18,6 @@ from api.schemas.state import (
     TrainingStateSaveResponse,
 )
 from api.settings import settings
-from src.analysis import alarm_gbdt
 from src.analysis.screening.schema import ALL_TARGET_COLUMNS
 from src.automation import sql_source
 from src.automation.refresh import is_refresh_running, run_refresh_pipeline
@@ -176,24 +174,6 @@ def save_analysis_state(body: AnalysisStateSaveRequest) -> dict[str, bool]:
     payload = _with_fmea(body.dataset, body.payload)
     payload = _with_action_priority(payload)
     saved = save_state(_store(), "analysis", dataset={"dataset": body.dataset}, payload=payload)
-    return {"saved": saved}
-
-
-@router.post("/alarms", response_model=StateSaveResponse)
-def save_alarms_state(body: AlarmsStateSaveRequest) -> dict[str, bool]:
-    # 지시서 JD-2③: 이 요청이 오는 시점 자체가 이미 "사용자가 실제로
-    # 조작했다"는 신호다 -- 프런트(alerts/page.tsx)가 userModified 플래그로
-    # 가드해, 복원·초기화로 인한 setState는 이 엔드포인트를 아예 부르지
-    # 않는다(JD-2②). 여기서는 그 저장이 어느 기본값 세대에서 만들어졌는지만
-    # 감사용으로 찍어 둔다 -- 이 값으로 자동 무효화하지 않는다(진짜 사용자
-    # 선택을 지울 위험).
-    payload = {**body.payload, "defaultsVersion": alarm_gbdt.ALARM_DEFAULTS_VERSION}
-    saved = save_state(
-        _store(),
-        "alarms",
-        dataset={"train_dataset": body.train_dataset, "eval_dataset": body.eval_dataset},
-        payload=payload,
-    )
     return {"saved": saved}
 
 

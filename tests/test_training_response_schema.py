@@ -57,11 +57,9 @@ def test_new_cv_aggregate_metrics_populates_legacy_alias() -> None:
     summary = {"r2": {"mean": 0.76, "std": 0.04}}
     payload["evaluation_summary"] = None
     payload["cv"] = {"name": "nested_group_kfold", "aggregate_metrics": summary}
-    payload["ensemble"] = {"enabled": True, "selected": True}
     response = TrainResponse(**payload).model_dump(mode="json")
 
     expected = summary | {"rmse": None, "mae": None, "mse": None}
     assert response["evaluation_summary"]["metric_summary"] == expected
     assert response["evaluation_summary"]["name"] == "nested_group_kfold"
     assert response["cv"]["aggregate_metrics"] == expected
-    assert response["ensemble"]["selected"] is True

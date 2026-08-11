@@ -34,18 +34,6 @@ from sklearn.model_selection import GroupKFold
 FINAL_YIELD_COLUMN = "Y"
 GBDT_MAX_ITER = 200
 
-# 알림 발송(yield_update_dispatch)이 아직 목표 수율/민감도 개념을 쓰는
-# 화면(원인 분석 탭 등)이 저장한 값을 읽을 때 기본값으로 쓴다. AA-4/HD:
-# 프런트 AnalysisStateProvider.DEFAULT_TARGET_YIELD/DEFAULT_SENSITIVITY와
-# 반드시 같은 값을 유지한다.
-DEFAULT_TARGET_YIELD = 88.0
-DEFAULT_SENSITIVITY = 0.2
-
-# 지시서 JD-2③: 위 두 기본값을 또 바꿀 일이 생기면 올린다 -- 저장된
-# alarms 레코드(api/routes/state.py의 save_alarms_state)에 이 버전을
-# 함께 찍어 둔다.
-ALARM_DEFAULTS_VERSION = 1
-
 # 예측 구간 conformal 캘리브레이션 (spec "예측 구간 캘리브레이션 + 미분류
 # 사유 분리" §BA) -- 목표 포함률. q(홀드아웃 |잔차| 분위수)는 이 값 기준
 # 분위수를 쓴다. 서버 상수로만 조절한다 -- UI는 만들지 않는다(§BA-3).

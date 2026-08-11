@@ -13,8 +13,7 @@ from uuid import uuid4
 import pytest
 
 from api.routes import state as state_routes
-from api.schemas.state import AlarmsStateSaveRequest, AnalysisStateSaveRequest, TrainingStateSaveRequest
-from src.analysis import alarm_gbdt
+from api.schemas.state import AnalysisStateSaveRequest, TrainingStateSaveRequest
 
 
 @pytest.fixture()
@@ -144,20 +143,6 @@ def test_get_latest_drops_record_for_deleted_dataset(isolated_settings: SimpleNa
 
     assert result["analysis"] is None
     assert result["dataset_fallback_applied"] is True
-
-
-def test_save_and_restore_alarms(isolated_settings: SimpleNamespace) -> None:
-    payload = {"summary": {"a": 1}, "alarms": {"b": 2}, "recommendations": {"c": 3}}
-    state_routes.save_alarms_state(AlarmsStateSaveRequest(train_dataset="train", eval_dataset="test", payload=payload))
-
-    result = state_routes.get_latest()
-    assert result["alarms"]["train_dataset"] == "train"
-    assert result["alarms"]["eval_dataset"] == "test"
-    assert result["alarms"]["payload"]["summary"] == {"a": 1}
-    # 지시서 JD-2③: 이 요청 자체가 이미 "사용자가 실제로 조작했다"는
-    # 신호(프런트가 userModified로 가드한다) -- 저장 시점의 기본값 세대만
-    # 감사용으로 함께 찍는다.
-    assert result["alarms"]["payload"]["defaultsVersion"] == alarm_gbdt.ALARM_DEFAULTS_VERSION
 
 
 def test_save_overwrites_previous_training_result(isolated_settings: SimpleNamespace) -> None:

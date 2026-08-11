@@ -144,7 +144,7 @@ def test_refresh_pipeline_saves_snapshot_with_config_model(monkeypatch: pytest.M
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
     monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
-        "champion_version": "config-model-1", "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
+        "champion_version": "config-model-1", "trained_at": None, "promoted": None, "skipped_reason": None,
     })
     monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
     _mock_heavy_unrelated_stages(monkeypatch)
@@ -167,7 +167,7 @@ def test_forced_exception_records_failed_last_run(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
     monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
-        "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
+        "champion_version": None, "trained_at": None, "promoted": None, "skipped_reason": None,
     })
     monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
     monkeypatch.setattr(
@@ -194,7 +194,7 @@ def test_success_after_failure_replaces_failed_status_and_snapshot(monkeypatch: 
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
     monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
-        "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
+        "champion_version": None, "trained_at": None, "promoted": None, "skipped_reason": None,
     })
     monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
 
@@ -212,7 +212,7 @@ def test_success_after_failure_replaces_failed_status_and_snapshot(monkeypatch: 
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
     monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
-        "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
+        "champion_version": None, "trained_at": None, "promoted": None, "skipped_reason": None,
     })
     monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
     _mock_heavy_unrelated_stages(monkeypatch)

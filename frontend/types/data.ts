@@ -348,65 +348,6 @@ export type DispatchResponse = {
 
 // -- 전처리 방식 A/B/C 실시간 비교 (설정 패널 신설 §E) ----------------------
 
-// 옛 사전 알람 로그(§A-3, 등급 없는 wafer별 원시 예측치 + 클라이언트
-// 재분류)는 폐기됐다 -- AlertsDataResponse/WaferPrediction 타입은 더 이상
-// 어떤 fetch 경로에서도 채워지지 않지만, AnalysisStateProvider의
-// AlarmsState.data 필드가 여전히 이 모양을 선언하고 있어 타입만 남긴다.
-export type WaferPrediction = {
-  lot_wafer_id: string;
-  lot_id: string | null;
-  measured: boolean;
-  pred_mean: number;
-  pred_lo: number;
-  pred_hi: number;
-  reason: string | null;
-  target_source: "measured" | "derived_measured" | "predicted" | string;
-};
-
-export type AlertsDataResponse = {
-  train_dataset_id: string;
-  eval_dataset_id: string;
-  total_wafers: number;
-  train_y_min: number;
-  train_y_max: number;
-  train_y_median: number;
-  train_y_p1: number;
-  train_y_p99: number;
-  predictions: WaferPrediction[];
-  // 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 랏 단위 홀드아웃
-  // OOF (실제 Y, 예측값) 쌍의 층화 샘플(최대 1,000쌍). eval의 실제 정답은
-  // 알 수 없으므로 이 학습 데이터 기반 추정치로 정밀도·재현율을 계산한다
-  // -- "홀드아웃 기준 추정"임을 화면에 반드시 병기한다. 랏 수 부족으로
-  // 홀드아웃을 못 냈으면 둘 다 빈 배열이다.
-  holdout_oof_actual: number[];
-  holdout_oof_predicted: number[];
-  auc_lower_bound: number | null;
-  auc_gate_passed: boolean;
-  display_prediction_allowed: boolean;
-  auc_gate_threshold: number;
-  // 예측 구간 conformal 캘리브레이션 (spec §BA-4) -- "구간을 믿어도
-  // 되는지"를 화면 하단에 보여주는 근거. interval_coverage_actual은
-  // eval에 실측 Y가 있을 때만 값이 있다(없으면 null). interval_conformal_q가
-  // null이면 랏 수 부족으로 부트스트랩 분위수로 대체됐다는 뜻이다.
-  interval_coverage_target: number;
-  interval_coverage_actual: number | null;
-  interval_conformal_q: number | null;
-  // 집계 수준(SUMMARY 등 eval 전체 평균) conformal 여유 (spec GA) -- 웨이퍼
-  // interval_conformal_q를 평균에 그대로 적용하면 평균의 불확실성을
-  // 과대평가한다(랏 블록 부트스트랩으로 별도 산출, 항상 웨이퍼 q보다
-  // 훨씬 좁다). null이면 웨이퍼 q와 같은 이유(랏 수 부족)로 못 낸 것.
-  interval_conformal_q_agg: number | null;
-  // 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- 이 응답이 어느
-  // max_step 기준인지. null이면 전체 스텝(마스킹 없음)이다.
-  effective_max_step: number | null;
-  // 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step이 주어졌을 때만
-  // 채워진다. 둘 다 null이면 표본 부족이거나 max_step이 없는 것이다.
-  max_step_auc: number | null;
-  max_step_auc_gate_passed: boolean | null;
-  target_provenance: TargetProvenance | null;
-  external_delivery_suppressed_reason: string | null;
-};
-
 // RE-1: y(=100 − Σ Y1~Y5) 오름차순 상위 N건 -- /alarms/predictions(구
 // 5분류·목표 수율 체계)를 대체한다. 정렬 기준은 y 하나뿐이다.
 
@@ -750,22 +691,17 @@ export type LatestAnalysisRecord = {
   payload: LatestAnalysisPayload;
 };
 
-// wafer 수만큼 커지는 predictions/holdout는 서버에 저장하지 않는다 (spec
-// 학습·분석 결과 상태 유지와 같은 원칙 -- AnalysisState의 scatterByKey와
-// 동일하게, 재접속 시 가벼운 설정값만 복원하고 무거운 데이터는 배경에서
-// 다시 불러온다). 목표 수율·민감도만 저장해 두면 재접속 시 사용자가
-// 마지막으로 보던 설정 그대로 다시 조회할 수 있다.
-export type LatestAlarmsPayload = {
-  targetYield: number;
-  sensitivity: number;
-};
-
+// 목표 수율·민감도 저장(POST /api/state/alarms)은 두 개념이 폐기되며
+// 함께 폐기됐다 -- 이 레코드는 이제 train/eval 데이터셋·시각만 의미가
+// 있다(모니터링 홈의 "판정 결과와 조회 중인 데이터셋이 다르다" 경고에
+// 쓰임). payload는 배포 이전 옛 레코드가 남아 있을 수 있어 형태를
+// 고정하지 않는다.
 export type LatestAlarmsRecord = {
   schema_version: number;
   created_at: string;
   train_dataset: string;
   eval_dataset: string;
-  payload: LatestAlarmsPayload;
+  payload: Record<string, unknown>;
 };
 
 export type LatestStateResponse = {
@@ -801,32 +737,8 @@ export type RefreshSnapshotModel = {
   champion_version: string | null;
   trained_at: string | null;
   promoted: boolean | null;
-  gate_reason: string | null;
   skipped_reason: string | null;
   training_job_submitted?: string;
-};
-
-export type RefreshSnapshotAlarmItem = {
-  lot_wafer_id: string;
-  lot_id: string | null;
-  grade: string;
-  risk_percentile: number;
-  target_source: string;
-  model_id: string | null;
-  model_version: string | null;
-  criteria_version: string;
-};
-
-export type RefreshSnapshotAlarms = {
-  gate_passed: boolean;
-  target_yield: number;
-  sensitivity: number;
-  counts: Record<"심각" | "위험" | "주의" | "정상" | "판별불가", number>;
-  items_top: RefreshSnapshotAlarmItem[];
-  total: number;
-  target_provenance: TargetProvenance | null;
-  decision_criteria_version: string;
-  external_delivery_suppressed_reason: string | null;
 };
 
 export type RefreshSnapshotMonitoring = {
@@ -857,11 +769,6 @@ export type RefreshSnapshot = {
     // 뺀 것)이다.
     yieldPrediction: Omit<YieldPredictionResponse, "train_dataset_id" | "eval_dataset_id" | "analysis_id"> | null;
   };
-  // 옛 알람 등급/게이트 판정 파이프라인 폐기 이후 항상 null이다
-  // (src/automation/refresh.py -- 알림 발송은 수율 예측 갱신 파이프라인이
-  // 전담한다). 타입/스냅샷 스키마의 키 자체는 다른 소비처가 존재를
-  // 가정할 수 있어 유지한다.
-  alarms: RefreshSnapshotAlarms | null;
   monitoring: RefreshSnapshotMonitoring;
   errors: string[];
 };

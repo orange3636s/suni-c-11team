@@ -525,12 +525,10 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             "model": model_meta,
             "analysis": analysis_block,
             # 알람 등급(심각/위험/주의)·게이트 판정 파이프라인은 폐기됐다 --
-            # 어떤 화면도 이 두 블록의 내용(counts/items_top/gate_passed/
-            # predicted_yield/gap)을 더 이상 렌더링하지 않는 것으로 확인했다
-            # (알림 발송은 수율 예측 갱신 파이프라인, 아래로 대체).
-            # 스냅샷 스키마의 키 자체는 다른 소비처가 존재를 가정할 수 있어
-            # 유지하되, 내용은 빈 상태로 남긴다.
-            "alarms": None,
+            # 어떤 화면도 그 블록(counts/items_top/gate_passed/target_yield/
+            # sensitivity)을 렌더링하지 않는 것으로 확인해 스냅샷 스키마의
+            # `alarms` 키 자체를 제거했다(알림 발송은 수율 예측 갱신
+            # 파이프라인, 아래 monitoring으로 대체).
             "monitoring": {"predicted_yield": None, "gap": None, "gap_pareto": [], "treemap": None},
             "errors": errors,
         }
@@ -609,15 +607,14 @@ def _resolve_source(
 
 def _current_model_meta(store: RuntimeStore) -> dict[str, Any]:
     """RB-3: refresh 파이프라인은 더 이상 학습을 제출하지 않는다 --
-    현재 활성 챔피언을 읽기만 한다. `trained_at`/`promoted`/`gate_reason`은
-    이 파이프라인이 학습을 트리거하던 시절에도 항상 None이었다(학습이
-    비동기라 완료를 여기서 기다리지 않았다) -- 그 필드 의미는 그대로
-    유지한다."""
+    현재 활성 챔피언을 읽기만 한다. `trained_at`/`promoted`는 이 파이프라인이
+    학습을 트리거하던 시절에도 항상 None이었다(학습이 비동기라 완료를
+    여기서 기다리지 않았다) -- 그 필드 의미는 그대로 유지한다. `gate_reason`은
+    승격 게이트(RB-4로 제거됨) 시절의 필드라 함께 제거했다."""
     return {
         "champion_version": _current_champion_id(store),
         "trained_at": None,
         "promoted": None,
-        "gate_reason": None,
         "skipped_reason": None,
     }
 

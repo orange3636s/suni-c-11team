@@ -5,7 +5,6 @@ import { getLatestState, getSnapshot, getSnapshotMeta } from "@/lib/api";
 import type { MonitoringSnapshot } from "@/lib/monitoringSource";
 import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
-  AlertsDataResponse,
   ActionPriorityPayload,
   AnalysisProgress,
   BootstrapStatus,
@@ -35,16 +34,6 @@ const SNAPSHOT_META_POLL_BOOTSTRAP_MS = 10_000;
 const SNAPSHOT_META_POLL_ANALYSIS_RUNNING_MS = 2_000;
 // "방금 갱신됨" 배지를 몇 초간 보여줄지.
 const SNAPSHOT_JUST_UPDATED_MS = 5_000;
-
-// 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 설정한 적 없거나
-// 첫 접속이면 이 값이 기본이다. HD그룹: 88.0 -- src/analysis/alarm_gbdt.py의
-// DEFAULT_TARGET_YIELD와 반드시 같은 값을 유지한다.
-export const DEFAULT_TARGET_YIELD = 88.0;
-// AA-4: "오경보 최소" 프리셋(alerts/page.tsx SENSITIVITY_PRESETS.low_fp)과
-// 같은 값이어야 한다 -- 다르면 "기본 상태인데 어느 프리셋도 활성이 아닌"
-// 어색한 상태가 된다. src/analysis/alarm_gbdt.py의 DEFAULT_SENSITIVITY와도
-// 반드시 같은 값을 유지한다(첫 로딩과 서버 판정 기준 불일치 방지).
-export const DEFAULT_SENSITIVITY = 0.2;
 
 const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
   slack: { connected: false, target: null, webhook_masked: null, verified_at: null },
@@ -133,13 +122,6 @@ export type AlarmsState = {
   trainDataset: string;
   evalDataset: string;
   createdAt: string;
-  // 사전 알람 로그 전면 개편 (spec §A-1/§A-2) -- 사용자가 조절한 설정.
-  // 서버에도 이 두 값만 저장된다(가벼움).
-  targetYield: number;
-  sensitivity: number;
-  // wafer 수만큼 커질 수 있어 서버에는 저장하지 않는다 -- 재접속 직후에는
-  // null이고, 페이지가 배경에서 다시 불러와 채운다.
-  data: AlertsDataResponse | null;
 } | null;
 
 // 지시서 K-3: 모니터링 홈이 마지막으로 렌더한 결과를 탭 이동에도 살아남는
@@ -256,17 +238,10 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
 }
 
 function synthesizeAlarmsFromSnapshot(snap: RefreshSnapshot): AlarmsState {
-  // 옛 알람 등급/게이트 판정 파이프라인이 폐기되면서 백엔드 스냅샷의
-  // `alarms` 블록은 항상 null이다(src/automation/refresh.py) -- 여기서
-  // 읽던 target_yield/sensitivity는 더 이상 서버가 채우지 않으므로
-  // 기본값으로 폴백한다.
   return {
     trainDataset: snap.source.train_dataset,
     evalDataset: snap.source.eval_dataset,
     createdAt: snap.created_at,
-    targetYield: snap.alarms?.target_yield ?? DEFAULT_TARGET_YIELD,
-    sensitivity: snap.alarms?.sensitivity ?? DEFAULT_SENSITIVITY,
-    data: null,
   };
 }
 
@@ -378,9 +353,6 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
             trainDataset: state.alarms.train_dataset,
             evalDataset: state.alarms.eval_dataset,
             createdAt: state.alarms.created_at,
-            targetYield: state.alarms.payload.targetYield ?? DEFAULT_TARGET_YIELD,
-            sensitivity: state.alarms.payload.sensitivity ?? DEFAULT_SENSITIVITY,
-            data: null,
           });
         }
         if (state.notifications) {

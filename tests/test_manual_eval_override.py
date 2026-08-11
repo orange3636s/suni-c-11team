@@ -98,7 +98,7 @@ def test_manual_mode_saves_snapshot_without_dispatching(monkeypatch: pytest.Monk
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
     monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
-        "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
+        "champion_version": None, "trained_at": None, "promoted": None, "skipped_reason": None,
     })
     monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
     # T8-1: "2/8 모델 추론" 단계가 이제 명시적으로 하이드레이션을 부른다

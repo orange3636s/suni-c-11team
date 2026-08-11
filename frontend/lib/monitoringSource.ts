@@ -52,7 +52,7 @@ export async function buildMonitoringSnapshot(
         created_at: alarms.createdAt,
         train_dataset: alarms.trainDataset,
         eval_dataset: alarms.evalDataset,
-        payload: { targetYield: alarms.targetYield, sensitivity: alarms.sensitivity },
+        payload: {},
       }
     : null;
 

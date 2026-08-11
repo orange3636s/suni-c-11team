@@ -15,12 +15,6 @@ class AnalysisStateSaveRequest(BaseModel):
     payload: dict[str, Any]
 
 
-class AlarmsStateSaveRequest(BaseModel):
-    train_dataset: str
-    eval_dataset: str
-    payload: dict[str, Any]
-
-
 class StateSaveResponse(BaseModel):
     saved: bool
 

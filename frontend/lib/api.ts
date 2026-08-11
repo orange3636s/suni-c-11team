@@ -11,7 +11,6 @@ import type {
   FavoriteRecord,
   FavoriteSnapshot,
   HeatmapResponse,
-  LatestAlarmsPayload,
   LatestAnalysisPayload,
   LatestStateResponse,
   LatestTrainingPayload,
@@ -478,14 +477,6 @@ export function saveTrainingState(
 
 export function saveAnalysisState(dataset: string, payload: LatestAnalysisPayload): Promise<{ saved: boolean }> {
   return postJson("/api/state/analysis", { dataset, payload }, 15_000);
-}
-
-export function saveAlarmsState(
-  trainDataset: string,
-  evalDataset: string,
-  payload: LatestAlarmsPayload,
-): Promise<{ saved: boolean }> {
-  return postJson("/api/state/alarms", { train_dataset: trainDataset, eval_dataset: evalDataset, payload }, 15_000);
 }
 
 // -- 즐겨찾기 (지시서 J) -- 서버에 저장한다(브라우저 저장소 금지, J-4). 점

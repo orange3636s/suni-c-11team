@@ -218,10 +218,6 @@ def test_model_detail_normalizes_nullable_fields_and_legacy_aliases(
         "train_size": 80,
         "validation_size": 10,
         "test_size": 10,
-        "target_ensemble_configs": None,
-        "ensemble_config": {
-            "Y": {"selected_type": "weighted", "weights": {"ridge": 1.0}}
-        },
         "target_metrics": None,
         "outer_fold_metrics": None,
         "available_targets": None,
@@ -236,7 +232,6 @@ def test_model_detail_normalizes_nullable_fields_and_legacy_aliases(
     assert detail["metrics"]["validation"]["r2"] == 0.7
     assert detail["dataset_rows"] == {"train": 80, "validation": 10, "test": 10}
     assert detail["dataset_split"] == {}
-    assert detail["target_ensemble_configs"]["Y"]["selected_type"] == "weighted"
     assert detail["target_metrics"] == {}
     assert detail["outer_fold_metrics"] == []
     assert detail["available_targets"] == ["Y"]

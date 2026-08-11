@@ -21,17 +21,6 @@ export function parseConfig(config: string): ConfigParts | null {
   return { step: Number(m[1]), model: m[2], eq: m[3], chamber: m[4] };
 }
 
-/** 알람 판정 3등급 색 (spec §B-1) -- ScatterChart의 삼각형 마커, alerts
- * 페이지의 5분류 배지가 같은 값을 쓴다. "주의"는 #EAB308 대신 #CA8A04를
- * 쓴다: 빈 삼각형이라 테두리만 보이므로 밝은 노랑은 흰 배경에서 식별이
- * 어렵다. CSS 변수(--chart-alarm-*, globals.css :root / [data-theme=dark])로
- * 승격해 라이트/다크 분기를 컴포넌트가 직접 하지 않도록 한다. */
-export const ALARM_GRADE_COLOR: Record<"심각" | "위험" | "주의", string> = {
-  심각: "var(--chart-alarm-severe)",
-  위험: "var(--chart-alarm-danger)",
-  주의: "var(--chart-alarm-caution)",
-};
-
 /** 발산형(빨강=낮음/초록=높음) 팔레트 -- Treemap 색 스케일, 비교 모달의
  * "최적 중심/구간 평균 불량률" 범례 스와치가 공유한다. dataviz 스킬의
  * validate_palette.js로 확인된 값(라이트 CVD ΔE 8.6, 다크 6.5). */

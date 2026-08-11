@@ -151,7 +151,6 @@ class TrainResponse(BaseModel):
     target_metrics: dict[str, Any] | None = None
     risk_metrics: dict[str, Any] | None = None
     preprocessing: dict[str, Any] | None = None
-    ensemble: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -266,22 +265,16 @@ class ModelDetailResponse(BaseModel):
     outlier_policy: str | None = None
     group_column: str | None = None
     target_leakage_check: dict[str, Any] = Field(default_factory=dict)
-    ensemble_enabled: bool | None = None
-    ensemble_mode: str | None = None
-    ensemble_method: str | None = None
-    target_ensemble_configs: dict[str, Any] = Field(default_factory=dict)
     target_metrics: dict[str, Any] = Field(default_factory=dict)
     outer_fold_metrics: list[Any] = Field(default_factory=list)
     inner_fold_metrics: list[Any] = Field(default_factory=list)
     available_targets: list[str] = Field(default_factory=list)
     cv_summary: dict[str, Any] = Field(default_factory=dict)
-    ensemble_weights: dict[str, Any] = Field(default_factory=dict)
     hybrid_summary: dict[str, Any] = Field(default_factory=dict)
     risk_metrics: dict[str, Any] = Field(default_factory=dict)
     preprocessing_summary: dict[str, Any] = Field(default_factory=dict)
     training_config: dict[str, Any] = Field(default_factory=dict)
     model_agreement_summary: dict[str, Any] = Field(default_factory=dict)
-    production_ensemble_retrained: bool | None = None
     available: bool = True
     loadable: bool = True
     compatibility_status: str = "unknown_schema"

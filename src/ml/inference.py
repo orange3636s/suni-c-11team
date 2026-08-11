@@ -998,9 +998,6 @@ def get_prediction_model_detail(
         if split_name not in dataset_rows and isinstance(alias_value, (int, float)) and not isinstance(alias_value, bool) and math.isfinite(alias_value):
             dataset_rows[split_name] = int(alias_value)
     preprocessing_config = normalized_dict(metadata.get("preprocessing_config"))
-    target_ensemble_configs = metadata.get("target_ensemble_configs")
-    if not isinstance(target_ensemble_configs, dict):
-        target_ensemble_configs = normalized_dict(metadata.get("ensemble_config"))
     target_metrics = normalized_dict(metadata.get("target_metrics"))
     available_targets = _metadata_available_targets(metadata)
     availability = _model_availability(model_path, metadata)
@@ -1043,10 +1040,6 @@ def get_prediction_model_detail(
         "outlier_policy": metadata.get("outlier_policy"),
         "group_column": metadata.get("group_column"),
         "target_leakage_check": normalized_dict(metadata.get("target_leakage_check")),
-        "ensemble_enabled": metadata.get("ensemble_enabled"),
-        "ensemble_mode": metadata.get("ensemble_mode"),
-        "ensemble_method": metadata.get("ensemble_method"),
-        "target_ensemble_configs": target_ensemble_configs,
         "target_metrics": target_metrics,
         "outer_fold_metrics": normalized_list(metadata.get("outer_fold_metrics")),
         "inner_fold_metrics": normalized_list(metadata.get("inner_fold_metrics")),
@@ -1054,13 +1047,11 @@ def get_prediction_model_detail(
         "cv_summary": _compact_cv_summary(
             metadata.get("cv_summary") or metadata.get("cv_protocol")
         ),
-        "ensemble_weights": normalized_dict(metadata.get("ensemble_weights")),
         "hybrid_summary": normalized_dict(metadata.get("hybrid_summary")),
         "risk_metrics": normalized_dict(metadata.get("risk_metrics")),
         "preprocessing_summary": normalized_dict(metadata.get("preprocessing_summary")),
         "training_config": normalized_dict(metadata.get("training_config")),
         "model_agreement_summary": normalized_dict(metadata.get("model_agreement_summary")),
-        "production_ensemble_retrained": metadata.get("production_ensemble_retrained"),
         **availability,
     }
 
