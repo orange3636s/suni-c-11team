@@ -63,13 +63,18 @@ export default function NotifyHistoryPage() {
 
         {error && <p className="errorMessage">{error}</p>}
 
+        {/* B-5: 원인 분석의 분석-없음 안내(analysisErrorBox)와 같은 모양으로
+            통일한다 -- 버튼이 문장 안에 섞여 있던 이전 모양은 이 화면만
+            달랐다. */}
         {items && items.length === 0 && (
-          <p className="emptyMessage">
-            발송된 알림이 없습니다. 알림·자동화 설정에서 채널을 연결하고 자동화를 켜세요.{" "}
-            <button type="button" className="button secondary" onClick={() => setSettingsPanelOpen(true)}>
+          <div className="analysisErrorBox" role="status">
+            <div className="analysisErrorBody">
+              <p className="analysisErrorMessage">발송된 알림이 없습니다. 알림·자동화 설정에서 채널을 연결하고 자동화를 켜세요.</p>
+            </div>
+            <button type="button" className="button sm secondary" onClick={() => setSettingsPanelOpen(true)}>
               열기
             </button>
-          </p>
+          </div>
         )}
 
         {items && items.length > 0 && (
