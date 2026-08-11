@@ -1,44 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { getScreeningHeatmap } from "@/lib/api";
+import { buildExportFilename, buildHeatmapCaptionText, exportNodeAsPng } from "@/lib/chartExport";
 import { TIER_LABEL } from "@/lib/confidenceTier";
-import { formatEps2, formatQValue } from "@/lib/numberFormat";
+import { formatAdjR2, formatQValue } from "@/lib/numberFormat";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
-import type { ConfidenceTier, HeatmapResponse } from "@/types/data";
+import type { ConfidenceTier, HeatmapResponse, RelationShape } from "@/types/data";
 
-// 작업 지시서 WJ-1: 기본 7행만 보여주고 "전체 N행 보기"로 펼친다 --
-// 스크롤 상자와 자르기를 함께 쓰지 않는다(펼치면 전체가 그대로 자라난다,
-// WJ-1 "하지 말 것"). 정렬을 바꾸면 다시 7행으로 접힌다(아래 sortMode/
-// significantOnly onChange가 setExpanded(false)를 함께 호출).
+// 기본 7행만 보여주고 "전체 N행 보기"로 펼친다 -- 스크롤 상자와 자르기를
+// 함께 쓰지 않는다(펼치면 전체가 그대로 자라난다). 정렬을 바꾸면 다시
+// 7행으로 접힌다(아래 sortMode/significantOnly onChange가
+// setExpanded(false)를 함께 호출).
 const DEFAULT_ROW_LIMIT = 7;
-// NG-1: 범주형(Config vs Y1~Y5) 보기를 제거했다 -- Config 효과는 600건
-// 검정에서 FDR 통과 0건이라 전량 중립색이었고, Config별 트리맵 탭이 같은
-// 정보를 더 잘 보여준다(eps2_categorical 자체는 트리맵이 계속 쓰므로
-// 남겨뒀다 -- 지운 것은 이 히트맵의 categorical 조회 경로뿐이다). 토글이
-// 없으므로 제목도 고정된다.
+// 내보내기 사본의 해석 캡션 폭 상한(px) -- 아래 HeatmapLegendCaption 주석 참고.
+const EXPORT_CAPTION_MAX_WIDTH = 760;
+// 이 히트맵은 수치형(R, D vs Y1~Y5) 보기 하나만 그리므로 제목이 고정이다.
+// Config 효과는 Config별 트리맵 탭이 담당한다.
 const VIEW_TITLE = "R, D vs Y1~Y5 상관관계 히트맵";
-// TC-4: eps2 >= 이 값이고 |rho| < 이 값이면 U자(비단조) 관계로 판정한다 --
-// 순위상관(rho)만 보면 약해 보이지만 실제 설명력(eps2)은 높은 경우.
-const U_SHAPE_EPS2_MIN = 0.05;
-const U_SHAPE_RHO_MAX = 0.15;
-// TC-4: 정렬 드롭다운은 세 항목만 남긴다 -- 절댓값 정렬·특정 타깃 기준·
-// Step 순서는 제거했다. 기본값은 "최대 ε²"(관계 강도 순 -- U자 인자도
-// 상위에 온다).
-type SortMode = "max_eps2" | "max_rho" | "min_rho";
+
+// 정렬 드롭다운은 네 항목이며 모두 부호 없는 크기(Adj R²)나 Step 기준이다
+// -- 핵심 인자 다수가 U자라 전체구간 부호(ρ)는 표본 절반에 대해 반대로
+// 읽히므로, 그 값으로 행을 줄 세우면 오해를 만든다. 기본값은
+// "최대 Adj R²"(서버 기본 순서와 동일).
+type SortMode = "max_adj_r2" | "min_adj_r2" | "step_desc" | "step_asc";
 const SORT_OPTION_LABEL: Record<SortMode, string> = {
-  max_eps2: "최대 ε²",
-  max_rho: "최대 ρ",
-  min_rho: "최소 ρ",
+  max_adj_r2: "최대 Adj R²",
+  min_adj_r2: "최소 Adj R²",
+  step_desc: "Step 내림차순",
+  step_asc: "Step 오름차순",
 };
 
-function isUShape(eps2Value: number | null, rhoValue: number | null): boolean {
-  return eps2Value != null && rhoValue != null && eps2Value >= U_SHAPE_EPS2_MIN && Math.abs(rhoValue) < U_SHAPE_RHO_MAX;
-}
-
+/** `Step13_R1` -> 13. 문자열 정렬로는 Step1 < Step11 < Step2가 되므로
+ * 반드시 숫자로 뽑아 비교한다. 스텝 번호가 없는 이름은 맨 뒤로 민다. */
 function featureStep(feature: string): number {
   const match = /^Step(\d+)_/.exec(feature);
-  return match ? Number(match[1]) : 0;
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -46,34 +44,68 @@ function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
 }
 
-function mixHex(from: string, to: string, t: number): string {
-  const [r1, g1, b1] = hexToRgb(from);
-  const [r2, g2, b2] = hexToRgb(to);
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return `rgb(${r}, ${g}, ${b})`;
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
 
-function relativeLuminance(rgb: [number, number, number]): number {
-  const [r, g, b] = rgb.map((c) => c / 255);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+// 단일 색상 그라데이션(흰색 -> 진한 파랑) -- 셀 색이 전달하는 정보는
+// "설명력이 얼마나 큰가" 하나뿐이고, 방향은 툴팁의 차수/꼭짓점/증감으로만
+// 말한다.
+// 정지점은 Adjusted R² 절대값 기준이며, 아래에서 scale.max로 정규화해
+// 쓴다(데이터셋마다 다시 스케일링하지 않는 고정 척도).
+const GRADIENT_STOPS: Array<[number, string]> = [
+  [0.0, "#ffffff"],
+  [0.1, "#DDE4EE"],
+  [0.3, "#6B8CBD"],
+  [0.5, "#2A4E86"],
+  [0.7, "#0E306D"],
+];
+const GRADIENT_SPAN = GRADIENT_STOPS[GRADIENT_STOPS.length - 1][0];
+// 이 값보다 어두운 배경 위에서는 글자를 흰색으로 뒤집는다.
+const DARK_BACKGROUND_LUMINANCE = 0.5;
+
+function interpolateGradient(ratio: number): [number, number, number] {
+  const t = Math.min(1, Math.max(0, ratio)) * GRADIENT_SPAN;
+  let lower = GRADIENT_STOPS[0];
+  let upper = GRADIENT_STOPS[GRADIENT_STOPS.length - 1];
+  for (let i = 0; i < GRADIENT_STOPS.length - 1; i += 1) {
+    if (t >= GRADIENT_STOPS[i][0] && t <= GRADIENT_STOPS[i + 1][0]) {
+      lower = GRADIENT_STOPS[i];
+      upper = GRADIENT_STOPS[i + 1];
+      break;
+    }
+  }
+  const span = upper[0] - lower[0];
+  const local = span > 0 ? (t - lower[0]) / span : 0;
+  const from = hexToRgb(lower[1]);
+  const to = hexToRgb(upper[1]);
+  return [
+    Math.round(from[0] + (to[0] - from[0]) * local),
+    Math.round(from[1] + (to[1] - from[1]) * local),
+    Math.round(from[2] + (to[2] - from[2]) * local),
+  ];
 }
 
-const THEME_COLORS = {
-  light: { pos: "#B42318", neg: "#1849A9", center: "#FFFFFF" },
-  dark: { pos: "#F97066", neg: "#84CAFF", center: "#2C2C2E" },
+/** 셀 배경 -- Adjusted R² 크기 하나만 본다. `scaleMax`는 서버가 내려주는
+ * 고정 척도(ADJ_R2_SCALE의 최대값)라 데이터셋이 바뀌어도 같은 값이 같은
+ * 농도로 보인다. */
+function cellBackground(value: number, scaleMax: number): { bg: string; darkBackground: boolean } {
+  const rgb = interpolateGradient(Math.max(0, value) / (scaleMax || GRADIENT_SPAN));
+  return {
+    bg: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
+    darkBackground: relativeLuminance(rgb) < DARK_BACKGROUND_LUMINANCE,
+  };
+}
+
+function gradientCss(): string {
+  const stops = GRADIENT_STOPS.map(([at, hex]) => `${hex} ${(at / GRADIENT_SPAN) * 100}%`);
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+const DIRECTION_TEXT: Partial<Record<RelationShape, string>> = {
+  monotonic_increasing: "값이 커질수록 불량 증가",
+  monotonic_decreasing: "값이 커질수록 불량 감소",
 };
-
-// TC-4: 농도(강도)는 eps2, 색상(방향)은 rho 부호 -- 둘을 분리해서 받는다.
-function cellBackground(eps2Value: number, rhoValue: number | null, epsMax: number, theme: "light" | "dark"): { bg: string; light: boolean } {
-  const { pos, neg, center } = THEME_COLORS[theme];
-  const target = rhoValue != null && rhoValue < 0 ? neg : pos;
-  const t = Math.min(1, Math.max(0, eps2Value) / (epsMax || 1));
-  const bg = mixHex(center, target, t);
-  const light = relativeLuminance(hexToRgb(target)) * t + relativeLuminance(hexToRgb(center)) * (1 - t) < 0.45;
-  return { bg, light };
-}
 
 export type HeatmapCellSelection = {
   target: string;
@@ -87,15 +119,17 @@ type TooltipState = {
   y: number;
   feature: string;
   target: string;
-  eps2: number | null;
-  rho: number | null;
+  adjR2: number | null;
+  degree: number | null;
+  shape: RelationShape | null;
+  optimalCenter: number | null;
   n: number;
+  measurementRatePct: number | null;
   q: number | null;
   significant: boolean;
   tier: ConfidenceTier | null;
-  uShape: boolean;
-  // QA-3: 상관계수는 그려지지만(n>=30) 종류별 표본 게이트 미달로 유의
-  // 인자 목록에는 없는 셀.
+  // 값은 그려지지만(n>=30) 종류별 표본 게이트 미달로 유의 인자 목록에는
+  // 없는 셀.
   gateExcluded: boolean;
 };
 
@@ -109,17 +143,18 @@ export default function CorrelationHeatmap({
   datasetId: string;
   enabled: boolean;
   onSelectCell: (selection: HeatmapCellSelection) => void;
-  // TA그룹: 탭 왕복으로 이 컴포넌트가 언마운트/리마운트돼도 재요청하지
-  // 않도록, 상위(AnalysisStateProvider의 analysis.heatmap)가 들고 있는
-  // 캐시를 씨앗으로 받고, 새로 조회할 때마다 갱신분을 되돌려준다. 키는
-  // 이제 kind 하나뿐이다(TC-4: metric 토글 제거, TC-3: config_level 제거,
-  // NG-1: categorical 자체 제거로 사실상 항상 "numeric" 하나만 쓴다).
+  // 탭 왕복으로 이 컴포넌트가 언마운트/리마운트돼도 재요청하지 않도록,
+  // 상위(AnalysisStateProvider의 analysis.heatmap)가 들고 있는 캐시를
+  // 씨앗으로 받고, 새로 조회할 때마다 갱신분을 되돌려준다. 키는 kind
+  // 하나뿐이고, 그 값은 항상 "numeric"이다.
   initialCache?: Record<string, HeatmapResponse>;
   onCacheUpdate?: (cache: Record<string, HeatmapResponse>) => void;
 }) {
-  const theme = useResolvedTheme();
+  // 셀 색은 테마와 무관한 단일 팔레트다. 테마는 마스킹/게이트 셀
+  // 같은 나머지 표시에만 CSS 변수로 반영된다.
+  useResolvedTheme();
   const kind = "numeric" as const;
-  // TA그룹: 마운트 시점의 initialCache로 씨앗을 뿌린다 -- 탭을 나갔다
+  // 마운트 시점의 initialCache로 씨앗을 뿌린다 -- 탭을 나갔다
   // 돌아와 이 컴포넌트가 다시 마운트될 때, AnalysisStateProvider가 들고
   // 있던 이전 결과를 그대로 이어받아 재요청을 건너뛴다. `data`보다 먼저
   // 선언해야 아래 lazy initializer가 이 값을 바로 읽을 수 있다.
@@ -135,19 +170,24 @@ export default function CorrelationHeatmap({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [significantOnly, setSignificantOnly] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>("max_eps2");
+  const [sortMode, setSortMode] = useState<SortMode>("max_adj_r2");
   const [expanded, setExpanded] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   // Brief settle animation on the rows whenever the sort/filter controls
-  // below actually change the order (spec §5-4-3) -- triggered from
+  // below actually change the order -- triggered from
   // those controls' own onChange, not derived reactively from `rows`,
   // so it never fires a setState synchronously inside an effect.
   const [sorting, setSorting] = useState(false);
+  // 이미지 저장: true인 동안에만 "전체 행" 사본이 화면 밖 컨테이너에
+  // 마운트된다(아래 handleExport 주석 참고). 저장 버튼의 disabled 상태도
+  // 이 값 하나로 쓴다.
+  const [exporting, setExporting] = useState(false);
+  const exportSurfaceRef = useRef<HTMLDivElement | null>(null);
 
   function triggerRowSettle() {
     setSorting(true);
     window.setTimeout(() => setSorting(false), 220);
-    // WJ-1: 정렬/필터를 바꾸면 다시 7행으로 접힌다.
+    // 정렬/필터를 바꾸면 다시 7행으로 접힌다.
     setExpanded(false);
   }
 
@@ -190,42 +230,68 @@ export default function CorrelationHeatmap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId, kind, enabled]);
 
-  // TC-4: "최대/최소 ρ" 정렬의 대표값 -- 각 행에서 eps2가 가장 큰(=가장
-  // 중요한) 타깃 칸의 부호 있는 rho를 그 행의 대표 rho로 쓴다. 특정
-  // 타깃에 고정하지 않고(제거된 "특정 타깃 기준"), 행마다 자기 자신의
-  // 지배적 관계를 대표값으로 삼는다.
-  const dominantRho = useMemo(() => {
-    if (!data) return [];
-    return data.features.map((_, rowIndex) => {
-      let bestCol = -1;
-      let bestEps2 = -Infinity;
-      data.values[rowIndex].forEach((v, colIndex) => {
-        if (v != null && v > bestEps2) {
-          bestEps2 = v;
-          bestCol = colIndex;
-        }
-      });
-      return bestCol >= 0 ? (data.rho[rowIndex]?.[bestCol] ?? null) : null;
-    });
-  }, [data]);
-
   const rows = useMemo(() => {
     if (!data) return [];
     let indices = data.features.map((_, index) => index);
     if (significantOnly) {
       indices = indices.filter((index) => data.significant[index].some(Boolean));
     }
-    if (sortMode === "max_rho") {
-      // 빨강(양) -> 흰색 -> 파랑(음) 순으로 배열된다 (지시서 TC-4).
-      indices = [...indices].sort((a, b) => (dominantRho[b] ?? -Infinity) - (dominantRho[a] ?? -Infinity));
-    } else if (sortMode === "min_rho") {
-      indices = [...indices].sort((a, b) => (dominantRho[a] ?? Infinity) - (dominantRho[b] ?? Infinity));
+    const rowMax = (index: number) =>
+      data.values[index].reduce<number>((best, value) => (value != null && value > best ? value : best), 0);
+    if (sortMode === "min_adj_r2") {
+      indices = [...indices].sort((a, b) => rowMax(a) - rowMax(b));
+    } else if (sortMode === "step_asc" || sortMode === "step_desc") {
+      // 같은 스텝에 여러 인자가 있으면(Step14_R1/Step14_R2/Step14_D1)
+      // 인자명으로 2차 정렬해 순서가 흔들리지 않게 한다.
+      const direction = sortMode === "step_asc" ? 1 : -1;
+      indices = [...indices].sort((a, b) => {
+        const stepDelta = featureStep(data.features[a]) - featureStep(data.features[b]);
+        if (stepDelta !== 0) return stepDelta * direction;
+        return data.features[a].localeCompare(data.features[b]);
+      });
     }
-    // sortMode "max_eps2"는 서버 기본 순서(이미 max eps2 내림차순)를 그대로 쓴다.
+    // "max_adj_r2"는 서버 기본 순서(이미 행별 최대 Adjusted R² 내림차순)를
+    // 그대로 쓴다.
     return indices;
-  }, [data, significantOnly, sortMode, dominantRho]);
+  }, [data, significantOnly, sortMode]);
 
   const visibleRows = expanded ? rows : rows.slice(0, DEFAULT_ROW_LIMIT);
+
+  /** 이미지 저장 -- 화면에는 기본 7행만 떠 있지만 내보낸 PNG에는 **전체
+   * 행**(예: R+D 58행)이 들어가야 한다. 그래서 화면 상태(expanded)를
+   * 건드리는 대신, 전체 행짜리 사본을 화면 밖 컨테이너
+   * (`position:absolute; left:-99999px`)에 잠깐 마운트해 그 노드를 굽는다.
+   *
+   * `display:none`을 쓰지 않는 이유가 핵심이다 -- 그 서브트리에서는
+   * getComputedStyle이 빈 값을 돌려주므로, chartExport의 "계산된 스타일을
+   * 인라인으로 굳히기" 패스가 그대로 무력화된다(이 기능의 원래 색 유실
+   * 버그와 똑같은 증상이 난다). 화면 밖이지만 실제로 레이아웃된, DOM에
+   * 붙어 있는 노드여야 한다.
+   *
+   * flushSync로 마운트를 동기 확정한 뒤 rAF 한 번으로 레이아웃까지 끝난
+   * 것을 보장하고 캡처한다. finally에서 반드시 언마운트한다. */
+  async function handleExport() {
+    if (!data || exporting) return;
+    try {
+      flushSync(() => setExporting(true));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const surface = exportSurfaceRef.current;
+      if (!surface) throw new Error("내보낼 히트맵을 준비하지 못했습니다.");
+      await exportNodeAsPng(surface, {
+        filename: buildExportFilename({ feature: null, target: "all", view: "heatmap" }),
+        captionText: buildHeatmapCaptionText({
+          rowCount: rows.length,
+          columnCount: data.targets.length,
+          sortLabel: SORT_OPTION_LABEL[sortMode],
+          datasetId,
+        }),
+      });
+    } catch (failure) {
+      console.warn("히트맵 이미지 저장 실패", failure);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   if (!enabled) {
     return (
@@ -257,7 +323,7 @@ export default function CorrelationHeatmap({
   }
   if (!data) return null;
 
-  const [scaleMin, scaleMax] = [data.scale.min, data.scale.max];
+  const scaleMax = data.scale.max;
   const gridTemplateColumns = `160px repeat(${data.targets.length}, minmax(64px, 1fr))`;
 
   return (
@@ -267,6 +333,17 @@ export default function CorrelationHeatmap({
           <span className="sectionLabel">CORRELATION OVERVIEW</span>
           <h2>{VIEW_TITLE}</h2>
         </div>
+        {/* 파레토·산점도·박스플롯 카드와 같은 자리(제목 줄 우측 끝)·같은
+            스타일의 이미지 저장 버튼. */}
+        <button
+          type="button"
+          className="chartExportButton"
+          onClick={() => void handleExport()}
+          disabled={exporting}
+          title="이미지로 저장 (PNG, 전체 행)"
+        >
+          ⬇ 이미지 저장
+        </button>
       </div>
 
       <div className="heatmapControls">
@@ -311,7 +388,6 @@ export default function CorrelationHeatmap({
                 feature={feature}
                 rowIndex={rowIndex}
                 data={data}
-                theme={theme}
                 scaleMax={scaleMax}
                 onHover={setTooltip}
                 onSelectCell={onSelectCell}
@@ -327,36 +403,52 @@ export default function CorrelationHeatmap({
         </button>
       </div>
 
-      <div className="heatmapColorbar">
-        <span>−{scaleMax.toFixed(2)}</span>
+      <ColorScaleLegend scaleMax={scaleMax} />
+      <HeatmapLegendCaption excludedConfigs={data.excluded_configs} />
+
+      {exporting && (
+        // 화면 밖(왼쪽 -99999px)에 전체 행짜리 사본을 띄운다. display:none이
+        // 아니라 실제로 레이아웃되는 노드라야 getComputedStyle이 값을
+        // 돌려주고, chartExport의 색 굳히기 패스가 동작한다.
         <div
-          className="heatmapColorbarTrack"
-          style={{
-            background: `linear-gradient(to right, ${THEME_COLORS[theme].neg}, ${THEME_COLORS[theme].center}, ${THEME_COLORS[theme].pos})`,
-          }}
-        />
-        <span>{scaleMax.toFixed(2)}</span>
-      </div>
-      <p className="heatmapCaption">
-        셀 농도는 ε²(설명력) · 색상은 ρ(스피어만 상관)의 부호(빨강=양, 파랑=음)입니다.
-        {data.excluded_configs > 0 && ` Config ${data.excluded_configs}개 제외.`}
-        {" "}표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다. 색은 있지만 점선 테두리인 셀은 표본 게이트로 유의 인자 목록에서 빠진 셀입니다.
-      </p>
+          aria-hidden="true"
+          style={{ position: "absolute", left: -99999, top: 0, width: "max-content", pointerEvents: "none" }}
+        >
+          <HeatmapExportSurface
+            surfaceRef={exportSurfaceRef}
+            data={data}
+            rows={rows}
+            scaleMax={scaleMax}
+          />
+        </div>
+      )}
 
       {tooltip && (
         <div className="heatmapTooltip" style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
           <strong>{tooltip.feature} × {tooltip.target}</strong>
-          <div className="heatmapTooltipRow"><span>ε²</span><b>{tooltip.eps2 != null ? tooltip.eps2.toFixed(3) : "표본 부족"}</b></div>
-          {tooltip.rho != null && (
-            <div className="heatmapTooltipRow"><span>ρ</span><b>{tooltip.rho >= 0 ? "+" : ""}{tooltip.rho.toFixed(3)}</b></div>
+          <div className="heatmapTooltipRow">
+            <span>Adj R²</span>
+            <b>
+              {tooltip.adjR2 != null ? tooltip.adjR2.toFixed(3) : "표본 부족"}
+              {tooltip.adjR2 != null && tooltip.degree != null && ` (${tooltip.degree}차 적합)`}
+            </b>
+          </div>
+          <div className="heatmapTooltipRow">
+            <span>n</span>
+            <b>
+              {tooltip.n.toLocaleString()}
+              {tooltip.measurementRatePct != null && ` · 계측률 ${tooltip.measurementRatePct.toFixed(1)}%`}
+            </b>
+          </div>
+          {tooltip.degree === 2 && tooltip.optimalCenter != null && (
+            <div className="heatmapTooltipRow"><span>꼭짓점</span><b>{tooltip.optimalCenter.toFixed(1)}</b></div>
           )}
-          <div className="heatmapTooltipRow"><span>n</span><b>{tooltip.n.toLocaleString()}</b></div>
+          {tooltip.degree === 1 && tooltip.shape != null && DIRECTION_TEXT[tooltip.shape] && (
+            <div className="heatmapTooltipRow"><span>방향</span><b>{DIRECTION_TEXT[tooltip.shape]}</b></div>
+          )}
           <div className="heatmapTooltipRow"><span>q</span><b>{formatQValue(tooltip.q)}</b></div>
           <div className="heatmapTooltipRow"><span>신뢰도</span><b>{tooltip.tier ? TIER_LABEL[tooltip.tier] : "-"}</b></div>
           <div className="heatmapTooltipRow"><span>FDR 통과</span><b>{tooltip.significant ? "예" : "아니오"}</b></div>
-          {tooltip.uShape && (
-            <p className="heatmapTooltipShapeNote">U자 형태 — 순위상관으로는 약해 보이지만 설명력은 높습니다</p>
-          )}
           {tooltip.gateExcluded && (
             <div className="heatmapTooltipRow"><span>유의 인자</span><b className="paretoUnderSampledLabel">표본 게이트 미달로 제외</b></div>
           )}
@@ -366,11 +458,92 @@ export default function CorrelationHeatmap({
   );
 }
 
+/** 색 농도 범례(Adjusted R² 척도). 화면 카드와 내보내기 사본이 같은 것을
+ * 쓴다 -- 내보낸 이미지에서 범례가 잘리면 셀 색을 읽을 수 없다. */
+function ColorScaleLegend({ scaleMax, labelled = false }: { scaleMax: number; labelled?: boolean }) {
+  return (
+    <div className="heatmapColorbar">
+      {/* 화면에서는 바로 아래 캡션이 척도를 설명하므로 라벨을 생략하고,
+          캡션과 떨어져 읽힐 수 있는 내보내기 사본에만 붙인다. */}
+      {labelled && <span>Adjusted R²</span>}
+      <span>0.00</span>
+      <div className="heatmapColorbarTrack" style={{ background: gradientCss() }} />
+      <span>{scaleMax.toFixed(2)}</span>
+    </div>
+  );
+}
+
+/** `maxWidth`는 내보내기 사본 전용이다 -- 그 카드는 폭이 `max-content`라,
+ * 캡을 씌우지 않으면 이 긴 문장이 한 줄로 펴지면서 카드(=이미지) 폭을
+ * 2,000px 넘게 끌고 간다. */
+function HeatmapLegendCaption({ excludedConfigs, maxWidth }: { excludedConfigs: number; maxWidth?: number }) {
+  return (
+    <p className="heatmapCaption" style={maxWidth != null ? { maxWidth } : undefined}>
+      셀 숫자·농도는 Adjusted R²(설명력)이며, 우측 상단 배지는 적합 차수(1차/2차)입니다. 방향은 색이 아니라 툴팁의 꼭짓점·증감으로 읽습니다.
+      {excludedConfigs > 0 && ` Config ${excludedConfigs}개 제외.`}
+      {" "}표본이 30개 미만인 셀은 사선 패턴으로 표시됩니다. 색은 있지만 점선 테두리인 셀은 표본 게이트로 유의 인자 목록에서 빠진 셀입니다.
+    </p>
+  );
+}
+
+function noopHover(): void {}
+function noopSelect(): void {}
+
+/** 내보내기 전용 사본 -- 화면 카드와 같은 클래스를 쓰되
+ *  1) 행을 자르지 않고(rows 전체),
+ *  2) 가로 스크롤 대신 내용만큼 늘어나며(overflow: visible + max-content),
+ *  3) 인자명 열을 max-content로 둬 라벨이 잘리지 않게 한다.
+ * 제목 / 타깃 열 머리글(Y1~Y5) / 인자명 / 셀 값 + 차수 배지 / 색 농도
+ * 범례 / 해석 캡션이 모두 한 이미지에 들어간다. */
+function HeatmapExportSurface({
+  surfaceRef,
+  data,
+  rows,
+  scaleMax,
+}: {
+  surfaceRef: RefObject<HTMLDivElement | null>;
+  data: HeatmapResponse;
+  rows: number[];
+  scaleMax: number;
+}) {
+  const gridTemplateColumns = `max-content repeat(${data.targets.length}, minmax(72px, 1fr))`;
+  return (
+    <div ref={surfaceRef} className="resultCard heatmapCard" style={{ width: "max-content", maxWidth: "none" }}>
+      <div className="heatmapHeaderRow">
+        <div className="heatmapHeaderRowText">
+          <span className="sectionLabel">CORRELATION OVERVIEW</span>
+          <h2>{VIEW_TITLE}</h2>
+        </div>
+      </div>
+      <div className="heatmapScrollArea" style={{ overflow: "visible" }}>
+        <div className="heatmapGrid" style={{ gridTemplateColumns }}>
+          <div className="heatmapCornerCell heatmapColHeader" />
+          {data.targets.map((target) => (
+            <div key={target} className="heatmapColHeader">{target}</div>
+          ))}
+          {rows.map((rowIndex) => (
+            <FragmentRow
+              key={data.features[rowIndex]}
+              feature={data.features[rowIndex]}
+              rowIndex={rowIndex}
+              data={data}
+              scaleMax={scaleMax}
+              onHover={noopHover}
+              onSelectCell={noopSelect}
+            />
+          ))}
+        </div>
+      </div>
+      <ColorScaleLegend scaleMax={scaleMax} labelled />
+      <HeatmapLegendCaption excludedConfigs={data.excluded_configs} maxWidth={EXPORT_CAPTION_MAX_WIDTH} />
+    </div>
+  );
+}
+
 function FragmentRow({
   feature,
   rowIndex,
   data,
-  theme,
   scaleMax,
   onHover,
   onSelectCell,
@@ -378,42 +551,58 @@ function FragmentRow({
   feature: string;
   rowIndex: number;
   data: HeatmapResponse;
-  theme: "light" | "dark";
   scaleMax: number;
   onHover: (tooltip: TooltipState | null) => void;
   onSelectCell: (selection: HeatmapCellSelection) => void;
 }) {
+  const totalRows = data.total_rows ?? 0;
   return (
     <>
       <div className="heatmapRowLabel">{feature}</div>
       {data.targets.map((target, colIndex) => {
-        const eps2Value = data.values[rowIndex][colIndex];
-        const rhoValue = data.rho[rowIndex]?.[colIndex] ?? null;
+        const adjR2Value = data.values[rowIndex][colIndex];
+        const degree = data.degree?.[rowIndex]?.[colIndex] ?? null;
+        const shape = data.shape?.[rowIndex]?.[colIndex] ?? null;
+        const optimalCenter = data.optimal_center?.[rowIndex]?.[colIndex] ?? null;
         const n = data.n[rowIndex][colIndex];
         const q = data.q[rowIndex][colIndex];
         const significant = data.significant[rowIndex][colIndex];
         const tier = data.tier[rowIndex][colIndex];
-        const masked = eps2Value == null;
-        // QA-3: 상관계수는 그려지는데(n>=30) 종류별 표본 게이트(R>=100/
-        // D>=40) 미달로 유의 인자 목록에는 없는 셀 -- 히트맵과 유의 인자
-        // 판정이 어긋나 보이지 않도록 별도 표시한다.
+        const masked = adjR2Value == null;
+        // 값은 그려지는데(n>=30) 종류별 표본 게이트(R>=100/D>=40)
+        // 미달로 유의 인자 목록에는 없는 셀 -- 히트맵과 유의 인자 판정이
+        // 어긋나 보이지 않도록 별도 표시한다.
         const gateExcluded = !masked && Boolean(data.gate_excluded?.[rowIndex]?.[colIndex]);
-        const uShape = isUShape(eps2Value, rhoValue);
         const style: React.CSSProperties = {};
         if (!masked) {
-          const { bg, light } = cellBackground(eps2Value, rhoValue, scaleMax, theme);
+          const { bg, darkBackground } = cellBackground(adjR2Value, scaleMax);
           style.background = bg;
-          style.color = light ? "var(--heatmap-text-inverse)" : "var(--heatmap-text)";
+          // 진한 배경 위에서는 테마와 무관하게 흰 글자로 뒤집는다(셀 색이
+          // 테마를 타지 않으므로 판정도 배경 명도만 본다). 밝은 배경은
+          // 테마별 본문 색을 그대로 쓴다.
+          style.color = darkBackground ? "var(--heatmap-text-inverse)" : "var(--heatmap-text)";
         }
-        const hoverPayload = { feature, target, eps2: eps2Value, rho: rhoValue, n, q, significant, tier, gateExcluded, uShape };
+        const hoverPayload = {
+          feature,
+          target,
+          adjR2: adjR2Value,
+          degree,
+          shape,
+          optimalCenter,
+          n,
+          measurementRatePct: totalRows > 0 ? (n / totalRows) * 100 : null,
+          q,
+          significant,
+          tier,
+          gateExcluded,
+        };
         return (
           <button
             key={target}
             type="button"
-            // TC-2: 유의 인자 강조 테두리(노란/주황)는 제거했다 -- "significant"
-            // 클래스 자체는 더 이상 시각 효과가 없으므로 붙이지 않는다.
-            // 필터(유의 인자만 보기 체크박스)는 data.significant 배열을
-            // 그대로 쓰므로 이 클래스와 무관하게 동작한다.
+            // 유의 여부는 셀 클래스로 표시하지 않는다 -- 필터("유의 인자만
+            // 보기" 체크박스)는 data.significant 배열을 직접 읽으므로
+            // 클래스 없이도 동작한다.
             className={`heatmapCell ${masked ? "masked" : ""} ${gateExcluded ? "gate-excluded" : ""}`}
             style={style}
             onMouseEnter={(event) => onHover({ x: event.clientX, y: event.clientY, ...hoverPayload })}
@@ -423,9 +612,10 @@ function FragmentRow({
               onHover({ x: event.touches[0]?.clientX ?? 0, y: event.touches[0]?.clientY ?? 0, ...hoverPayload })
             }
             onClick={() => onSelectCell({ target, feature, significant, qValue: q })}
-            aria-label={`${feature}, ${target}, eps2 ${eps2Value != null ? formatEps2(eps2Value) : "표본 부족"}${gateExcluded ? ", 표본 게이트로 유의 인자 목록에서 제외" : ""}`}
+            aria-label={`${feature}, ${target}, Adjusted R 제곱 ${adjR2Value != null ? formatAdjR2(adjR2Value) : "표본 부족"}${degree != null ? `, ${degree}차 적합` : ""}${gateExcluded ? ", 표본 게이트로 유의 인자 목록에서 제외" : ""}`}
           >
-            {masked ? "" : formatEps2(eps2Value)}
+            {masked ? "" : formatAdjR2(adjR2Value)}
+            {!masked && degree != null && <span className="heatmapCellDegree" aria-hidden="true">{degree}</span>}
           </button>
         );
       })}
