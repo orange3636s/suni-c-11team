@@ -783,7 +783,7 @@ a{
 .brandTitle{
   color: #ffffff;
   font-size: var(--fs-title);
-  font-weight: 700; /* KEEP700-BRAND: 지시서 P-3 브랜드명(SUNI) 예외 */
+  font-weight: 700; /* KEEP700-BRAND: 브랜드명(SUNI) 예외 */
   letter-spacing: -0.01em;
   line-height: 1.45;
 }
@@ -929,7 +929,7 @@ a{
   margin-bottom: 11px;
   color: #52657e;
   font-size: var(--fs-xs);
-  font-weight: 500; /* 지시서 P-3: eyebrow는 500 (버튼·메뉴·등폭 수치·표 헤더와 같은 계층) */
+  font-weight: 500; /* eyebrow는 500 (버튼·메뉴·등폭 수치·표 헤더와 같은 계층) */
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
@@ -3281,10 +3281,9 @@ html[data-theme="dark"] .savedModelList > button.active{
   --surface: #ffffff;
   --surface-secondary: #f8f9fb;
   --surface-tertiary: #eff1f4;
-  /* Z-2: --surface-subtle는 라이트·다크 어디에도 정의가 없어(레거시
-     :root의 --surface-muted만 있고 이 이름 자체는 없었다) 7곳 이상에서
-     transparent로 렌더되고 있었다 -- 새 색을 만들지 않고 기존 --surface-muted
-     별칭으로 연결한다. */
+  /* --surface-subtle은 독립된 색이 아니라 --surface-muted의 별칭이다 --
+     7곳 이상이 이 이름을 참조하므로, 정의가 빠지면 그 규칙들이 모두
+     transparent로 렌더된다. */
   --surface-subtle: var(--surface-muted);
   --text-primary: #141a22;
   --text-secondary: #59636f;
@@ -3340,8 +3339,8 @@ html[data-theme="dark"] .savedModelList > button.active{
   --sig-green: var(--success);
   --font-data: 'JetBrains Mono', ui-monospace, Menlo, monospace;
 
-  /* 타이포 스케일 7단계 (지시서 P-3) -- 18종으로 흩어져 있던 font-size를
-     정리한다. 등폭(JetBrains Mono)은 같은 px에서 Pretendard보다 작아
+  /* 타이포 스케일 7단계 -- font-size는 이 스케일 안에서만 고른다.
+     등폭(JetBrains Mono)은 같은 px에서 Pretendard보다 작아
      보이므로, 등폭 자리에 한 단계 위 크기를 쓰는 식으로 보정한다 --
      스케일 밖의 새 값을 만들지 않는다. */
   --fs-display: 22px;
@@ -3366,9 +3365,6 @@ html[data-theme="dark"] .savedModelList > button.active{
   --yield-improvement: #009a93;
   --yield-degradation: #ea002c;
   --pareto-bar: var(--measured);
-  --heatmap-pos-max: #b42318;
-  --heatmap-neg-max: #1849a9;
-  --heatmap-center: #ffffff;
   --heatmap-cell-border: rgba(0, 0, 0, 0.06);
   --heatmap-fdr-border: #1d1d1f;
   --heatmap-text: #1d1d1f;
@@ -3469,7 +3465,7 @@ select,
   overflow: hidden;
   color: #ffffff;
   font-size: var(--fs-title);
-  font-weight: 650; /* KEEPBRAND: 지시서 P-3 브랜드명(SUNI) 예외, 700 형제 선언과 함께 유지 */
+  font-weight: 650; /* KEEPBRAND: 브랜드명(SUNI) 예외, 700 형제 선언과 함께 유지 */
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3515,6 +3511,13 @@ select,
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
+}
+
+.navigationItemIcon{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
 }
 
 .sidebarFooter{
@@ -4953,8 +4956,8 @@ select,
 .modelCompatibility.incompatible{ color: #c03737; }
 .modelCompatibility.unavailable{ color: #c03737; background: color-mix(in srgb, #c03737 10%, var(--surface-subtle)); }
 .modelUnavailableReason{ color: #c03737 !important; overflow-wrap: anywhere; }
-/* Y-2: 다크 오버라이드 누락 -- 어두운 채도색(#138a52/#a56a00/#c03737)이
-   그대로면 다크 배경에서 대비가 부족하다. 이 앱이 이미 쓰는 배지 규약
+/* 어두운 채도색(#138a52/#a56a00/#c03737)을 그대로 두면 다크 배경에서
+   대비가 부족하다. 이 앱이 이미 쓰는 배지 규약
    (confidenceBadge 등: 어두운 톤 -> 밝은 톤)을 그대로 따른다. */
 html[data-theme="dark"] .modelCompatibility.compatible{ color: #34D399; }
 html[data-theme="dark"] .modelCompatibility.legacy{ color: #FBBF24; }
@@ -5151,7 +5154,7 @@ html[data-theme="dark"] .selectedModelSummary{
 .hybridTrainingCard small{ color: var(--text-secondary); font-size: var(--fs-sm); }
 .hybridTrainingCard > strong{ font-size: var(--fs-title); color: #0e306d; }
 .hybridTrainingCard p{ margin: 0; font-size: var(--fs-body); line-height: 1.5; }
-/* Y-2: 다크 오버라이드 누락 -- 브랜드 남색(#0e306d)은 다크 배경에서 대비가
+/* 브랜드 남색(#0e306d)은 다크 배경에서 대비가
    부족하다. 다크 토큰의 --measured/--brand-navy-text와 같은 값(#7ba3e8)을
    쓴다. */
 html[data-theme="dark"] .hybridTrainingCard > strong{ color: #7ba3e8; }
@@ -5510,20 +5513,19 @@ html[data-theme="dark"]{
   --surface: #252527;
   --surface-secondary: #2c2c2e;
   --surface-tertiary: #343437;
-  /* Z-2: 다크에서는 밝을수록 "떠 있는 면"으로 읽히므로(패널이 #252527일
+  /* 다크에서는 밝을수록 "떠 있는 면"으로 읽히므로(패널이 #252527일
      때 #343437처럼 한 단계 밝은 톤이 "낮은 배경"이 아니라 "얹힌 카드"가
      된다) --surface-muted가 아니라 --surface-tertiary를 쓴다. */
   --surface-subtle: var(--surface-tertiary);
   --text-primary: #f5f5f7;
   --text-secondary: #b5b7bc;
   --text-muted: #8f9299;
-  /* Y-5: WCAG 1.4.11(UI 요소 3:1) 대비 계산 결과 이전 값들이 크게
-     미달이었다 -- 흰 8%/14%를 --panel(#252527) 위에 얹으면 각각 1.27:1,
-     1.57:1(둘 다 라이트 회귀 없이 다크만 조정). --border-strong(카드·표
-     외곽선 등 "강한" 구분선)은 0.34로 올려 3.05:1로 기준을 충족시킨다.
-     --border(--line-soft, "약한" 구분선)는 완전히 3:1까지 올리면 강한
-     쪽과 구분이 없어지므로 0.16으로 절반만 올렸다(1.68:1) -- 여전히
-     기준 미달이라 보고서에 "확인 필요"로 남긴다. */
+  /* WCAG 1.4.11(UI 요소 3:1)에 맞춰 잡은 다크 전용 값이다(라이트는
+     그대로 둔다). --border-strong(카드·표 외곽선 등 "강한" 구분선)은
+     0.34로 --panel(#252527) 대비 3.05:1을 충족한다. --border
+     (--line-soft, "약한" 구분선)는 3:1까지 올리면 강한 쪽과 구분이
+     없어지므로 0.16(1.68:1)에서 멈춘다 -- 기준 미달임을 알고 택한
+     값이다. */
   --border: rgba(255, 255, 255, 0.16);
   --border-strong: rgba(255, 255, 255, 0.34);
   --accent: #0e306d;
@@ -5557,9 +5559,6 @@ html[data-theme="dark"]{
   --yield-improvement: #009a93;
   --yield-degradation: #ea002c;
   --pareto-bar: var(--measured);
-  --heatmap-pos-max: #f97066;
-  --heatmap-neg-max: #84caff;
-  --heatmap-center: #2c2c2e;
   --heatmap-cell-border: rgba(255, 255, 255, 0.08);
   --heatmap-fdr-border: #f5f5f7;
   --heatmap-text: #f5f5f7;
@@ -5582,25 +5581,24 @@ html[data-theme="dark"]{
   --line: var(--border-strong);
   --line-soft: var(--border);
   --measured: #7ba3e8;
-  /* Z-1: 이전 값(#97a3b8)은 measured와 상대휘도가 완전히 같아(대비
-     1.00:1) 계측값/추정치 구분이 다크에서 사라져 있었다. measured
+  /* 다크에서 계측값(--measured)과 추정치를 구분하기 위한 값. measured
      대비·panel(#252527) 대비를 각각 3.0:1 이상으로 동시에 만족시키는
      값은 수학적으로 존재하지 않는다 -- measured 자체가 panel 대비
      6.0:1뿐이라, 그 사이에 양쪽으로 3:1씩 떨어진 세 번째 값이 들어갈
      여유가 없다(두 경계에서 같은 대비가 되는 지점의 대비는 최대
-     2.45:1). 그 최적점(minimax)에 가장 가까운 값을 채택했다 --
-     measured 대비 2.44:1, panel 대비 2.46:1로 이전(1.00:1)보다 확실히
-     구분되면서 "확정값보다 조용한" 방향(더 어둡고 채도 낮게)을 유지한다. */
+     2.45:1). 그 최적점(minimax)에 가장 가까운 값이라 measured 대비
+     2.44:1, panel 대비 2.46:1이며, "확정값보다 조용한" 방향(더 어둡고
+     채도 낮게)을 유지한다. */
   --inferred: #556272;
   --sig-red: var(--danger);
   --sig-amber: var(--warning);
   --sig-green: var(--success);
 
-  /* Y-1: 라이트/다크 토큰 대조에서 발견한 진짜 누락 2건 -- 둘 다 다른
-     레거시 :root 블록(파일 상단)에만 정의돼 있고 다크 오버라이드가 아예
-     없었다. 다크에서 그대로 상속되면: border-card는 rgba(15,23,42,.08)
-     (검정 8%)라 어두운 배경 위에서 거의 안 보이고, surface-muted는
-     #f8fafc(거의 흰색)이라 어두운 화면에 밝은 얼룩으로 튄다. */
+  /* 이 두 토큰은 파일 상단 :root에서 라이트 값으로만 정의되므로 다크
+     오버라이드가 반드시 있어야 한다. 라이트 값이 그대로 상속되면
+     border-card는 rgba(15,23,42,.08)(검정 8%)라 어두운 배경 위에서 거의
+     안 보이고, surface-muted는 #f8fafc(거의 흰색)이라 어두운 화면에
+     밝은 얼룩으로 튄다. */
   --border-card: rgba(255, 255, 255, 0.16);
   --surface-muted: var(--surface-secondary);
 }
@@ -5690,8 +5688,8 @@ html[data-theme="dark"] .button.secondary:hover:not(:disabled){
 @media (max-width: 1023px) {
   .sidebar{
     border-bottom-color: rgba(255, 255, 255, 0.14);
-    /* AE그룹: 768~1023px 구간(≤767px는 위 6296행 규칙이 이김)도 같은
-       --ink로 맞춘다. */
+    /* 768~1023px 구간도 같은 --ink로 맞춘다(≤767px는 드로어 규칙이
+       이긴다). */
     background: var(--ink);
   }
 
@@ -6164,13 +6162,11 @@ html[data-theme="dark"] .dataTable th{
   border-radius: var(--radius-panel);
 }
 
-/* NF: 이전에는 .themeMenu 배경/테두리/z-index가 네 곳(L44, L67 부근의
-   패킹된 두 줄, 여기)에 흩어져 있었고, 이 규칙만 유일하게 background를
-   지정했다 -- 다른 세 곳이 나중에 로드되며 width/padding/z-index/
-   border-radius를 다시 덮어써 규칙이 바뀔 때마다 배경이 통째로 빠지기
-   쉬운 구조였다. 여기 하나로 합치고, 불투명 토큰(--surface-card)과
-   --border-card/--z-dropdown을 써서 라이트/다크 모두 별도 오버라이드
-   없이 정확히 맞도록 한다(.themeMenuPortal과 같은 패턴). */
+/* .themeMenu의 배경/테두리/z-index는 반드시 이 한 규칙에만 모아 둔다 --
+   여러 곳에 흩어 놓으면 나중에 로드되는 규칙이 width/padding/z-index/
+   border-radius를 덮어쓰면서 배경이 통째로 빠지기 쉽다. 불투명
+   토큰(--surface-card)과 --border-card/--z-dropdown을 써서 라이트/다크
+   모두 별도 오버라이드 없이 맞는다(.themeMenuPortal과 같은 패턴). */
 .sidebar .themeMenu{
   z-index: var(--z-dropdown);
   width: 160px;
@@ -6252,11 +6248,10 @@ html[data-theme="dark"] .sidebar .themeOptions .themeIcon{
     overflow: visible;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 22px;
-    /* AE그룹: 데스크톱 사이드바의 실제 보이는 색은 .sidebarSurface가 얹는
+    /* 데스크톱 사이드바의 실제 보이는 색은 .sidebarSurface가 얹는
        var(--ink)다(.sidebar 자체 배경은 그 안에 가려진다) -- 모바일에서
-       사이드바가 상단바로 펼쳐지면 이 바깥 배경이 그대로 노출되는데
-       예전 브랜드 남색(rgba(14,48,109,.93))이 남아 있어 데스크톱과
-       색이 달라 보였다. 같은 --ink로 통일한다. */
+       사이드바가 상단바로 펼쳐지면 이 바깥 배경이 그대로 노출되므로,
+       여기도 --ink로 맞춰야 데스크톱과 색이 어긋나지 않는다. */
     background: var(--ink);
     box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
   }
@@ -6879,13 +6874,12 @@ root-cause{
   font-size: var(--fs-body);
 }
 
-/* 지시서 K-4/P-2/CC: 액션 레일(모니터링 홈) 세 레일의 "상세" 버튼 전용 --
+/* 액션 레일(모니터링 홈) 세 레일의 "상세" 버튼 전용 --
    다른 화면에서도 컴팩트한 버튼이 필요하면 이 한 종류를 재사용한다. 두
    클래스(.button.sm)라 위 .button보다 우선한다. inline-flex+center+
    line-height:1로 글자를 정중앙에 둔다(패딩 비대칭이나 상속된
    line-height로 세로 중앙이 어긋나지 않게). min-width가 고정값이라 라벨
-   길이가 바뀌어도(지시서 CC 이전엔 실행/상세/보기로 제각각이었다) 세
-   버튼 폭이 흔들리지 않는다. */
+   길이가 바뀌어도 세 버튼 폭이 흔들리지 않는다. */
 .button.sm{
   display: inline-flex;
   align-items: center;
@@ -7596,16 +7590,15 @@ root-cause{
 .rcControlBar input,.rcControlBar select{width:100%;min-width:0}.rcGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.tableWrap{overflow-x:auto}.tableWrap table{min-width:640px}
 html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.1)}
 
-/* 헤더 컨텍스트 스트립 (지시서 M-2) -- "지금 어느 데이터를 보고 있나"를
+/* 헤더 컨텍스트 스트립 -- "지금 어느 데이터를 보고 있나"를
    항상 같은 자리에 보여준다. 항목마다 좌측 구분선으로 끊고, 위에는 등폭
    대문자 키, 아래에는 등폭 값. 좁은 폭에서는 뒤(오른쪽)부터 잘려 나가고
    줄바꿈은 하지 않는다 -- nowrap + overflow:hidden만으로 충분하다. */
 .headerContextStrip{display:flex;align-items:stretch;overflow:hidden;white-space:nowrap;min-width:0}
 .headerContextItem{display:flex;flex:0 0 auto;flex-direction:column;justify-content:center;gap:2px;padding:2px 12px;border-left:1px solid var(--line-soft)}
 .headerContextItem:first-child{border-left:0;padding-left:0}
-/* QE: SOURCE 항목 제거로 EVAL/WAFERS/LAST RUN 3개만 남았다 -- 4항목
-   기준으로 촘촘했던 12px 패딩 대신 살짝 더 넓혀 CURRENT TIME과의
-   간격이 짝이 안 맞아 보이지 않게 한다. */
+/* EVAL/WAFERS/LAST RUN 3항목만 있는 변형 -- 4항목 기준의 12px 패딩보다
+   살짝 넓혀 CURRENT TIME과의 간격이 짝이 안 맞아 보이지 않게 한다. */
 .headerContextStrip-noSource .headerContextItem{padding:2px 16px}
 .headerContextStrip-noSource .headerContextItem:first-child{padding-left:0}
 .headerContextKey{font:500 10px/1 var(--font-data);letter-spacing:.04em;color:var(--text-muted);text-transform:uppercase}
@@ -7643,8 +7636,8 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   --shell-margin: 16px;
   --header-height: 52px;
   /* Both panels' top edge, collapsed or open -- one variable so left rail
-     and right circle can never drift apart. --panel-top-gap (16px, spec
-     재지시: 좌우 사이드바 높이 확장) is its own named variable rather than
+     and right circle can never drift apart. --panel-top-gap (16px) is its
+     own named variable rather than
      inlined here so both this offset and anything else that needs "the
      same gap the panels use" can reference one source. */
   --panel-top-gap: 16px;
@@ -7668,9 +7661,8 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
   --shell-logo-hover-bg: rgba(0, 0, 0, 0.04);
   --shell-circle-bg: var(--surface);
   --shell-block-bg-on-navy: rgba(255, 255, 255, 0.12);
-  /* Bumped from .18 (spec asked for "~.12 -> ~.20") so the collapsed
-     rail's now-sole expand affordance -- the logo -- reads clearly
-     clickable on hover (spec §1-2). */
+  /* 0.20 so the collapsed rail's sole expand affordance -- the logo --
+     reads clearly clickable on hover. */
   --shell-block-bg-on-navy-hover: rgba(255, 255, 255, 0.20);
 }
 html[data-theme="dark"]{
@@ -7701,14 +7693,14 @@ html[data-theme="dark"]{
   .dashboardGrid{ transition: none; }
 }
 @media (max-width: 1280px){
-  /* BUG FIX (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃 전환 §B-4):
-     `.dashboardGrid[data-sidebar="collapsed"]` etc. above are unconditional
+  /* `.dashboardGrid[data-sidebar="collapsed"]` etc. above are unconditional
      (attribute selectors, higher specificity than the plain `.dashboardGrid`
-     this media query was relying on) -- so collapsing the sidebar below
-     1280px re-asserted the desktop 3-column `grid-template-columns`
-     (rail-width | 1fr | ai-width) instead of collapsing to a single column,
-     squeezing/overflowing `.contentShell` into a column narrower than the
-     viewport actually needs (visually "본문이 화면 밖으로 나간다"). Every
+     a media query would otherwise rely on) -- listing only `.dashboardGrid`
+     here lets collapsing the sidebar below 1280px re-assert the desktop
+     3-column `grid-template-columns` (rail-width | 1fr | ai-width) instead
+     of collapsing to a single column, squeezing/overflowing
+     `.contentShell` into a column narrower than the viewport actually
+     needs (visually "본문이 화면 밖으로 나간다"). Every
      attribute-qualified variant is repeated here, at equal specificity and
      later in source order, so each one is properly overridden inside this
      media query regardless of sidebar/AI-panel state. */
@@ -7824,7 +7816,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--brand-navy, #0e306d);
 /* Collapsed: logo-to-first-icon gap matches the rail's own icon-to-icon
    gap (--railNav gap: 6px below) instead of the expanded state's 8px,
    so the icons read as one continuous list starting right under the
-   logo (spec §1-1). */
+   logo. */
 .sidebar.collapsed .shellLogoBlock{ flex-direction: column; gap: 4px; padding: 8px 4px; margin-bottom: 6px; }
 
 /* AI panel: block sits on the theme-following glass card, so it uses the
@@ -7852,34 +7844,33 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
 .railNavItem.active{ background: rgba(255, 255, 255, 0.16); color: #fff; }
 .railNavItem svg{ width: 20px; height: 20px; }
 
-/* §3 (earlier pass): the theme control sits directly in sidebarFooter --
-   no decorative wrapper box around it. */
+/* The theme control sits directly in sidebarFooter -- no decorative
+   wrapper box around it. */
 .sidebar .sidebarFooter{
   background: none !important; border: none !important; box-shadow: none !important;
   padding: 0 !important; margin-top: 14px !important;
 }
 
 /* AI panel: expanded chat shell.
-   .aiPanelBody is the flex-grow slot that used to belong to
-   .aiPanelMessages directly -- it's now split in two so the floating chip
-   block (position:absolute, spec 재지시 A-3) can anchor to its bottom edge
+   .aiPanelBody is the flex-grow slot, split away from .aiPanelMessages so
+   the floating chip block (position:absolute) can anchor to its bottom edge
    (== the input area's top edge, since they're adjacent flex siblings)
    without needing a separately-measured "composer height" variable. */
 .aiPanelBody{ flex: 1 1 auto; min-height: 0; position: relative; }
 .aiPanelMessages{
   overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px;
-  /* Reserves room for the floating block (spec: "padding-bottom 방식이
-     아니다" -- an explicit height, not padding, so the mask below applies
-     to the scrollable box itself, not to dead space inside it).
+  /* Reserves room for the floating block via an explicit height, not
+     padding, so the mask below applies to the scrollable box itself,
+     not to dead space inside it.
      --chip-float-height is measured live via ResizeObserver (see
      AiPanel.tsx); 60px is only the first-paint fallback before that
      measurement lands. The trailing 24px, combined with the chip block's
      own bottom:12px, is what puts exactly 12px between the conversation
-     area and row 1 (spec: "대화 영역 하단과 1행 사이 12px"). */
+     area and row 1. */
   height: calc(100% - var(--chip-float-height, 60px) - 24px);
   /* Bottom of the (now-shortened) message list fades out instead of
      ending on a hard edge -- non-linear stops so the fade itself doesn't
-     read as a visible band (spec: "선이 보이면 안 된다"). Applies
+     read as a visible band. Applies
      unconditionally, including when there's nothing to scroll -- a mask
      with nothing under the fade zone is simply invisible. */
   mask-image: linear-gradient(
@@ -7899,8 +7890,8 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
     transparent 100%
   );
 }
-/* Floating example-chip block -- layout only, no visual container (spec
-   재지시: "흰색 카드 컨테이너 제거"). The chips themselves (opaque
+/* Floating example-chip block -- layout only, no visual container.
+   The chips themselves (opaque
    background + border, see .aiPanelMarqueeChip) are what stays legible
    over the conversation; this element only positions the two rows
    (position:absolute, 12px side inset, 12px above the input area) and
@@ -7915,7 +7906,7 @@ html[data-theme="dark"] .aiPanel .shellLogoBlock:focus-visible{ background: rgba
 .aiPanelRow{ display: flex; align-items: flex-end; gap: 6px; }
 .aiPanelRow-user{ justify-content: flex-end; }
 .aiPanelBubbleAvatar{ width: 28px; flex: 0 0 28px; }
-/* 지시서 N-7: 메시지 버블 -- 사용자는 --ink 배경 + 흰 글자, 응답은
+/* 메시지 버블 -- 사용자는 --ink 배경 + 흰 글자, 응답은
    --surface-muted 배경, radius 3px(--radius-control). */
 .aiPanelBubble{
   max-width: 78%; padding: 10px 13px; font-size: var(--fs-body); line-height: 1.5;
@@ -7989,14 +7980,14 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
   30%{ transform: translateY(-4px); opacity: 1; }
 }
 
-/* "분석 보고서 생성" 만 고정 배치한다 (spec 재지시: 흐르는 줄에서 제외 --
-   가장 중요한 버튼이 움직이면 누르기 어렵다). */
+/* "분석 보고서 생성"만 고정 배치한다(흐르는 줄에서 제외 -- 가장 중요한
+   버튼이 움직이면 누르기 어렵다). */
 .aiPanelChipsWrap{
   margin: 4px 0 8px 34px;
 }
-/* 지시서 N-7: 프리셋은 신규 .button 규율(radius 3px, :active scale(.97))을
-   따르는 테두리 버튼으로 -- 채워진 버튼은 화면당 1개 원칙이라 "분석 보고서
-   생성"도 채우지 않는다. */
+/* 프리셋은 .button 규율(radius 3px, :active scale(.97))을 따르는 테두리
+   버튼이다 -- 채워진 버튼은 화면당 1개 원칙이라 "분석 보고서 생성"도
+   채우지 않는다. */
 .aiPanelChip{
   padding: 6px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--text);
@@ -8005,13 +7996,13 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
 .aiPanelChip:hover{ background: var(--surface-secondary, var(--surface-muted)); }
 .aiPanelChip:active:not(:disabled){ transform: scale(.97); }
 .aiPanelChip:disabled{ opacity: .45; cursor: not-allowed; }
-/* O-6: --measured는 다크 모드에서도 짙은 남색 그대로라(필드 채움 배경
+/* --measured는 다크 모드에서도 짙은 남색 그대로라(필드 채움 배경
    전용) 테두리+텍스트로 쓰면 다크에서 대비가 무너진다 -- 테마에 따라
    밝기가 반전되는 --brand-navy-text를 쓴다. */
 .aiPanelChipPrimary{ border-color: var(--brand-navy-text); color: var(--brand-navy-text); }
 
 /* Example-question marquee: 2 rows, opposite directions, both 28s/loop
-   (spec 재지시 -- 패널 폭이 좁아 Railway류 10s 기준은 너무 빠르다). Each
+   (패널 폭이 좁아 10s류 기준은 너무 빠르다). Each
    row's chip list is duplicated and the track animates to exactly -50% of
    its own scrollable width so the seam between the two copies never shows
    (see MarqueeRow's comment in AiPanel.tsx for why). */
@@ -8049,8 +8040,8 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
 /* Background is a solid off-white/off-black, not var(--surface-card) --
    now that the chips sit directly on the conversation background with no
    card behind them, an exact page-color match would make them blend in
-   and the mask fade wouldn't read against the page (spec: "칩 배경이
-   불투명해 뒤 메시지가 비치지 않아야"). */
+   and the mask fade wouldn't read against the page. The chip background
+   must stay opaque so messages never show through it. */
 .aiPanelMarqueeChip{
   display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
   padding: 6px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
@@ -8135,7 +8126,7 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 
 /* Dataset selector dropdown */
 .datasetSelector{ position: relative; display: inline-block; min-width: 260px; }
-/* RD-2: 데이터셋 셀렉터를 대체하는 표시 라벨 -- 선택 컨트롤이 아니라
+/* 데이터셋 표시 라벨 -- 선택 컨트롤이 아니라
    "지금 모델 분석이 정한 값"을 보여주기만 한다. */
 .currentDatasetLabel{ display: inline-flex; align-items: center; gap: 10px; min-width: 260px; }
 .currentDatasetLabelValue{ font-size: var(--fs-body); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -8145,8 +8136,8 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
   min-height: 40px; padding: 0 12px; border-radius: var(--radius-panel); border: 1px solid var(--border-card, rgba(0,0,0,.12));
   background: var(--surface, #fff); color: inherit; font: inherit; cursor: pointer;
 }
-/* Bundled filenames now include long ones (mentorship_dataset_v7_killing_event.csv,
-   spec §1) -- truncate rather than let them push the dropdown trigger wide
+/* Bundled filenames can be long (e.g. mentorship_dataset_v7_killing_event.csv)
+   -- truncate rather than let them push the dropdown trigger wide
    or wrap inside the menu list, and expose the full name via title=. */
 .datasetSelectorButtonLabel{
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
@@ -8154,7 +8145,7 @@ html[data-theme="dark"] .aiPanelMarkdown th{ background: rgba(255,255,255,.06); 
 .datasetSelectorFilename{
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
-/* Portaled to document.body (spec §1-4) -- position/left/top/width come
+/* Portaled to document.body -- position/left/top/width come
    from an inline style computed off the trigger button's own
    getBoundingClientRect(), not from this class, so it's never clipped
    by an ancestor card's overflow:hidden (added for the full-bleed
@@ -8186,15 +8177,14 @@ html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
 }
 .datasetWarningBanner ul{ margin: 4px 0 0; padding-left: 18px; }
 
-/* 학습·분석 결과 상태 유지 -- "마지막 실행" 표시 (spec §5-1/§5-2) 및
-   데이터셋 불일치 경고 (spec §5-3). */
+/* 학습·분석 결과 상태 유지 -- "마지막 실행" 표시와 데이터셋 불일치 경고. */
 .lastRunNote{ font-size: var(--fs-micro); color: var(--text-secondary); white-space: nowrap; }
-/* 작업지시 T9: 여섯 화면 공통 헤더 메타 줄 -- 좁은 화면에서는 줄바꿈되되
+/* 여섯 화면 공통 헤더 메타 줄 -- 좁은 화면에서는 줄바꿈되되
    가로 스크롤은 생기지 않는다(개별 조각은 white-space: nowrap이라 조각
    단위로만 접힌다). */
 .pageHeaderMeta{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
 .lastRunStale{ color: var(--warning); }
-/* TD-2: 모니터링·원인 분석·수율 예측 상단, LastRunNote 옆에 학습/분석
+/* 모니터링·원인 분석·수율 예측 상단, LastRunNote 옆에 학습/분석
    데이터 파일명을 보여준다. 긴 파일명은 말줄임표로 자르고 title
    속성으로 전체 이름을 툴팁으로 보여준다. */
 .trainingAnalysisDataNote{
@@ -8215,7 +8205,7 @@ html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
   border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-card, rgba(0,0,0,.1)));
   background: var(--warning-soft); color: var(--warning);
 }
-/* HF그룹: 모니터링 SUMMARY처럼 두 데이터셋 이름과 이동 액션까지 보여주는
+/* 모니터링 SUMMARY처럼 두 데이터셋 이름과 이동 액션까지 보여주는
    확장판 -- 배경·테두리는 기존 .datasetMismatchWarning을 그대로 물려받고
    (위 규칙), 내부 레이아웃만 세로로 쌓는다. */
 .datasetMismatchWarningRich{ display: flex; flex-direction: column; gap: 6px; }
@@ -8223,7 +8213,7 @@ html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
 .datasetMismatchWarningDetail{ margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .datasetMismatchWarningActions{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
 /* Target segmented control with factor-count badges (원인분석 tab) */
-/* Shared by 모델 학습 and 원인 분석 (spec §2): centered between the heatmap
+/* Shared by 모델 학습 and 원인 분석: centered between the heatmap
    and Pareto cards with equal margin on both sides -- a single margin
    value on this element so top/bottom can't drift apart, since adjacent
    block margins collapse against the cards above/below it. Sticky (not
@@ -8256,7 +8246,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   background: var(--panel);
   border-bottom-color: rgba(255, 255, 255, 0.1);
 }
-/* Y1~Y5 그룹 (좌측) / 표시 기준 토글 (우측, spec §A-3) -- 같은 sticky
+/* Y1~Y5 그룹 (좌측) / 표시 기준 토글 (우측) -- 같은 sticky
    .targetSegmentBar 안의 두 flex 자식. margin-left:auto로 우측에 붙여,
    좁은 화면에서 줄바꿈되어도(플렉스 각 줄이 독립적으로 정렬되므로) 토글은
    항상 그 줄의 오른쪽 끝에 남는다. */
@@ -8279,11 +8269,11 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .factorChartCard{ min-height: 480px; container-type: inline-size; container-name: factorCard; }
 .factorChartMeta{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .factorChartTitleBlock{ min-width: 0; }
-/* Title -> tier badge -> compare button: same gap between every pair
-   (spec §4-4). Button/badge visual style is untouched, only position. */
+/* Title -> tier badge -> compare button: same gap between every pair.
+   Position only -- button/badge visual style is owned elsewhere. */
 .factorChartTitleRow{ display: flex; align-items: center; gap: var(--factor-title-gap, 8px); flex-wrap: wrap; }
 .factorChartTitleRow h2{ margin: 0; }
-/* 지시서 J-2: 인자 카드 즐겨찾기 별. */
+/* 인자 카드 즐겨찾기 별. */
 .favoriteStarButton{
   border: none; background: transparent; cursor: pointer; padding: 0 2px;
   font-size: var(--fs-title); line-height: 1; color: var(--text-secondary);
@@ -8291,7 +8281,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .favoriteStarButton.active{ color: #F59E0B; }
 .favoriteStarButton:hover{ color: #F59E0B; }
 
-/* 지시서 WI-4: 그래프 이미지 저장 버튼 -- 차트 카드 우상단, 즐겨찾기
+/* 그래프 이미지 저장 버튼 -- 차트 카드 우상단, 즐겨찾기
    별 옆에 붙는다. */
 .chartExportButton{
   display: inline-flex; align-items: center; gap: 4px;
@@ -8303,7 +8293,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .chartExportButton:hover:not(:disabled){ color: var(--text-primary); }
 .chartExportButton:disabled{ opacity: .55; cursor: default; }
 
-/* 지시서 J-3: 즐겨찾기 페이지 -- 흰 카드 그리드. */
+/* 즐겨찾기 페이지 -- 흰 카드 그리드. */
 .favoritesGrid{
   display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px; margin-top: 16px;
@@ -8313,13 +8303,13 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .favoriteCardBody{ padding: 12px 14px; }
 .favoriteCardBody h3{ margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; }
 .favoriteCardTime{ font-size: var(--fs-xs); color: var(--text-secondary); display: block; margin-bottom: 6px; }
-/* DE-1: 해석 문구는 2줄로 말줄임한다 -- 문구 길이가 들쭉날쭉해도 카드
+/* 해석 문구는 2줄로 말줄임한다 -- 문구 길이가 들쭉날쭉해도 카드
    높이가 흔들리지 않는다. */
 .favoriteCardInterpretation{
   margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-/* DE-1: 저장된 해석이 저장 시점 모델 기준이고, 이후 재학습/재승격으로
+/* 저장된 해석이 저장 시점 모델 기준이고, 이후 재학습/재승격으로
    현재 챔피언과 달라졌다는 신호 -- 등폭 9px, 눈에 띄되 카드를 어지럽히지
    않는 옅은 색. */
 .favoriteCardStaleBadge{
@@ -8338,7 +8328,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   font-size: var(--fs-body); color: var(--text-secondary); white-space: nowrap;
 }
 .factorChartStats span:not(:first-child)::before{ content: "·"; margin: 0 6px; opacity: .6; }
-/* Meta must never overflow the card (spec §4-4): shrink, then drop the
+/* Meta must never overflow the card: shrink, then drop the
    least-critical figure (누적) first, evaluated against the card's own
    width so it reacts the same whether the sidebar/AI panel toggles or the
    viewport resizes. */
@@ -8352,18 +8342,16 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   .factorChartMeta{ flex-direction: column; align-items: flex-start; }
 }
 
-/* Numeric factor card header (spec §1) -- 2 stacked rows: row 1 is
+/* Numeric factor card header -- 2 stacked rows: row 1 is
    제목 -> 등급 배지 -> Y1~Y5 비교 -> 색상 (left) plus the Scatter/Box 보기
    토글 (right, same height as the title); row 2 is 순위·ε² (left) plus the
-   n/기여율/누적/p-value/등급 meta, now collapsed into one 2-line block
-   directly under the toggle instead of split across two separate
-   surfaces (card header vs. chart-internal meta line). */
+   n/기여율/누적/등급 meta, collapsed into one 2-line block directly under
+   the toggle. */
 .factorChartHeader{ display: flex; flex-direction: column; gap: 4px; }
 .factorChartHeaderRow{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .factorChartHeaderRow.meta{ align-items: flex-start; }
-/* DB그룹: 예전에는 이 블록이 2줄(<span> 두 개, flex-direction:column)로
-   렌더됐다 -- 한 줄로 합치고, 좁은 화면에서만 자연스럽게 줄바꿈되도록
-   flex-wrap을 쓴다. 항목 하나(예: "p-value 0.0145")는 각자
+/* 이 블록은 한 줄로 렌더하고, 좁은 화면에서만 자연스럽게 줄바꿈되도록
+   flex-wrap을 쓴다. 항목 하나(예: "기여율 12.4%")는 각자
    white-space:nowrap이라 항목 중간이 끊기지 않고, 줄바꿈은 항목과 항목
    사이에서만 일어난다. */
 .factorChartMetaLine{
@@ -8372,9 +8360,9 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   font-size: var(--fs-micro); color: var(--text-secondary); flex: 0 0 auto; min-width: 0; max-width: 100%;
 }
 .factorChartMetaLine .metaItem{ white-space: nowrap; }
-/* DD-2: 구분자 좌우 여백 -- 항목이 붙어 보이지 않게 0.4em씩 확보한다. */
+/* 구분자 좌우 여백 -- 항목이 붙어 보이지 않게 0.4em씩 확보한다. */
 .factorChartMetaLine .metaItem:not(:first-child)::before{ content: "·"; margin: 0 0.4em; opacity: .6; }
-/* Never overflow the card (spec §1-5): shrink first, then let the
+/* Never overflow the card: shrink first, then let the
    least-critical figure (누적) wrap rather than push the card wider. */
 @container factorCard (max-width: 640px){
   .factorChartMetaLine{ font-size: var(--fs-nano); }
@@ -8399,15 +8387,14 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapCard{ display: flex; flex-direction: column; gap: 12px; }
 .heatmapHeaderRow{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .heatmapHeaderRow h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
-/* Was capped at 60ch, breaking the sentence mid-way even when the card
-   had plenty of room left (spec §5-4-5). No cap now -- it only wraps
-   when the row itself actually runs out of width, and keep-all avoids
-   splitting a Korean word/particle across the break when it does. */
+/* No max-width cap here -- a `ch` cap breaks the sentence mid-way even
+   when the card has plenty of room left. It wraps only when the row
+   itself actually runs out of width, and keep-all avoids splitting a
+   Korean word/particle across the break when it does. */
 .heatmapHeaderRowText{ flex: 1 1 320px; min-width: 0; }
 .heatmapHeaderRow p{ margin: 4px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); max-width: none; word-break: keep-all; }
-/* 지시서 F: 히트맵의 토글을 산점도의 .scatterViewToggle 스타일로
-   통일한다 -- 기존 탭 모양의 .heatmapMetricToggle은 삭제했다(더는 쓰는
-   곳이 없다). 여러 줄(기준/보기/계층)을 세로로 쌓는 래퍼만 새로 둔다. */
+/* 히트맵의 토글은 산점도의 .scatterViewToggle 스타일을 그대로 쓴다 --
+   여러 줄(기준/보기/계층)을 세로로 쌓는 래퍼만 따로 둔다. */
 .heatmapToggleStack{ display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; align-items: flex-end; }
 .heatmapToggleStack .scatterViewToggleRow{ justify-content: flex-end; }
 .scatterViewToggleBtn:disabled{ opacity: 0.4; cursor: not-allowed; }
@@ -8416,7 +8403,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapControls .fieldGroup{ min-width: 140px; }
 .heatmapControls label{ display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-secondary); }
 
-/* 작업 지시서 WJ-1: 스크롤(세로 max-height)과 행 자르기를 함께 쓰지
+/* 스크롤(세로 max-height)과 행 자르기를 함께 쓰지
    않는다 -- 세로는 항상 내용만큼 자라고(7행 기본, 펼치면 전체), 가로만
    좁은 화면에서 스크롤한다. */
 .heatmapScrollArea{ overflow-x: auto; overflow-y: visible; border-radius: var(--radius-panel); border: 1px solid var(--heatmap-cell-border); }
@@ -8452,20 +8439,19 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   transition: transform .08s ease; box-sizing: border-box;
 }
 .heatmapCell:hover{ transform: scale(1.06); z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+/* 셀 우측 상단의 적합 차수 배지(1차/2차). 색을 상속받으므로 진한 셀
+   위에서는 본문 숫자와 함께 흰색으로 뒤집힌다. */
+.heatmapCellDegree{
+  position: absolute; top: 2px; right: 4px; font: 600 9px/1 var(--font-ui);
+  opacity: .62; pointer-events: none;
+}
 .heatmapCell:focus-visible{ outline: 2px solid var(--accent); outline-offset: -2px; }
-/* TC-2: 유의 인자 노란 강조 테두리(.heatmapCell.significant) 제거 --
-   "유의 인자만 보기" 체크박스는 유지하되(필터는 data.significant 배열을
-   그대로 쓴다), 셀 테두리 강조만 없앴다. */
 .heatmapCell.masked{
   background: repeating-linear-gradient(45deg, var(--surface-tertiary) 0 6px, var(--surface-secondary) 6px 12px);
   color: var(--text-muted); font-weight: 500; cursor: default;
 }
 .heatmapCell.masked:hover{ transform: none; box-shadow: none; }
-/* 범주형 보기: FDR 게이트를 통과하지 못한(q>=0.05) 셀 -- 검정은 됐지만
-   신호가 없다는 뜻이라, "표본 부족"(.masked, 사선 패턴)과는 다른
-   단색 회색으로 구분한다 (지시서 E). */
-
-/* QA-3: 상관계수는 그려지지만(n>=30) 종류별 표본 게이트(R>=100/D>=40)
+/* 상관계수는 그려지지만(n>=30) 종류별 표본 게이트(R>=100/D>=40)
    미달로 유의 인자 목록에는 없는 셀 -- 색은 그대로 두고(값 자체는
    유효하다) 점선 테두리만 덧대 히트맵과 유의 인자 판정이 어긋나는
    지점임을 표시한다. */
@@ -8487,9 +8473,6 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .heatmapTooltip strong{ display: block; font-size: var(--fs-sm); margin-bottom: 2px; }
 .heatmapTooltip .heatmapTooltipRow{ display: flex; justify-content: space-between; gap: 12px; color: var(--text-secondary); }
 .heatmapTooltip .heatmapTooltipRow b{ color: var(--text-primary, inherit); font-weight: 600; }
-/* TC-4: U자(비단조) 관계 안내 -- eps2는 높은데 |rho|는 낮은 셀의 툴팁에만 뜬다. */
-.heatmapTooltipShapeNote{ margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--heatmap-cell-border); color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.5; }
-
 .heatmapExpandRow{ display: flex; justify-content: center; }
 .heatmapCaption{ font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; }
 .heatmapSignificanceBanner{
@@ -8509,14 +8492,13 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 
 /* This 6px gap (axisCol <-> plotScroll) plus the tick text sitting flush
    against its own tickCol edge is the "눈금 숫자 <-> 축선 6px" leg of the
-   spec §1 budget below -- already correct, not touched here. */
+   width budget computed below. */
 .paretoChartBody{ display: flex; align-items: stretch; justify-content: center; gap: 6px; }
-/* A prior pass misread this bug as "title crowds the ticks" and widened
-   the gap to 10px -- backwards. The actual bug (spec §1 re-instruction):
-   the title sits at the outer card edge, far from the ticks, because
-   nothing pulled it inward. Fix is a *small* deliberate gap (8px) plus a
-   tighter tickCol, so axis-line -> title stays within ~50px total:
-   tickCol(22) + gap(8) + label(14) + .paretoChartBody's own 6px = 50px. */
+/* A deliberately *small* gap (8px) plus a tight tickCol, so axis-line ->
+   title stays within ~50px total: tickCol(22) + gap(8) + label(14) +
+   .paretoChartBody's own 6px = 50px. Widening this gap does not relieve
+   crowding -- it pushes the title out toward the card edge, away from the
+   ticks. */
 .paretoAxisCol{ display: flex; align-items: stretch; gap: 8px; flex: 0 0 auto; }
 /* Rotated as a single plain-text run (not writing-mode: vertical-rl --
    that rotates Latin/symbol glyphs but keeps Hangul upright per
@@ -8573,7 +8555,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .paretoBar.tier-weak{ fill: color-mix(in srgb, var(--pareto-bar, #0072c6) 42%, var(--surface-card, #fff)); }
 .paretoBar.tier-reference{ fill: color-mix(in srgb, var(--pareto-bar, #0072c6) 25%, var(--surface-card, #fff)); }
 .paretoBar:hover{ filter: brightness(1.12); }
-/* 활성 막대(현재 카드의 인자)는 진하게, 나머지는 옅게 (지시서 N-2) --
+/* 활성 막대(현재 카드의 인자)는 진하게, 나머지는 옅게 --
    tier별 농도 인코딩(strong~reference) 위에 활성/비활성 투명도를 더한다. */
 .paretoBar{ opacity: .62; }
 .paretoBar.active{ opacity: 1; stroke: var(--accent); stroke-width: 2; }
@@ -8616,23 +8598,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   background-image: repeating-linear-gradient(45deg, rgba(0,0,0,.14) 0 4px, transparent 4px 8px);
 }
 
-.paretoRunBar{
-  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-}
-.paretoRunProgress{ display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 220px; }
-.paretoRunProgressTrack{ height: 6px; border-radius: 999px; background: var(--heatmap-cell-border, var(--border)); overflow: hidden; }
-.paretoRunProgressTrack > span{
-  display: block; height: 100%; background: var(--accent); border-radius: 999px;
-  transition: width 240ms ease;
-}
-.paretoRunStage{ font-size: var(--fs-sm); color: var(--text-secondary); }
-
-/* AB그룹: 이 블록 전체가 아래 10776행 .confidenceBadge 블록에 property별로
-   완전히 가려져 있던 죽은 규칙이었다(같은 명시성, 소스 순서상 후자가
-   항상 이김) -- 실제로 반영되는 쪽은 10776행이라 강함/보통 강조는
-   거기서만 고치면 된다. 혼동을 막기 위해 죽은 사본을 지운다. */
-
-/* 모델 학습 -- 요약바 + 통합 테이블 (spec §1). Horizontal padding matches
+/* 모델 학습 -- 요약바 + 통합 테이블. Horizontal padding matches
    every other card (--card-pad-x, defined below) so stacked cards line
    their text up on the same left edge. */
 .trainingSummaryBar{
@@ -8671,11 +8637,11 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    renders through this one component so control-limit lines are never
    drawn differently on different screens. */
 .scatterChart{ display: flex; flex-direction: column; gap: 4px; }
-/* 드래그 선택 정보 박스의 위치 기준 (spec B: "플롯 우측 상단 고정") --
+/* 드래그 선택 정보 박스의 위치 기준(플롯 우측 상단 고정) --
    해석 팁을 포함한 카드 전체가 아니라 SVG 자체에만 relative를 건다. */
 .scatterPlotWrap{ position: relative; }
 
-/* 드래그 선택 (spec B) -- 브러시 사각형 + 우상단 고정 정보 박스. 박스는
+/* 드래그 선택 -- 브러시 사각형 + 우상단 고정 정보 박스. 박스는
    .heatmapTooltip 외형(흰 배경·그림자·radius)을 재사용하되 position만
    fixed(커서 추적)에서 absolute(플롯 코너 고정)로 바꾼다. */
 .scatterBrushRect{ fill: var(--accent); fill-opacity: 0.08; stroke: var(--accent); stroke-width: 1; }
@@ -8696,7 +8662,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 .scatterSelectionBoxTable td:first-child{ text-align: left; color: var(--text-secondary); }
 .scatterSelectionBoxTable th{ font-weight: 600; color: var(--text-primary); }
 .scatterSelectionBoxTable td:not(:first-child){ color: var(--text-primary); font-variant-numeric: tabular-nums; }
-/* Scatter/Box view toggle (spec §1-3) -- lives in the card header (see
+/* Scatter/Box view toggle -- lives in the card header (see
    ViewToggle in root-cause/page.tsx), same row/height as the title, not
    inside this component. Also backs the "비교" trigger row above it
    (CompareToggleRow) -- same segmented-control markup, just without an
@@ -8714,16 +8680,15 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 }
 .scatterViewToggleBtn.active{ background: #0E306D; color: #FFFFFF; }
 html[data-theme="dark"] .scatterViewToggleBtn.active{ background: #3B5DA8; color: #FFFFFF; }
-/* 보기/방식 토글을 세로로 쌓고 우측 정렬 (spec: 방식 토글이 보기 토글
-   바로 아래, 두 좌측 라벨("보기"/"방식")이 세로로 정렬된다). Fixed label
+/* 보기/방식 토글을 세로로 쌓고 우측 정렬 -- 방식 토글이 보기 토글
+   바로 아래, 두 좌측 라벨("보기"/"방식")이 세로로 정렬된다. Fixed label
    width guarantees the two 2-글자 라벨's right edge lines up regardless
    of tiny per-glyph width differences. */
 .factorChartToggleStack{ display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .factorChartToggleStack .scatterViewToggleLabel{ display: inline-block; min-width: 28px; }
-/* Pareto/Scatter/Box 보기 토글 (spec "Pareto를 산점도 카드로 병합") -- 버튼이
-   2개에서 3개로 늘며 좁은 카드에서 넘칠 수 있다. 세그먼트 형태를 유지하는
-   게 우선이므로 줄바꿈 대신 패딩/폰트만 줄인다 (§4-4의 다른 규칙과 같은
-   패턴). */
+/* Pareto/Scatter/Box 보기 토글 -- 버튼이 3개라 좁은 카드에서 넘칠 수
+   있다. 세그먼트 형태를 유지하는 게 우선이므로 줄바꿈 대신 패딩/폰트만
+   줄인다. */
 @container factorCard (max-width: 480px){
   .factorChartToggleStack .scatterViewToggleBtn{ padding: 0 8px; font-size: var(--fs-xs); }
 }
@@ -8731,27 +8696,26 @@ html[data-theme="dark"] .scatterViewToggleBtn.active{ background: #3B5DA8; color
 .scatterChartSvg{ display: block; overflow: visible; }
 /* Dark-mode-only plot background, one shade darker than the card
    (#242426 vs. --surface's #252527) so points read as "floating" above
-   it instead of blending into the card (spec §4 재지시). Light mode
+   it instead of blending into the card. Light mode
    stays transparent -- a white-on-white plot never had this problem. */
 .scatterPlotBg{ fill: transparent; }
 html[data-theme="dark"] .scatterPlotBg{ fill: #242426; }
-/* Lightened (spec §8) so the denser 8-10/6-8 tick grid doesn't read as
-   visual clutter -- was full-opacity border color at the old fixed 6/5
-   tick count. Dark mode gets its own explicit low-alpha value (spec §4
-   재지시) rather than riding the var-based light formula. */
+/* Lightened so the denser 8-10/6-8 tick grid doesn't read as visual
+   clutter -- a full-opacity border color would. Dark mode gets its own
+   explicit low-alpha value rather than riding the var-based light
+   formula. */
 .scatterGridLine{ stroke: var(--heatmap-cell-border, var(--border)); stroke-width: 1; opacity: 0.55; }
 .scatterGridLine-x{ opacity: 0.35; }
 html[data-theme="dark"] .scatterGridLine{ stroke: rgba(255, 255, 255, 0.05); opacity: 1; }
 .scatterTickLabel{ font-family: var(--font-data); font-size: var(--fs-micro); fill: var(--text-secondary); }
-/* 권장 구간 band (spec: SPC/ML 방식 전환 §3-4, HP-HMI 색 규율 §H-1로
-   무채색 갱신): fill color set inline per-theme in TSX (METHOD_COLOR --
+/* 권장 구간 band: fill color set inline per-theme in TSX (METHOD_COLOR --
    SPC/ML 모두 같은 중립 톤), opacity fixed at 15% here -- never higher,
    or the points underneath get lost (a 2px solid border compensates for
    visibility instead, drawn separately in TSX). */
 .scatterRecommendedBand{ opacity: 0.15; cursor: help; }
-/* 권장 구간 밴드 양끝 안쪽 경계값 라벨 (spec §C-5) -- 밴드/테두리와 같은
-   색, 9px. 이름표("권장 구간 (SPC) 54.7~61.5")는 상단 3단 라벨 체계로
-   옮겨졌으므로 밴드 안에는 값만 남는다. */
+/* 권장 구간 밴드 양끝 안쪽 경계값 라벨 -- 밴드/테두리와 같은 색, 9px.
+   이름표("권장 구간 (SPC) 54.7~61.5")는 상단 3단 라벨 체계가 담당하므로
+   밴드 안에는 값만 둔다. */
 .scatterBandBoundaryLabel{ font-family: var(--font-data); font-size: var(--fs-nano); font-weight: 600; }
 .scatterTrendBand{ opacity: 0.08; stroke: none; }
 .scatterTrendLine{ stroke-width: 2; }
@@ -8768,16 +8732,14 @@ html[data-theme="dark"] .scatterGridLine{ stroke: rgba(255, 255, 255, 0.05); opa
 }
 html[data-theme="dark"] .scatterLineLabel{ background: var(--surface-card, #2c2c2e); }
 .scatterAxisTitle{ margin: 4px 0 0; text-align: center; font-family: var(--font-data); font-size: var(--fs-sm); color: var(--text-secondary); }
-/* y-axis title (spec §7) -- SVG <text> version of .scatterAxisTitle, same
+/* y-axis title -- SVG <text> version of .scatterAxisTitle, same
    grey/secondary color and a matching font-size. */
 .scatterAxisTitleSvg{ font-family: var(--font-data); font-size: var(--fs-sm); fill: var(--text-secondary); }
 
-/* 해석·신뢰도 카드 (HA그룹) -- 차트 바로 위, 옅은 파란 카드. Scatter·Box·
-   Pareto 세 뷰가 전부 이 클래스 하나를 쓴다(InterpretationCard.tsx) --
-   "해석"(항상)과 "신뢰도"(조건부) 두 행을 카드 하나 안에 쌓는다. 이전에는
-   차트마다 별도 컴포넌트(ScatterChart 전용 해석 팁 클래스)와 별도 카드
-   (.interpretCard, ModerateTierCaption)가 갈라져 있어 스타일이
-   일치하지 않았다 -- 이 클래스로 통합했다. */
+/* 해석·신뢰도 카드 -- 차트 바로 위, 옅은 파란 카드. Scatter·Box·Pareto
+   세 뷰가 전부 이 클래스 하나를 쓴다(InterpretationCard.tsx) --
+   "해석"(항상)과 "신뢰도"(조건부) 두 행을 카드 하나 안에 쌓는다. 차트마다
+   따로 스타일을 두면 세 뷰의 모양이 어긋나므로 여기서만 정의한다. */
 .interpretationCard{
   display: flex; flex-direction: column; gap: 6px;
   margin: 12px 0 16px;
@@ -8801,7 +8763,7 @@ html[data-theme="dark"] .interpretationCard{
   color: var(--text-secondary); word-break: keep-all;
 }
 
-/* 범례 (spec §5) -- 각 행이 최대 5항목, 견본+굵은 라벨(+있을 때만 작은
+/* 범례 -- 각 행이 최대 5항목, 견본+굵은 라벨(+있을 때만 작은
    설명)을 갖는 카드. 토글 가능한 카드(관리한계/최적 중심/권장 구간/구간
    평균 불량률, Box Plot의 개별 wafer/이상치 wafer)는 <button>으로, 상자/
    중앙값/수염처럼 끌 수 없는 카드는 <div>로 렌더링되지만 스타일은 공유한다
@@ -8818,7 +8780,7 @@ html[data-theme="dark"] .interpretationCard{
 }
 .scatterLegendCard.interactive{ cursor: pointer; border-color: var(--border-card, var(--border)); }
 .scatterLegendCard.interactive.active{ background: var(--surface-secondary, var(--surface-muted)); }
-/* Clicked off (spec §4: "꺼진 항목은 불투명도 0.35로 흐리게") -- distinct
+/* Clicked off (꺼진 항목은 불투명도 0.35) -- distinct
    from `.disabled` (never clickable to begin with, e.g. 데이터 범위 밖):
    this is a togglable card currently in its "off" state. */
 .scatterLegendCard.interactive:not(.active):not(.disabled){ opacity: 0.35; }
@@ -8828,7 +8790,7 @@ html[data-theme="dark"] .interpretationCard{
 .scatterLegendCardText strong{ font-size: var(--fs-xs); font-weight: 600; color: var(--text-primary); }
 .scatterLegendCardText small{ font-size: var(--fs-nano); color: var(--text-secondary); }
 
-/* 그룹 스크럽 슬라이더 (지시서 CA) -- 트랙/썸 색은 수율 예측 탭의 민감도
+/* 그룹 스크럽 슬라이더 -- 트랙/썸 색은 수율 예측 탭의 민감도
    슬라이더(.alertsGaugeSlider)를 그대로 재사용한다(새 슬라이더 스타일을
    만들지 않는다). 정렬 셀렉트도 표 툴바의 .tableSortSelect를 재사용한다. */
 .scatterScrubRow{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
@@ -8851,11 +8813,11 @@ html[data-theme="dark"] .interpretationCard{
 html[data-theme="dark"] .scatterScrubInput.invalid{ border-color: #F87171; }
 .scatterScrubSortSelect{ flex: 0 0 auto; min-height: 28px; font-size: var(--fs-sm); }
 
-/* Box mode point-hover tooltip "이상치" tag (spec §5). */
+/* Box mode point-hover tooltip "이상치" tag. */
 .scatterOutlierTag{ color: #DC2626; }
 html[data-theme="dark"] .scatterOutlierTag{ color: #F87171; }
 
-/* SPC/ML 권장 구간 산출 방식 비교 카드 (spec §4) -- 표시 전용, 산점도/
+/* SPC/ML 권장 구간 산출 방식 비교 카드 -- 표시 전용, 산점도/
    박스플롯 아래 인자별 카드 안에 하나씩. 채택된 쪽만 옅은 배경 + 보라/
    초록 테두리 + "채택" 배지, 방식을 여기서 선택할 수 있는 UI는 없다. */
 .methodComparisonCard{
@@ -8899,13 +8861,13 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 .methodComparisonReason{ margin: 12px 0 2px; font-size: var(--fs-sm); font-weight: 600; }
 .methodComparisonFootnote{ margin: 2px 0 0; font-size: var(--fs-micro); color: var(--text-secondary); }
 
-/* Bottom-of-card explanatory blurb under a results table (spec §7
-   재지시) -- own class since this one always sits below the
+/* Bottom-of-card explanatory blurb under a results table -- own class
+   since this one always sits below the
    table/caption, wraps to 2-3 lines, and never breaks mid-Korean-word. */
 .tableDisclaimer{
   margin: 10px 2px 0; font-size: var(--fs-body); color: var(--text-secondary); line-height: 1.5;
   word-break: keep-all;
-  /* 지시서 O-6: 한두 글자만 셋째 줄로 넘어가는 고아 줄을 막는다 --
+  /* 한두 글자만 셋째 줄로 넘어가는 고아 줄을 막는다 --
      미지원 브라우저에서는 그냥 무시되고 기존 줄바꿈으로 폴백한다. */
   text-wrap: pretty;
 }
@@ -8926,7 +8888,7 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 }
 .compareModalHeader h2{ margin: 0; font-size: var(--fs-title); font-weight: 600; }
 .compareModalMeta{ margin: 4px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); }
-/* Plain-language read of the 5 charts (spec §5-2): one step smaller than
+/* Plain-language read of the 5 charts: one step smaller than
    the meta line above it, secondary color, always 2 lines. */
 .compareModalInterpretation{
   margin: 6px 0 0; font-size: var(--fs-xs); line-height: 1.5; color: var(--text-secondary);
@@ -8935,7 +8897,7 @@ html[data-theme="dark"] .methodComparisonName.method-ml{ color: #C084FC; }
 .compareModalClose{
   border: none; background: var(--surface-secondary, var(--surface-muted)); border-radius: 8px;
   width: 30px; height: 30px; cursor: pointer; font-size: var(--fs-body); flex: 0 0 auto;
-  color: #DC2626; /* icon only -- background/size/position stay as-is (spec §5-4) */
+  color: #DC2626; /* icon only -- background/size/position are owned elsewhere */
 }
 .compareModalClose:hover{ background: color-mix(in srgb, var(--surface-secondary, var(--surface-muted)) 80%, black 12%); }
 html[data-theme="dark"] .compareModalClose{ color: #F87171; }
@@ -8953,9 +8915,12 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .compareMiniChart.origin{ border: 2px solid var(--brand-navy-text, #0E306D); }
 .compareMiniChartHeader{ display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 2px; }
 .compareMiniChartTitle{ font-size: var(--fs-body); font-weight: 600; }
+/* 미니 차트 헤더의 통계 라벨 -- 불량 유형별 비교는 Adjusted R²(.Stat),
+   장비별 비교는 그룹 내에서 직접 계산한 기울기 지표(.Rho)를 쓴다. */
+.compareMiniChartStat,
 .compareMiniChartRho{ font: 500 11.5px var(--font-data); margin-left: 4px; }
 .compareMiniChartSvg{ display: block; }
-/* Trellis 지시서 C-2: 배지 텍스트 길이("강함" 2자 vs "근거 부족" 5자 vs
+/* 배지 텍스트 길이("강함" 2자 vs "근거 부족" 5자 vs
    "표본 부족(n=NN)")가 달라도 패널 레이아웃이 밀리지 않게 최소 폭을
    준다. CompareAcrossTargetsModal의 MiniChart와 Trellis의 TrellisPanel
    둘 다 이 헤더 클래스를 공유하므로 한 규칙으로 양쪽에 적용된다. */
@@ -8974,7 +8939,7 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 
 /* 장비별 Trellis 패널 중 표본(n<30) 부족 그룹 -- 근거 없는 참조선을 감추는
    대신, 패널 자체를 흐리게 표시해 "데이터는 있으나 판정은 유보"임을
-   드러낸다 (지시서 "n 부족 처리"). */
+   드러낸다. */
 .compareMiniChart.insufficientN{ opacity: 0.55; }
 
 /* YD: 수율 예측 화면 "알림 전송" 확인 다이얼로그 -- compareModal과
@@ -8996,9 +8961,8 @@ html[data-theme="dark"] .compareModalClose:hover{ background: color-mix(in srgb,
 .notifyDialogResultList{ margin: 8px 0 0; padding-left: 18px; }
 
 /* ===================================================================
-   Table sits inside the card's own padding (spec 재지시: 다른 카드와
-   여백 통일 -- full-bleed 지시를 철회) + outer border restored (spec
-   재지시: 테두리 부분 복원).
+   Table sits inside the card's own padding (다른 카드와 여백 통일), with
+   an outer border.
 
    Reference measured directly in-browser (getBoundingClientRect), not
    assumed: CORRELATION OVERVIEW's placeholder box (.emptyMessage, plain
@@ -9131,7 +9095,7 @@ html[data-theme="dark"]{
 }
 
 /* 데이터 전처리(BENCHMARK) 카드: R² 숫자와 채택 배지를 분리된 컬럼에 둔다
-   (spec 재지시) -- 같은 셀에 두면 배지가 있는 행만 숫자가 왼쪽으로 밀려
+   -- 같은 셀에 두면 배지가 있는 행만 숫자가 왼쪽으로 밀려
    세 값의 우측 끝이 어긋난다. 배지 유무와 무관하게 3번째 컬럼(빈 셀 포함)
    을 항상 렌더링해 정렬을 보존한다. */
 .benchmarkTable{
@@ -9163,7 +9127,7 @@ html[data-theme="dark"]{
   margin-bottom: 2px;
 }
 
-/* 원인 분석 실패 안내 (spec §5-2). Same shape family as
+/* 원인 분석 실패 안내. Same shape family as
    .heatmapSignificanceBanner (13px radius, similar padding), red instead
    of amber, plus an icon so it isn't color-only. */
 .analysisErrorBox{
@@ -9187,7 +9151,7 @@ html[data-theme="dark"] .analysisErrorBox{
 html[data-theme="dark"] .analysisErrorDetail code{ background: rgba(255, 255, 255, 0.08); }
 .analysisErrorBox > .button{ flex: 0 0 auto; }
 
-/* D-2: 셸 레벨 배너 -- 이전 결과 복원(GET /api/state/latest) 실패를
+/* 셸 레벨 배너 -- 이전 결과 복원(GET /api/state/latest) 실패를
    모든 페이지에서 동일하게 알린다. */
 .degradedStateBanner{
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -9199,7 +9163,7 @@ html[data-theme="dark"] .degradedStateBanner{
 }
 .degradedStateBanner > .button{ flex: 0 0 auto; }
 
-/* RD-3: 스냅샷 갱신 알림 -- degradedStateBanner와 같은 레이아웃, 톤만
+/* 스냅샷 갱신 알림 -- degradedStateBanner와 같은 레이아웃, 톤만
    긍정(초록)으로. 몇 초 뒤 자동으로 사라진다(snapshotJustUpdated가
    AnalysisStateProvider에서 타이머로 꺼진다). */
 .snapshotUpdatedBanner{
@@ -9211,7 +9175,7 @@ html[data-theme="dark"] .snapshotUpdatedBanner{
   border-color: rgba(74, 222, 128, 0.35); background: rgba(20, 83, 45, 0.28); color: #86EFAC;
 }
 
-/* W-4: 첫 기동 부트스트랩 진행 배너 -- 같은 레이아웃을 쓰되(스켈레톤·
+/* 첫 기동 부트스트랩 진행 배너 -- 같은 레이아웃을 쓰되(스켈레톤·
    무한 로딩이 아니라 한 줄 상태 표시) 톤은 중립(진행 중)/실패(경고)로
    나뉜다. 실패 상태는 위 .degradedStateBanner와 같은 팔레트를 재사용한다. */
 .bootstrapStateBanner{
@@ -9227,7 +9191,7 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 }
 .bootstrapStateBanner > .button{ flex: 0 0 auto; }
 
-/* SF-3: 네 화면이 공유하는 "분석 시작" 진행 표시. */
+/* 네 화면이 공유하는 "분석 시작" 진행 표시. */
 .analysisProgressBanner{
   margin: 0; padding: 10px 20px; font-size: var(--fs-body); line-height: 1.5;
   border-bottom: 1px solid var(--line); background: var(--surface-card); color: var(--text-secondary);
@@ -9240,7 +9204,7 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 /* 작업지시 T8-4: 완료된 분석에 부분 실패(errors)가 남아 있을 때. */
 .analysisErrorsBanner{ background: var(--warning-soft); color: var(--warning); border-bottom-color: var(--warning-soft); }
 
-/* Per-scatter-card Color By dropdown (spec §5-3) -- height/radius/font
+/* Per-scatter-card Color By dropdown -- height/radius/font
    sized to match the confidence badge it sits beside in
    .factorChartTitleRow, gapped via --factor-title-gap. */
 .colorBySelectField{
@@ -9254,8 +9218,8 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 }
 
 /* ===================================================================
-   z-index scale (spec: 레이어 겹침 — z-index 체계 정립).
-   Every layer implicated in the reported overlap bugs (sticky header,
+   z-index scale.
+   Every layer that can overlap another (sticky header,
    sticky Y1~Y5 segment, left/right panels, the dataset-selector
    dropdown, the compare modal, and hover tooltips) reads its z-index
    from here -- no raw numbers at these call sites, so the relative
@@ -9275,7 +9239,7 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 }
 
 /* ===================================================================
-   개선 권장 목록 (spec §3) + 테이블 검색/정렬/10행 스크롤 (spec §4).
+   개선 권장 목록 + 테이블 검색/정렬/10행 스크롤.
    Both the 알람 목록 and 개선 권장 목록 tables share this shell.
    =================================================================== */
 .sectionHeading.compact .tableToolbar{
@@ -9324,10 +9288,10 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 }
 
 /* Fixed N-row-tall scroll body (10 rows for 알람/개선 권장, 5 for
-   LOT별 알람 집계 -- spec §6 재지시 -- via the --scroll-rows inline var,
-   default 10, set on .tableScroll itself -- see the "Table as one
-   rounded block" section above for the base .tableScroll rule and why
-   it's a separate element from .tableWrap). Row height is pinned via
+   LOT별 알람 집계) via the --scroll-rows inline var, default 10, set on
+   .tableScroll itself -- see the "Table as one rounded block" section
+   above for the base .tableScroll rule and why it's a separate element
+   from .tableWrap. Row height is pinned via
    --scroll-row-h so the max-height math (header + N rows) stays exact
    regardless of content; thead's `position:sticky;top:0` (see .tableWrap
    th above) keeps the header pinned while .tableScroll scrolls. */
@@ -9352,7 +9316,7 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
   pointer-events: none;
 }
 
-/* 알람 목록의 "해설" 버튼 (spec A-3) -- 작은 외곽선 버튼, 행
+/* 알람 목록의 "해설" 버튼 -- 작은 외곽선 버튼, 행
    높이(--scroll-row-h: 42px)를 늘리지 않도록 세로 패딩을 최소로 둔다. */
 .explainButton{
   display: inline-flex; align-items: center; gap: 3px;
@@ -9390,10 +9354,9 @@ html[data-theme="dark"] .explainButton:hover:not(:disabled){ background: rgba(96
    plus a right-edge shadow standing in for a border so the frozen
    column reads as separate from the scrolling ones.
 
-   지시서 T 버그 수정: 이 규칙이 th/td에 똑같이 카드 배경(흰색)을 줬던
-   것이 헤더의 첫 칸(Wafer/LOT_WF_ID)만 다른 헤더 칸(회색)과 다르게
-   보이던 원인이다 -- 헤더 칸은 다른 헤더 칸과 같은 --table-header-bg를
-   써야 하고, 본문 칸만 카드 배경을 쓴다. */
+   헤더 칸(th)에는 다른 헤더 칸과 같은 --table-header-bg를 주고, 본문
+   칸(td)만 카드 배경을 쓴다 -- th/td에 똑같이 카드 배경(흰색)을 주면
+   헤더의 첫 칸(LOT_WF_ID)만 나머지 헤더 칸(회색)과 달라 보인다. */
 .tableScroll.hScroll th:first-child,
 .tableScroll.hScroll td:first-child{
   position: sticky;
@@ -9445,32 +9408,14 @@ html[data-theme="dark"] .tableScroll.hScroll td:first-child{
   text-overflow: clip;
   white-space: nowrap;
 }
-/* 지시서 S: 헤더 텍스트가 Wafer -> LOT_WF_ID로 길어져 줄바꿈되지 않도록
-   최소 폭을 넓힌다. */
-
-/* 배지 폭에 맞춰 열이 좁아진다 (spec §C-2) -- 고정 min-width 대신
-   width:1%(table-layout:auto에서 "내용만큼만") + nowrap. */
-/* 지시서 O-4: 등급 배지와 다음 칸(사유)이 너무 붙어 보여 여유를 준다 --
-   min-width로 배지가 줄바꿈되지 않을 폭을 확보하고, 오른쪽 여백을
-   키워 다음 칸과 거리를 둔다. */
-
-/* DA그룹: 수율 예측 표 -- LOT_WF_ID·LOT이 식별자끼리 붙어 스캔되도록
-   앞쪽에 두고, 나머지 칸은 내용에 맞춘 고정 폭, "사유"만 가변으로 남는
-   공간을 전부 흡수한다(그래야 빈 여백이 사유란으로 몰린다). */
-
-/* 지시서 H-3: 판정 원리·인자별 불량률 카드를 없애면서 이 구간 색상
-   변수/트랙/스탯 CSS 전체를 삭제했다 (사용처가 그 두 카드뿐이었음).
-   .yieldBandCardTitle만 판정 결과 카드 헤더가 계속 쓴다. */
+/* 판정 결과 카드 헤더. */
 .yieldBandCardTitle{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .yieldBandCardTitle h3{ margin: 0; font-size: var(--text-section, 15px); font-weight: 600; }
 
-/* 수율 예측 화면이 목표 수율·민감도·5분류 카드 UI에서 순위 기반
-   표(§yp 클래스, 아래 참고)로 전면 재설계되며, 이 구간에 있던 조회
-   카드·5분류 카드 전용 CSS(§A/§B, 지시서 B/B-2~B-3)는 전부 사용처가
-   사라져 삭제했다. `.alertsGaugeSlider`/`.alertsPresetButton`만 예외로
-   남긴다 -- ScatterChart.tsx의 그룹 스크럽 슬라이더·리셋 버튼이
-   `scatterScrubSlider`/`scatterScrubResetButton`과 함께 이 두 클래스를
-   그대로 쓴다(슬라이더 트랙 이중 렌더링 버그 수정, 구 DA-3). */
+/* 수율 예측 화면 자체는 순위 기반 표(yp* 클래스, 아래 참고)로 그리지만,
+   이름과 달리 `.alertsGaugeSlider`/`.alertsPresetButton`은 수율 예측
+   화면이 아니라 ScatterChart.tsx의 그룹 스크럽 슬라이더·리셋 버튼이
+   `scatterScrubSlider`/`scatterScrubResetButton`과 함께 쓴다. */
 .alertsGaugeSlider{
   width: 100%; margin: 0; height: 18px;
   accent-color: var(--accent);
@@ -9490,9 +9435,9 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 .alertsPresetButton.active{ background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ===================================================================
-   SUNI C 헤더 로고 (spec §10). .headerContext now has 2 children (logo
-   link + h1) instead of 1, so it needs an explicit gap -- it never had
-   one before since align-items:center + a single child didn't need it.
+   SUNI C 헤더 로고. .headerContext has 2 children (logo link + h1), so
+   it needs an explicit gap -- align-items:center alone would not space
+   them.
    =================================================================== */
 .headerContext{ gap: 28px; }
 .headerLogoLink{
@@ -9508,28 +9453,26 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .headerLogo{ height: 24px; }
 }
 /* ≤767px: Header.tsx swaps the wordmark <Image> for a compact SuniAvatar
-   icon in JS (spec §B-7) rather than hiding the link -- the old
-   `display:none` rule this replaced left the header logo slot empty
-   between 768-1023px too, which is no longer the intended behavior (the
-   wordmark should still show, just at the existing 24px height above). */
+   icon in JS rather than hiding the link -- do not add a `display:none`
+   rule here, or the logo slot goes empty between 768-1023px as well,
+   where the wordmark should still show at the 24px height above. */
 
 /* ===================================================================
-   모바일 · 축소 화면 레이아웃 (모바일/좁은 화면 반응형 패치, S-1~S-7).
+   모바일 · 축소 화면 레이아웃.
    Additive block, appended at the very end of the file on purpose --
-   globals.css has several dead pre-v2-shell layout blocks earlier on
-   (see the `@media(max-width:1280px)` specificity fix above for one
-   example); editing any of them has no effect on what actually
-   renders, only adding rules *after* the live v2-shell section
-   reliably wins the cascade. R그룹이 ~74개 흩어진 breakpoint를 3단계
-   (1023/767/479)로 정리했고, 이 패치는 그 위에 얹인다. 현재 셸
-   아키텍처(S-1, DashboardShell.tsx/Sidebar.tsx):
+   globals.css has several dead layout blocks earlier on (see the
+   `@media(max-width:1280px)` specificity fix above for one example);
+   editing any of them has no effect on what actually renders, only
+   adding rules *after* the live shell section reliably wins the
+   cascade. Breakpoint는 3단계(1023/767/479)로만 나눈다. 셸
+   아키텍처(DashboardShell.tsx/Sidebar.tsx):
      1280px/1279px    무관 -- 사이드바/AI 패널 오버플로 버그 전용,
                        이 패치와 무관하게 그대로 둔다.
      1024px+          데스크톱. <Sidebar> 펼침/접힘은 사용자가 토글.
      768px~1023px     태블릿. <Sidebar>는 계속 마운트되지만 이 밴드에
                        "진입"하는 순간 기본 접힘(56px 아이콘 레일)으로
                        시작한다(DashboardShell.tsx). <MobileTabBar> 없음.
-                       헤더 컨텍스트 스트립은 SOURCE·LAST RUN만 남는다.
+                       헤더 컨텍스트 스트립은 LAST RUN만 표시한다.
      ≤767px           <Sidebar>는 오프캔버스 드로어(data-mode="drawer")로
                        전환되고 <MobileTabBar>가 주 내비게이션이 된다.
                        .headerContextStrip은 완전히 사라지고, 대신 헤더
@@ -9542,7 +9485,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   --touch-target-min: 44px;
 }
 
-/* -- S-1: 헤더 햄버거 트리거 (≤767px, Header.tsx) -----------------------
+/* -- 헤더 햄버거 트리거 (≤767px, Header.tsx) ---------------------------
    ≤767px에서 <Sidebar>가 항상 오프캔버스 드로어가 되어 화면에 보이지
    않으므로, 여는 트리거가 필요하다 -- .headerSuniButton과 같은 원형
    아이콘 버튼 패턴을 그대로 재사용한다(새 버튼 스타일을 만들지 않는다). */
@@ -9555,18 +9498,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 }
 .headerMenuButton:hover{ background: var(--surface-tertiary); }
 
-/* -- S-1: 헤더 컨텍스트 스트립 축약 (768px~1023px 태블릿 티어) -----------
-   767px까지는 그대로(EVAL/WAFERS/LAST RUN 전부), 1023px 이하에서
-   태블릿 폭이 되면 EVAL/WAFERS를 줄이고 LAST RUN만 남긴다(QE: SOURCE는
-   헤더에서 완전히 제거됐다). LAST RUN이 시각적으로 첫(이자 유일한)
-   항목이 되므로 좌측 구분선을 지운다(.headerContextItem:first-child과
-   같은 효과). */
-@media (max-width: 1023px){
-  .headerContextEval, .headerContextWafers{ display: none; }
-  .headerContextLastRun{ border-left: 0; padding-left: 0; }
-}
-
-/* -- S-1: 사이드바 오프캔버스 드로어 (≤767px, Sidebar.tsx mode="drawer") -
+/* -- 사이드바 오프캔버스 드로어 (≤767px, Sidebar.tsx mode="drawer") -----
    기본은 화면 밖(translateX(-100%)), sidebarDrawerOpen이 true면 안으로
    슬라이드한다. data-mode/data-open 속성으로 구분한다 (.dashboardGrid의
    data-sidebar="collapsed" 패턴과 동일). 배경 스크림은
@@ -9607,11 +9539,11 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .sidebar[data-mode="drawer"]{ width: min(280px, 85vw); }
 }
 
-/* -- S-1: 헤더 아래 한 줄 데이터 컨텍스트 요약 바 (≤767px, Header.tsx) --
-   .headerContextStrip이 !isMobileLayout에서만 렌더돼(이미 존재하는
-   동작, 회귀 없음 확인) 이 폭에서는 데이터셋/소스 정보가 화면에서 완전히
-   사라진다 -- "어떤 데이터를 보고 있는지"가 모든 폭에서 남아 있어야
-   한다는 규칙(지시서 하지 말 것 목록)을 지키는 유일한 자리다. <header>
+/* -- 헤더 아래 한 줄 데이터 컨텍스트 요약 바 (≤767px, Header.tsx) ------
+   .headerContextStrip이 !isMobileLayout에서만 렌더돼 이 폭에서는
+   데이터셋/소스 정보가 화면에서 완전히 사라진다 -- "어떤 데이터를 보고
+   있는지"는 모든 폭에서 남아 있어야 하므로, 이 바가 그 역할을 맡는
+   유일한 자리다. <header>
    바깥의 형제 요소라 ResizeObserver가 재는 --header-height(52px)에는
    영향이 없다. 한 줄 고정, 줄바꿈도 가로 스크롤도 없다 -- 넘치면
    ellipsis로 자른다. */
@@ -9632,7 +9564,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .headerMobileContextLastRun{ display: none; }
 }
 
-/* -- S-2: 카드 3단계 위계, 좁은 화면에서는 패딩만 줄인다 -----------------
+/* -- 카드 3단계 위계, 좁은 화면에서는 패딩만 줄인다 ---------------------
    .panel-primary(위계1)/.panel(위계2)/.panel-quiet(위계3)/.resultCard(위계2
    와 동일 규율) 네 클래스 모두 패딩만 건드린다 -- border-top: 2px solid
    var(--ink)(위계1 식별자)와 border-radius(전부 var(--radius-panel)=4px)는
@@ -9657,22 +9589,19 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .resultCard, .rcPage .resultCard{ padding: 10px 11px; }
 }
 
-/* BUG FIX: .topHeader has no `position`/`top` declared in the live v2-shell
-   section, so it was still inheriting `position:sticky` from a dead legacy
-   block (globals.css ~L3699, `top:0`) -- itself then overridden again for
-   `top` alone by two MORE dead breakpoint-specific blocks (~L4941's
-   `top:101px`, ~L6532's `top:122px`), because plain `.topHeader{ top: … }`
-   rules keep winning per-property regardless of which layout system they
-   were written for. At ≤1023px this made the header stick 101-122px down
-   the page instead of at 0, so .mobileTabBar (sticky at `top:
-   var(--header-height)`, i.e. right below where the header *should* sit)
-   ended up overlapping/rendering above it instead of under it. Authoritative
-   here, last in source order, wins for exactly these two properties. */
+/* .topHeader's `position`/`top` must stay declared here, last in source
+   order -- earlier dead layout blocks in this file still set
+   `position:sticky` plus `top:101px`/`top:122px` at some breakpoints, and
+   plain `.topHeader{ top: … }` rules keep winning per-property regardless
+   of which layout system they were written for. Without this rule the
+   header sticks 101-122px down the page at ≤1023px, so .mobileTabBar
+   (sticky at `top: var(--header-height)`, i.e. right below where the
+   header *should* sit) renders above it instead of under it. */
 .topHeader{ position: sticky; top: 0; z-index: var(--z-header); }
 
 /* -- 상단 가로 탭바 (≤1023px, MobileTabBar.tsx) --------------------------
    Same floating-navy-card language as .sidebarSurface: same background
-   var, same 16px radius, its own shadow -- spec §B-3/§8-1/§8-2. Only
+   var, same 16px radius, its own shadow. Only
    ever mounted (not just styled) at ≤1023px, so no @media gate is
    needed for existence, only for the parts that must react to width
    further (the fade-scroll mask width, tab font-size) once the whole
@@ -9684,9 +9613,8 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   margin: 12px 16px;
   padding: 8px;
   border-radius: var(--radius-panel);
-  /* AE그룹: 주석은 "same background var as .sidebarSurface"라 써놓고
-     실제로는 다른 값(brand-navy)을 쓰고 있었다 -- .sidebarSurface가
-     실제로 쓰는 --ink로 맞춘다. */
+  /* .sidebarSurface와 같은 배경이어야 하므로, brand-navy가 아니라
+     .sidebarSurface가 실제로 쓰는 --ink를 쓴다. */
   background: var(--ink);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
@@ -9697,7 +9625,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
   /* Fades the two scroll edges into the navy background instead of a hard
-     clip (spec §B-3: "좌우 끝에 mask-image 페이드 12px"). */
+     clip -- 좌우 끝에 mask-image 페이드 12px. */
   mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent);
 }
@@ -9708,9 +9636,9 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   align-items: center;
   gap: 4px;
   /* Spec's own mockup gives the pill a 32px height; bumped to the
-     44px touch-target floor instead (spec §B-8 is the harder
-     requirement of the two -- an inaccessible 32px tap target isn't an
-     acceptable tradeoff for matching a reference screenshot exactly). */
+     44px touch-target floor instead -- an inaccessible 32px tap target
+     isn't an acceptable tradeoff for matching a reference screenshot
+     exactly. */
   min-height: var(--touch-target-min);
   padding: 0 14px;
   border-radius: var(--radius-panel);
@@ -9720,12 +9648,10 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   text-decoration: none;
   transition: background-color 140ms ease, color 140ms ease;
 }
-/* AE그룹: MobileTabBar.tsx는 aria-selected가 아니라 aria-current="page"를
-   쓴다 -- 이 규칙이 [aria-selected]를 짚고 있어 실제로는 한 번도
-   매치되지 않았고(활성 탭 표시가 아예 동작하지 않았다), 매치됐더라도
-   채워진 흰 pill이라 데스크톱(왼쪽 2px 인디케이터, 투명 배경)과
-   형태가 달랐다. 데스크톱과 같은 방식 -- 투명 배경 + 인디케이터 선(가로
-   탭이므로 아래쪽) -- 으로 맞춘다. */
+/* MobileTabBar.tsx는 aria-selected가 아니라 aria-current="page"를 쓴다 --
+   셀렉터를 [aria-selected]로 잡으면 활성 탭 표시가 아예 동작하지 않는다.
+   형태는 데스크톱과 같은 방식(투명 배경 + 인디케이터 선, 가로 탭이므로
+   아래쪽)으로 맞춘다. */
 .mobileTab[aria-current="page"]{ background: transparent; color: #fff; box-shadow: inset 0 -2px 0 #fff; }
 .mobileTab:not([aria-current="page"]){ background: transparent; color: rgba(255, 255, 255, 0.72); }
 .mobileTabStatusDot{
@@ -9735,7 +9661,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 
 /* -- 헤더 SUNI 버튼 (≤1023px, Header.tsx) -------------------------------
    The only way to open AiPanel once it stops rendering its own always-
-   visible floating circle (spec §B-5/§B-7). */
+   visible floating circle. */
 .headerSuniButton{
   display: inline-flex; align-items: center; justify-content: center;
   width: var(--touch-target-min); height: var(--touch-target-min);
@@ -9746,7 +9672,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 .headerSuniButton:hover{ background: var(--surface-tertiary); }
 
 /* -- AiPanel: overlay (768~1023px) / full-screen (≤767px) 드로어 --------
-   spec §B-5. Both variants ignore the desktop grid column entirely
+   Both variants ignore the desktop grid column entirely
    (`position:fixed`) and are only ever mounted while `open` (see
    AiPanel.tsx's early `return null`) -- there is no collapsed-circle
    state to style here, unlike the desktop `.aiPanel.collapsed` variant. */
@@ -9763,7 +9689,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   height: 100dvh; max-height: 100dvh;
   border-radius: 0;
   z-index: calc(var(--z-panel) + 1);
-  transition: none; /* slide-in isn't required by spec; avoid animating a full-height fixed panel's layout properties */
+  transition: none; /* no slide-in -- avoid animating a full-height fixed panel's layout properties */
 }
 .aiPanel.aiPanelOverlay{ width: min(85%, 360px); }
 .aiPanel.aiPanelFullscreen{ width: 100%; }
@@ -9795,9 +9721,8 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 .aiPanelMobileTitle{ font-size: var(--fs-title); font-weight: 600; flex: 1 1 auto; min-width: 0; }
 .aiPanelMobileHeader .aiPanelCtx{ flex: 0 0 auto; }
 
-/* 흐르는 칩: 폭이 좁아 빠르게 느껴지므로 한 바퀴 36초로 늦춘다 (spec §B-5,
-   기본 28s에서 재정의 -- .reverse도 duration은 그대로 상속되므로 별도 규칙
-   불필요). */
+/* 흐르는 칩: 폭이 좁아 빠르게 느껴지므로 한 바퀴 36초로 늦춘다(기본 28s
+   재정의 -- .reverse도 duration은 그대로 상속되므로 별도 규칙 불필요). */
 @media (max-width: 1023px){
   .aiPanelMarqueeTrack{ animation-duration: 36s; }
 }
@@ -9808,9 +9733,9 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 }
 
 /* -- 집계 카드 2x2 (사전 알람 로그, ≤767px) ------------------------------
-   4개를 가로 1행으로 두면 너무 좁다 (spec §B-6). */
+   4개를 가로 1행으로 두면 너무 좁다. */
 
-/* -- 터치 대상 최소 44x44px (spec §B-8) ---------------------------------
+/* -- 터치 대상 최소 44x44px --------------------------------------------
    Buttons/badges that were sized for a mouse cursor (severity/recommendation
    tags, the compact confidence badge, the 해설 icon button) grow their
    *tappable* box via padding on ≤767px without changing their visual
@@ -9828,7 +9753,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .explainButton{ min-width: var(--touch-target-min); justify-content: center; }
 }
 
-/* -- 산점도/박스플롯 범례 2열 (≤767px, spec §B-6) ------------------------
+/* -- 산점도/박스플롯 범례 2열 (≤767px) ---------------------------------
    ScatterChart.tsx's .scatterLegendRow is `flex-wrap:wrap` with each
    card `flex: 1 1 160px` already -- at a ~350px content width that
    naturally wraps to 2 per row without a dedicated override, but pin it
@@ -9838,9 +9763,9 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .scatterLegendCard{ flex-basis: 45%; }
 }
 
-/* -- Y1~Y5 세그먼트: 가로 스크롤 허용, 줄바꿈 금지 (spec §B-6) -----------
-   표시 기준 토글(spec §A-3)이 같은 sticky 바에 추가된 뒤로는 Y1~Y5
-   버튼만 스크롤 대상이다 -- 토글까지 nowrap에 묶이면 화면 밖으로 밀려난다. */
+/* -- Y1~Y5 세그먼트: 가로 스크롤 허용, 줄바꿈 금지 ----------------------
+   같은 sticky 바에 표시 기준 토글이 함께 있으므로 스크롤 대상은 Y1~Y5
+   버튼뿐이다 -- 토글까지 nowrap에 묶이면 화면 밖으로 밀려난다. */
 @media (max-width: 767px){
   .targetSegmentGroup{ overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
   .targetSegmentGroup::-webkit-scrollbar{ display: none; }
@@ -9850,8 +9775,8 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .tableHideOnMobile{ display: none; }
 }
 
-/* -- 데이터 전처리 벤치마크 표: 카드 전환 없이 폰트·패딩만 축소
-   (spec §B-6: "컬럼이 적으므로 카드 전환 없이") -------------------------- */
+/* -- 데이터 전처리 벤치마크 표: 컬럼이 적으므로 카드 전환 없이
+   폰트·패딩만 축소한다 -------------------------------------------------- */
 @media (max-width: 767px){
   .benchmarkTable th, .benchmarkTable td{
     padding: 6px 8px; font-size: var(--fs-sm);
@@ -9859,23 +9784,18 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 }
 
 /* -- 브러싱: 767px 이하 비활성 -------------------------------------------
-   해당 시점 기준 ScatterChart.tsx에는 드래그 영역 선택(브러싱) 기능 자체가
-   구현되어 있지 않다 (점 클릭 -> WaferDetailPopover, 호버 -> 툴팁만 존재) --
-   비활성화할 대상이 없어 이 규칙은 향후 브러싱이 추가될 때를 대비한
-   자리표시자로만 남긴다. */
+   ScatterChart.tsx에는 드래그 영역 선택(브러싱) 기능이 없다 (점 클릭 ->
+   WaferDetailPopover, 호버 -> 툴팁만 존재) -- 비활성화할 대상이 없어 이
+   규칙은 브러싱이 추가될 때를 대비한 자리표시자다. */
 @media (max-width: 767px){
   .scatterChartSvg{ touch-action: pan-y; }
 }
 
 .sectionCaption{ font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; margin: 4px 0 12px; }
 
-/* MA-3: 계측 확대 권고 카드 CSS는 컴포넌트(ActionBlock.tsx)와 함께
-   삭제했다 -- 모니터링 홈 블록①(ActionPriorityBlock)이 아래 새 클래스로
-   대체한다. */
-
-/* -- S-4: 비교 모달(Y1~Y5 / 장비별 Trellis) ≤767px -----------------------
-   두 모달 다 가로 스크롤은 항상 유지한다(하지 말 것 목록: 패널을 세로로
-   쌓지 않는다) -- 패널 폭 자체(320px -> 200px)는 CompareAcrossTargetsModal.tsx
+/* -- 비교 모달(Y1~Y5 / 장비별 Trellis) ≤767px ---------------------------
+   두 모달 다 가로 스크롤은 항상 유지한다(패널을 세로로 쌓지 않는다)
+   -- 패널 폭 자체(320px -> 200px)는 CompareAcrossTargetsModal.tsx
    /CompareAcrossConfigsModal.tsx가 useIsMobileLayout으로 반응형 처리한다
    (여기서는 SVG width라 CSS만으로 줄일 수 없다). 모달 자체는 전체화면. */
 @media (max-width: 767px){
@@ -9883,7 +9803,7 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .compareModal{ width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
 }
 
-/* -- S-4: 트리맵 3-Model 분할, ≤767px에서 세로로 쌓는다 ------------------
+/* -- 트리맵 3-Model 분할, ≤767px에서 세로로 쌓는다 ----------------------
    가로 3분할은 이 폭에서 각 Model 폭이 너무 좁아 읽을 수 없다.
    ConfigTreemap.tsx가 이 폭에서 flexGrow(면적 비례) 대신 flex:0 0 100px
    (고정 높이)로 인라인 스타일을 바꾼다 -- CSS만으로는 각 Model의 상대
@@ -9896,28 +9816,27 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
   .monitoringTreemapTileN{ display: none; }
 }
 
-/* -- S-4: 차트 눈금 폰트 ≤767px에서 더 축소 (10px -> 9px). Pareto의
+/* -- 차트 눈금 폰트 ≤767px에서 더 축소 (10px -> 9px). Pareto의
    LEFT_TICKS/RIGHT_TICKS(0/25/50/75/100류)는 고정 배열이라(동적 backoff가
-   아니다) 개수는 그대로 두고 폰트만 줄인다 -- 축 스케일 계산과 결합돼
-   있어 배열 자체를 줄이는 건 이번 패치 범위를 넘는 위험이 있다. */
+   아니다) 개수는 그대로 두고 폰트만 줄인다 -- 배열 자체는 축 스케일
+   계산과 결합돼 있어 함부로 줄이면 눈금과 스케일이 어긋난다. */
 @media (max-width: 767px){
   .scatterTickLabel{ font-size: var(--fs-nano); }
   .paretoTick{ font-size: var(--fs-nano); }
 }
 
-/* -- S-5: 그룹 스크럽 슬라이더 트랙 최소 폭 140px (지시서 최소 트랙 폭
-   규칙 -- 민감도 슬라이더(.alertsGaugeWrap)는 이미 140px을 갖고 있어
-   손대지 않는다, 이 트랙만 120px이었다). */
+/* -- 그룹 스크럽 슬라이더 트랙 최소 폭 140px -- 민감도
+   슬라이더(.alertsGaugeWrap)와 같은 최소 트랙 폭을 맞춘다. */
 .scatterScrubTrack{ min-width: 140px; }
 
-/* -- S-5: 세그먼트/뷰 토글은 넘치면 가로 스크롤, 줄바꿈 금지 ------------- */
+/* -- 세그먼트/뷰 토글은 넘치면 가로 스크롤, 줄바꿈 금지 ----------------- */
 @media (max-width: 767px){
   .scatterViewToggle{ overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
   .scatterViewToggle::-webkit-scrollbar{ display: none; }
   .scatterViewToggleBtn{ flex: 0 0 auto; }
 }
 
-/* -- S-5: 주 터치 대상(.button) 최소 높이 26px -> 32px (≤767px) --------- */
+/* -- 주 터치 대상(.button) 최소 높이 32px (≤767px) ---------------------- */
 @media (max-width: 767px){
   .button{ min-height: 32px; }
 }
@@ -9936,9 +9855,9 @@ html[data-theme="dark"] .alertsGaugeSlider:focus-visible{ outline-color: #7ba3e8
 .meSideEffectCard strong{ font-size: var(--fs-body); }
 .meSideEffectSubtitle{ font-size: var(--fs-sm); color: var(--text-secondary); }
 .meSideEffectCard p{ font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; margin: 2px 0 0; }
-/* Y-3: 인라인 style={{color:...}}로 박혀 있던 리터럴 헥스 3종을 클래스로
-   옮긴다 -- 인라인 스타일은 테마 오버라이드가 닿지 않아 다크에서 그대로
-   고정색이었다. */
+/* 이 색들은 인라인 style={{color:...}}이 아니라 반드시 클래스로 둔다 --
+   인라인 스타일에는 테마 오버라이드가 닿지 않아 다크에서 고정색으로
+   남는다. */
 .meSideEffectCard.discovery{ border-color: #9333EA; }
 .meSideEffectCard.discovery strong{ color: #9333EA; }
 html[data-theme="dark"] .meSideEffectCard.discovery{ border-color: #C084FC; }
@@ -9952,23 +9871,23 @@ html[data-theme="dark"] .meSideEffectCard.reliability strong{ color: #22D3EE; }
 html[data-theme="dark"] .meSideEffectCard.falsePositive{ border-color: #34D399; }
 html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; }
 
-/* 1280px에서 한 줄에 들어가야 한다 (spec §A-1) -- keep-all만 쓴다.
+/* 1280px에서 한 줄에 들어가야 한다 -- keep-all만 쓴다.
    white-space: nowrap과 함께 쓰면 좁은 화면에서 텍스트가 잘린다. */
 .rootCauseIntro{ word-break: keep-all; }
 
-/* -- 표시 기준 토글 (spec §A-2/§A-3) -- Y1~Y5 세그먼트와 같은 sticky 줄
+/* -- 표시 기준 토글 -- Y1~Y5 세그먼트와 같은 sticky 줄
    우측에 얹힌다 (targetSegmentCriterion). 버튼 자체는
    .scatterViewToggle/.scatterViewToggleBtn을 그대로 재사용한다. */
 .chartCriterionBar{ display: flex; align-items: center; gap: 10px; }
 .chartCriterionLabel{ font-size: var(--fs-sm); color: var(--text-secondary); font-weight: 600; }
 
-/* -- 차트 표시 규칙 §A-4: 그릴 차트가 0개인 타깃/데이터셋 안내 -- */
+/* -- 그릴 차트가 0개인 타깃/데이터셋 안내 -- */
 .noChartMessage{ display: flex; flex-direction: column; gap: 8px; }
 .noChartMessage h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
 .noChartStats{ margin: 0; font-size: var(--fs-body); line-height: 1.6; color: var(--text-secondary); }
 
-/* DC그룹: 해석 문구 카드 -- `보통` 등급 인자의 설명력 캡션(구
-   .moderateTierCaption)과 Pareto 종합 문구가 함께 쓰는 옅은 정보 카드.
+/* 해석 문구 카드 -- `보통` 등급 인자의 설명력 캡션과 Pareto 종합 문구가
+   함께 쓰는 옅은 정보 카드.
    신호색(위험/경고 등급 색)은 쓰지 않는다 -- 판정이 아니라 정보다.
    Pareto·Scatter·Box 세 뷰가 전부 이 클래스 하나만 쓴다. */
 .interpretCard{
@@ -9981,7 +9900,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   line-height: 1.65;
 }
 
-/* 종합 신뢰성 등급 (spec §E-3) */
+/* 종합 신뢰성 등급 */
 .pageHeadingTitleRow{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .reliabilityPanel{
@@ -10003,23 +9922,16 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   background: var(--surface-secondary); color: var(--text-secondary);
 }
 
-/* 알람 신뢰도 게이트 안내 (spec 알람 신뢰도 게이트 §A-3) -- 빈 목록만
-   보여주면 기능 오류로 오해하므로, 카드 형태로 사유를 설명한다. */
-
-/* 신뢰성 상세 패널의 게이트 안내 행 (spec §D-3). */
-
 /* ============================================================
-   설정 패널 신설 -- §A 사이드바 2분할, §B Theme 아이콘, §C/§D 설정 패널,
-   §E 전처리 비교 스켈레톤. 기존 .sidebarFooter/.themeTrigger 규칙 위에
-   덧씌우는 방식이다 (파일 앞쪽의 레거시 블록들과 직접 충돌하지 않도록
-   끝에 추가해 캐스케이드에서 이긴다).
+   설정 패널 -- 사이드바 2분할, Theme 아이콘, 설정 패널, 전처리 비교
+   스켈레톤. 기존 .sidebarFooter/.themeTrigger 규칙 위에 덧씌우는
+   방식이라 파일 끝에 두어야 캐스케이드에서 이긴다.
    ============================================================ */
 
-/* -- §A-2/§D-0-1: 화면 모드 + 설정 세로 배치 ------------------------- */
-/* 가로 반반(flex-direction:row + flex:1 1 0)이었던 이전 배치는 폭이 좁아
-   두 버튼 라벨이 서로 겹치는 문제가 있었다 (spec §D-0-1) -- 세로로
-   쌓으면 각 버튼이 컨테이너 전체 폭을 쓸 수 있어 겹칠 여지가 없어진다.
-   순서는 화면 모드 -> 설정. */
+/* -- 화면 모드 + 설정 세로 배치 -------------------------------------- */
+/* 세로로 쌓아야 각 버튼이 컨테이너 전체 폭을 쓴다 -- 가로 반반
+   (flex-direction:row + flex:1 1 0)으로 두면 폭이 좁아 두 버튼 라벨이
+   서로 겹친다. 순서는 화면 모드 -> 설정. */
 .sidebar .sidebarFooter{
   display: flex !important;
   flex-direction: column;
@@ -10028,16 +9940,14 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   padding: 0 12px 12px;
 }
 .sidebar .themeTriggerCol{ position: relative; width: 100%; }
-/* 겹침 원인 진단 (spec §D-1, 세로 배치로 근본 해결 §D-0-1): line 39의
-   레거시 `.sidebar .themeTrigger{ min-width:118px }`가 예전 가로 2분할
-   레이아웃 때부터 남아있었다. 지금은 두 버튼 모두 폭 100%를 쓰므로 더는
-   충돌하지 않지만, 높이만큼은 두 버튼이 정확히 같아야 하므로 고정값으로
-   맞춘다 (spec: "두 버튼의 폭과 높이가 정확히 같아야 한다"). */
+/* 두 버튼의 폭과 높이가 정확히 같아야 하므로 높이를 고정값으로 맞춘다.
+   파일 앞쪽의 `.sidebar .themeTrigger{ min-width:118px }`가 아직 살아
+   있지만, 여기서 두 버튼 모두 폭 100%를 쓰므로 충돌하지 않는다. */
 .sidebar .themeTriggerCol .themeTrigger,
 .sidebar .settingsTrigger,
-/* NF-3: 모델 학습·모델 분석·자동화는 이 규칙 밖의 .themeToggle 기본값
-   (min-height:38px, padding:0 11px)만 쓰고 있어 화면 모드·알림 설정과
-   치수가 어긋났다 -- 네 버튼 모두 여기로 통일한다. */
+/* 모델 학습·모델 분석 트리거가 이 셀렉터에서 빠지면 .themeToggle 기본값
+   (min-height:38px, padding:0 11px)만 적용돼 화면 모드·알림 설정 버튼과
+   치수가 어긋난다 -- 네 버튼을 모두 여기에 묶는다. */
 .sidebar .trainingTrigger,
 .sidebar .analysisTrigger{
   width: 100%;
@@ -10045,7 +9955,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   min-width: 0;
   box-sizing: border-box;
   /* 사이드바 기존 메뉴 항목(.navigationItem: padding 0 12px, gap 11px)과
-     맞춘 정렬 -- 하단 버튼만 다르게 보이지 않도록 한다 (spec §D-0-1). */
+     맞춘 정렬 -- 하단 버튼만 다르게 보이지 않도록 한다. */
   padding: 0 12px;
   gap: 10px;
 }
@@ -10056,9 +9966,8 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   background: rgba(255, 255, 255, 0.18);
 }
 
-/* 접힘 상태: 아이콘만 세로로 쌓는다 (spec §A-2 "접힘 상태에서는 아이콘만
-   세로로 쌓는다", 체크리스트 4번). 같은 마크업을 재사용하고 라벨/셰브론만
-   숨긴다 -- 분기를 늘리지 않는다. */
+/* 접힘 상태: 아이콘만 세로로 쌓는다. 같은 마크업을 재사용하고
+   라벨/셰브론만 숨긴다 -- 분기를 늘리지 않는다. */
 .sidebar.collapsed .sidebarFooter{
   flex-direction: column;
   gap: 6px;
@@ -10077,19 +9986,15 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .sidebar.collapsed .themeChevron{
   display: none;
 }
-/* U-2: 하단 3버튼(모델 학습·자동화/알림 설정/화면 모드)은 펼침 상태에서
-   텍스트만 -- 라벨이 이미 있으므로 아이콘이 정보를 더하지 않는다. 접힘
-   상태(위 라벨 숨김과 대칭)는 라벨이 없으므로 아이콘을 유지한다. */
-.sidebar:not(.collapsed) .themeTriggerIcon{
-  display: none;
-}
+/* 하단 4버튼(모델 학습·모델 분석·알림 설정·화면 모드)은 접힘·펼침 모두
+   같은 아이콘을 보여준다 -- 펼침 상태에서만 라벨이 추가로 붙는다. */
 
-/* 접힘 상태 호버 배경 (spec §D-3) -- railNavItem(.railNav 아이콘)과 완전히
-   같은 값(rgba(255,255,255,.1), radius 12px)을 쓴다. .themeTrigger는
-   line 8353의 레거시 규칙에서 항상 켜진 배경/테두리(rgba(255,255,255,.1)
-   ~.22)를 물려받아 hover가 "새로 뜨는 배경"으로 보이지 않았다 -- 접힘
-   상태에서는 그 배경/테두리를 지우고 다른 rail 아이콘처럼 기본 투명,
-   hover에서만 배경이 뜨게 만든다. Theme·설정 버튼 모두 같은 클래스를 쓴다. */
+/* 접힘 상태 호버 배경 -- railNavItem(.railNav 아이콘)과 완전히 같은 값
+   (rgba(255,255,255,.1), radius 12px)을 쓴다. .themeTrigger는 파일
+   앞쪽 규칙에서 항상 켜진 배경/테두리(rgba(255,255,255,.1)~.22)를
+   물려받으므로, 접힘 상태에서는 그 배경/테두리를 지워야 hover가 "새로
+   뜨는 배경"으로 읽힌다 -- 다른 rail 아이콘처럼 기본은 투명,
+   hover에서만 배경이 뜬다. Theme·설정 버튼 모두 같은 클래스를 쓴다. */
 .sidebar.collapsed .railIconButton{
   background: transparent;
   border-color: transparent;
@@ -10101,11 +10006,11 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   border-radius: var(--radius-panel);
 }
 
-/* 접힘 상태 Theme 패널 포털 (spec §D-2) -- .sidebarSurface가
+/* 접힘 상태 Theme 패널 포털 -- .sidebarSurface가
    overflow:hidden이라(카드 코너를 둥글게 유지하기 위해) 컨테이너 내부에
-   그대로 두면 잘린다. document.body로 포털돼 더 이상 `.sidebar` 하위가
-   아니므로, 기존 `.sidebar .themeMenu`(네이비 유리 카드) 스타일에 기대지
-   않고 이 카드 자체로 완결된 스타일을 갖는다 -- 일반 드롭다운 카드와
+   그대로 두면 잘린다. document.body로 포털돼 `.sidebar` 하위가 아니므로,
+   `.sidebar .themeMenu`(네이비 유리 카드) 스타일에 기대지 않고 이 카드
+   자체로 완결된 스타일을 갖는다 -- 일반 드롭다운 카드와
    같은 톤(라이트/다크 모두 var()로 대응)이며, z-index도 기존 드롭다운
    포털(DatasetSelector)과 같은 레이어(--z-dropdown)를 쓴다. */
 .themeMenuPortal{
@@ -10126,7 +10031,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   color: var(--text-secondary);
 }
 
-/* -- §B: Theme 옵션 아이콘 (lucide-react, 이모지 아님) ------------------ */
+/* -- Theme 옵션 아이콘 (lucide-react, 이모지 아님) --------------------- */
 .themeOptions button{
   display: inline-flex;
   align-items: center;
@@ -10142,7 +10047,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   color: var(--accent);
 }
 
-/* -- §A-3/§C: 설정 패널 --------------------------------------------- */
+/* -- 설정 패널 ------------------------------------------------------- */
 .settingsPanelBackdrop{
   position: fixed;
   inset: 0;
@@ -10189,24 +10094,33 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .settingsSection h3{ margin: 0 0 4px; font-size: var(--fs-body); font-weight: 600; }
 .settingsSectionDesc{ margin: 0 0 12px; font-size: var(--fs-sm); color: var(--text-secondary); }
 
-/* 지시서 I-2: 모델 학습 팝업 -- 3줄 읽기전용 정보 + SQL 필드 행. */
+/* 모델 학습 팝업 -- 3줄 읽기전용 정보 + SQL 필드 행. */
 .trainingInfoList{ margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .trainingInfoList > div{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-/* 지시서 N-6: 상단 3줄(최근 학습·학습 파일·데이터 크기)을 등폭으로, 키는
+/* 상단 3줄(최근 학습·학습 파일·데이터 크기)을 등폭으로, 키는
    헤더 컨텍스트 스트립과 같은 소형 대문자 스타일로. */
 .trainingInfoList dt{ font: 500 10px var(--font-data); letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
 .trainingInfoList dd{ margin: 0; font: 600 13px var(--font-data); font-variant-numeric: tabular-nums; text-align: right; color: var(--text-primary); }
-/* AD그룹: 자동화 상태(연결 점 + 라벨) / 챔피언 ID(길면 말줄임 + 툴팁 전체
+/* 자동화 상태(연결 점 + 라벨) / 챔피언 ID(길면 말줄임 + 툴팁 전체
    표시, title 속성으로). */
 .trainingAutomationStatus{ display: inline-flex; align-items: center; gap: 6px; }
 .trainingAutomationStatus.offline .sidebarStatusDot{ background: var(--text-muted); }
 .trainingChampionId{ max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+/* 학습 팝업 "모델 성능" -- 전체 Y 홀드아웃 지표 5행(Adjusted R² · RMSE ·
+   MAE · MSE · AUC). 지표 이름 아래 한 줄 설명을 두고 값은 오른쪽 등폭으로
+   정렬한다. 모드별(Y1~Y5) 근거 강도는 여기 넣지 않는다 -- 원인분석 화면 몫. */
+.modelMetricList{ margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.modelMetricList > div{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.modelMetricList dt{ display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.modelMetricList dd{ margin: 0; font: 600 13px var(--font-data); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; color: var(--text-primary); }
+.modelMetricName{ font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
+.modelMetricNote{ font-size: var(--fs-xs); color: var(--text-muted); }
 .trainingSqlRow{ display: flex; gap: 10px; margin-bottom: 10px; }
 .trainingSqlRow .notifyFieldLabel{ flex: 1 1 auto; }
 .trainingSqlRow .trainingPortField{ flex: 0 0 110px; }
 
-/* -- §C-2: 채널 카드 (지시서 N-5: 옛 디자인 잔존 정리 -- radius/테두리를
-   토큰으로, 연결 상태 배지는 무채색+신호색 테두리로, 입력·버튼 높이 통일) */
+/* -- 채널 카드 -- radius/테두리는 토큰, 연결 상태 배지는 무채색+신호색
+   테두리, 입력·버튼 높이는 통일한다. */
 .notifyChannelList{ display: flex; flex-direction: column; gap: 10px; }
 .notifyChannelCard{
   border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px;
@@ -10266,7 +10180,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   background: transparent; border: 1px solid var(--sig-amber); color: var(--sig-amber);
 }
 .notifyChannelNote{ margin: 0; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
-/* EA-3: 봇 username 미설정 안내 -- 설정 누락이지 오류가 아니므로
+/* 봇 username 미설정 안내 -- 설정 누락이지 오류가 아니므로
    경고/오류 색을 쓰지 않는다. */
 .notifyChannelMuted{ margin: 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; }
 .notifyChannelPendingNote{
@@ -10287,27 +10201,19 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .notifyTestResult.ok{ color: var(--sig-green); }
 .notifyTestResult.error{ color: var(--sig-red); }
 .notifyFormActions{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* SE-3: 알림 기록 -- 발송 당시 메시지 원문을 등폭 서체로 그대로 보여준다. */
+/* 알림 기록 -- 발송 당시 메시지 원문을 등폭 서체로 그대로 보여준다. */
 .notifyHistoryMessage{ display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
 .notifyHistoryMessageText{
   margin: 0; padding: 12px; border-radius: var(--radius-panel); border: 1px solid var(--line);
   background: var(--surface); color: var(--text-primary); font-family: var(--font-data);
   font-size: var(--fs-xs); line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow-y: auto;
 }
-/* 지시서 N-6: 모델 학습 팝업에서 "설정 저장" 버튼이 Refresh Time 입력칸
-   바로 아래에 붙어 입력칸의 일부처럼 보이던 문제 -- 숫자 입력 필드 바로
-   다음에 오는 버튼 행에만 위 여백을 준다. */
+/* 숫자 입력 필드 바로 다음에 오는 버튼 행에만 위 여백을 준다 -- 없으면
+   "설정 저장" 버튼이 Refresh Time 입력칸에 붙어 입력칸의 일부처럼
+   보인다. */
 .notifyFieldLabel + .notifyFormActions{ margin-top: 14px; }
 
-/* -- §C-4: 발송 조건 (지시서 N-5) -- 등급은 실제 알람 등급이므로 신호색을
-   유지하되 배경 채움 없이 테두리+텍스트로만(그레이드별 색은
-   ALARM_GRADE_COLOR를 컴포넌트에서 인라인으로 적용한다). 발송 시점은
-   산점도의 .scatterViewToggle 세그먼트 스타일을 그대로 재사용한다. */
-.notifyConditions{ display: flex; flex-direction: column; gap: 14px; }
-.notifyConditionsRow{ display: flex; flex-direction: column; gap: 6px; }
-.notifyConditionsLabel{ font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
-
-/* EB-5: 발송 정책 안내 -- 토글이 아니라 현재 정책을 보여주기만 하는
+/* 발송 정책 안내 -- 토글이 아니라 현재 정책을 보여주기만 하는
    정보성 문구라 위 게이트 안내와 같은 스타일을 쓴다. */
 .notifyDispatchPolicyNote{
   margin: 4px 0 0; padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); line-height: 1.6;
@@ -10319,10 +10225,10 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   .settingsPanel{ width: 100%; max-height: 90vh; border-radius: 18px 18px 0 0; }
 }
 
-/* -- §A-2 모바일 탭바: 설정 탭 (버튼, <a>가 아니므로 기본 스타일 리셋) --- */
+/* -- 모바일 탭바: 설정 탭 (버튼, <a>가 아니므로 기본 스타일 리셋) ------- */
 .mobileTabButton{ border: none; cursor: pointer; font: inherit; }
 
-/* -- §E-6: 전처리 비교 로딩 스켈레톤 ------------------------------------ */
+/* -- 전처리 비교 로딩 스켈레톤 ------------------------------------------ */
 .benchmarkTableSkeleton{ display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
 .benchmarkTableSkeleton .skeletonRow{
   height: 34px; border-radius: 8px;
@@ -10337,7 +10243,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .preprocessingWinnerNote,
 .preprocessingTieNote{ color: var(--text-muted); }
 
-/* -- 모니터링 홈 §4③: Model > EQ > Chamber 트리맵. 계층별 flex-grow를
+/* -- Model > EQ > Chamber 트리맵. 계층별 flex-grow를
    n(웨이퍼 수)에 비례시켜 "면적 = n"을 얻는다 -- 별도 treemap 라이브러리
    없이 중첩 flexbox만으로 정확히 비례한다. 이 레이아웃 자체는 기존 카드에
    없는 새 구조라 전용 클래스가 필요하다(컨테이너/툴팁/빈 상태는
@@ -10382,40 +10288,15 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   .monitoringTreemap{ height: 420px; }
 }
 
-/* AF그룹: "최신화" 버튼 -- 페이지 제목과 같은 줄, 우측 정렬. .button.secondary
+/* "최신화" 버튼 -- 페이지 제목과 같은 줄, 우측 정렬. .button.secondary
    (테두리)를 그대로 쓴다 -- 채워진 primary로 만들지 않는다(모니터링은
    읽기 전용이 원칙, 이 버튼은 자동 갱신을 기다리지 않을 때의 보조 수단). */
 .monitoringHeadingRow{ display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .monitoringRefreshButton{ flex: 0 0 auto; }
 
-/* 지시서 K-1: 수율 갭 고정 스케일 막대. 트랙 폭은 항상 80~95% 스케일을
-   나타낸다 -- 관측값에 맞춰 자동으로 넓어지거나 좁아지지 않는다. */
-
-/* 근거 밴드 (지시서 §E, 보정 §I-1) -- EvidenceBand.tsx 공유 컴포넌트.
-   SUMMARY(전체 폭, 라벨 포함)와 알람 목록 행(mini, 96px, 라벨 없음)이
-   이 클래스들을 그대로 공유한다. */
-
-/* GA-5: 집계 구간(SUMMARY)은 웨이퍼 구간보다 훨씬 좁아(약 ±0.2%p) 고정
-   스케일(80~95)에서 %폭이 선처럼 사라질 수 있다 -- 트랙 폭이 좁은
-   화면에서도 채워진 구간이 항상 보이도록 최소 3px를 절대값으로
-   보장한다(퍼센트 기반 최소폭만으로는 좁은 트랙에서 1px 밑으로
-   내려간다). */
-
-/* Y-5/Y-6: --ink은 사이드바 전용 고정 남색이라 의도적으로 다크
-   오버라이드가 없다(위 5605행 주석) -- 그런데 이 경계선은 사이드바가
-   아니라 다크 패널 위의 얇은 마커라, 그대로 상속하면 #0e1621 35%가
-   #252527 위에서 1.07:1(사실상 안 보임)이 된다. --ink 토큰 자체는
-   건드리지 않고 이 규칙에서만 다크 전용 색을 준다(text-primary 35% =
-   약 3.0:1). */
-
-/* HE-1 3순위: 2단 배치로도 자리가 안 나면(극단적으로 좁은 구간) 라벨
-   텍스트 대신 작은 점만 남기고 값은 title 툴팁으로만 제공한다 -- 완전히
-   숨기지 않고(추측하지 않는다는 원칙과 같은 이유로 "존재"는 표시) 위치는
-   보존한다. */
-
-/* 보정 §I-1: 알람 목록 행에 미니 근거 밴드가 붙으며 행 높이가 늘었다 --
-   고정 --scroll-row-h(기본 42px)를 이 표에서만 늘려 ALARM_VISIBLE_ROWS(7)가
-   여전히 잘리지 않고 보이게 한다. .tableHideOnMobile은 이 페이지의 알람
+/* 알람 목록 행에는 미니 근거 밴드가 들어가 행 높이가 크므로, 고정
+   --scroll-row-h(기본 42px)를 이 표에서만 늘려 ALARM_VISIBLE_ROWS(7)가
+   잘리지 않고 보이게 한다. .tableHideOnMobile은 이 페이지의 알람
    표에만 쓰이는 클래스라 다른 hScroll 표(개선 권장 목록)에는 영향이
    없다. */
 .tableHideOnMobile .tableScroll.hScroll{ --scroll-row-h: 54px; }
@@ -10517,7 +10398,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   vertical-align: middle;
   line-height: 1.6;
 }
-/* AB그룹: "정상은 무채색" 규율의 의도적 예외 -- 근거 있는 인자(강함·보통)를
+/* "정상은 무채색" 규율의 의도적 예외 -- 근거 있는 인자(강함·보통)를
    빠르게 찾는 것이 이 배지의 목적이라 그 둘만 신호색을 쓴다. 배경은
    채우지 않는다(테두리+글자만) -- 알람 등급 배지(채워진 pill)와 형태로
    구분되어야 혼동이 없다. 예외를 상관성 4단계 밖으로 넓히지 않는다. */
@@ -10531,7 +10412,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 }
 .confidenceBadge.adopted{ border-color: var(--sig-green); color: var(--sig-green); background: transparent; }
 
-/* QA-2: "표본 부족" 배지 -- confidenceBadge와 형태를 맞추되(테두리+글자만)
+/* "표본 부족" 배지 -- confidenceBadge와 형태를 맞추되(테두리+글자만)
    사선 해치로 "판정은 하되 확실하진 않다"를 시각적으로 구분한다. 등급
    배지 자체는 이미 한 단계 낮춰져 있으므로, 이 배지는 "왜 낮은지"를
    보충 설명하는 역할이다. */
@@ -10560,13 +10441,11 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .alertCell{ text-align: right; font-variant-numeric: tabular-nums; }
 .alertCell.measured{ color: var(--text-primary); border: 1px solid var(--border); }
 .alertCell.gray{ background: var(--surface-tertiary); color: var(--text-muted); }
-/* RC-4b 팔레트는 --sig-red/--measured 재사용을 제안하지만, 그 두 토큰은
+/* 여기서는 --sig-red/--measured를 재사용하지 않는다 -- 그 두 토큰은
    다크 모드에서 이미 밝은 색(#EE6B76/#7BA3E8, 어두운 배경 위 강조색
-   용도)으로 바뀌어 있다 -- 그 값을 그대로 배경에 쓰고 흰 글자를
-   얹으면 다크 모드에서 대비가 무너진다(지시서가 예로 든 트리맵
-   #0B0B0B 고정과 같은 종류의 문제를 반대 방향에서 만드는 것과 같다).
-   "대비 4.5:1 이상, 다크 모드에서도 확인"이 "기존 토큰 재사용"보다
-   우선한다고 보고, 라이트/다크 공통으로 대비를 미리 확인한 고정
+   용도)이라, 그 값을 배경으로 쓰고 흰 글자를 얹으면 다크에서 대비가
+   무너진다. 대비 4.5:1 이상을 지키는 것이 토큰 재사용보다 우선하므로,
+   라이트/다크 공통으로 대비를 미리 확인한 고정
    팔레트를 쓴다(히트맵의 고정 발산 팔레트 THEME_COLORS와 같은 이유 --
    데이터 인코딩 색은 앱 테마와 무관하게 항상 식별 가능해야 한다). */
 .alertCell.red.dark{ background: #DC2626; color: #fff; }
@@ -10577,7 +10456,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .alertCell.blue.light{ background: #DBEAFE; color: #1E3A8A; }
 
 /* ===================================================================
-   VB그룹: 수율 예측 표 -- 16열 + 가로 스크롤 + 순위·LOT_WF_ID 2열 sticky.
+   수율 예측 표 -- 16열 + 가로 스크롤 + 순위·LOT_WF_ID 2열 sticky.
    .tableScroll.hScroll의 첫 열 sticky 규칙(위 "알람 테이블 가로 스크롤"
    섹션)은 열 1개 기준이라 재사용하지 않고, 이 표 전용으로 두 열을
    각자 고정한다 -- 순위 열 폭을 고정해야 LOT_WF_ID 열의 left 오프셋이
@@ -10586,12 +10465,12 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .ypColRank{ width: 52px; min-width: 52px; max-width: 52px; text-align: center; white-space: nowrap; }
 .ypColWafer{ min-width: 112px; white-space: nowrap; }
 .ypColCoreFactor{ min-width: 148px; white-space: nowrap; }
-/* VB-1/YC-1: "권장사항"은 마지막, white-space:normal, 최소 폭 320px --
+/* "권장사항"은 마지막, white-space:normal, 최소 폭 320px --
    다른 열을 좁히지 않고 가로 스크롤로 확보한다(표는 이미 hScroll
    래퍼 안에 있어 폭을 넓히면 자동으로 스크롤이 생긴다). */
 .ypColRecommendation{ min-width: 420px; white-space: normal; overflow: visible; text-overflow: clip; }
 
-/* sticky 좌측 2열. z-index 우선순위(지시서 VB-1): 헤더+sticky 교차점 >
+/* sticky 좌측 2열. z-index 우선순위: 헤더+sticky 교차점 >
    헤더 > sticky열 > 일반셀 -- 위에서 정의한 --z-sticky-seg 스케일을
    그대로 쓴다(헤더행은 이미 .tableWrap th에서 top:0 sticky). */
 .ypTable td.ypColRank,
@@ -10616,17 +10495,26 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 html[data-theme="dark"] .ypTable td.ypColWafer,
 html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.5); }
 
-/* VA-4: 핵심 인자 표시("Step18_R1 (82.5%)") -- 괄호 안 기여율은 부차
+/* 핵심 인자 표시("Step18_R1 (82.5%)") -- 괄호 안 기여율은 부차
    정보라 옅게, 인자 없음은 --text-muted. */
 .ypCoreFactorPct{ color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .ypCoreFactorEmpty{ color: var(--text-muted); }
 
-/* VC-1: 신뢰도 n/5 -- 0/5는 위험색, 1/5는 주의색, 2/5 이상은 기본색. */
+/* 기여율 구간별 색 강도 (60%+/20~60%/10~20%/10% 미만) -- 10%가
+   신뢰도 카운트 기준(DISPLAY_CONTRIBUTION_THRESHOLD_PCT)과 일치하는
+   색 유무의 경계다. 미계측은 근거가 없으므로 항상 muted. */
+.ypCoreFactorTierStrong{ color: var(--measured); font-weight: 600; }
+.ypCoreFactorTierMedium{ color: color-mix(in srgb, var(--measured) 70%, var(--text-primary)); }
+.ypCoreFactorTierLight{ color: color-mix(in srgb, var(--measured) 40%, var(--text-secondary)); }
+.ypCoreFactorTierMuted{ color: var(--text-muted); }
+.ypCoreFactorUnmeasured{ color: var(--text-muted); }
+
+/* 신뢰도 n/5 -- 0/5는 위험색, 1/5는 주의색, 2/5 이상은 기본색. */
 .ypReliabilityCell{ font-variant-numeric: tabular-nums; text-align: center; color: var(--text-secondary); }
 .ypReliabilityCell.zero{ color: var(--sig-red); font-weight: 600; }
 .ypReliabilityCell.low{ color: var(--sig-amber); font-weight: 600; }
 
-/* VD-5/YC-3: 권장사항 최대 3줄 말줄임(조정 인자 최대 2줄 + 미계측
+/* 권장사항 최대 3줄 말줄임(조정 인자 최대 2줄 + 미계측
    요약 1줄 = 정확히 3줄이 가장 흔한 경우) -- 전체 문장은 title
    툴팁으로. 문장 내 줄바꿈(\n)을 그대로 보여주기 위해
    white-space:pre-line을 쓰고, 그 위에 3줄로 클램프한다. */
@@ -10676,11 +10564,10 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
   background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--ink);
   border-radius: var(--radius-panel); padding: 16px 18px;
 }
-/* Y-5/Y-6: --ink은 사이드바 전용이라 다크에서 의도적으로 그대로다 --
-   이 "위계 1" 식별 상단 선도 --panel 위에 얹히는 전경 요소라 그대로
-   상속하면 1.19:1(거의 안 보임)이 된다.
-   라이트에서 ink가 흰 배경 위 ~15:1이었던 것과 같은 무게로,
-   --text-primary(다크 ~14:1)를 쓴다. */
+/* --ink은 사이드바 전용이라 다크 오버라이드가 의도적으로 없다 -- 이
+   "위계 1" 식별 상단 선은 --panel 위에 얹히는 전경 요소라, --ink을 그대로
+   상속하면 1.19:1(거의 안 보임)이 된다. 라이트에서 ink가 흰 배경 위
+   ~15:1인 것과 같은 무게로 --text-primary(다크 ~14:1)를 쓴다. */
 html[data-theme="dark"] .panel-primary,
 html[data-theme="dark"] .resultCard.panel-primary{
   border-top-color: var(--text-primary);
@@ -10707,9 +10594,9 @@ html[data-theme="dark"] .resultCard.panel-primary{
 
 /* ── E. 근거 밴드: 모델 추정치 아래 동일한 구간 트랙 (3곳 공용) ──────── */
 
-/* 보정 §I-1: 계측 우선순위의 "수율 기여" 0-채움 바는 근거 밴드가 아니다
+/* 계측 우선순위의 "수율 기여" 0-채움 바는 근거 밴드가 아니다
    -- "어디부터 어디까지 불확실한가"(구간, 양끝이 열림)가 아니라 "얼마나
-   찼는가"(진행률, 0에서 시작)를 말하므로 별도 클래스로 분리했다. tick을
+   찼는가"(진행률, 0에서 시작)를 말하므로 별도 클래스다. tick을
    쓰지 않고, 트랙 자체가 0-fill 스타일로 다르게 읽히도록 border-radius를
    남겨 "진행 바"라는 인상을 유지한다. */
 .contribution-bar{ width: 96px; }
@@ -10772,10 +10659,8 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   box-shadow: inset 2px 0 0 #fff;
 }
 .sidebar .railNavItem.active{ background: transparent; box-shadow: inset 2px 0 0 #fff; }
-/* AD그룹: .sidebarStatus/.sidebarStatusRow와 접힘 상태 규칙은 죽었다
-   (Sidebar.tsx의 CHAMPION/SNAPSHOT/SQL 세 줄 블록을 제거하면서 유일한
-   사용처가 사라졌다 -- 정보는 TrainingPanel.tsx로 옮겼다). .sidebarStatusDot은
-   TrainingPanel의 "자동화" 행이 그대로 재사용하므로 남긴다. */
+/* .sidebarStatusDot은 이름과 달리 사이드바가 아니라 TrainingPanel.tsx의
+   "자동화" 행이 쓴다. */
 .sidebarStatusDot{
   width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
   background: var(--sig-green);
@@ -10784,9 +10669,8 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 /* 연결됨(초록)/미연결(회색)/오류(주황) 3단계. offline은 이미 회색이라
    재사용하고, error만 새로 추가한다. */
 .sidebarStatusDot.error{ background: var(--sig-amber); }
-/* ME-2: 모델 학습·모델 분석·자동화·알림 설정 세 버튼 전부 같은 위치
-   규칙을 쓴다(RA-1 시절에는 분석 버튼 전용이었다) -- 접힘 상태에서도
-   점이 보여야 한다(지시서 "접힘 상태에서도 점은 보인다"). */
+/* 모델 학습·모델 분석·알림 설정 버튼 전부 같은 위치 규칙을 쓴다 --
+   접힘 상태에서도 상태 점은 보여야 한다. */
 .trainingTrigger,
 .analysisTrigger,
 .settingsTrigger{ position: relative; }
@@ -10801,16 +10685,12 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .analysisTrigger.railIconButton .sidebarStatusDot,
 .settingsTrigger.railIconButton .sidebarStatusDot{ top: 4px; right: 4px; }
 
-/* MA-3: 모니터링 홈 재설계로 FMEA 분석표(FmeaTable.tsx)·권고 조치/계측
-   확대(ActionBlock.tsx)·요약 카드(SummaryCards.tsx)·모드별 손실 막대
-   (ModeLossBars.tsx)·수율 분포 히스토그램(YieldHistogram.tsx)이 전부
-   삭제됐다 -- 그 컴포넌트 전용 CSS도 함께 지웠다. `.fmeaFeatureLink`
-   만 예외로 남긴다: 새 블록①(ActionPriorityBlock.tsx)·블록②
-   (CoverageBlock.tsx)이 같은 "잠재 원인 강조 링크" 스타일을 그대로
-   재사용한다. */
+/* `.fmeaFeatureLink`는 이름과 달리 FMEA 표 전용이 아니다 --
+   블록①(ActionPriorityBlock.tsx)·블록②(CoverageBlock.tsx)이 같은
+   "잠재 원인 강조 링크" 스타일로 쓴다. */
 .fmeaFeatureLink{ color: var(--measured); font-weight: 600; }
 
-/* ---- 모니터링 홈 블록①: 조치 우선순위 (작업 지시서 MB) -------------- */
+/* ---- 모니터링 홈 블록①: 조치 우선순위 --------------------------------- */
 .actionPrioritySortSelect{
   font-size: var(--fs-sm); padding: 6px 10px; border-radius: var(--radius-control);
   border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
@@ -10819,7 +10699,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .actionPriorityRow.dimmed{ opacity: 0.45; }
 .actionPriorityRankTop{ color: var(--sig-red); font-weight: 700; }
 .actionPriorityTargetTag{ margin-left: 6px; font-size: var(--fs-xs); color: var(--text-secondary); font-weight: 400; }
-/* MB-1b: 같은 타깃이 이어지는 행은 타깃명을 생략하고 좌측 세로선으로만
+/* 같은 타깃이 이어지는 행은 타깃명을 생략하고 좌측 세로선으로만
    묶음을 드러낸다(정렬을 깨면서까지 강제로 붙이지 않는다 -- 그냥 정렬
    결과가 우연히 인접했을 때만 보이는 표시). */
 .actionPriorityGrouped{ border-left: 2px solid var(--border); padding-left: 8px; }
@@ -10830,15 +10710,15 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .actionPriorityPositive{ color: var(--sig-green); font-weight: 600; }
 .actionPriorityDimReason{ color: var(--text-secondary); font-size: var(--fs-sm); font-style: italic; }
 
-/* ---- 모니터링 홈 블록②: 조치 가능 범위 (작업 지시서 MC) -------------- */
+/* ---- 모니터링 홈 블록②: 조치 가능 범위 -------------------------------- */
 .coverageLegend{ display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--text-secondary); margin: 8px 0 14px; }
 .coverageLegend span{ display: inline-flex; align-items: center; gap: 6px; }
 .coverageLegendSwatch{ display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
 .coverageRow{ margin-bottom: 14px; }
 .coverageRow:last-child{ margin-bottom: 0; }
 .coverageRowHead{ display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
-/* MC-2: 전체 1,000장을 분모로 그린다 -- 계측된 것만 100%로 그리지
-   않는다(지시서 "하지 말 것"). 미계측이 85~93%라 트랙 대부분이 배경색
+/* 전체 1,000장을 분모로 그린다 -- 계측된 것만 100%로 그리지
+   않는다. 미계측이 85~93%라 트랙 대부분이 배경색
    (빈 트랙)으로 보이는 것이 정상이다. */
 .coverageTrack{
   display: flex; height: 16px; border-radius: 4px; overflow: hidden;
@@ -10850,9 +10730,9 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .coverageSeg-unmeasured{ background: transparent; }
 .coverageRowCaption{ margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 
-/* ---- 작업 지시서 WL: 데이터 한계 진단(MNAR + 분산 분해) -------------- */
-/* MA-3 정리 중 실수로 함께 지웠다가 복원 -- DataLimitationDiagnostics.tsx
-   (블록③, 유일한 남은 소비처)가 여전히 쓴다. */
+/* ---- 데이터 한계 진단(MNAR + 분산 분해) ------------------------------ */
+/* .actionBlockSubheading의 유일한 사용처는 블록③
+   (DataLimitationDiagnostics.tsx)이다. */
 .actionBlockSubheading{ margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
 .fmeaFootnote{ margin: 8px 2px 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
 .limitsGrid{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 12px; }

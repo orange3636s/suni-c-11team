@@ -41,10 +41,9 @@ def _config_column_for(feature: str, df: pd.DataFrame) -> str | None:
     return candidate if candidate in df.columns else None
 
 
-# Kept as a private alias -- this module's own callers below were written
-# against the underscored name before `quantile_bins` moved to
-# screening/quantile_profile.py as the shared definition every consumer
-# (this module, recommendations.py, shape.py) reads from.
+# Private alias for the shared definition in screening/quantile_profile.py,
+# which every consumer (this module, recommendations.py, shape.py) reads
+# from. Do not reintroduce a local implementation.
 _quantile_bins = quantile_bins
 
 
@@ -69,7 +68,7 @@ def _resolve_optimal_center(
     now bin-mean-based -- see quantile_profile.py) against the train-side
     recommended window: both must agree, since a "최적 중심" outside its
     own "권장구간" is the exact contradiction this module exists to
-    prevent (spec §3-3). Only clamping-to-control-range can legitimately
+    prevent. Only clamping-to-control-range can legitimately
     push a correctly-computed center outside its window; when that
     happens the center is dropped (never forced back inside) and the
     reason surfaces to the caller for the disabled-toggle tooltip.
@@ -92,7 +91,7 @@ def _resolve_optimal_center(
 def _compute_methods(
     train_df: pd.DataFrame, factor: ParetoFactor, control_range: ControlRange, *, dataset_id: str
 ) -> dict[str, Any] | None:
-    """SPC/ML comparison for the 방식 토글 (spec §3) -- train-derived, same
+    """SPC/ML comparison for the 방식 토글 -- train-derived, same
     x/y pair `compute_control_range`/`compute_factor_recommendation` use.
     `None` for Config factors (no numeric x to fit either method on).
     """
@@ -123,8 +122,10 @@ class ScatterData:
     bins: list[dict[str, float]]
     optimal_center: float | None
     optimal_center_dropped_reason: str | None
-    eps2: float
-    spearman_r: float | None
+    adj_r2: float
+    # 1 or 2 -- the polynomial degree `adj_r2` was fit at (scatter chart's
+    # "R²=0.235 (2차)" meta line reads both from here).
+    degree: int | None
     p_value: float
     q_value: float
     significant: bool
@@ -143,13 +144,11 @@ def build_scatter_data(
     *,
     dataset_id: str,
 ) -> ScatterData:
-    """`train_df` derives the control-limit-derived bits still in use
-    (`points[].in_range` / `normal_range`, IQR*1.5). The PDP-based 경고선
-    that used to replace the LCL/UCL reference lines on screen was removed
-    (그 임계가 계측률에 비례해 반대로 작동하는 것이 검증되어 폐기됨) --
-    `reference_lines` below is just the control-range-derived lines.
-    `eval_df` supplies the plotted points and the per-reference-line
-    "outside count" (pass the same frame for both to inspect train itself).
+    """`train_df` derives the control-limit bits (`points[].in_range` /
+    `normal_range`, IQR*1.5); `reference_lines` is exactly those
+    control-range-derived lines and nothing else. `eval_df` supplies the
+    plotted points and the per-reference-line "outside count" (pass the
+    same frame for both to inspect train itself).
     """
     control_range = compute_control_range(train_df, factor)
     optimal_center, optimal_center_dropped_reason = _resolve_optimal_center(
@@ -181,15 +180,14 @@ def build_scatter_data(
         for row in frame.itertuples(index=False)
     ]
     if len(points) > SCATTER_POINT_MAX_ROWS:
-        # T2: 그 이상은 화면에서 겹쳐 안 보인다 -- 찍는 점만 균등 간격으로
-        # 줄인다. 통계량(n/eps2/outside_count/기준선)은 전부 위에서 이미
+        # 그 이상은 화면에서 겹쳐 안 보인다 -- 찍는 점만 균등 간격으로
+        # 줄인다. 통계량(n/adj_r2/outside_count/기준선)은 전부 위에서 이미
         # 전체 frame 기준으로 계산을 마쳤으니 이 아래로는 영향이 없다.
         stride = len(points) / SCATTER_POINT_MAX_ROWS
         points = [points[int(i * stride)] for i in range(SCATTER_POINT_MAX_ROWS)]
 
-    # 관리한계(iqr_lo/iqr_hi)는 더 이상 화면에 그리지 않는다. 나머지
-    # 참고선(mean/q1/q3/s3/s6)은 이미 화면에서 렌더되지 않던 값들이라
-    # 그대로 둔다 (JSON 소비자가 있을 수 있어 굳이 제거하지 않는다).
+    # 참고선은 전부 payload에 싣되, 화면에 그릴지는 `drawable` 플래그가
+    # 정한다 -- JSON을 직접 읽는 소비자가 있어 값 자체는 빼지 않는다.
     reference_lines = [
         {
             "key": line.key,
@@ -212,18 +210,18 @@ def build_scatter_data(
             "one_sided": control_range.one_sided,
             "fallback_applied": control_range.fallback_applied,
         },
-        # TC-5: 이 필드는 SPC 계열(recommendations.py/window_methods.py)과
-        # 같은 이유로 12구간 고정을 유지한다 -- Sturges는 히트맵/Pareto의
-        # eps2 계산에만 적용했다.
+        # SPC 계열(recommendations.py/window_methods.py)과 같은 이유로
+        # 12구간 고정이다 -- Sturges 자동 구간수는 히트맵/Pareto의
+        # Adjusted R² 계산에만 쓴다.
         bins=_quantile_bins(frame["x"], frame["y"], bins=DEFAULT_BINS),
         optimal_center=optimal_center,
         optimal_center_dropped_reason=optimal_center_dropped_reason,
-        eps2=factor.eps2,
-        spearman_r=factor.spearman_r,
+        adj_r2=factor.adj_r2,
+        degree=factor.degree,
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,
-        confidence_tier=effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled),
+        confidence_tier=effective_confidence_tier(factor.adj_r2, factor.p_value, under_sampled=factor.under_sampled),
         under_sampled=factor.under_sampled,
         relation_shape=factor.relation_shape,
         methods=methods,
@@ -253,7 +251,7 @@ class CategoricalGroup:
 @dataclass
 class CategoricalScatterData:
     groups: list[CategoricalGroup]
-    eps2: float
+    adj_r2: float
     p_value: float
     q_value: float
     significant: bool
@@ -292,11 +290,11 @@ def build_categorical_data(eval_df: pd.DataFrame, factor: ParetoFactor) -> Categ
 
     return CategoricalScatterData(
         groups=groups,
-        eps2=factor.eps2,
+        adj_r2=factor.adj_r2,
         p_value=factor.p_value,
         q_value=factor.q_value,
         significant=factor.significant,
-        confidence_tier=effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled),
+        confidence_tier=effective_confidence_tier(factor.adj_r2, factor.p_value, under_sampled=factor.under_sampled),
         n=len(frame),
         axis={
             "x_label": f"{factor.feature} (Step {factor.step} · 장비 설정)",

@@ -117,20 +117,17 @@ SCHEMA_CACHE_DATASETS = 2
 
 @lru_cache(maxsize=SCHEMA_CACHE_DATASETS)
 def _cached_schema(dataset_id: str, dataset_version: str) -> Any:
-    """UB-2 (perf): `parse_schema` re-walks every column of the dataframe
-    (regex match x ~90 columns) on every call -- individually cheap, but
+    """`parse_schema` re-walks every column of the dataframe (regex match
+    x ~90 columns) on every call -- individually cheap, but
     `get_screening_scatter` alone calls it fresh 50 times in one 5-target x
-    10-factor analysis run (target_hydration.py's own cache fixed the much
-    bigger cost -- model load/predict -- but left this uncached).
+    10-factor analysis run.
 
     `dataset_version` MUST stay in the cache key even though the function
-    body never reads it -- this project has hit the "cache key missing the
-    version" bug three times before (uploading a replacement dataset under
-    the same id must produce a fresh schema, not a stale one). Keying by
-    version alone is enough: content changes bump `dataset_version`, which
-    is itself a fresh key, so old entries just age out via `maxsize`
-    LRU eviction -- no explicit invalidation call is needed for this cache
-    (see the UB-3 invalidation-audit note in the perf commit message).
+    body never reads it: uploading a replacement dataset under the same id
+    must produce a fresh schema, not a stale one. Keying by version alone is
+    enough -- content changes bump `dataset_version`, which is itself a
+    fresh key, so old entries just age out via `maxsize` LRU eviction and no
+    explicit invalidation call is needed for this cache.
     """
     del dataset_version  # part of the cache key only, see docstring above
     df = get_dataset_registry().get_dataframe(dataset_id)
@@ -142,11 +139,11 @@ ANALYSIS_SAMPLE_CACHE_DATASETS = 2
 
 @lru_cache(maxsize=ANALYSIS_SAMPLE_CACHE_DATASETS)
 def _cached_analysis_sample(dataset_id: str, dataset_version: str) -> tuple[pd.DataFrame, SampleInfo]:
-    """작업지시 T2: 인자 순위(스크리닝/히트맵)만 필요한 단계는 하이드레이션된
+    """인자 순위(스크리닝/히트맵)만 필요한 단계는 하이드레이션된
     전체 데이터가 아니라 이 로트 단위 층화 표본을 쓴다 -- `_cached_ranked_rows_versioned`와
     `_cached_heatmap`이 둘 다 이 함수를 거치므로 같은 (dataset_id,
     dataset_version)에는 항상 같은 표본이 나온다(원인 분석 탭과 학습 탭이
-    바이트 단위로 같은 결과를 봐야 한다는 기존 불변식이 표본 도입 후에도
+    바이트 단위로 같은 결과를 봐야 한다는 불변식이 표본을 쓰는 경로에서도
     유지된다). 시드가 `dataset_version` 해시로 고정되므로 같은 데이터셋을
     다시 분석해도 같은 표본이 나온다.
 
@@ -159,7 +156,7 @@ def _cached_analysis_sample(dataset_id: str, dataset_version: str) -> tuple[pd.D
 
 
 def _single_flight(fn):
-    """B-4: `lru_cache`만으로는 같은 키가 아직 캐시되지 않은 상태에서
+    """`lru_cache`만으로는 같은 키가 아직 캐시되지 않은 상태에서
     동시에 두 스레드가 들어오면(예: 일일 발송 스케줄러 잡과 사용자의
     `/alarms` 요청이 겹치는 경우) 둘 다 캐시 미스를 보고 같은 무거운
     GBDT를 이중으로 적합시킨다. 키별 락으로 감싸 두 번째 호출은 첫 번째가
@@ -188,7 +185,7 @@ def _find_cached_factor(
     feature: str,
     provenance: Any | None = None,
 ) -> ParetoFactor | None:
-    """B-2: `find_factor`가 직접 부르는 `_ranked_rows_with_contribution`
+    """`find_factor`가 직접 부르는 `_ranked_rows_with_contribution`
     (88인자 ANOVA+FDR 전수 스코어링)을 다시 돌리지 않고, Pareto/heatmap이
     이미 채워 뒀을 `_cached_ranked_rows(dataset, target)`를 재사용한다.
     같은 (dataset, target) 기본 파라미터(fdr_alpha=0.05, min_n=100/20)로
@@ -202,10 +199,9 @@ def _find_cached_factor(
 
 @router.get("/screening/scatter", response_model=ScreeningScatterResponse)
 def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, Any]:
-    # UA-1 (perf measurement): per-phase timing for a scatter request -- a
-    # single "분석 실행" fires 5 targets x 10 factors of these, so a slow
-    # phase here is a slow phase x50. See UB's commit message for the
-    # before/after numbers this instrumentation produced.
+    # Per-phase timing for a scatter request -- a single "분석 실행" fires
+    # 5 targets x 10 factors of these, so a slow phase here is a slow
+    # phase x50.
     t_start = time.perf_counter()
     hydrated = _hydrated_targets_or_409(dataset)
     df = hydrated.dataframe
@@ -237,7 +233,7 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
     )
     # Only the bulky per-point/per-bin arrays are rounded -- they're what
     # actually drives payload size (108KB for 1,470 points); scalar stats
-    # (p_value/q_value/eps2) keep full precision since a very small
+    # (p_value/q_value/adj_r2) keep full precision since a very small
     # p-value (e.g. 7.7e-66) rounded to 4 decimals would collapse to a
     # meaningless 0.0 in the "p<0.001" exponential display.
     return {
@@ -247,8 +243,8 @@ def get_screening_scatter(dataset: str, target: str, feature: str) -> dict[str, 
         "bins": round_floats(data.bins),
         "optimal_center": data.optimal_center,
         "optimal_center_dropped_reason": data.optimal_center_dropped_reason,
-        "eps2": data.eps2,
-        "spearman_r": data.spearman_r,
+        "adj_r2": data.adj_r2,
+        "degree": data.degree,
         "p_value": data.p_value,
         "q_value": data.q_value,
         "significant": data.significant,
@@ -284,7 +280,7 @@ def get_screening_scatter_categorical(dataset: str, target: str, feature: str) -
     data = build_categorical_data(df, factor)
     return {
         "groups": round_floats([vars(group) for group in data.groups]),
-        "eps2": data.eps2,
+        "adj_r2": data.adj_r2,
         "p_value": data.p_value,
         "q_value": data.q_value,
         "significant": data.significant,
@@ -307,23 +303,26 @@ def _cached_heatmap(
 ) -> HeatmapData:
     # 데이터셋 내용은 dataset_id가 존재하는 한 불변이므로(업로드는 매번 새
     # uuid, 번들 파일은 정적) 이 캐시는 최근 2개 데이터셋만 LRU로 유지해
-    # 무한정 커지지 않는다. NG-1: categorical 보기를 제거해 kind 분기와
-    # 그만큼의 캐시 슬롯도 함께 없앴다.
+    # 무한정 커지지 않는다.
     del model_id, model_version, hydration_version
     df, sample_info = _cached_analysis_sample(dataset_id, dataset_version)
     schema = _cached_schema(dataset_id, dataset_version)
     heatmap = build_heatmap(df, schema)
     heatmap.sample_info = sample_info.as_dict() if sample_info.is_sampled else None
+    # 셀 툴팁 "계측률 %"의 분모 -- 셀의 n과 같은 프레임에서 세야 표본
+    # 사용 여부와 무관하게 비율이 맞는다.
+    heatmap.total_rows = len(df)
     return heatmap
 
 
 @router.get("/screening/heatmap", response_model=HeatmapResponse)
 def get_screening_heatmap(dataset: str = "train") -> dict[str, Any]:
     """The correlation heatmap used identically by both the training tab
-    and the root-cause tab: R+D x Y1~Y5, always both ε² and rho (TC-4).
-    NG-1: the Config x Y1~Y5 categorical view was removed -- 600 tests
-    found 0 FDR-significant Config factors, and the per-Config treemap tab
-    already covers that ground better.
+    and the root-cause tab: R+D x Y1~Y5, every cell reporting the same
+    Adjusted R² (+ polynomial degree) the scatter and Pareto views show.
+    Config factors are not part of this grid: 약 600건 검정에서 FDR을
+    통과한 Config 인자가 0건이고, Config별 트리맵 탭이 그 영역을 더 잘
+    다룬다.
     """
     t0 = time.perf_counter()
     hydrated = _hydrated_targets_or_409(dataset)
@@ -343,12 +342,14 @@ def get_screening_heatmap(dataset: str = "train") -> dict[str, Any]:
     )
     return {
         "dataset_id": dataset,
-        "metric": "eps2",
+        "metric": "adj_r2",
         "kind": "numeric",
         "features": heatmap.features,
         "targets": heatmap.targets,
         "values": heatmap.values,
-        "rho": heatmap.rho,
+        "degree": heatmap.degree,
+        "shape": heatmap.shape,
+        "optimal_center": heatmap.optimal_center,
         "n": heatmap.n,
         "q": heatmap.q,
         "significant": heatmap.significant,
@@ -356,6 +357,7 @@ def get_screening_heatmap(dataset: str = "train") -> dict[str, Any]:
         "gate_excluded": heatmap.gate_excluded,
         "scale": {"min": heatmap.scale["min"], "max": heatmap.scale["max"]},
         "excluded_configs": heatmap.excluded_configs,
+        "total_rows": heatmap.total_rows,
         "target_provenance": provenance.as_dict(),
         "sample_info": heatmap.sample_info,
     }
@@ -423,29 +425,30 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
             "feature": row["feature"],
             "kind": row["kind"],
             "step": row["step"],
-            "eps2": row["eps2"],
+            "adj_r2": row["adj_r2"],
+            "degree": row["degree"],
             "p_value": row["p_value"],
             "q_value": row["q_value"],
             "significant": row["significant"],
-            "confidence_tier": effective_confidence_tier(row["eps2"], row["p_value"], under_sampled=row.get("under_sampled", False)),
+            "confidence_tier": effective_confidence_tier(row["adj_r2"], row["p_value"], under_sampled=row.get("under_sampled", False)),
             "n_observed": row["n_observed"],
             "contribution_pct": row["contribution_pct"],
             "cumulative_pct": row["cumulative_pct"],
-            # QA-2: 배제 대신 "표본 부족" 배지로 표시 -- 하한(30) 이상이지만
+            # 배제 대신 "표본 부족" 배지로 표시 -- 하한(30) 이상이지만
             # 종류별 정상 판정 임계 미만인 경우 True.
             "under_sampled": row.get("under_sampled", False),
         }
         for row in top
     ]
     n80 = next((index + 1 for index, row in enumerate(ranked) if row["cumulative_pct"] >= 80.0), None)
-    # 차트 표시 규칙(spec §B)의 0개-타깃 안내 문구가 쓰는 전체 풀 집계치 --
+    # 차트 표시 규칙의 0개-타깃 안내 문구가 쓰는 전체 풀 집계치 --
     # 화면에 노출되는 top-5만으로는 "58건 중 FDR 통과 0건"을 계산할 수 없어
     # 여기서 전체 ranked 풀을 기준으로 함께 내려보낸다.
     fdr_pass_count = sum(1 for row in ranked if row["significant"])
     effect_size_pass_count = sum(
-        1 for row in ranked if effective_confidence_tier(row["eps2"], row["p_value"], under_sampled=row.get("under_sampled", False)) != "reference"
+        1 for row in ranked if effective_confidence_tier(row["adj_r2"], row["p_value"], under_sampled=row.get("under_sampled", False)) != "reference"
     )
-    max_eps2 = max((row["eps2"] for row in ranked), default=None)
+    max_adj_r2 = max((row["adj_r2"] for row in ranked), default=None)
     return {
         "dataset_id": dataset_id,
         "target": target,
@@ -453,7 +456,7 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
         "n80": n80,
         "fdr_pass_count": fdr_pass_count,
         "effect_size_pass_count": effect_size_pass_count,
-        "max_eps2": max_eps2,
+        "max_adj_r2": max_adj_r2,
         "items": items,
         "analyzable_target_samples": int(pd.to_numeric(hydrated.dataframe[target], errors="coerce").replace([np.inf, -np.inf], np.nan).notna().sum()),
         "model_available": bool(hydrated.provenance.model_id) or not hydrated.provenance.uses_predictions,
@@ -466,16 +469,13 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
 def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
     """모니터링 홈 블록③(데이터 한계) -- MNAR 계측 편향 + 분산 분해.
 
-    MA-3: 이 함수는 원래 FMEA 분석표(행별 권장구간·편차) 전체를
-    반환했지만, 그 표를 그리던 FmeaTable/ActionBlock이 모니터링 홈
-    재설계로 삭제되면서 행 데이터(`items`)의 유일한 소비처가 없어졌다
-    (블록①은 이제 `_action_priority_payload`가 train.CSV 기준으로 따로
-    낸다 -- 이 함수의 eval 기준 표와는 다른 산출물이다). 남은 소비처
-    (`DataLimitationDiagnostics`)는 `mnar_rate_report`/
-    `variance_decomposition`만 읽으므로 그 둘만 내려보낸다 -- payload가
-    작아진다(행마다 17개 필드였던 `items`가 통째로 빠진다).
-    `build_fmea_table`은 여전히 내부에서 호출한다 -- MNAR 리포트가 그
-    표의 (타깃, 인자) 쌍을 그대로 재사용하기 때문이다.
+    소비처(`DataLimitationDiagnostics`)는 `mnar_rate_report`/
+    `variance_decomposition`만 읽으므로 그 둘만 내려보낸다 -- FMEA 행
+    데이터(`items`, 행마다 17개 필드)는 payload에 싣지 않는다. 블록①은
+    `_action_priority_payload`가 train.CSV 기준으로 따로 내는 별개
+    산출물이다(이 함수는 eval 기준이다). `build_fmea_table` 자체는 내부에서
+    호출한다 -- MNAR 리포트가 그 표의 (타깃, 인자) 쌍을 그대로 재사용하기
+    때문이다.
     """
     hydrated = _hydrated_targets_or_409(dataset_id)
     df = hydrated.dataframe
@@ -523,17 +523,17 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
 
 def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
     """모니터링 홈 블록①(조치 우선순위)·블록②(조치 가능 범위) -- 항상
-    train.CSV 기준(작업 지시서 MB-6)이라 eval 데이터셋 선택과 무관하게
+    train.CSV 기준이라 eval 데이터셋 선택과 무관하게
     안정적이다. 랭킹(`_ranked_rows_for_provenance`)과 권장구간 계산
     (`compare_methods`의 자체 캐시)이 이미 프로세스 전역으로 캐시되어
-    있어(YF/ZD 성능 작업 참고) train 데이터셋이 바뀌지 않는 한 사실상
+    있어 train 데이터셋이 바뀌지 않는 한 사실상
     즉시 반환된다.
     """
     from src.analysis.action_priority import build_action_priority_table
     from src.analysis.data_limitations import compute_mode_variance_share
 
     hydrated = _hydrated_targets_or_409(train_dataset_id)
-    # T2: 인자 랭킹(`_ranked_rows_for_provenance`)은 내부적으로 표본을
+    # 인자 랭킹(`_ranked_rows_for_provenance`)은 내부적으로 표본을
     # 쓰지만, `build_action_priority_table`에는 일부러 전량 `df`를 그대로
     # 넘긴다 -- 이 표는 `total_wafers`/`out_of_range_count` 같은 실제
     # 웨이퍼 카운트를 산출하므로, 표본을 넘기면 "몇 장을 구제할 수
@@ -596,7 +596,7 @@ def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
 
 @router.get("/screening/pareto", response_model=ParetoRankingResponse)
 def get_screening_pareto(dataset: str = "train", target: str = "Y1", top_n: int = PARETO_TOP_N) -> dict[str, Any]:
-    """The top-eps2 Pareto ranking for one target across the full
+    """The top-adj_r2 Pareto ranking for one target across the full
     R+D+Config pool -- the shared source for both the training tab's
     screening table and the root-cause tab's Pareto chart, which show
     different counts (5 vs 10) and so must each pass their own `top_n`
@@ -620,10 +620,9 @@ def _alarm_factors(
     """Per-target alarm-eligible factors: every BH-FDR-significant factor
     (see select_fdr_significant_factors's docstring -- deliberately kept
     unchanged so the golden 19-alarm-wafer count doesn't move). Screen
-    display no longer gates on significance, but alarm generation still
-    does.
+    display does not gate on significance; alarm generation does.
 
-    B-3: reuses `_cached_ranked_rows(train_dataset_id, target)` instead of
+    Reuses `_cached_ranked_rows(train_dataset_id, target)` instead of
     `select_fdr_significant_factors` (which reruns the full 88-factor
     ANOVA+FDR scoring every call with identical default parameters) --
     same rows, same significance flags, just not recomputed from scratch.
@@ -673,19 +672,18 @@ def get_alarm_snapshot_history(limit: int = 20) -> dict[str, Any]:
 
 @router.get("/alerts/ranking", response_model=YieldPredictionResponse)
 def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, Any]:
-    """VA~VD: 수율 예측 순위 목록 -- y(=100 − Σ Y1~Y5, RC-3 실측 우선
-    규칙으로 채운 뒤 재계산) 오름차순 전체(신뢰도==0 웨이퍼는 제외)를
-    내려보낸다. 상위 10/전체 보기·검색·정렬 9종은 프런트가 이 목록
-    위에서 수행한다(VB그룹) -- `top_n`으로 서버가 미리 자르면 검색이
-    상위 10 밖의 웨이퍼를 찾지 못한다(VB-4: "검색 중에는 상위 10 제한을
-    해제한다").
+    """수율 예측 순위 목록 -- y(=100 − Σ Y1~Y5, 실측 우선 규칙으로 채운 뒤
+    재계산) 오름차순 전체(신뢰도==0 웨이퍼는 제외)를 내려보낸다. 상위
+    10/전체 보기·검색·정렬 9종은 프런트가 이 목록 위에서 수행한다 --
+    `top_n`으로 서버가 미리 자르면 검색이 상위 10 밖의 웨이퍼를 찾지
+    못한다(검색 중에는 상위 10 제한이 풀려야 한다).
 
-    SC그룹: 요청한 (train, eval)이 "모델 분석"이 마지막으로 저장한
+    요청한 (train, eval)이 "모델 분석"이 마지막으로 저장한
     스냅샷의 source와 일치하면, 그 파이프라인이 이미 계산해 둔 캐시를
     그대로 돌려준다(다시 계산하지 않는다 -- 화면 수치와 알림 수치가
     어긋나지 않게 하고, `analysis_id`를 함께 실어 네 화면이 같은 분석
     회차를 공유함을 드러낸다). 캐시가 없거나 다른 데이터셋을 요청한
-    경우(예: 미등록 조합을 미리보기)는 기존처럼 즉석 계산한다.
+    경우(예: 미등록 조합을 미리보기)는 그 자리에서 즉석 계산한다.
     """
     from src.analysis.yield_prediction import build_yield_prediction_table, serialize_yield_prediction_table
 
@@ -730,10 +728,10 @@ def _cached_report_payload(
     eval_dataset_version: str,
     model_version: str,
 ) -> dict[str, Any]:
-    # E-3(perf): 버전 인자 셋은 캐시 키에만 쓰인다(del 아래) --
+    # 버전 인자 셋은 캐시 키에만 쓰인다(del 아래) --
     # `_cached_schema`의 docstring이 설명하는 것과 같은 패턴: 학습/평가
     # 데이터셋이 재업로드되거나 챔피언 모델이 바뀌면 다른 키가 되어 자동
-    # 무효화되고, 옛 항목은 명시적 삭제 없이 maxsize LRU로 밀려난다.
+    # 무효화되고, 오래된 항목은 명시적 삭제 없이 maxsize LRU로 밀려난다.
     # `/api/analysis/context`(챗봇 컨텍스트)가 메시지마다 이 함수를
     # 거치므로, 두 번째 메시지부터는 report.py의 select_primary_factor/
     # select_fdr_significant_factors 재계산(0.64초 x 10회 = 6.4초)이
@@ -773,7 +771,7 @@ def _build_report_payload_uncached(dataset: str) -> dict[str, Any]:
         eval_meta=eval_meta,
         app_version=APP_VERSION,
         generated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
-        # E-3(perf): report.py:231,244가 select_primary_factor/select_fdr_
+        # report.py:231,244가 select_primary_factor/select_fdr_
         # significant_factors로 직접 재랭킹하는 대신, 원인 분석 탭과 같은
         # `_cached_ranked_rows_versioned`(analysis.py:342) 결과를 재사용하게
         # 한다 -- analysis.py:576 `_alarm_factors`가 이미 쓰는 것과 같은 캐시.
@@ -789,8 +787,7 @@ def _build_report_payload_uncached(dataset: str) -> dict[str, Any]:
 @router.get("/analysis/report", response_model=AnalysisReportResponse)
 def get_analysis_report(dataset: str = "train", *, response: Response) -> dict[str, Any]:
     """Full JSON analysis report -- always denominated by the full
-    R+D+Config pool, matching the screen now that the R/D/Config split
-    view has been removed entirely (see build_analysis_report's
+    R+D+Config pool, exactly as the screen is (see build_analysis_report's
     docstring for why the factor list and the alarm list use different,
     deliberately non-interchangeable factor sets).
     """
@@ -803,8 +800,8 @@ PREPROCESSING_COMPARISON_CACHE_DATASETS = 8
 
 @lru_cache(maxsize=PREPROCESSING_COMPARISON_CACHE_DATASETS)
 def _cached_preprocessing_comparison(dataset_id: str) -> dict[str, Any] | None:
-    """설정 패널 신설 §E: 데이터셋마다 실측한 전처리 A/B/C 비교. 데이터셋당
-    한 번만 계산해 캐시한다(§E-6: "탭을 열 때마다 재계산하지 마라") -- LOT
+    """데이터셋마다 실측한 전처리 A/B/C 비교. 데이터셋당
+    한 번만 계산해 캐시한다(탭을 열 때마다 재계산하지 않는다) -- LOT
     70/30 홀드아웃 1회 × 3방식이라 4초 안팎이지만, 그 값을 매 탭 전환마다
     다시 치르지 않는다.
     """
@@ -872,7 +869,8 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
             "no_factor_available": bool(detail.get("no_factor_available")),
             "feature": detail.get("feature"),
             "kind": detail.get("kind"),
-            "eps2": detail.get("eps2"),
+            "adj_r2": detail.get("adj_r2"),
+            "degree": detail.get("degree"),
             "contribution_pct": detail.get("contribution_pct"),
             "relation_shape": detail.get("relation_shape"),
             "optimal_center": detail.get("optimal_center"),
@@ -882,6 +880,9 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
             "rmse": detail.get("rmse"),
             "mae": detail.get("mae"),
             "n": detail.get("n"),
+            "mse": detail.get("mse"),
+            "r2_adjusted": detail.get("r2_adjusted"),
+            "auc": detail.get("auc"),
         }
         for target, detail in target_metrics.items()
     ]
@@ -892,7 +893,8 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
             "no_factor_available": False,
             "feature": None,
             "kind": None,
-            "eps2": None,
+            "adj_r2": None,
+            "degree": None,
             "contribution_pct": None,
             "relation_shape": None,
             "optimal_center": None,
@@ -902,6 +904,11 @@ def get_model_performance(dataset: str | None = None) -> dict[str, Any]:
             "rmse": final_test_metrics.get("rmse"),
             "mae": final_test_metrics.get("mae"),
             "n": final_test_metrics.get("n"),
+            # 학습 팝업 "모델 성능"의 5행(Adjusted R²/RMSE/MAE/MSE/AUC).
+            # 이 변경 전에 학습된 모델에는 없어 None으로 내려간다.
+            "mse": final_test_metrics.get("mse"),
+            "r2_adjusted": final_test_metrics.get("r2_adjusted"),
+            "auc": final_test_metrics.get("auc"),
         }
         if final_test_metrics
         else None

@@ -11,10 +11,10 @@ import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { ScatterPoint, ScreeningScatterResponse } from "@/types/data";
 
 // n 미만이면 그룹 내 최적중심/구간을 그리지 않는다 -- 근거 없는
-// 선을 그리면 오탐을 유도하므로 (지시서 "n 부족 처리").
+// 선을 그리면 오탐을 유도한다.
 const MIN_GROUP_N = 30;
 // Y1~Y5 비교 모달(CompareAcrossTargetsModal의 MiniChart)과 완전히 같은
-// 값으로 고정한다 (지시서 C-2: "기준은 Y1~Y5 비교 모달이다. 두 모달을
+// 값으로 고정한다 ("기준은 Y1~Y5 비교 모달이다. 두 모달을
 // 나란히 열었을 때 패널 카드가 같은 크기·같은 폰트로 보여야 한다") --
 // 분할 기준(Model/EQ/Chamber)이 바뀌어도, 패널 수가 몇 개든 이 값은
 // 절대 재계산하지 않는다. 패널이 늘면 .compareModalScroll의 가로
@@ -28,18 +28,18 @@ const BIN_COUNT = 12;
 // 최적 중심이 x 범위의 이 비율을 넘게 흩어지면 "따로 분리" 문구를 얹는다.
 const CENTER_SPREAD_RATIO = 0.15;
 
-// 발산(초록/빨강) 팔레트 제거 (지시서 N-3) -- 그룹별 최적 중심은 --text.
-// 구간 평균 곡선은 이 차트의 핵심 판독 대상이라 신호색(--sig-red)을
-// 쓴다 -- ScatterChart.tsx의 OPTIMAL_CENTER_COLOR/TREND_COLOR와 동일한
-// 상수쌍이다. (경고선은 화면에서 완전히 제거했다.)
+// 그룹별 최적 중심은 무채색(--text)이고, 구간 평균 곡선은 이 차트의
+// 핵심 판독 대상이라 신호색(--sig-red)을 쓴다 -- 발산(초록/빨강)
+// 팔레트는 쓰지 않는다. ScatterChart.tsx의 OPTIMAL_CENTER_COLOR/
+// TREND_COLOR와 같은 값이어야 한다.
 const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
 const INFERRED_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 const GRAY = { light: "#9CA3AF", dark: "#6B7280" };
-// 산점도 "기본" 모드의 단일 점 색과 동일한 상수(--measured, 지시서 P-1).
+// 산점도 "기본" 모드의 단일 점 색과 동일한 상수(--measured).
 const POINT_COLOR = { light: "#0E306D", dark: "#7BA3E8" };
 
 type SplitMode = "model" | "eq" | "chamber";
-// 계층 순서(Model이 상위)와 일치시킨다 (지시서 C-1) -- Object.keys 순회
+// 계층 순서(Model이 상위)와 일치시킨다 -- Object.keys 순회
 // 순서로 토글 버튼이 렌더되므로 이 선언 순서가 곧 화면 순서다.
 const SPLIT_LABEL: Record<SplitMode, string> = { model: "Model", eq: "EQ 호기", chamber: "Chamber" };
 
@@ -111,12 +111,11 @@ function normalCdf(z: number): number {
   return 0.5 * (1 + erf(z / Math.SQRT2));
 }
 
-// C-2: "다릅니다"를 단정하려면 그룹 쌍을 직접 비교하는 검정이 필요하다 --
-// 예전에는 max|rho|/min|rho| 비율이 임의 상수(1.5) 미만이면 "유사"로
-// 봤는데, 이 앱 전체가 FDR 규율을 쓰면서 이 화면만 검정 없이 결론을
-// 냈다. 두 독립 상관계수의 차이는 Fisher z 변환 후 표준정규로 검정한다
-// (Fisher, 1921) -- 각 그룹의 상관은 서로 다른 wafer 표본에서 나온
-// 독립 추정치이므로 이 검정이 성립한다.
+// "다릅니다"를 단정하려면 그룹 쌍을 직접 비교하는 검정이 필요하다 --
+// 상관계수 비율 같은 임의 기준으로는 이 앱 전체가 쓰는 FDR 규율과
+// 어긋난다. 두 독립 상관계수의 차이는 Fisher z 변환 후 표준정규로
+// 검정한다(Fisher, 1921) -- 각 그룹의 상관은 서로 다른 wafer 표본에서
+// 나온 독립 추정치이므로 이 검정이 성립한다.
 function fisherZ(r: number): number {
   const clamped = Math.max(-0.999999, Math.min(r, 0.999999));
   return 0.5 * Math.log((1 + clamped) / (1 - clamped));
@@ -134,7 +133,7 @@ function formatPValue(p: number): string {
 
 type BinStat = { x_mean: number; y_mean: number; n: number; x_lo: number; x_hi: number };
 
-/** 그룹 점들을 x 기준 12분위로 나눠 각 bin의 x/y 평균을 낸다 (지시서: 산점도/
+/** 그룹 점들을 x 기준 12분위로 나눠 각 bin의 x/y 평균을 낸다 (산점도/
  * Box Plot과 같은 BOX_BIN_COUNT=12). 등분위(같은 개수)로 자르는 quantile
  * binning -- 값 범위 등분이 아니다. */
 function computeBins(points: { x: number; y: number }[]): BinStat[] {
@@ -155,9 +154,9 @@ function computeBins(points: { x: number; y: number }[]): BinStat[] {
   return bins;
 }
 
-/** 그룹 내 최적중심/최적구간을 12-bin 프로파일에서 재계산한다 (지시서
- * "그룹별 재계산 규칙" -- 전체 데이터로 계산된 값을 복사하면 이 기능의
- * 목적, 즉 패널마다 달라지는지를 보는 것이 무너진다). SPC 결과와 정확히
+/** 그룹 내 최적중심/최적구간을 12-bin 프로파일에서 재계산한다 -- 전체
+ * 데이터로 계산된 값을 복사하면 이 기능의 목적, 즉 패널마다 달라지는지를
+ * 보는 것이 무너진다. SPC 결과와 정확히
  * 일치할 필요는 없다 -- 세 패널에 같은 규칙만 일관되게 적용되면 패널
  * 간 상대 비교는 유효하다. */
 function computeGroupWindow(points: { x: number; y: number }[]): {
@@ -207,9 +206,8 @@ type GroupStat = {
   rangeLo: number | null;
   rangeHi: number | null;
   insufficientN: boolean;
-  // TD-3: 이 그룹만의 점으로 재적합한 곡선 -- 전체(비층화) 곡선을
-  // 복사하지 않는다(지시서: "Trellis는 그룹별로 재적합하라 -- 전체
-  // 곡선을 복사하면 비교가 무의미하다").
+  // 이 그룹만의 점으로 재적합한 곡선 -- 전체(비층화) 곡선을 복사하면
+  // Trellis 패널 간 비교가 무의미해지므로 반드시 그룹별로 재적합한다.
   curveFit: CurveFitResult | null;
 };
 
@@ -243,7 +241,7 @@ export default function CompareAcrossConfigsModal({
   const [loading, setLoading] = useState(true);
   const [splitMode, setSplitMode] = useState<SplitMode>("model");
   const scrollRef = useRef<HTMLDivElement>(null);
-  // 모바일 반응형 패치 S-4: 패널 폭 320px -> 200px (≤767px). 가로 스크롤은
+  // 패널 폭 320px -> 200px (≤767px). 가로 스크롤은
   // 모든 폭에서 유지한다 -- 패널을 세로로 쌓지 않는다(하지 말 것 목록).
   const isMobileLayout = useIsMobileLayout();
   const panelWidth = isMobileLayout ? 200 : CHART_W;
@@ -296,9 +294,8 @@ export default function CompareAcrossConfigsModal({
     return [min - pad, max + pad];
   }, [data]);
 
-  // y 도메인은 0부터 -- 패널마다 자동 스케일하면 패널 간 비교가 무의미해
-  //지므로 (지시서 "필수 규칙 — 축 공유"), 모든 패널이 이 도메인을 그대로
-  // 공유한다.
+  // y 도메인은 0부터 -- 패널마다 자동 스케일하면 패널 간 비교가
+  // 무의미해지므로, 모든 패널이 이 도메인을 그대로 공유한다.
   const yDomain = useMemo<[number, number]>(() => {
     if (!data || data.points.length === 0) return [0, 1];
     let max = -Infinity;
@@ -338,7 +335,7 @@ export default function CompareAcrossConfigsModal({
     const lines: string[] = [];
     const rhoList = known.map((g) => `${g.key} ${g.rho >= 0 ? "+" : ""}${g.rho.toFixed(2)}`).join(" / ");
 
-    // C-2: 모든 쌍을 Fisher z 차이 검정으로 비교하고, 다중 비교이므로
+    // 모든 쌍을 Fisher z 차이 검정으로 비교하고, 다중 비교이므로
     // Bonferroni로 유의수준을 쌍 수만큼 보정한다(α=0.05/쌍 수). 임의
     // 비율 상수로 "다르다"를 단정하던 이전 로직을 대체한다.
     const pairs: { a: GroupStat & { rho: number }; b: GroupStat & { rho: number }; p: number }[] = [];
@@ -390,7 +387,7 @@ export default function CompareAcrossConfigsModal({
       <div className="compareModal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${feature} 장비별 Trellis 비교`}>
         <div className="compareModalHeader">
           <div>
-            {/* 모바일 반응형 패치 S-5: ≤767px에서 "장비별 Trellis" -> "Trellis" */}
+            {/* ≤767px에서 "장비별 Trellis" -> "Trellis" */}
             <h2>{feature} vs {target} — {isMobileLayout ? "Trellis" : "장비별 Trellis"}</h2>
             {data && <p className="compareModalMeta">n={data.n.toLocaleString()} 계측 · Step{step}</p>}
             <div className="scatterViewToggleRow" style={{ marginTop: 6 }}>
@@ -477,7 +474,7 @@ function TrellisPanel({
   const xScale = (v: number) => ((v - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * plotWidth;
   const yScale = (v: number) => plotHeight - ((v - yDomain[0]) / (yDomain[1] - yDomain[0] || 1)) * plotHeight;
 
-  // 미니 패널은 작으므로 눈금을 양끝 2개로 덜어낸다 (지시서 N-3) -- 값을
+  // 미니 패널은 작으므로 눈금을 양끝 2개로 덜어낸다 -- 값을
   // 읽는 화면이 아니라 형태를 보는 화면이다.
   const xTicks = useMemo(() => [xDomain[0], xDomain[1]], [xDomain]);
   const yTicks = useMemo(() => [yDomain[0], yDomain[1]], [yDomain]);
@@ -487,9 +484,9 @@ function TrellisPanel({
   const grayColor = theme === "dark" ? GRAY.dark : GRAY.light;
   const pointColor = theme === "dark" ? POINT_COLOR.dark : POINT_COLOR.light;
 
-  // C-2: 패널별 무보정 p 배지는 제거했다 -- 장비 간 차이는 이제 모달
-  // 상단의 Fisher z + Bonferroni 쌍별 검정 문구가 담당한다. 효과크기
-  // 등급(배지)만 이 패널에 남는다: "관계의 크기"는 그룹 간 차이와
+  // 패널에는 무보정 p 배지를 두지 않는다 -- 장비 간 차이는 모달 상단의
+  // Fisher z + Bonferroni 쌍별 검정 문구가 담당한다. 이 패널이 보여주는
+  // 것은 효과크기 등급(배지)뿐이다: "관계의 크기"는 그룹 간 차이와
   // 무관한 별개 질문이다.
   const tier = !group.insufficientN && group.rho != null ? effectSizeTierFromRho(group.rho) : null;
 
@@ -540,8 +537,7 @@ function TrellisPanel({
           )}
 
           {/* 권장 구간 밴드: 옅은 중립 배경만, 테두리 없음 -- 작은 패널에서는
-              덜어낼수록 핵심 2선(최적 중심/구간 평균 곡선)이 산다
-              (지시서 N-3). */}
+              덜어낼수록 핵심 2선(최적 중심/구간 평균 곡선)이 산다. */}
           {!group.insufficientN && group.rangeLo != null && group.rangeHi != null && (
             <rect
               x={xScale(group.rangeLo)}
@@ -566,7 +562,7 @@ function TrellisPanel({
             <line x1={xScale(group.optimalCenter)} x2={xScale(group.optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.4} strokeDasharray="4 3" />
           )}
 
-          {/* TD-3: 그룹별로 재적합한 곡선(curveFit) -- 폴백(표본 부족 등)
+          {/* 그룹별로 재적합한 곡선(curveFit) -- 폴백(표본 부족 등)
               이면 기존 12분위 구간 평균 꺾은선을 그대로 그린다. */}
           {!group.insufficientN && group.curveFit && group.curveFit.fallbackReason == null && (
             <path d={buildCurvePathD(group.curveFit, xScale, yScale)} fill="none" stroke={inferredColor} strokeWidth={1.8} opacity={0.9}>

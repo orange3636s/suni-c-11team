@@ -2,9 +2,16 @@
 #
 # p-value alone answers "is the effect non-zero", not "is the effect big
 # enough to act on" -- a large-n dataset makes p tiny even for a near-zero
-# eps2 (e.g. Step6_R1 -> Y1: n=1,462, p=0.006, eps2=0.0089, under 1%
-# explained). eps2 is checked first and can only push the tier down, never
+# effect size (e.g. Step6_R1 -> Y1: n=1,462, p=0.006, under 1% explained).
+# The effect size is checked first and can only push the tier down, never
 # up on its own.
+#
+# The `min_eps2_*` key names are historical: the score fed into them is now
+# Adjusted R² (src/analysis/screening/effect_size.py), not the old
+# bias-corrected epsilon-squared. The keys were deliberately left alone so
+# existing deployments' overrides keep working -- only the statistic behind
+# the number changed, and both are "share of variance explained" on the
+# same 0..1 scale, so the cut points still mean what they meant.
 min_eps2_reference: 0.02   # below this: always 참고, regardless of p
-min_eps2_moderate: 0.05    # 보통 additionally requires eps2 >= this
-min_eps2_strong: 0.10      # 강함 additionally requires eps2 >= this
+min_eps2_moderate: 0.05    # 보통 additionally requires Adjusted R² >= this
+min_eps2_strong: 0.10      # 강함 additionally requires Adjusted R² >= this

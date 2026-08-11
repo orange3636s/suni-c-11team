@@ -14,7 +14,7 @@ const MAX_BAR = 48;
 const MIN_BAR = 20;
 const PADDING = 56;
 const PLOT_HEIGHT = 360;
-// HB그룹: 좌우 y축의 최상단 눈금 라벨(100)이 .paretoTick의
+// 좌우 y축의 최상단 눈금 라벨(100)이 .paretoTick의
 // `bottom:100%` + `transform:translateY(50%)` 배치 때문에 tick column의
 // y=0(플롯 최상단) 경계 위로 반쯤 넘쳐 그려진다 -- 해석 카드 쪽 여백만
 // 늘려서는(margin) 못 고친다, 이 넘침 자체가 차트 내부 좌표계 문제이기
@@ -30,7 +30,7 @@ const LABEL_MIN_GAP = 4; // px of breathing room required between adjacent horiz
 // axis columns always take up and that computeBarLayout must not offer to
 // the plot, or the plot claims width the flex row can't actually give it.
 const AXIS_RESERVED_WIDTH = 44 * 2 + 6 * 2;
-// DE-2: Pareto 썸네일은 막대가 위에서 시작하고 하단 x축 라벨이 생략돼,
+// Pareto 썸네일은 막대가 위에서 시작하고 하단 x축 라벨이 생략돼,
 // 본 차트와 같은 여백 비율을 쓰면 상단이 붙어 보인다. 썸네일 전용
 // 상수로 상단에 여유를 확보한다(본 차트와 공유하지 않는다).
 const THUMBNAIL_TOP_PADDING_RATIO = 0.12;
@@ -44,7 +44,7 @@ function shortenFeatureName(feature: string, maxLength = 11): string {
   return feature.length > maxLength ? `${feature.slice(0, maxLength - 1)}…` : feature;
 }
 
-/** DC-3/DE그룹: Pareto 종합 문구의 순수 텍스트 버전 -- 차트 본문
+/** Pareto 종합 문구의 순수 텍스트 버전 -- 차트 본문
  * (summaryCaption)과 즐겨찾기 스냅샷 저장(root-cause/page.tsx)이 같은
  * 문구를 쓴다. 로직이 두 곳에 따로 있으면 나중에 서로 어긋난다. */
 export function buildParetoSummaryText(items: ParetoRankingItem[], n80: number | null): string {
@@ -128,20 +128,20 @@ export default function ParetoChart({
   // embedded일 때만 사용 -- 카드의 chartHeight(데스크톱/모바일)에 맞춘다.
   // 생략 시 기존 PLOT_HEIGHT 상수로 대체한다.
   height?: number;
-  // DE그룹: 즐겨찾기 카드의 미리보기 -- 해석 문구(종합 캡션)를 그리지
+  // 즐겨찾기 카드의 미리보기 -- 해석 문구(종합 캡션)를 그리지
   // 않고(그 문구는 카드 본문이 저장 시점 스냅샷으로 따로 보여준다),
   // 상단에 여유 패딩을 둬 Scatter/Box 썸네일과 같은 높이로 보이게 한다.
   thumbnail?: boolean;
-  // HA그룹: "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김,
+  // "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김,
   // root-cause/page.tsx의 buildModerateInterpretation과 동일 로직) --
   // Pareto 종합 문구("해석")와 카드 하나로 합친다. 빈 문자열/undefined면
   // "신뢰도" 행을 만들지 않는다.
   reliabilityText?: string;
-  // 지시서 "차트 이미지 저장": 이미지 저장 버튼이 이 카드 루트 노드를
+  // 이미지 저장 버튼이 이 카드 루트 노드를
   // DOM 캡처해 PNG로 굽는다 -- non-embedded(독립 카드) 모드에서만 의미가
   // 있다.
   cardRef?: RefObject<HTMLElement | null>;
-  // 지시서 WI-1/WI-4: 타깃당 1개로 고정된 카드의 헤더에 얹을 액션(이미지
+  // 타깃당 1개로 고정된 카드의 헤더에 얹을 액션(이미지
   // 저장 버튼 등) -- root-cause/page.tsx가 소유한 상태(export 진행 여부
   // 등)를 이 컴포넌트에 넣지 않기 위해 완성된 노드를 그대로 받는다.
   // non-embedded 모드에서만 렌더된다.
@@ -167,7 +167,7 @@ export default function ParetoChart({
   }, [items, layout.slot, n]);
 
   // 누적 곡선/마커는 실측이 아니라 계산된 값이라 --inferred, 80% 임계선은
-  // 신호가 아니므로 중립 --line 을 쓴다 (지시서 N-2). ScatterChart의
+  // 신호가 아니므로 중립 --line 을 쓴다. ScatterChart의
   // TREND_COLOR와 동일한 상수쌍.
   const lineColor = theme === "dark" ? "#97A3B8" : "#7C8AA5";
   const thresholdColor = theme === "dark" ? "rgba(255, 255, 255, 0.14)" : "#D9DEE6";
@@ -194,9 +194,9 @@ export default function ParetoChart({
 
   const tooltipItem = tooltip ? items[tooltip.index] : null;
 
-  // DC-3/HA그룹: Pareto의 종합 문구(해석) -- 예전에는 차트 하단에 있었다.
-  // 메타 줄 바로 아래·차트 위로 옮기고, "해석" 라벨을 붙여 Scatter/Box와
-  // 같은 InterpretationCard로 그린다(신뢰도 행은 caller가 넘겨줄 때만).
+  // Pareto의 종합 문구(해석) -- 메타 줄 바로 아래·차트 위에 두고,
+  // "해석" 라벨을 붙여 Scatter/Box와 같은 InterpretationCard로
+  // 그린다(신뢰도 행은 caller가 넘겨줄 때만).
   // 썸네일(즐겨찾기 카드 미리보기)에서는 그리지 않는다 -- 그 문구는
   // 저장 시점 스냅샷으로 카드 본문이 따로 보여준다(DE-1).
   const summaryRows: InterpretationRow[] = [
@@ -212,7 +212,7 @@ export default function ParetoChart({
   const body = (
     <>
       {!thumbnail && summaryCaption}
-      {/* HB그룹: 상단 여백 -- 최상단 눈금 라벨(100)이 tick column의 y=0
+      {/* 상단 여백 -- 최상단 눈금 라벨(100)이 tick column의 y=0
           경계 위로 넘쳐 그려지는 것 자체는 막지 않되(그 라벨의 상대
           위치는 그대로), 그 넘침이 이 빈 공간 안에서 끝나도록 플롯 전체를
           아래로 민다. plotHeight(막대·선 비례 계산)는 건드리지 않으므로
@@ -351,9 +351,15 @@ export default function ParetoChart({
           <strong>{tooltipItem.feature}</strong>
           <div className="heatmapTooltipRow"><span>기여율</span><b>{tooltipItem.contribution_pct.toFixed(1)}%</b></div>
           <div className="heatmapTooltipRow"><span>누적 기여율</span><b>{tooltipItem.cumulative_pct.toFixed(1)}%</b></div>
-          <div className="heatmapTooltipRow"><span>ε²</span><b>{tooltipItem.eps2.toFixed(3)}</b></div>
+          <div className="heatmapTooltipRow">
+            <span>Adj R²</span>
+            <b>
+              {tooltipItem.adj_r2.toFixed(3)}
+              {tooltipItem.degree != null && ` (${tooltipItem.degree}차)`}
+            </b>
+          </div>
           <div className="heatmapTooltipRow"><span>n</span><b>{tooltipItem.n_observed.toLocaleString()}</b></div>
-          {/* 지시서 CD: 알람 등급(심각/위험/주의)과 겹치지 않게 -- 이 값은
+          {/* 알람 등급(심각/위험/주의)과 겹치지 않게 -- 이 값은
               인자-타깃 연관의 세기(강함/보통/근거 부족/관계 없음)다. */}
           <div className="heatmapTooltipRow"><span>상관성</span><b>{TIER_LABEL[tooltipItem.confidence_tier]}</b></div>
           {tooltipItem.under_sampled && (
@@ -365,7 +371,7 @@ export default function ParetoChart({
   );
 
   if (embedded) {
-    // DE-2: 썸네일 컨테이너에 상단 여유 패딩을 줘 Scatter/Box 썸네일과
+    // 썸네일 컨테이너에 상단 여유 패딩을 줘 Scatter/Box 썸네일과
     // 나란히 놓아도 위쪽이 붙어 보이지 않게 한다.
     if (thumbnail) return <div style={{ paddingTop: topPadding }}>{body}</div>;
     return body;
@@ -376,7 +382,7 @@ export default function ParetoChart({
       <div className="paretoChartHeader">
         <div>
           <span className="sectionLabel">PARETO</span>
-          {/* 지시서 WI-1: 파레토는 타깃당 1개로 고정되며, 인자명이 아니라
+          {/* 파레토는 타깃당 1개로 고정되며, 인자명이 아니라
               "R/D/Config vs {타깃}"이 제목이다 -- 특정 인자 하나가 아니라
               이 타깃의 인자 순위 전체를 보여주는 차트이기 때문이다. */}
           <h2>R/D/Config vs {target}</h2>

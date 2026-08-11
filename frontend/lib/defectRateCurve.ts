@@ -1,8 +1,8 @@
-// TD-3: "구간 평균 불량률" 꺾은선을 F 검정으로 차수를 고른 1·2차 다항 곡선으로
-// 대체한다. ScatterChart/CompareAcrossConfigsModal/CompareAcrossTargetsModal
-// 세 곳이 이 한 모듈을 공유한다(지시서: "한 화면씩 만들지 마라"). 순수
-// 프런트 렌더링 오버레이다 -- data.points 위에 그릴 뿐, 최적 중심·권장
-// 구간·알람 판정(백엔드 src/analysis/*)에는 전혀 관여하지 않는다.
+// 산점도 위 "구간 평균 불량률" 추세를 F 검정으로 차수를 고른 1·2차 다항
+// 곡선으로 그린다. ScatterChart/CompareAcrossConfigsModal/
+// CompareAcrossTargetsModal 세 곳이 이 한 모듈을 공유한다. 순수 프런트
+// 렌더링 오버레이다 -- data.points 위에 그릴 뿐, 최적 중심·권장 구간·알람
+// 판정(백엔드 src/analysis/*)에는 전혀 관여하지 않는다.
 
 export type CurveFitResult = {
   degree: 1 | 2;
@@ -17,7 +17,8 @@ export type CurveFitResult = {
   pValue: number | null;
   /** Observed x min/max -- evaluateCurve never extrapolates beyond this. */
   domain: [number, number];
-  /** Non-null means: don't draw a curve, fall back to the old stepped line. */
+  /** Non-null means: don't draw a curve, fall back to the stepped
+   * bin-average line. */
   fallbackReason: string | null;
 };
 
@@ -152,7 +153,7 @@ function degenerate(
 
 /** OLS-fits a 1st and (if valid) 2nd degree polynomial to `points`, picks
  * the degree via an F-test comparing the nested models, and reports
- * whether the caller should fall back to the old stepped bin-average line
+ * whether the caller should fall back to the stepped bin-average line
  * instead of drawing a curve at all. Pure function -- no fetch, no
  * mutation, safe to call from a `useMemo`. */
 export function fitDefectRateCurve(points: { x: number; y: number }[]): CurveFitResult {
@@ -223,7 +224,7 @@ export function fitDefectRateCurve(points: { x: number; y: number }[]): CurveFit
         fStatistic = F;
         pValue = fSurvival1(F, df2);
       }
-      // 지시서: p < 0.01 AND 2차 계수(c) > 0(위로 볼록, 즉 U자) 일 때만
+      // p < 0.01 AND 2차 계수(c) > 0(아래로 볼록, 즉 U자) 일 때만
       // 2차를 채택한다. c <= 0("가운데가 최악")은 불량률 곡선의 "권장
       // 구간" 개념과 모순되므로 통계적으로 유의해도 버린다.
       if (pValue !== null && pValue < 0.01 && cQ > 0) adoptQuadratic = true;

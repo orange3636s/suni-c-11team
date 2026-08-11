@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from scipy import stats
 
 from src.analysis.screening.schema import parse_schema
 from src.analysis.screening.selector import (
@@ -23,7 +24,7 @@ from src.analysis.screening.selector import (
 
 TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.CSV"
 
-# Per-target: the top-eps2 factor (regardless of significance), plus its shape/center.
+# Per-target: the top-adj_r2 factor (regardless of significance), plus its shape/center.
 # `center` values were re-derived when optimal_center switched from an
 # unrelated linear grid-search (src/analysis/screening/shape.py's old
 # `_best_center` value) to the x_mean of the quantile-bin with the lowest
@@ -31,33 +32,47 @@ TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "train.C
 # recommended window and 구간 평균 불량률 curve already used, so a factor's
 # "최적 중심" can no longer land outside its own "권장구간" the way it used
 # to for some factor/target pairs before this fix.
-## TC-5: regenerated after `eps2_numeric` switched from a flat 8-bin qcut to
-## a Sturges-rule auto bin count (`suggest_bin_count`) -- D-heavy factors
-## (n~480) now use 10 bins instead of 8, R factors (n~1500) use 12 instead
-## of 8. shape/center are unaffected (they come from quantile_profile.py's
-## own bin count, which TC-5 deliberately left pinned at 12 for anything
-## alarm/recommendation-adjacent).
+## Regenerated for the epsilon-squared -> Adjusted R² swap: numeric factors
+## now take their R² from the same degree-1/degree-2 polynomial fit the
+## scatter chart's curve overlay uses (`curve_fit.fit_defect_rate_curve`)
+## and convert it to Adjusted R², instead of a quantile-binned ANOVA's
+## bias-corrected epsilon-squared. `degree` is new (1 or 2 for numeric,
+## None for Config). shape/center are unaffected -- they still come from
+## quantile_profile.py's own bin count, pinned at 12 for anything
+## alarm/recommendation-adjacent.
+##
+## Invariant deliberately preserved by the swap (and asserted below): the
+## #1-ranked feature per target is byte-identical to the epsilon-squared
+## era, and so is the count of factors clearing
+## CORE_FACTOR_CONTRIBUTION_MIN.
 GOLDEN_TABLE = {
-    "Y1": {"feature": "Step28_R1", "eps2": 0.209, "shape": "u_shape", "center": 57.9},
-    "Y2": {"feature": "Step16_R1", "eps2": 0.196, "shape": "u_shape", "center": 56.5},
-    "Y3": {"feature": "Step1_D1", "eps2": 0.687, "shape": "monotonic_increasing", "center": None},
-    "Y4": {"feature": "Step24_R1", "eps2": 0.081, "shape": "u_shape", "center": 56.7},
-    "Y5": {"feature": "Step18_R1", "eps2": 0.327, "shape": "u_shape", "center": 55.9},
+    "Y1": {"feature": "Step28_R1", "adj_r2": 0.234, "degree": 2, "n": 1492, "shape": "u_shape", "center": 57.9},
+    "Y2": {"feature": "Step16_R1", "adj_r2": 0.345, "degree": 2, "n": 1470, "shape": "u_shape", "center": 56.5},
+    "Y3": {"feature": "Step1_D1", "adj_r2": 0.708, "degree": 1, "n": 479, "shape": "monotonic_increasing", "center": None},
+    "Y4": {"feature": "Step24_R1", "adj_r2": 0.094, "degree": 2, "n": 1512, "shape": "u_shape", "center": 56.7},
+    "Y5": {"feature": "Step18_R1", "adj_r2": 0.371, "degree": 2, "n": 1479, "shape": "u_shape", "center": 55.9},
 }
 
 # contribution_pct/cumulative_pct denominated by the FULL candidate pool
 # (all R+D+Config factors evaluated for the target, 88 for train.CSV) --
 # not just the FDR-significant subset. This is the fix for the "single
 # significant factor reads as 100% contribution" bug.
+#
+# The percentages rose across the board versus the epsilon-squared era
+# (e.g. Y1 62.5% -> 86.2%): Adjusted R² subtracts the parameter-count bias
+# that used to inflate every also-ran factor's score, so the denominator
+# (the full pool's summed effect size) shrank much more than the #1
+# factor's own numerator did. Rankings are unchanged -- only the spread
+# between #1 and the rest widened.
 CONTRIBUTION_TABLE = {
-    "Y1": {"top1_pct": 62.5, "cum10_pct": 84.7, "n80": 8, "fdr_count": 1},
-    "Y2": {"top1_pct": 64.1, "cum10_pct": 87.4, "n80": 6, "fdr_count": 1},
-    "Y3": {"top1_pct": 88.5, "cum10_pct": 96.6, "n80": 1, "fdr_count": 1},
-    "Y4": {"top1_pct": 42.6, "cum10_pct": 77.2, "n80": 12, "fdr_count": 1},
-    "Y5": {"top1_pct": 79.4, "cum10_pct": 97.3, "n80": 2, "fdr_count": 1},
+    "Y1": {"top1_pct": 86.2, "cum10_pct": 96.1, "n80": 1, "fdr_count": 1},
+    "Y2": {"top1_pct": 87.6, "cum10_pct": 94.0, "n80": 1, "fdr_count": 1},
+    "Y3": {"top1_pct": 95.7, "cum10_pct": 98.9, "n80": 1, "fdr_count": 1},
+    "Y4": {"top1_pct": 65.5, "cum10_pct": 88.4, "n80": 5, "fdr_count": 1},
+    "Y5": {"top1_pct": 90.9, "cum10_pct": 97.9, "n80": 1, "fdr_count": 1},
 }
 
-EPS2_TOLERANCE = 0.01
+ADJ_R2_TOLERANCE = 0.01
 CENTER_TOLERANCE = 0.5
 PCT_TOLERANCE = 0.5
 
@@ -89,7 +104,9 @@ def test_golden_top_factor(primary_factors, target):
     assert factor is not None
 
     assert factor.feature == expected["feature"]
-    assert factor.eps2 == pytest.approx(expected["eps2"], abs=EPS2_TOLERANCE)
+    assert factor.adj_r2 == pytest.approx(expected["adj_r2"], abs=ADJ_R2_TOLERANCE)
+    assert factor.degree == expected["degree"]
+    assert factor.n_observed == expected["n"]
     assert factor.relation_shape == expected["shape"]
     if expected["center"] is None:
         assert factor.optimal_center is None
@@ -104,17 +121,17 @@ def test_golden_contribution_denominator_is_full_pool(train_df, schema, target):
     """
     expected = CONTRIBUTION_TABLE[target]
     rows = score_all_factors(train_df, schema, target)
-    rows.sort(key=lambda r: r["eps2"], reverse=True)
-    total_eps2 = sum(r["eps2"] for r in rows)
+    rows.sort(key=lambda r: r["adj_r2"], reverse=True)
+    total_adj_r2 = sum(r["adj_r2"] for r in rows)
 
-    top1_pct = rows[0]["eps2"] / total_eps2 * 100.0
-    cum10_pct = sum(r["eps2"] for r in rows[:10]) / total_eps2 * 100.0
+    top1_pct = rows[0]["adj_r2"] / total_adj_r2 * 100.0
+    cum10_pct = sum(r["adj_r2"] for r in rows[:10]) / total_adj_r2 * 100.0
     fdr_count = sum(1 for r in rows if r["significant"])
 
     cumulative = 0.0
     n80 = None
     for index, row in enumerate(rows):
-        cumulative += row["eps2"] / total_eps2 * 100.0
+        cumulative += row["adj_r2"] / total_adj_r2 * 100.0
         if n80 is None and cumulative >= 80.0:
             n80 = index + 1
 
@@ -140,12 +157,11 @@ def test_fdr_significant_factors_for_y2(train_df, schema):
     """The alarm engine's factor set (select_fdr_significant_factors) keeps
     every BH-FDR-significant factor, not just the strongest.
 
-    TC-5: before the Sturges bin-count switch, Step24_R1 also passed FDR
-    (q<0.05) for Y2 as a second factor alongside Step16_R1. Under the new
-    auto bin count its q-value no longer clears 0.05 for Y2 -- eps2_numeric's
-    bin count changed from a flat 8 to n-dependent (R factors now use 12
-    bins instead of 8), which shifts the ANOVA group boundaries and hence
-    the p-value. Only Step16_R1 remains significant for Y2 now.
+    Only Step16_R1 clears q<0.05 for Y2. That was already true under the
+    binned-ANOVA epsilon-squared scoring and stays true under the
+    polynomial-fit Adjusted R² scoring: the p-value source changed (an
+    F-test on the degree-1/degree-2 regression rather than on quantile
+    bins) but Step24_R1 still doesn't clear the FDR gate for this target.
     """
     y2_factors = select_fdr_significant_factors(train_df, schema, "Y2")
     assert {f.feature for f in y2_factors} == {"Step16_R1"}
@@ -163,8 +179,17 @@ def test_step1_d1_observed_count(primary_factors):
     assert y3_factor.n_observed == 479
 
 
-def test_step18_r1_eps2_beats_pearson_r2(primary_factors):
+def test_step18_r1_adj_r2_beats_plain_linear_r2(primary_factors, train_df):
+    """The point the old `eps2 > pearson_r**2` assertion made, restated for
+    the polynomial fit that replaced the binned ANOVA: Y5's driver is
+    U-shaped, so a whole-range straight line badly under-reports it. The
+    reported Adjusted R² comes from a degree-2 fit and must beat the
+    plain linear r² a Pearson correlation would give.
+    """
     factor = primary_factors["Y5"]
     assert factor.feature == "Step18_R1"
-    assert factor.pearson_r is not None
-    assert factor.eps2 > factor.pearson_r**2
+    assert factor.degree == 2
+
+    valid = train_df[["Step18_R1", "Y5"]].dropna()
+    linear_r, _ = stats.pearsonr(valid["Step18_R1"], valid["Y5"])
+    assert factor.adj_r2 > linear_r**2

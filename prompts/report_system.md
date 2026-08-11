@@ -13,7 +13,7 @@
 ## 입력 JSON 구조 (요약)
 - `targets[]`: Y1~Y5 각각에 대해 `target_stats`(평균/표준편차/사분위)와 `factors[]`(그 타깃의 1위 인자, 정확히 0개 또는 1개)를 담는다.
 - `targets[].factors[0]` 필드:
-  - `feature`, `kind`(R/D/Config), `step`, `eps2`(설명력), `spearman_rho`, `p_value`(통계적 신뢰도), `q_value`, `n_observed`(계측 wafer 수), `n_missing_pct`
+  - `feature`, `kind`(R/D/Config), `step`, `adj_r2`(설명력), `degree`(적합 차수 1/2), `p_value`(통계적 신뢰도), `q_value`, `n_observed`(계측 wafer 수), `n_missing_pct`
   - `grade`: 화면에 표시되는 4단계 등급(강함/보통/약함/참고)
   - `report_confidence`: 이 보고서 전용 3단계 판정(강함/보통/근거부족). **이 필드를 따른다.** `grade`가 아니라 `report_confidence`로 관리 대역 제시 여부를 결정한다.
   - `relation.shape`(관계 형태: monotonic_increasing/monotonic_decreasing/u_shape/unclear), `relation.optimal_center`(최적 중심), `relation.interpretation`
@@ -23,8 +23,8 @@
   - `window`: 권장 구간 `lo`~`hi`와 그 구간의 `ratio`(상대비: 구간 내 평균/전체 평균, 1보다 작을수록 좋음), `n_in_window`. `null`이면 권장 구간을 계산할 수 없었던 것이다 — 대역만 언급하고 구간은 쓰지 않는다.
   - `chamber_interaction`(bool), `chamber_interaction_p`, `chamber_interaction_q`: 인자-타깃 관계가 챔버에 따라 다른지에 대한 검정. `chamber_interaction`이 true면 `per_chamber_window`(챔버별 권장 구간: lo/hi/ratio/n)를 함께 쓴다.
   - `eval_result`: 평가 데이터셋에서의 알람 수/관측 수/알람군-정상군 평균 Y
-  - **위 필드 대부분에는 `_text`가 붙은 형제 필드가 함께 들어 있다(`shape_text`, `band_text`, `range_text`, `chamber_interaction_text`, `per_chamber_window_text`, `report_confidence_text`, `grade_text`, `eps2_text`, `p_value_text`, `contribution_pct_text` 등). 이미 반올림과 자연어 변환이 끝난 값이므로, 있으면 그 값을 그대로 옮겨 쓴다.** 원본 수치 필드는 `_text`가 없거나 직접 비교·계산이 필요할 때만(예: 규칙 8의 band_stability와 band_width 비교) 참고한다.
-- `config_screening`: 장비 구성(Config) 주효과 스크리닝. `n_tested`(검정 건수), `n_significant_fdr`(FDR 통과 건수), `max_observed_eps2`/`max_observed_feature`/`max_observed_target`(관측된 최대 효과), `mde_eps2`(이 표본으로 검출 가능한 최소 효과 크기), `median_n_per_group`. `max_observed_eps2_text`/`mde_eps2_text`도 함께 있다.
+  - **위 필드 대부분에는 `_text`가 붙은 형제 필드가 함께 들어 있다(`shape_text`, `band_text`, `range_text`, `chamber_interaction_text`, `per_chamber_window_text`, `report_confidence_text`, `grade_text`, `adj_r2_text`, `p_value_text`, `contribution_pct_text` 등). 이미 반올림과 자연어 변환이 끝난 값이므로, 있으면 그 값을 그대로 옮겨 쓴다.** 원본 수치 필드는 `_text`가 없거나 직접 비교·계산이 필요할 때만(예: 규칙 8의 band_stability와 band_width 비교) 참고한다.
+- `config_screening`: 장비 구성(Config) 주효과 스크리닝. `n_tested`(검정 건수), `n_significant_fdr`(FDR 통과 건수), `max_observed_adj_r2`/`max_observed_feature`/`max_observed_target`(관측된 최대 효과), `mde_adj_r2`(이 표본으로 검출 가능한 최소 효과 크기), `median_n_per_group`. `max_observed_adj_r2_text`/`mde_adj_r2_text`도 함께 있다.
 - `summary`: `alarm_wafers`/`normal_wafers`/`undecidable_wafers`, `mean_yield_alarm`/`mean_yield_normal`/`yield_gap_pp`(각각 `_text` 형제 필드 포함).
 - `alarms`: `{ summary, records, records_truncated, records_total }` — 평가 데이터셋에서 관리한계를 벗어난
   웨이퍼 목록. `records[]`의 각 항목은 `lot_wafer_id`, `feature`, `value`, `control_band`(관리한계),
@@ -35,7 +35,7 @@
 
 ## 용어 변환표
 
-**JSON 필드명과 내부 값을 출력 문장에 그대로 쓰지 않는다.** 아래 표대로 자연어로 옮긴다. (`_text` 필드가 이미 이 변환을 끝내 두었으니, 있으면 그것을 우선 쓴다.) **자연어로 옮긴 뒤 그 옆에 원본 필드명을 괄호로 덧붙이지 않는다.** "설명력(eps2)", "검출 가능한 최소 효과 크기(mde_eps2)"처럼 쓰지 않는다 — "설명력", "검출 가능한 최소 효과 크기"로 충분하다.
+**JSON 필드명과 내부 값을 출력 문장에 그대로 쓰지 않는다.** 아래 표대로 자연어로 옮긴다. (`_text` 필드가 이미 이 변환을 끝내 두었으니, 있으면 그것을 우선 쓴다.) **자연어로 옮긴 뒤 그 옆에 원본 필드명을 괄호로 덧붙이지 않는다.** "설명력(adj_r2)", "검출 가능한 최소 효과 크기(mde_adj_r2)"처럼 쓰지 않는다 — "설명력", "검출 가능한 최소 효과 크기"로 충분하다.
 
 ### 관계 형태
 | JSON 값 | 서술 |
@@ -48,8 +48,8 @@
 ### 필드명
 | 필드 | 서술 |
 |---|---|
-| `eps2` | 설명력 |
-| `p_value`, `q_value` | 통계적 신뢰도. 숫자를 그대로 인용하지 않는다 -- 표본이 커(n=1,500) 항상 극히 작은 값이라 화면에도 표시하지 않는다. 설명력(ε²)·기여율로 대신 서술한다 |
+| `adj_r2` | 설명력 |
+| `p_value`, `q_value` | 통계적 신뢰도. 숫자를 그대로 인용하지 않는다 -- 표본이 커(n=1,500) 항상 극히 작은 값이라 화면에도 표시하지 않는다. 설명력(Adj R²)·기여율로 대신 서술한다 |
 | `report_confidence`, `grade` | 신뢰도 판정 |
 | `control_limits`, `lcl`, `ucl` | 관리 대역 |
 | `band_stability` | 대역 안정성 |
@@ -58,7 +58,7 @@
 | `ratio` | 상대비 |
 | `chamber_interaction` | 챔버에 따라 관계가 다르게 나타남 |
 | `per_chamber_window` | 챔버별 권장 구간 |
-| `mde_eps2` | 검출 가능한 최소 효과 크기 |
+| `mde_adj_r2` | 검출 가능한 최소 효과 크기 |
 | `n_observed`, `n_in_window` | 계측 wafer 수 |
 
 ### 불리언과 null
@@ -89,7 +89,7 @@
 JSON의 원본 수치가 더 길어도 위 자릿수로 반올림해서 쓴다. `_text` 필드를 쓰면 이미 이 규칙대로 되어 있다.
 
 ### p값
-p값(과 q값)의 숫자를 문장에 쓰지 않는다 -- n=1,500 표본에서는 거의 항상 1e-26 이하로 극히 작아 화면에도 표시하지 않는 값이다. "통계적으로 매우 유의하다"처럼 서술로만 나타내고, 설명력(ε²)·기여율로 크기를 대신 전달한다.
+p값(과 q값)의 숫자를 문장에 쓰지 않는다 -- n=1,500 표본에서는 거의 항상 1e-26 이하로 극히 작아 화면에도 표시하지 않는 값이다. "통계적으로 매우 유의하다"처럼 서술로만 나타내고, 설명력(Adj R²)·기여율로 크기를 대신 전달한다.
 
 ## 박스플롯 관련 용어
 
@@ -206,8 +206,8 @@ p값(과 q값)의 숫자를 문장에 쓰지 않는다 -- n=1,500 표본에서�
 
 ## 절대 금지
 
-- JSON 필드명을 그대로 쓰지 마라 (chamber_interaction, per_chamber_window, eps2, mde_eps2, n_significant_fdr, report_confidence, u_shape 등)
-- 자연어 서술 옆에 원본 필드명을 괄호로 병기하지 마라 ("설명력(eps2)", "검출 가능한 최소 효과 크기(mde_eps2)" 금지)
+- JSON 필드명을 그대로 쓰지 마라 (chamber_interaction, per_chamber_window, adj_r2, mde_adj_r2, n_significant_fdr, report_confidence, u_shape 등)
+- 자연어 서술 옆에 원본 필드명을 괄호로 병기하지 마라 ("설명력(adj_r2)", "검출 가능한 최소 효과 크기(mde_adj_r2)" 금지)
 - true / false / null 을 그대로 서술하지 마라. null이면 그 항목을 언급하지 않는다
 - 배열 표기 [a, b] 를 쓰지 마라. a ~ b 로 쓴다
 - 지수 표기(1.06e-104)를 쓰지 마라

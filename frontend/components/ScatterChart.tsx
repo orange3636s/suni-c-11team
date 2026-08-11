@@ -12,50 +12,43 @@ import { useResolvedTheme } from "@/lib/useResolvedTheme";
 import type { RelationShape, ScatterPoint, ScreeningScatterResponse, WindowMethod } from "@/types/data";
 
 export type ScatterColorMode = "default" | "config_model" | "lot";
-// 그룹 스크럽 슬라이더 정렬 기준 (spec CA) -- 기본은 평균순: Lot_ID는 처리
+// 그룹 스크럽 슬라이더 정렬 기준 -- 기본은 평균순: Lot_ID는 처리
 // 순서가 아니라 임의 부여이므로, 이름순으로 훑으면 점이 무작위로 튀어
 // 아무 패턴도 안 보인다. 평균 y값 오름차순으로 훑어야 분포가 아래->위로
 // 이동하는 것이 보인다.
 type ScrubSort = "mean" | "name" | "count";
-// 비선택 그룹의 투명도 (spec CA: "0.10 ~ 0.15", 지시서 X-3: 기본 불투명도가
-// 낮아졌으니 하한 0.10을 쓴다) -- 색은 유지한 채 이만큼만 낮춘다. 회색으로
-// 바꾸지 않는다.
+// 비선택 그룹의 투명도 -- 기본 점 불투명도(POINT_OPACITY)가 낮으므로
+// 권장 범위(0.10~0.15)의 하한을 쓴다. 색은 유지한 채 이만큼만 낮추고,
+// 회색으로 바꾸지 않는다.
 const SCRUB_DIM_OPACITY = 0.1;
 // 이보다 그룹 수가 많으면(LOT 390개 등) 눈금을 그리지 않는다 -- 스톱이
-// 적은 Config 모드(3~4개)에서만 각 스톱이 어디인지 보이게 한다 (spec CA
-// "그룹 수에 따른 차이").
+// 적은 Config 모드(3~4개)에서만 각 스톱이 어디인지 보이게 한다.
 const SCRUB_TICK_MAX_STOPS = 12;
-// 인자 카드 "보기" 상태 -- 지시서 WI-1: 파레토는 타깃당 1개로 화면 상단에
-// 고정되고, 인자 카드는 더 이상 Pareto를 자체적으로 그리지 않으므로
-// Scatter/Box 둘뿐이다. Quick Look 패널도 원래 이 값만 받았다(root-cause/
-// page.tsx의 QuickLookViewToggle 참고).
+// 인자 카드 "보기" 상태 -- 파레토는 타깃당 1개로 화면 상단에 고정되고
+// 인자 카드가 직접 그리지 않으므로 Scatter/Box 둘뿐이다. Quick Look
+// 패널도 같은 값을 받는다(root-cause/page.tsx의 QuickLookViewToggle 참고).
 export type QuickLookView = "scatter" | "box";
-// Unified with the trend curve's 12-quantile profile (spec §2: "Box Plot
-// 도 12구간을 쓴다") -- was 10 (qcut decile) before, which is why the same
-// factor's outlier count reads differently between the two profiles even
-// though both are computed independently from the same points.
+// Matches the trend curve's 12-quantile profile -- the two are computed
+// independently from the same points, so an unequal bin count would make
+// the same factor's outlier count read differently between them.
 const BOX_BIN_COUNT = 12;
-// 62%/50% of the per-category pixel spacing (spec §3-2/§3-4).
+// 62%/50% of the per-category pixel spacing.
 const BOX_WIDTH_RATIO = 0.62;
 const BOX_CAP_WIDTH_RATIO = 0.32;
-// Gaussian std-dev for point jitter, in category-axis units (spec §3-3).
+// Gaussian std-dev for point jitter, in category-axis units.
 const BOX_JITTER_STD = 0.1;
 
-// left margin widened 58->76 (spec §1 재지시): the y-axis title moved
-// from the top margin back to sitting horizontally left of the tick
-// numbers, vertically centered on the plot -- that needs *horizontal*
-// room again, sized to comfortably fit the widest realistic tick label
-// (~35px, e.g. "-123.4") + 8px tick-gap + the title text + its own 8px
-// gap, with a few px of slack.
-// top/right trimmed 36/28 -> 28/16 (경고선 제거) -- 라벨 최고 행이
-// warning_line(34)에서 window_bounds(20)로 낮아졌고, 오른쪽 끝에
-// 붙던 경고선(warning_hi) 값 라벨도 사라져 두 여백 모두 그만큼
-// 빈 공간으로 남았던 것을 걷어냈다.
+// left 76: the y-axis title sits horizontally left of the tick numbers,
+// vertically centered on the plot, so this margin has to fit the widest
+// realistic tick label (~35px, e.g. "-123.4") + 8px tick-gap + the title
+// text + its own 8px gap, with a few px of slack.
+// top 28: the highest label row is window_bounds (offset 20) plus its own
+// line height. right 16: nothing is anchored to the right edge.
 const MARGIN = { top: 28, right: 16, bottom: 46, left: 76 };
 // Matches .scatterTickLabel's font (app/globals.css) -- used to measure
-// candidate tick labels for the overlap-backoff pass (spec §8). HP-HMI
-// 전환으로 .scatterTickLabel이 등폭(var(--font-data))이 됐으므로, 폭
-// 측정도 같은 폰트로 해야 충돌 판정이 실제 렌더 폭과 어긋나지 않는다.
+// candidate tick labels for the overlap-backoff pass. .scatterTickLabel은
+// 등폭(var(--font-data))이므로 폭 측정도 같은 폰트로 해야 충돌 판정이
+// 실제 렌더 폭과 어긋나지 않는다.
 const TICK_FONT = "10.5px ui-monospace, Menlo, monospace";
 // Y tick labels are horizontal text stacked vertically, so their collision
 // dimension is line height, not width -- a fixed estimate for 10.5px text.
@@ -63,61 +56,57 @@ const Y_TICK_LABEL_HEIGHT_PX = 14;
 const X_TICK_COUNT: [max: number, min: number] = [10, 8];
 const Y_TICK_COUNT: [max: number, min: number] = [8, 6];
 const HEIGHT = 420;
-// 기준선 라벨 겹침 수정 (spec §C-2) -- "최적 중심"/"권장 구간" 라벨이
-// 서로의 x 위치가 가까울 때 겹치던 문제를, 2단 높이로 분산해 해결한다.
-// offset은 plot 상단 가장자리(y=0) 기준 위쪽(margin 안)으로 얼마나
-// 띄우는지이며, 값이 클수록 차트에서 더 멀다 -- 20이 위(권장 구간), 6이
-// 차트에 가장 가깝다(최적 중심). 14px 간격은 라벨 한 줄의 대략적인
-// 높이와 맞춘 값이라 두 줄이 서로 겹치지 않는다. (경고선 제거로 3단에서
-// 2단으로 줄었다 -- 행 번호를 당겼다.)
+// "최적 중심"/"권장 구간" 라벨은 x 위치가 가까우면 겹치므로 2단 높이로
+// 분산한다. offset은 plot 상단 가장자리(y=0) 기준 위쪽(margin 안)으로
+// 얼마나 띄우는지이며, 값이 클수록 차트에서 더 멀다 -- 20이 위(권장
+// 구간), 6이 차트에 가장 가깝다(최적 중심). 14px 간격은 라벨 한 줄의
+// 대략적인 높이와 맞춘 값이라 두 줄이 서로 겹치지 않는다.
 type LabelRowKey = "window_bounds" | "optimal_center";
 const LABEL_ROW_OFFSET: Record<LabelRowKey, number> = {
   optimal_center: 6,
   window_bounds: 20,
 };
-// 생략 순서 (spec §C-3): 권장 구간 경계(1) > 최적 중심(2, 가장 먼저
+// 생략 순서: 권장 구간 경계(1) > 최적 중심(2, 가장 먼저
 // 생략) -- 숫자가 작을수록 우선순위가 높다.
 const LABEL_ROW_PRIORITY: Record<LabelRowKey, number> = {
   window_bounds: 1,
   optimal_center: 2,
 };
-// .scatterLineLabel의 font-weight/font-size와 맞춘 측정용 폰트 문자열
-// (spec §C-4 폭 계산에 실제 렌더 폭을 써야 축약 여부 판단이 정확하다).
-// HP-HMI 전환으로 .scatterLineLabel이 등폭이 됐으므로 측정 폰트도 맞춘다.
+// .scatterLineLabel의 font-weight/font-size(등폭)와 맞춘 측정용 폰트
+// 문자열 -- 폭 계산에 실제 렌더 폭을 써야 축약 여부 판단이 정확하다.
 const LABEL_FONT = "700 10px ui-monospace, Menlo, monospace";
-// 이 폭 미만이면 라벨을 축약형으로 바꾼다 (spec §C-4: "차트 폭 600px
-// 미만이면 축약형을 쓴다").
+// 차트 폭이 이 값 미만이면 라벨을 축약형으로 바꾼다.
 const COMPACT_LABEL_CHART_WIDTH = 600;
-// 권장 구간 밴드 폭이 이보다 좁으면 양끝 경계값 라벨을 생략한다 (spec
-// §C-5).
+// 권장 구간 밴드 폭이 이보다 좁으면 양끝 경계값 라벨을 생략한다.
 const BAND_BOUNDARY_MIN_WIDTH = 60;
 
 function formatNum1(value: number): string {
   return value.toFixed(1);
 }
 
-// Below this ε², the curve is close enough to flat that naming a shape
-// (U자/단조) would read as a confident pattern the data doesn't actually
-// support -- so the flatness message wins regardless of `relation_shape`
-// (spec §2-2, priority 1).
-const EPS2_FLAT_THRESHOLD = 0.02;
+// Below this Adjusted R², the curve is close enough to flat that naming a
+// shape (U자/단조) would read as a confident pattern the data doesn't
+// actually support -- so the flatness message wins regardless of
+// `relation_shape`. Same value as grade_thresholds.yaml's
+// "관계 없음" floor.
+const ADJ_R2_FLAT_THRESHOLD = 0.02;
 
 type ShapeCategory = "flat" | "u_shape" | "monotonic_increasing" | "monotonic_decreasing" | "unclear";
 
-// ε² gates first (spec §7-1, priority 1): below threshold, the flatness
-// message wins regardless of `relation_shape`, since naming a shape on a
-// near-flat curve would read as a confident pattern the data doesn't
-// actually support.
-function classifyShape(eps2: number, shape: RelationShape): ShapeCategory {
-  if (eps2 < EPS2_FLAT_THRESHOLD) return "flat";
+// Effect size gates first: below threshold, the
+// flatness message wins regardless of `relation_shape`, since naming a
+// shape on a near-flat curve would read as a confident pattern the data
+// doesn't actually support.
+function classifyShape(adjR2: number, shape: RelationShape): ShapeCategory {
+  if (adjR2 < ADJ_R2_FLAT_THRESHOLD) return "flat";
   if (shape === "u_shape" || shape === "monotonic_increasing" || shape === "monotonic_decreasing") return shape;
   return "unclear";
 }
 
-/** Jargon-free reading of the chart above it (spec §7) -- no ρ/ε²/p-value,
+/** Jargon-free reading of the chart above it -- no R²/p-value,
  * factor/target names and the optimal-center value swapped in as real
- * numbers. The first sentence is identical regardless of `view` (spec
- * §7: "첫 줄은 완전히 같다"); only the second sentence -- how to read that
+ * numbers. The first sentence is identical regardless of `view`;
+ * only the second sentence -- how to read that
  * shape in *this* view -- differs, and is omitted entirely for the flat
  * category, which has nothing view-specific to add. `optimalCenter` only
  * ever backs the u_shape branch (monotonic relations have none by
@@ -125,13 +114,13 @@ function classifyShape(eps2: number, shape: RelationShape): ShapeCategory {
  * center got dropped (sparse min-y bin) still gets the U-shape message,
  * just without a number to anchor it to. */
 function buildInterpretationTip(
-  eps2: number,
+  adjR2: number,
   shape: RelationShape,
   optimalCenter: number | null,
   targetLabel: string,
   view: QuickLookView,
 ): string {
-  const category = classifyShape(eps2, shape);
+  const category = classifyShape(adjR2, shape);
   let first: string;
   switch (category) {
     case "flat":
@@ -155,8 +144,8 @@ function buildInterpretationTip(
   if (view === "box") {
     return `${first} 상자가 낮고 짧을수록 평균이 낮고 흩어짐도 작다는 뜻입니다.`;
   }
-  // 인과/조작 표현 금지 (spec 문구 전수 검토 §A-7, prompts/report_system.md
-  // "절대 규칙 2"와 동일 기준) -- "~하면 유리합니다"/"조절하면 안 됩니다"는
+  // 인과/조작 표현 금지 (prompts/report_system.md "절대 규칙 2"와 동일
+  // 기준) -- "~하면 유리합니다"/"조절하면 안 됩니다"는
   // 관찰된 상관관계를 개입 처방으로 읽히게 하므로, LLM 프롬프트가 이미 쓰는
   // "~구간에서 낮게/높게 관측된다" 식 서술로 통일한다.
   if (category === "u_shape") return `${first} 관측된 범위 양쪽 끝 모두에서 ${targetLabel} 불량률이 높게 나타납니다.`;
@@ -181,8 +170,8 @@ function quantileOf(sorted: number[], q: number): number {
 }
 
 /** Deterministic hash -> seeded PRNG -> gaussian sample, so a given
- * wafer's box-plot jitter offset never changes across re-renders (spec
- * §3-3: "지터 난수는 시드를 고정"), without needing to persist any extra
+ * wafer's box-plot jitter offset never changes across re-renders (지터
+ * 난수는 시드를 고정한다), without needing to persist any extra
  * per-point state. */
 function hashSeed(key: string): number {
   let h = 2166136261;
@@ -225,7 +214,7 @@ type BoxBin = {
 
 /** Equal-frequency 12-bin split of `points` by x -- matches pandas'
  * `qcut(x, 12)`, the same bin count as the trend curve/권장 구간 profile
- * (spec §2: 두 보기의 구간 수를 통일해 토글 시 빨간 곡선이 그대로 유지되게
+ * (두 보기의 구간 수를 통일해 토글 시 빨간 곡선이 그대로 유지되게
  * 한다), though independently computed here since this needs full
  * per-bin y-quantile stats (Q1/median/Q3/whiskers), not just the mean the
  * trend profile carries: bin edges are the x-quantiles at each
@@ -295,7 +284,7 @@ function buildBoxBins(points: ScatterPoint[]): BoxBin[] {
 
 /** Interpolates a real data-axis value into the box chart's 1..N
  * category-position space, using the bins' x-means as anchor points
- * (spec §3-5) -- values outside the first/last bin center clamp to the
+ * -- values outside the first/last bin center clamp to the
  * nearest end instead of extrapolating. */
 function categoryPositionForValue(value: number, bins: BoxBin[]): number {
   if (bins.length === 0) return 1;
@@ -313,21 +302,18 @@ function categoryPositionForValue(value: number, bins: BoxBin[]): number {
   return bins.length;
 }
 
-// SPC/ML 방식 전환 (spec §3-4) -- 권장 구간 밴드/경계선/Box Plot 구간-내
-// 박스 테두리가 이 한 쌍을 공유한다. HP-HMI 색 규율(§H-1) 적용 후:
-// 권장 구간은 "정상 상태"(이상 신호가 아님)라 SPC/ML 모두 같은 무채색
-// 하나로 통일했다 -- 이전에는 초록(SPC)/보라(ML)로 방식을 구분했지만,
-// 신호색은 이상 상태에만 쓴다는 규율상 방식 구분에 색상을 쓸 이유가
-// 없다. 방식 구분은 여전히 텍스트 라벨("SPC"/"ML")이 담당한다.
+// 권장 구간 밴드/경계선/Box Plot 구간-내 박스 테두리가 이 한 쌍을
+// 공유한다. 권장 구간은 "정상 상태"(이상 신호가 아님)라 SPC/ML 모두 같은
+// 무채색을 쓴다 -- 신호색은 이상 상태에만 쓴다는 색 규율상 방식 구분에
+// 색상을 쓰지 않는다. 방식 구분은 텍스트 라벨("SPC"/"ML")이 담당한다.
 const METHOD_COLOR: Record<WindowMethod, { light: string; dark: string }> = {
   spc: { light: "#59636F", dark: "#9097A3" },
   ml: { light: "#59636F", dark: "#9097A3" },
 };
 const METHOD_LABEL: Record<WindowMethod, string> = { spc: "SPC", ml: "ML" };
-// 최적 중심(optimal_center)은 이전엔 METHOD_COLOR를 함께 썼지만, 권장
-// 구간(위)과 최적 중심은 이제 서로 다른 무채색 톤이어야 한다(§H-1: 최적
-// 중심 = --text, 권장 구간 = 옅은 중립 배경) -- 그래서 별도 상수로
-// 분리했다.
+// 최적 중심(optimal_center)은 위 METHOD_COLOR와 다른 무채색 톤이어야
+// 한다(최적 중심 = --text, 권장 구간 = 옅은 중립 배경) -- 그래서 별도
+// 상수로 둔다.
 const OPTIMAL_CENTER_COLOR = { light: "#141A22", dark: "#F5F5F7" };
 // 구간 평균 불량률 곡선은 "이 구간에서 불량이 얼마나 나는가"를 보여주는
 // 차트의 핵심 판독 대상이다 -- 무채색/추정값 색(--inferred)으로 두면
@@ -338,13 +324,12 @@ const TREND_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 
 // Box-plot 색 규칙. 상자 테두리/수염은 "권장구간 안쪽인지"와 무관하게 항상
 // 중립(var(--line))이다. 상자 자체는 옅게 채운다(8% var(--measured), 아래
-// 렌더 지점의 fillOpacity). 중앙값은 무채색(var(--text)). 관리한계 개념
-// 제거(GBDT 전환)에 따라 통계적 이상치(IQR 기준)는 항상 outlierNeutral
-// 하나로 통일한다 -- 경고선은 화면에서 완전히 제거됐으므로 그 기준 채색도 없다.
-// Y-5: --line의 다크 값을 rgba(255,255,255,.14)(1.57:1, WCAG UI 요소
-// 3:1 기준 미달)에서 .34(3.05:1)로 올렸다 -- 여기 두 하드코딩 사본도
-// 같이 맞춘다(둘 다 CSS 변수가 아니라 SVG stroke에 직접 넣는 JS 상수라
-// 토큰을 바꿔도 저절로 따라오지 않는다).
+// 렌더 지점의 fillOpacity). 중앙값은 무채색(var(--text)). 통계적
+// 이상치(IQR 기준)는 항상 outlierNeutral 하나로 칠한다.
+// --line의 다크 값 rgba(255,255,255,.34)는 3.05:1로 WCAG UI 요소 3:1
+// 기준을 넘는 값이다 -- 아래 두 하드코딩 사본도 토큰과 같이 맞춰야
+// 한다(둘 다 CSS 변수가 아니라 SVG stroke에 직접 넣는 JS 상수라 토큰을
+// 바꿔도 저절로 따라오지 않는다).
 const BOX_LINE_COLOR = { light: "#D9DEE6", dark: "rgba(255, 255, 255, 0.34)" }; // var(--line)
 const BOX_FILL_COLOR = { light: "#0E306D", dark: "#7BA3E8" }; // var(--measured), 8% 채움으로만 씀
 const BOX_COLOR = {
@@ -354,13 +339,13 @@ const BOX_COLOR = {
   outlierNeutral: { light: "#59636F", dark: "#9097A3" },
 };
 
-// Box Plot legend (spec §5) -- small presentational swatches drawn as
+// Box Plot legend -- small presentational swatches drawn as
 // mini inline SVGs so each icon actually matches its written description
 // (a bordered box + median tick, an I-beam whisker, jittered dots, hollow
 // outlier rings, a dashed/dotted reference line, a translucent band).
 // Rendered through the same `LegendCard` as every other legend entry
-// (spec §4: box-plot legend items are click-toggleable too, apart from
-// the box body itself), not a separate read-only component.
+// (box-plot legend items are click-toggleable too, apart from the box
+// body itself), not a separate read-only component.
 function IconBoxWhisker({ boxColor, medianColor }: { boxColor: string; medianColor: string }) {
   return (
     <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
@@ -405,8 +390,7 @@ function IconOutlierDots({ color }: { color: string }) {
 }
 
 // dash 패턴은 실제 렌더 상수(최적 중심 라인의 "4 3")를 그대로 받는다 --
-// 범례에서도 실선/점선 구분이 실제 차트와 같은 비율로 보이게 한다
-// (지시서 N-1).
+// 범례에서도 실선/점선 구분이 실제 차트와 같은 비율로 보이게 한다.
 function IconDashedLine({ color, dash }: { color: string; dash: string }) {
   return (
     <svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">
@@ -430,11 +414,11 @@ function IconBand({ color }: { color: string }) {
   );
 }
 /** Read-only-or-toggle legend card: swatch + bold label + small
- * description, stacked (spec §3). Renders as a `<button>` (and picks up
+ * description, stacked. Renders as a `<button>` (and picks up
  * `.active`/`.disabled`) when `onClick` is given -- reused for both the
  * static Color By row and the still-toggleable reference-line row so
- * clicking LCL/UCL, 최적 중심, 권장 구간, 구간 평균 불량률 keeps working
- * exactly as before (spec §3-3: 기존 토글 기능 유지). */
+ * clicking LCL/UCL, 최적 중심, 권장 구간, 구간 평균 불량률 toggles the
+ * matching layer. */
 function LegendCard({
   icon,
   label,
@@ -464,7 +448,7 @@ function LegendCard({
       <span className="scatterLegendCardText">
         <strong>{label}</strong>
         {/* Only lines that name a computed threshold/value or a concrete
-            action earn a description (spec §5-1) -- everything else is
+            action earn a description -- everything else is
             swatch + label only, so an empty/undefined desc renders no
             <small> at all rather than a blank line. */}
         {desc ? <small>{desc}</small> : null}
@@ -494,7 +478,7 @@ const MODEL_COLORS = ["#1D4ED8", "#059669", "#B45309"];
 const LOT_PALETTE = ["#1D4ED8", "#059669", "#B45309", "#7C3AED", "#DB2777", "#0891B2", "#65A30D", "#DC2626"];
 
 /** Config별/LOT별 Color By가 점 하나를 어느 그룹으로 보는지 -- colorForPoint
- * (칠하기)와 그룹 스크럽 슬라이더(spec CA, 강조)가 절대 다른 그룹 경계를
+ * (칠하기)와 그룹 스크럽 슬라이더(강조)가 절대 다른 그룹 경계를
  * 갖지 않도록 단일 소스로 뺐다. "기본" 모드는 그룹 개념이 없어 null. */
 function scrubGroupKeyOf(point: ScatterPoint, mode: ScatterColorMode): string | null {
   if (mode === "config_model") return modelOf(point.config);
@@ -502,17 +486,14 @@ function scrubGroupKeyOf(point: ScatterPoint, mode: ScatterColorMode): string | 
   return null;
 }
 
-// "기본" Color By 점 스타일 -- 관리한계(IQR/LCL/UCL) 개념 제거(GBDT 전환)에
-// 이어, "기본"은 "구분하지 않음"이라는 뜻으로 통일했다(spec P-1): 권장
-// 구간 안/밖을 포함한 어떤 zone 구분도 점 색·크기로 표현하지 않는다.
-// 권장 구간은 참조선/밴드로 이미 표시되므로 점에서 중복 인코딩할
-// 필요가 없다. --measured 토큰과 동일한 값.
+// "기본" Color By 점 스타일 -- "기본"은 "구분하지 않음"이라는 뜻이다:
+// 권장 구간 안/밖을 포함한 어떤 zone 구분도 점 색·크기로 표현하지
+// 않는다. 권장 구간은 참조선/밴드로 이미 표시되므로 점에서 중복
+// 인코딩할 필요가 없다. --measured 토큰과 동일한 값.
 //
-// 점 농도 완화 (X-1) -- 이 0.28은 임의값이 아니라 Box Plot의 지터된 일반
-// 점(POINT_OPACITY, 아래)이 이미 실제로 쓰고 있던 값을 그대로 가져온
-// 것이다. 예전에는 Box Plot이 산점도보다 일부러 더 연했는데("점이
-// 상자 위에 얹히므로"), 이제는 반대로 산점도가 Box Plot 무게에 맞춘다 --
-// 두 뷰를 오갈 때 점의 무게가 달라지면 안 되기 때문이다(지시서 X그룹).
+// 불투명도 0.28은 임의값이 아니라 Box Plot의 지터된 일반 점
+// (POINT_OPACITY, 아래)과 같은 값이다 -- 두 뷰를 오갈 때 점의 무게가
+// 달라지면 안 되기 때문에 반드시 같이 움직여야 한다.
 // 세 Color By 모드(기본/Config별/LOT별) 전부 이 값 하나를 공유한다 --
 // 모드마다 다르면 전환할 때 밀도 인상이 바뀌어 비교가 안 된다.
 const POINT_OPACITY = 0.28;
@@ -555,9 +536,9 @@ type DisplayLine = {
 
 // 기준선 라벨 하나 -- 최적 중심 vertical line뿐 아니라 권장 구간 밴드의
 // 요약 라벨(window_bounds)도 같은 체계로 배치되므로, "라인이
-// 있는가"와 무관하게 여기서는 x 위치 + 우선순위 행만 다룬다 (spec §C-6:
-// Box Plot도 같은 로직을 쓴다 -- plotX가 이미 두 보기를 통일하므로
-// 여기서부터는 view를 몰라도 된다).
+// 있는가"와 무관하게 여기서는 x 위치 + 우선순위 행만 다룬다 (Box Plot도
+// 같은 로직을 쓴다 -- plotX가 이미 두 보기를 통일하므로 여기서부터는
+// view를 몰라도 된다).
 type FloatingLabel = {
   key: string;
   rowKey: LabelRowKey;
@@ -569,14 +550,13 @@ type FloatingLabel = {
 
 type FloatingLabelPlacement = { key: string; x: number; y: number; hidden: boolean; text: string; color: string };
 
-/** 폭 기반 충돌 판정으로 라벨을 3단 높이에 배치한다 (spec §C-2/§C-3).
+/** 폭 기반 충돌 판정으로 라벨을 여러 단 높이에 배치한다.
  * 아무 라벨도 충돌하지 않으면 전부 가장 낮은 높이(차트에 가장 가까운
  * offset)에 그대로 둔다 -- 불필요한 계단을 만들지 않는다. 충돌이 하나라도
  * 있으면 각 라벨을 자기 우선순위의 지정 행으로 올리고, 그래도 같은 행
  * 안에서 겹치면(예: 최적 중심과 권장 구간 라벨이 서로 가까움) 우선순위가 낮은 쪽부터
  * 생략한다 -- 생략된 라벨은 그려지지 않지만, 그 라벨이 속한 선/밴드 자체는
- * 별도로 계속 그려지므로 호버 시 툴팁으로 값을 확인할 수 있다(spec §C-3
- * "생략된 라벨은 호버 시 툴팁으로 표시한다"). */
+ * 별도로 계속 그려지므로 호버 시 툴팁으로 값을 확인할 수 있다. */
 function layoutFloatingLabels(
   labels: FloatingLabel[],
   useShort: boolean,
@@ -609,9 +589,9 @@ type TrendHover = {
   screenY: number;
   dataX: number;
   dataY: number;
-  // TD-3: 곡선 모드(fallbackReason == null)에서는 신뢰구간·구간 wafer 수
-  // 개념이 없다(구간이 아니라 연속 함수이므로) -- null이면 툴팁이 그
-  // 행을 그리지 않는다. 기존 구간 평균 불량률(폴백) 모드는 값을 그대로 채운다.
+  // 곡선 모드(fallbackReason == null)에서는 신뢰구간·구간 wafer 수 개념이
+  // 없다(구간이 아니라 연속 함수이므로) -- null이면 툴팁이 그 행을 그리지
+  // 않는다. 구간 평균 불량률(폴백) 모드는 값을 그대로 채운다.
   ciLo: number | null;
   ciHi: number | null;
   n: number | null;
@@ -624,7 +604,7 @@ type PointHover = { screenX: number; screenY: number; clientX: number; clientY: 
 type BoxHover = { clientX: number; clientY: number; bin: BoxBin };
 
 const POINT_HOVER_RADIUS_PX = 16;
-// 드래그 선택 (spec B) -- 이동 거리가 이 미만이면 클릭(기존 포인트 상세),
+// 드래그 선택 -- 이동 거리가 이 미만이면 클릭(포인트 상세),
 // 이상이면 브러시 선택으로 본다.
 const DRAG_THRESHOLD_PX = 5;
 type DragPos = { x: number; y: number };
@@ -636,7 +616,7 @@ const STATS_BOX_HEIGHT = 130;
 // 다른 색처럼 테마별 쌍을 따로 두지 않는다.
 const ACCENT_COLOR = "#0E306D";
 
-// 즐겨찾기 썸네일 전용 점 반지름 (지시서 P-2) -- 본 차트의 DEFAULT_POINT_STYLE/
+// 즐겨찾기 썸네일 전용 점 반지름 -- 본 차트의 DEFAULT_POINT_STYLE/
 // MODEL_COLORS/LOT_PALETTE 크기와 절대 공유하지 않는 별도 상수다: 본 차트
 // 값을 나중에 바꿔도 썸네일이 따라 커지지 않아야 한다. 썸네일은 식별용이지
 // 값을 읽는 화면이 아니므로 3px대의 본 차트 점보다 한참 작게 잡는다.
@@ -655,25 +635,25 @@ export default function ScatterChart({
 }: {
   data: ScreeningScatterResponse;
   colorMode: ScatterColorMode;
-  // Owned by the caller now (spec §1-3: 보기 토글 lives in the card header,
+  // Owned by the caller now (보기 토글 lives in the card header,
   // same row as the title) -- this component only reads it to decide what
   // to render, it never renders the toggle buttons itself. Never "pareto"
   // -- the card renders ParetoChart itself for that state instead of
   // reaching this component (see QuickLookView above).
   view: QuickLookView;
   // Which of data.methods.{spc,ml} drives the recommended-range band and
-  // optimal-center line (spec §3) -- same "caller owns the toggle state"
+  // optimal-center line -- same "caller owns the toggle state"
   // pattern as `view`. Defaults to "spc" when the caller hasn't resolved
   // data.methods.adopted yet (first render before the toggle mounts).
   method?: WindowMethod;
   onSelectWafer: (point: ScatterPoint) => void;
   height?: number;
-  // HA그룹: "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김
+  // "보통" 등급 인자의 설명력이 낮다는 안내(caller가 계산해 넘김
   // -- root-cause/page.tsx의 buildModerateInterpretation과 동일 로직).
   // 이 컴포넌트가 자체 계산한 "해석" 행과 함께 카드 하나로 합쳐 그린다.
   // 빈 문자열/undefined면 "신뢰도" 행 자체를 만들지 않는다(조건부).
   reliabilityText?: string;
-  // 즐겨찾기 썸네일 모드 (지시서 P-2) -- 점을 훨씬 작게, 참조선은 최적
+  // 즐겨찾기 썸네일 모드 -- 점을 훨씬 작게, 참조선은 최적
   // 중심 하나만, 축은 눈금/라벨 없이 선만 남긴다. 식별용이라 값을 읽을
   // 필요가 없다.
   thumbnail?: boolean;
@@ -681,17 +661,16 @@ export default function ScatterChart({
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
   const theme = useResolvedTheme();
-  // 모바일 반응형 패치 S-4: ≤767px에서 점 반지름 4px -> 3px(투명도는
-  // 그대로), 눈금은 양끝+중앙(3개)까지 줄인다.
+  // ≤767px에서 점 반지름 4px -> 3px(투명도는 그대로), 눈금은
+  // 양끝+중앙(3개)까지 줄인다.
   const isMobileLayout = useIsMobileLayout();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [containerWidth, setContainerWidth] = useState(680);
-  // 남은 2개 참조 요소(최적 중심/권장 구간)는 기본으로 켜져 있다 (spec §4-2,
-  // 경고선 제거로 3개에서 2개로 줄었다).
+  // 참조 요소 2개(최적 중심/권장 구간)는 기본으로 켜져 있다.
   const [visibleGroups, setVisibleGroups] = useState<Set<string>>(new Set(["optimal", "recommended"]));
   const [trendVisible, setTrendVisible] = useState(true);
-  // Box Plot's own togglable elements (spec §4) -- 개별 wafer/이상치 wafer
+  // Box Plot's own togglable elements -- 개별 wafer/이상치 wafer
   // can be switched off from the legend same as every other reference
   // element; 상자/중앙값/수염 (the box body itself) intentionally have no
   // matching state, since those legend cards render with no onClick.
@@ -701,23 +680,23 @@ export default function ScatterChart({
   const [pointHover, setPointHover] = useState<PointHover | null>(null);
   const [disabledHint, setDisabledHint] = useState<{ x: number; y: number; text: string } | null>(null);
   const [boxHover, setBoxHover] = useState<BoxHover | null>(null);
-  // 드래그 선택 (spec B) -- 일시적 상태다. 뷰 전환·타깃 변경·카드 remount
+  // 드래그 선택 -- 일시적 상태다. 뷰 전환·타깃 변경·카드 remount
   // 시 해제해야 하므로 아래 [data, view] 이펙트에서 지운다.
   const [dragStart, setDragStart] = useState<DragPos | null>(null);
   const [dragCurrent, setDragCurrent] = useState<DragPos | null>(null);
   const [selectedPoints, setSelectedPoints] = useState<ScatterPoint[]>([]);
   // 정보 박스가 드래그 사각형이 우상단 코너를 침범할 때만 좌상단으로
   // flip한다 -- 선택이 끝난 뒤에는 박스가 사각형을 따라다니지 않으므로
-  // (지시서 B) 이 값도 finishDrag 시점에 한 번만 정해지고 고정된다.
+  // 이 값도 finishDrag 시점에 한 번만 정해지고 고정된다.
   const [statsBoxFlip, setStatsBoxFlip] = useState(false);
 
-  // 그룹 스크럽 슬라이더 (spec CA) -- Config별/LOT별 Color By에서만 의미가
+  // 그룹 스크럽 슬라이더 -- Config별/LOT별 Color By에서만 의미가
   // 있다. 위치 0 = 전체(강조 없음), 1..N = scrubGroups[index-1]. 카드별
   // 독립 상태이며, 서버·즐겨찾기에는 절대 저장하지 않는다(일시 상태).
   const [scrubSort, setScrubSort] = useState<ScrubSort>("mean");
   const [scrubIndex, setScrubIndex] = useState(0);
   const [scrubInputInvalid, setScrubInputInvalid] = useState(false);
-  // 드래그 중 rAF로 스로틀링 (spec CA "성능") -- 네이티브 range input이
+  // 드래그 중 rAF로 스로틀링 -- 네이티브 range input이
   // 매 스텝마다 onChange를 쏘아도, 실제 setState(리렌더)는 프레임당 최대
   // 1번만 반영한다.
   const pendingScrubIndexRef = useRef<number | null>(null);
@@ -731,7 +710,7 @@ export default function ScatterChart({
     return () => window.clearTimeout(timer);
   }, [data, view]);
 
-  // 그룹 스크럽 초기화 (spec CA "상태 범위") -- 색상 모드가 바뀌거나(Config
+  // 그룹 스크럽 초기화 -- 색상 모드가 바뀌거나(Config
   // 인덱스를 LOT 모드로 끌고 가면 안 됨) 새 인자 데이터가 들어오면 0(전체)
   // 으로 되돌린다. `view`는 의도적으로 빠져 있다 -- 뷰 전환(산점도<->Box
   // Plot) 시에는 유지해야 한다(같은 데이터를 다른 형태로 보는 것뿐이므로).
@@ -784,7 +763,7 @@ export default function ScatterChart({
   }, [data.points, plotWidth, plotHeight]);
 
   // 10-bin box/whisker profile computed client-side from the same points
-  // the scatter view already has -- no extra API call (spec §7).
+  // the scatter view already has -- no extra API call.
   const boxBins = useMemo(() => buildBoxBins(data.points), [data.points]);
 
   // Box mode's x-axis is categorical (1..N bin slots, evenly spaced with
@@ -800,37 +779,34 @@ export default function ScatterChart({
   // 최적 중심, 권장 구간, 구간 평균 불량률) -- scatter mode places them by
   // real value on the continuous xScale same as always; box mode
   // re-projects that same real value onto the categorical box axis by
-  // interpolating against the box bins' x-means (spec §3-5), so "LCL"
+  // interpolating against the box bins' x-means, so "LCL"
   // still lands between the two box columns whose data actually spans it.
   const plotX = (value: number): number =>
     view === "box" ? catScale(categoryPositionForValue(value, boxBins)) : xScale(value);
 
-  // Tick density up from the previous fixed 6 (x) / 5 (y) to spec §8's
-  // 8-10 / 6-8, backing off toward the lower bound whenever labels would
-  // collide -- which also makes density shrink automatically as the chart
-  // narrows (panel open, mobile), since a narrower plotWidth needs more
-  // backoff steps to stop the same labels from overlapping. Below a
-  // ~240px-tall mobile chart (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
-  // 전환 §B-6, "x축 4~5개 · y축 4개"), the desktop band itself drops too --
-  // niceTicksFitted's own overlap backoff alone doesn't reliably reach
-  // that few on a chart this compact.
+  // Tick density is 8-10 (x) / 6-8 (y), backing off toward the lower bound
+  // whenever labels would collide -- which also makes density shrink
+  // automatically as the chart narrows (panel open, mobile), since a
+  // narrower plotWidth needs more backoff steps to stop the same labels
+  // from overlapping. Below a ~240px-tall mobile chart the desktop band
+  // itself drops to 4-5 (x) / 4 (y) -- niceTicksFitted's own overlap
+  // backoff alone doesn't reliably reach that few on a chart this compact.
   const isCompactChart = plotHeight < 200;
-  // 모바일 반응형 패치 S-4: ≤767px 뷰포트에서는 chart 픽셀 높이와 무관하게
-  // 항상 3개(양끝+중앙)까지 더 줄인다 -- isCompactChart는 차트 자체의
-  // 렌더 높이(썸네일 등에서도 발생 가능)를 기준으로 하는 기존 규칙이라
-  // 그대로 남겨 두고, 뷰포트 폭 기준 규칙을 그 위에 얹는다.
+  // ≤767px 뷰포트에서는 chart 픽셀 높이와 무관하게 항상 3개(양끝+중앙)
+  // 까지 더 줄인다 -- isCompactChart는 차트 자체의 렌더 높이(썸네일 등에
+  // 서도 발생 가능)를 기준으로 하는 규칙이라 그대로 두고, 뷰포트 폭 기준
+  // 규칙을 그 위에 얹는다.
   const xTicks = useMemo(() => {
     const [max, min] = isMobileLayout ? [3, 3] : isCompactChart ? [5, 4] : X_TICK_COUNT;
     return niceTicksFitted(xDomain, max, min, plotWidth, formatTick, (label) => measureTextWidth(label, TICK_FONT));
   }, [xDomain, plotWidth, isCompactChart, isMobileLayout]);
   // Box mode: one tick per bin, at its column center, labeled with the
-  // bin's x-mean rounded to an integer (spec §3-1) -- not the shared
-  // niceTicksFitted continuous-axis logic, since these positions are
-  // fixed category slots, not values to round to "nice" numbers. Falls
-  // back to one decimal place for every label, uniformly, whenever
-  // integer rounding would collide two adjacent bins onto the same
-  // number (spec §2: "60이 두 번" -- 12 narrower bins make this far more
-  // likely than the old 10).
+  // bin's x-mean rounded to an integer -- not the shared niceTicksFitted
+  // continuous-axis logic, since these positions are fixed category slots,
+  // not values to round to "nice" numbers. Falls back to one decimal place
+  // for every label, uniformly, whenever integer rounding would collide
+  // two adjacent bins onto the same number ("60이 두 번"), which 12
+  // narrow bins make quite likely.
   const boxXTicks = useMemo(() => {
     const rounded = boxBins.map((bin) => Math.round(bin.xMean));
     const hasDuplicate = rounded.some((value, i) => rounded.indexOf(value) !== i);
@@ -844,8 +820,8 @@ export default function ScatterChart({
     const [max, min] = isMobileLayout ? [3, 3] : isCompactChart ? [4, 4] : Y_TICK_COUNT;
     return niceTicksFitted(yDomain, max, min, plotHeight, formatTick, () => Y_TICK_LABEL_HEIGHT_PX);
   }, [yDomain, plotHeight, isCompactChart, isMobileLayout]);
-  // Measured (not guessed) so the y-axis title's 8px clearance (spec §1
-  // 재지시) holds regardless of how wide the actual tick numbers render --
+  // Measured (not guessed) so the y-axis title's 8px clearance holds
+  // regardless of how wide the actual tick numbers render --
   // short domains ("1".."5") get a tighter gutter, wide ones ("-123.4")
   // get a wider one, and MARGIN.left's fixed 76px budget just needs to
   // comfortably cover the realistic worst case.
@@ -859,7 +835,7 @@ export default function ScatterChart({
   // assign each distinct config/lot a stable color index for this render.
   const lotIndex = new Map<string, number>();
 
-  // 그룹 스크럽 슬라이더 (spec CA) -- 점 -> 그룹키 매핑을 프레임마다 다시
+  // 그룹 스크럽 슬라이더 -- 점 -> 그룹키 매핑을 프레임마다 다시
   // 계산하지 않도록 미리 만들어 메모이즈한다("성능" 절: "그룹 -> 점 인덱스
   // 매핑을 미리 계산해 메모이즈한다. 매 프레임 filter를 돌리지 말 것").
   // colorMode가 "기본"이면 그룹 개념이 없으므로 null.
@@ -875,8 +851,7 @@ export default function ScatterChart({
 
   // 그룹 목록 + 평균 y/개수 -- 정렬 기준이 바뀔 때만 다시 정렬한다(그룹
   // 집계 자체는 scrubKeyByPoint/data.points가 바뀔 때만). 표본이 1~2개뿐인
-  // 그룹도 전부 포함한다 (spec CA "하지 말 것": "표본이 적다는 이유로 빼지
-  // 말 것").
+  // 그룹도 표본이 적다는 이유로 빼지 않고 전부 포함한다.
   const scrubGroups = useMemo(() => {
     if (!scrubKeyByPoint) return [] as { key: string; count: number; meanY: number }[];
     const stats = new Map<string, { count: number; sumY: number }>();
@@ -901,22 +876,21 @@ export default function ScatterChart({
   const activeScrubGroup = scrubIndex >= 1 ? (scrubGroups[scrubIndex - 1]?.key ?? null) : null;
   const scrubGroupLabel = activeScrubGroup ?? "전체";
 
-  /** 비선택 그룹의 점을 낮은 투명도로 흐리게 한다 (spec CA "시각 처리": 색은
+  /** 비선택 그룹의 점을 낮은 투명도로 흐리게 한다 (색은
    * 유지, 회색으로 바꾸지 않는다) -- 강조 그룹이 없거나(위치 0) 이 점이
    * 이미 호버/브러시 선택 중이면 원래 opacity를 그대로 쓴다.
    *
-   * 지시서 X-3: 기본 불투명도를 POINT_OPACITY(0.28)로 낮추면서 대비가
-   * 줄었다(이전 0.7~0.85 대 0.12 → 0.28 대 0.10). 선택 그룹은 원래
-   * opacity를 그대로 넘기는 대신 1로 올려, 강조 대비가 오히려 커지게
-   * 한다 -- 비선택 하한(SCRUB_DIM_OPACITY)만 낮추고 선택 쪽을 그대로
-   * 두면 이전보다 덜 도드라져 보였을 것이다. */
+   * 기본 불투명도가 POINT_OPACITY(0.28)로 낮아 비선택(0.10)과의 대비가
+   * 크지 않다 -- 그래서 선택 그룹은 원래 opacity를 그대로 넘기지 않고
+   * 1로 올린다. 비선택 하한(SCRUB_DIM_OPACITY)만 낮추고 선택 쪽을 그대로
+   * 두면 강조가 눈에 띄지 않는다. */
   function applyScrubDim(point: ScatterPoint, opacity: number, isHovered: boolean, isSelected: boolean): number {
     if (isHovered || isSelected) return opacity;
     if (!activeScrubGroup) return opacity;
     return scrubKeyByPoint?.get(point) === activeScrubGroup ? 1 : SCRUB_DIM_OPACITY;
   }
 
-  // 드래그 중 rAF 스로틀 (spec CA "성능") -- 슬라이더가 프레임당 여러 번
+  // 드래그 중 rAF 스로틀 -- 슬라이더가 프레임당 여러 번
   // onChange를 쏘아도 setState(리렌더)는 프레임당 최대 1번만 반영한다.
   function scheduleScrubIndex(next: number) {
     pendingScrubIndexRef.current = next;
@@ -932,7 +906,7 @@ export default function ScatterChart({
     });
   }
 
-  // 그룹명 직접 입력 -> 슬라이더 점프 (spec CA) -- 비우고 확정하면 0(전체)
+  // 그룹명 직접 입력 -> 슬라이더 점프 -- 비우고 확정하면 0(전체)
   // 으로, 존재하지 않는 이름이면 경고 테두리만 표시하고 슬라이더는 그대로
   // 둔다.
   function commitScrubInput(raw: string) {
@@ -951,14 +925,14 @@ export default function ScatterChart({
     setScrubInputInvalid(false);
   }
 
-  // The active method's own window/center (spec §3) -- null when
+  // The active method's own window/center -- null when
   // data.methods is null (Config factors, never routed through this
   // component in practice) or that method couldn't fit a window at all.
   const activeMethodWindow = data.methods?.[activeMethod] ?? null;
 
   // shape.py only ever sets optimal_center for a u_shape relation -- a
   // monotonic factor (e.g. Step1_D1) genuinely has no interior optimum,
-  // not just one that fell outside the drawable range (spec §4-2/§4-3).
+  // not just one that fell outside the drawable range.
   // This gate is intentionally method-independent: whether a factor has
   // a genuine U-shaped optimum at all doesn't change when the SPC/ML
   // toggle flips, only *where* that optimum sits does.
@@ -966,7 +940,7 @@ export default function ScatterChart({
   // A classified center that got dropped downstream (fell outside its
   // own recommended window after control-range clamping, or was picked
   // from a sparse/outlier-widened bin) gets its own specific reason
-  // instead of the generic "단조 관계라..." message (spec §3-3/§3-4).
+  // instead of the generic "단조 관계라..." message.
   const optimalUnavailableReason = data.optimal_center_dropped_reason ?? "단조 관계라 최적 중심이 없습니다";
   // The displayed center value follows the active method once one is
   // available server-side; falls back to the legacy client-only value
@@ -975,7 +949,7 @@ export default function ScatterChart({
   const displayedOptimalCenter = activeMethodWindow?.optimal_center ?? data.optimal_center;
 
   // Recommended range/최적중심 come straight from the backend's SPC/ML
-  // comparison (spec §2-1/§3-3) -- already clamped into the control
+  // comparison -- already clamped into the control
   // range there, so no client-side re-derivation or re-clamping needed.
   const recommendedRangeValue: [number, number] | null = activeMethodWindow ? activeMethodWindow.window : null;
 
@@ -990,21 +964,21 @@ export default function ScatterChart({
     return lines;
   }, [displayedOptimalCenter]);
 
-  // 차트 폭이 좁으면 라벨을 축약형(값만)으로 바꾼다 (spec §C-4). 이 폭
+  // 차트 폭이 좁으면 라벨을 축약형(값만)으로 바꾼다. 이 폭
   // 미만에서는 권장 구간 요약 라벨도 아예 빼고 밴드 안쪽 경계값 라벨에
   // 정보 전달을 맡긴다 (아래 BAND_BOUNDARY_MIN_WIDTH 조건부 렌더 참고).
   const isNarrowChart = containerWidth < COMPACT_LABEL_CHART_WIDTH;
 
   // 최적 중심 라인 라벨 + 권장 구간 요약 라벨을 한 배열로 모아 같은
-  // 2단 충돌 배치 로직을 함께 통과시킨다 (spec §C-2) -- 꺼진 그룹은 애초에
+  // 2단 충돌 배치 로직을 함께 통과시킨다 -- 꺼진 그룹은 애초에
   // 배치 대상에서 빼서, 숨겨진 라벨이 다른 라벨의 자리를 차지하지 않는다.
   const floatingLabels = useMemo<FloatingLabel[]>(() => {
     const items: FloatingLabel[] = [];
     for (const line of displayLines) {
       if (!visibleGroups.has("optimal")) continue;
-      // 보정 §I-5: 최적 중심은 SPC/ML 방식에 따라 값 자체가 달라지므로
-      // (권장 구간 라벨처럼) 방식을 라벨에 표기한다 -- 색으로는 더 이상
-      // 구분하지 않으니(§H-1) 텍스트가 유일한 구분 수단이다.
+      // 최적 중심은 SPC/ML 방식에 따라 값 자체가 달라지므로 (권장 구간
+      // 라벨처럼) 방식을 라벨에 표기한다 -- 색은 방식을 구분하지 않으므로
+      // 텍스트가 유일한 구분 수단이다.
       const methodSuffix = ` (${METHOD_LABEL[activeMethod]})`;
       const color = line.greyedOut ? (theme === "dark" ? "#6B7280" : "#9CA3AF") : (theme === "dark" ? line.color.dark : line.color.light);
       items.push({
@@ -1038,12 +1012,11 @@ export default function ScatterChart({
     [floatingLabels, isNarrowChart],
   );
 
-  // TD-3: "구간 평균 불량률" 꺾은선 대신, F 검정으로 차수를 고른 1·2차
+  // "구간 평균 불량률" 꺾은선 대신, F 검정으로 차수를 고른 1·2차
   // 다항 곡선을 그린다 -- data.points에서 순수 프런트에서 재계산하며
   // (추가 API 호출 없음), 최적 중심/권장 구간(백엔드 값)에는 전혀
   // 영향을 주지 않는다. n<30/R²<0.02/x 고유값<5/특이 행렬이면
-  // fallbackReason이 채워지고, 그때만 기존 data.bins 꺾은선을 그대로
-  // 그린다(계산 자체는 손대지 않는다).
+  // fallbackReason이 채워지고, 그때만 data.bins 꺾은선을 그대로 그린다.
   const curveFit = useMemo(() => fitDefectRateCurve(data.points), [data.points]);
 
   const curvePathD = useMemo(() => {
@@ -1067,10 +1040,10 @@ export default function ScatterChart({
     if (!data.bins.length) return { segments: [] as { d: string; dashed: boolean }[], band: "", markers: [] as { x: number; y: number }[] };
     const points = data.bins.map((b) => [plotX(b.x_mean), yScale(b.y_mean)] as const);
     // One segment per adjacent bin pair, dashed whenever either endpoint
-    // bin is `sparse` (outlier-widened -- spec §3-4: "표본이 넓게 흩어진
+    // bin is `sparse` (outlier-widened -- "표본이 넓게 흩어진
     // 구간" gets a visibly different line style, not silently blended
     // into the solid curve). In box mode every segment is dashed
-    // regardless of sparseness (spec §3-4: 실선->점선), plus a circle
+    // regardless of sparseness (실선->점선), plus a circle
     // marker is drawn at each bin so it reads distinctly from the box
     // plot's own solid median line.
     const segments = points.slice(1).map(([x2, y2], i) => {
@@ -1150,7 +1123,7 @@ export default function ScatterChart({
   }
 
   // Which box column (if any) the cursor sits over -- used for the box
-  // summary tooltip (spec §5). Column hit area is the box's own pixel
+  // summary tooltip. Column hit area is the box's own pixel
   // width, not the full category slot, so hovering the empty gap between
   // two boxes doesn't spuriously show a tooltip. Note: this can't be a
   // plain onMouseEnter/Leave on the box <rect> itself, since the shared
@@ -1165,11 +1138,11 @@ export default function ScatterChart({
     return null;
   }
 
-  // 선택 표시 (spec B) -- 선택이 있을 때만 비선택 점을 흐리게 한다.
+  // 선택 표시 -- 선택이 있을 때만 비선택 점을 흐리게 한다.
   const hasSelection = selectedPoints.length > 0;
   const selectedSet = new Set(selectedPoints);
 
-  // Esc는 브러시 선택만 해제한다 (spec CA "드래그 브러시 선택과의 관계") --
+  // Esc는 브러시 선택만 해제한다 --
   // 슬라이더(그룹 강조)는 건드리지 않는다. 선택이 없을 때는 리스너 자체를
   // 붙이지 않아 카드가 여러 개 떠 있어도 서로 방해하지 않는다.
   useEffect(() => {
@@ -1182,9 +1155,9 @@ export default function ScatterChart({
   }, [hasSelection]);
 
   // 드래그 브러시 히트테스트용 렌더 좌표 -- Box 모드는 지터된 화면 위치
-  // 기준으로 판정한다(지시서 B: "지터된 점 좌표 기준"), Scatter 모드는
+  // 기준으로 판정한다("지터된 점 좌표 기준"), Scatter 모드는
   // 실제 값 좌표. 숨겨진(inlier/outlier 토글 꺼짐) 점은 제외한다.
-  // H-4: 이 배열(최대 1,470개 점)이 매 렌더(호버 포함)마다 새로 만들어지고
+  // 이 배열(최대 1,470개 점)이 매 렌더(호버 포함)마다 새로 만들어지고
   // 있었다 -- 실제로 좌표가 바뀔 수 있는 입력이 바뀔 때만 다시 만든다.
   // catScale은 매 렌더 새로 만들어지는 함수라 그 자체를 deps에 넣으면
   // 메모가 무력화되므로, 대신 catScale의 실제 값을 좌우하는
@@ -1223,7 +1196,7 @@ export default function ScatterChart({
   function finishDrag(start: DragPos, end: DragPos) {
     const distance = Math.hypot(end.x - start.x, end.y - start.y);
     if (distance < DRAG_THRESHOLD_PX) {
-      // 클릭으로 본다 -- 기존 포인트 클릭 상세를 그대로 재현한다. 이
+      // 클릭으로 본다 -- 포인트 클릭 상세를 띄운다. 이
       // 오버레이가 모든 하위 도형의 포인터 이벤트를 가로채므로(위
       // findBoxColumnAt 주석 참고) 개별 <circle>의 onClick은 실제로
       // 발생하지 않는다 -- 클릭 처리는 여기서 대신한다.
@@ -1244,7 +1217,7 @@ export default function ScatterChart({
       .filter((p) => p.screenX >= xLo && p.screenX <= xHi && p.screenY >= yLo && p.screenY <= yHi)
       .map((p) => p.point);
     // 우상단 코너에 정보 박스가 뜨는데 드래그 사각형이 그 자리를
-    // 침범하면 박스가 선택 점을 가리므로 좌상단으로 flip (지시서 B).
+    // 침범하면 박스가 선택 점을 가리므로 좌상단으로 flip.
     setStatsBoxFlip(xHi > plotWidth - STATS_BOX_WIDTH && yLo < STATS_BOX_HEIGHT);
     setSelectedPoints(hits);
   }
@@ -1339,11 +1312,11 @@ export default function ScatterChart({
     setTrendHover({ screenX: xScale(dataX), screenY: yScale(dataY), dataX, dataY, ciLo, ciHi, n });
   }
 
-  // C-5: data.optimal_center는 SPC 고정값이다 -- ML로 전환하면 라인·범례는
+  // data.optimal_center는 SPC 고정값이다 -- ML로 전환하면 라인·범례는
   // displayedOptimalCenter(ML 중심)를 따르는데 해석 문장만 SPC 값에
   // 머물러 있었다.
-  const interpretationText = buildInterpretationTip(data.eps2, data.relation_shape, displayedOptimalCenter, targetAxisLabel(data.axis.y_label), view);
-  // HA그룹: 해석(항상) + 신뢰도(조건부, caller가 넘겨줄 때만) 두 행을
+  const interpretationText = buildInterpretationTip(data.adj_r2, data.relation_shape, displayedOptimalCenter, targetAxisLabel(data.axis.y_label), view);
+  // 해석(항상) + 신뢰도(조건부, caller가 넘겨줄 때만) 두 행을
   // 카드 하나로 합친다 -- 순서는 해석 -> 신뢰도(무엇인지 먼저, 얼마나
   // 믿을지 나중).
   const interpretationRows: InterpretationRow[] = [
@@ -1352,8 +1325,8 @@ export default function ScatterChart({
   ];
 
   // 단조 인자는 최적 중심 자체가 개념적으로 없으므로 항목을 아예 숨긴다
-  // (spec §3-4) -- u_shape/unclear에서 값이 빠진 경우는 기존처럼 "해당
-  // 없음" 비활성 카드로 남겨 이유를 알 수 있게 한다.
+  // -- u_shape/unclear에서 값이 빠진 경우는 "해당 없음" 비활성 카드로
+  // 남겨 이유를 알 수 있게 한다.
   const showOptimalLegendCard = data.relation_shape !== "monotonic_increasing" && data.relation_shape !== "monotonic_decreasing";
 
   function renderLineBody(line: DisplayLine) {
@@ -1382,8 +1355,8 @@ export default function ScatterChart({
   }
 
   // line 라벨/권장 구간 라벨 공용 렌더러 -- labelLayout이 이미 x/y/숨김
-  // 여부/축약 텍스트까지 계산해 뒀으므로 여기서는 그리기만 한다 (spec
-  // §C-6: Box Plot도 plotX를 통해 같은 좌표계를 쓰므로 별도 분기가 없다).
+  // 여부/축약 텍스트까지 계산해 뒀으므로 여기서는 그리기만 한다
+  // (Box Plot도 plotX를 통해 같은 좌표계를 쓰므로 별도 분기가 없다).
   function renderFloatingLabel(key: string) {
     const layout = labelLayout.find((l) => l.key === key);
     if (!layout || layout.hidden || !layout.text) return null;
@@ -1412,10 +1385,10 @@ export default function ScatterChart({
       <div className="scatterPlotWrap">
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-          {/* dark-mode-only plot background (spec §4 재지시) -- painted
+          {/* dark-mode-only plot background -- painted
               first so every other layer sits on top of it. */}
           <rect x={0} y={0} width={plotWidth} height={plotHeight} className="scatterPlotBg" />
-          {/* axis ticks -- 썸네일은 눈금/라벨 없이 축 선만 (지시서 P-2).
+          {/* axis ticks -- 썸네일은 눈금/라벨 없이 축 선만.
               식별용이라 값을 읽을 필요가 없다. */}
           {thumbnail ? (
             <>
@@ -1445,8 +1418,8 @@ export default function ScatterChart({
                   ))}
 
               {/* y-axis title -- target name only (e.g. "Y5"), same grey/
-                  secondary style as the x-axis title below the plot. Spec §1
-                  재지시: horizontal (not rotated), vertically centered on the
+                  secondary style as the x-axis title below the plot.
+                  Horizontal (not rotated), vertically centered on the
                   plot height, positioned left of the tick numbers with an
                   8px gap measured against the actual widest tick label so it
                   never overlaps regardless of the domain's value range. */}
@@ -1462,7 +1435,7 @@ export default function ScatterChart({
             </>
           )}
 
-          {/* 썸네일에서는 최적 중심 참조선 하나만 남긴다 (지시서 P-2) --
+          {/* 썸네일에서는 최적 중심 참조선 하나만 남긴다 --
               권장 구간 밴드는 3종 참조선 중 하나라 여기서 함께 생략한다. */}
           {!thumbnail && visibleGroups.has("recommended") && recommendedRangeValue && (() => {
             const [lo, hi] = recommendedRangeValue;
@@ -1480,12 +1453,12 @@ export default function ScatterChart({
                   onMouseLeave={() => setLineHover(null)}
                 />
                 {/* 2px 경계선 -- alpha만으로는 그 안의 점이 묻히므로 두께로
-                    보완한다 (spec §3-4: "밴드 알파를 0.15보다 올리지 마라"). */}
+                    보완한다 ("밴드 알파를 0.15보다 올리지 마라"). */}
                 <rect
                   x={x1} y={0} width={x2 - x1} height={plotHeight}
                   fill="none" stroke={fill} strokeWidth={2} pointerEvents="none"
                 />
-                {/* 밴드 양끝 안쪽 경계값 (spec §C-5) -- "권장 구간 (SPC)
+                {/* 밴드 양끝 안쪽 경계값 -- "권장 구간 (SPC)
                     54.7~61.5" 이름표는 이제 위쪽 3단 라벨 체계
                     (window_bounds)로 옮겨졌으니, 밴드 안에는 그 라벨이
                     좁은 화면에서 생략되더라도 경계값만은 항상 읽히도록
@@ -1504,16 +1477,16 @@ export default function ScatterChart({
             );
           })()}
 
-          {/* data points -- painted before every reference line/curve (spec
-              §4-1: lines and the trend curve must sit above the points,
-              never hidden behind them). */}
+          {/* data points -- painted before every reference line/curve
+              (lines and the trend curve must sit above the points, never
+              hidden behind them). */}
           {view === "scatter"
             ? data.points.map((point, index) => {
                 const style = colorForPoint(point, colorMode, lotIndex, theme);
                 const isHovered = pointHover?.point === point;
                 const isSelected = selectedSet.has(point);
                 const stroke = isHovered ? (theme === "dark" ? "#FFFFFF" : "#0E306D") : "none";
-                // 모바일 반응형 패치 S-4: ≤767px에서 점 반지름 1px 축소
+                // ≤767px에서 점 반지름 1px 축소
                 // (기본 4px -> 3px, 투명도는 손대지 않는다).
                 const size = thumbnail ? THUMBNAIL_POINT_RADIUS : isMobileLayout ? Math.max(style.size - 1, 2) : style.size;
                 const opacity = thumbnail ? THUMBNAIL_POINT_OPACITY : style.opacity;
@@ -1534,7 +1507,7 @@ export default function ScatterChart({
                 );
               })
             : boxBins.map((bin) => {
-                // 보정 §I-3: 상자 테두리·수염은 이제 권장구간 안/밖과
+                // 상자 테두리·수염은 이제 권장구간 안/밖과
                 // 무관하게 항상 중립(var(--line)) 하나다.
                 const boxColor = theme === "dark" ? BOX_LINE_COLOR.dark : BOX_LINE_COLOR.light;
                 const boxFill = theme === "dark" ? BOX_FILL_COLOR.dark : BOX_FILL_COLOR.light;
@@ -1556,13 +1529,12 @@ export default function ScatterChart({
                     <line x1={centerX - boxCapWidthPx / 2} x2={centerX + boxCapWidthPx / 2} y1={whiskerHiY} y2={whiskerHiY} stroke={whiskerColor} strokeWidth={1.1} />
                     <line x1={centerX - boxCapWidthPx / 2} x2={centerX + boxCapWidthPx / 2} y1={whiskerLoY} y2={whiskerLoY} stroke={whiskerColor} strokeWidth={1.1} />
                     {/* jittered individual wafers -- inliers filled (painted per
-                        the active Color By, spec §3), outliers hollow red
-                        (spec §3-3: "이상치는 속이 빈 원. 채우지 마라"). Radius
-                        stays smaller than the scatter view's (spec §3-2) since
-                        these sit on top of the box itself, but opacity is now
-                        POINT_OPACITY -- the same value the scatter view's
-                        colorForPoint uses (지시서 X그룹: 두 뷰의 점 무게가
-                        같아야 한다). */}
+                        the active Color By), outliers hollow red and
+                        never filled. Radius stays smaller than the scatter
+                        view's since these sit on top of the box itself, but
+                        opacity is POINT_OPACITY -- the same value the
+                        scatter view's colorForPoint uses, so the two views
+                        carry the same point weight. */}
                     {bin.members.map((member, mi) => {
                       const cx = catScale(bin.index + 1 + member.jitter);
                       const cy = yScale(member.point.y);
@@ -1614,11 +1586,11 @@ export default function ScatterChart({
                       );
                     })}
                     {/* box -- outline only, never filled, so jitter points under it
-                        stay visible (spec §3-2). Hover is handled by the
+                        stay visible. Hover is handled by the
                         shared plot overlay rect (see findBoxColumnAt), not
                         by listeners here -- the overlay paints on top of
                         every plot element and would swallow them anyway.
-                        보정 §I-3: 8% var(--measured) 옅은 채움을 추가했다 --
+                        8% var(--measured) 옅은 채움을 추가했다 --
                         fillOpacity가 낮아 밑에 깔린 jitter 점은 계속 보인다. */}
                     <rect
                       x={centerX - boxWidthPx / 2}
@@ -1640,12 +1612,12 @@ export default function ScatterChart({
                 );
               })}
 
-          {/* reference line body -- 최적 중심 (spec §4-1). Labels are a
+          {/* reference line body -- 최적 중심. Labels are a
               separate, always-topmost pass below so they never sit under a
               later-drawn line. */}
           {displayLines.map((line) => renderLineBody(line))}
 
-          {/* TD-3: 불량률 곡선 -- F 검정으로 차수를 고른 1·2차 다항 곡선.
+          {/* 불량률 곡선 -- F 검정으로 차수를 고른 1·2차 다항 곡선.
               폴백(fallbackReason 있음: 표본 부족/설명력 낮음/x 고유값
               부족/특이 행렬)일 때만 예전 구간 평균 꺾은선(data.bins
               기반, 신뢰구간 밴드 포함)을 그대로 그린다 -- 계산은 손대지
@@ -1674,7 +1646,7 @@ export default function ScatterChart({
                   fill="none"
                 />
               ))}
-              {/* circle markers -- box mode only (spec §3-4), so the dashed
+              {/* circle markers -- box mode only, so the dashed
                   구간 평균 curve reads distinctly from the box plot's own
                   solid median line. */}
               {view === "box" &&
@@ -1691,11 +1663,10 @@ export default function ScatterChart({
             </>
           )}
 
-          {/* line name labels -- topmost of all. 썸네일은 라벨을 전부 생략한다
-              (지시서 P-2). */}
+          {/* line name labels -- topmost of all. 썸네일은 라벨을 전부 생략한다. */}
           {!thumbnail && labelLayout.map((layout) => renderFloatingLabel(layout.key))}
 
-          {/* 드래그 브러시 사각형 (spec B) -- 오버레이보다 먼저 그려서
+          {/* 드래그 브러시 사각형 -- 오버레이보다 먼저 그려서
               오버레이가 계속 포인터 이벤트를 받게 둔다(사각형 자체는
               pointerEvents:none). */}
           {dragStart && dragCurrent && (
@@ -1711,7 +1682,7 @@ export default function ScatterChart({
 
           {/* continuous point+trend hover overlay -- nearest-point search,
               not per-point listeners (see findNearestPoint's comment).
-              Also owns click-vs-drag selection (spec B): every pointer
+              Also owns click-vs-drag selection: every pointer
               event in the plot lands here first (see findBoxColumnAt's
               comment on why per-shape listeners don't fire), so point
               click and the drag brush both route through this one rect. */}
@@ -1747,8 +1718,8 @@ export default function ScatterChart({
           yLabel={targetAxisLabel(data.axis.y_label)}
           flip={statsBoxFlip}
           onClose={() => setSelectedPoints([])}
-          // 브러시는 강조 그룹과 무관하게 전체에서 선택한다 (spec CA "드래그
-          // 브러시 선택과의 관계") -- 통계 박스에는 교집합만 병기한다.
+          // 브러시는 강조 그룹과 무관하게 전체에서 선택한다 -- 통계
+          // 박스에는 교집합만 병기한다.
           emphasizedCount={
             activeScrubGroup ? selectedPoints.filter((p) => scrubKeyByPoint?.get(p) === activeScrubGroup).length : null
           }
@@ -1758,21 +1729,19 @@ export default function ScatterChart({
 
       {!thumbnail && <p className="scatterAxisTitle">{factorAxisLabel(data.axis.x_label)}</p>}
 
-      {/* 범례 (spec §5) -- 점의 색 구분(Color By)은 더 이상 범례에 나타나지
-          않는다: 어떤 Color By를 고르든 이 아래 내용은 완전히 동일하다.
-          Box Plot은 박스 자체를 읽는 법(1행)이 앞에 붙고, 기준선 4종 +
-          구간 평균 불량률(row2)은 두 보기에서 문구까지 완전히 같다
-          (spec §5-3: "Box Plot 2행이 Scatter Plot 1행과 글자까지
-          동일"). */}
+      {/* 범례 -- 점의 색 구분(Color By)은 범례에 넣지 않는다: 어떤
+          Color By를 고르든 이 아래 내용은 완전히 동일하다. Box Plot은
+          박스 자체를 읽는 법(1행)이 앞에 붙고, 기준선 4종 + 구간 평균
+          불량률(row2)은 두 보기에서 문구까지 완전히 같다. */}
       <div className="scatterRefLegend">
         <div className="scatterRefLegendDivider" />
 
-        {/* 그룹 스크럽 슬라이더 (spec CA) -- Config별/LOT별 Color By에서만
+        {/* 그룹 스크럽 슬라이더 -- Config별/LOT별 Color By에서만
             렌더한다("기본"이면 그룹 개념이 없다). 위치 0 = 전체, 오른쪽으로
             움직이면 scrubSort 기준으로 정렬된 그룹을 하나씩 강조한다.
             참조선·최적중심·권장구간·박스 자체는 이 상태와 무관하게 항상
-            전체 데이터 기준으로 그려진다(§C 재계산 금지 -- 장비별 Trellis
-            모달의 역할과 겹치지 않게 한다). */}
+            전체 데이터 기준으로 그려진다(그룹별 재계산은 하지 않는다 --
+            장비별 Trellis 모달의 역할과 겹치지 않게 한다). */}
         {colorMode !== "default" && (
           <div className="scatterScrubRow">
             <span className="scatterScrubLabel">그룹 강조</span>
@@ -1869,10 +1838,10 @@ export default function ScatterChart({
         )}
 
         {/* 최적 중심 · 권장 구간 · 구간 평균 불량률 3종 -- Color By와
-            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)는 화면에 더는
-            노출하지 않는 개념이다 (src/analysis/control_range.py에는
-            그대로 남아 있다). 경고선(PDP 기반 임계)은 계측률에 비례해
-            반대로 작동하는 것이 검증되어 코드 자체가 삭제됐다. */}
+            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)는 화면에 노출하지
+            않는다(src/analysis/control_range.py에는 SPC 참조용으로 남아
+            있다). 경고선 개념도 이 범례에 없다 -- 계측률이 낮은 인자일수록
+            임계가 반대 방향으로 움직여 신뢰할 수 없기 때문이다. */}
         <div className="scatterLegendRow">
           {showOptimalLegendCard && (
             <LegendCard
@@ -1901,7 +1870,7 @@ export default function ScatterChart({
           <LegendCard
             icon={<IconTrendLine color={theme === "dark" ? TREND_COLOR.dark : TREND_COLOR.light} />}
             label={curveFit.fallbackReason == null ? "불량률 곡선" : "구간 평균 불량률"}
-            // TD-3: 폴백이 아니면 R²·채택 차수를, 폴백이면 사유를 메타
+            // 폴백이 아니면 R²·채택 차수를, 폴백이면 사유를 메타
             // 텍스트로 보여준다 (2자리 소수, "1차"/"2차").
             desc={
               curveFit.fallbackReason ??
@@ -1948,7 +1917,7 @@ export default function ScatterChart({
             <span>{curveFit.fallbackReason == null ? "불량률 곡선" : "구간 평균 불량률"}</span>
             <b>{trendHover.dataY.toFixed(2)}%</b>
           </div>
-          {/* TD-3: 폴백(구간 평균) 모드에만 신뢰구간·구간 wafer 수 개념이
+          {/* 폴백(구간 평균) 모드에만 신뢰구간·구간 wafer 수 개념이
               있다 -- 다항 곡선은 구간이 아니라 연속 함수라 두 행을 생략한다. */}
           {trendHover.ciLo != null && trendHover.ciHi != null && (
             <div className="heatmapTooltipRow"><span>95% 신뢰구간</span><b>{trendHover.ciLo.toFixed(2)} ~ {trendHover.ciHi.toFixed(2)}</b></div>
@@ -1967,8 +1936,8 @@ export default function ScatterChart({
           {pointHover.isOutlier && (
             <div className="heatmapTooltipRow"><span /><b className="scatterOutlierTag">이상치</b></div>
           )}
-          {/* 현재 Color By 기준값 -- 기존 항목은 그대로 두고 한 줄만 덧붙인다
-              (spec §5-3). 항상 최신 colorMode를 읽으므로 전환 시 즉시 반영된다. */}
+          {/* 현재 Color By 기준값 -- 항상 최신 colorMode를 읽으므로 전환
+              시 즉시 반영된다. */}
           {colorMode === "config_model" && pointHover.point.config && (() => {
             const parts = parseConfig(pointHover.point.config);
             return (
@@ -2019,10 +1988,10 @@ function meanOf(values: number[]): number {
   return values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
 }
 
-/** 드래그 선택 정보 박스 (spec B) -- 플롯 우측 상단에 고정 위치로 뜬다
+/** 드래그 선택 정보 박스 -- 플롯 우측 상단에 고정 위치로 뜬다
  * (드래그 사각형을 따라다니지 않는다). 축 이름은 하드코딩하지 않고
  * `data.axis`에서 그대로 받은 실제 컬럼명을 쓴다. 1개 선택이면 통계
- * 대신 그 wafer 하나의 값만 간략히 보여준다 -- 기존 포인트 클릭
+ * 대신 그 wafer 하나의 값만 간략히 보여준다 -- 포인트 클릭
  * 상세(WaferDetailPopover)와 중복되지 않게, 표 없이 한 줄로만. */
 function SelectionStatsBox({
   points,
@@ -2037,7 +2006,7 @@ function SelectionStatsBox({
   yLabel: string;
   flip: boolean;
   onClose: () => void;
-  // 그룹 스크럽 슬라이더가 강조 중일 때만 값이 있다 (spec CA) -- 브러시
+  // 그룹 스크럽 슬라이더가 강조 중일 때만 값이 있다 -- 브러시
   // 선택은 강조 그룹과 무관하게 전체에서 뽑히므로, 그 교집합만 괄호로
   // 병기한다. null이면 슬라이더가 "전체" 위치라 병기할 것이 없다.
   emphasizedCount: number | null;

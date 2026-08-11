@@ -1,4 +1,4 @@
-"""VD-3의 2차 곡선 f(x) -- frontend/lib/defectRateCurve.ts의 Python 이식.
+"""불량률 2차 곡선 f(x) -- frontend/lib/defectRateCurve.ts의 Python 이식.
 
 수율 예측 표의 "감소량"(현재 인자값과 권장 구간 중심 사이의 곡선상 차이)은
 백엔드에서 응답을 만들 때 이미 계산해 내려보낸다(산점도 차트처럼 프런트가
@@ -77,7 +77,7 @@ def fit_defect_rate_curve(x: np.ndarray, y: np.ndarray) -> CurveFit:
             else:
                 f_stat = ((rss_linear - rss_quad) / 1) / (rss_quad / df2)
                 p_value = float(stats.f.sf(f_stat, 1, df2)) if f_stat > 0 else 1.0
-            # 지시서: p < 0.01 AND 2차 계수(c) > 0(위로 볼록, U자)일 때만
+            # p < 0.01 AND 2차 계수(c) > 0(위로 볼록, U자)일 때만
             # 2차를 채택한다 -- "가운데가 최악"인 c<=0은 버린다.
             if p_value < QUADRATIC_P_THRESHOLD and c_q > 0:
                 degree = 2

@@ -74,7 +74,7 @@ def test_schema_with_only_y1_to_y3():
 def test_random_noise_still_returns_a_primary_factor_with_low_confidence():
     """The display-facing selector no longer hides a factor for failing
     significance -- pure noise (Y independent of every candidate) still
-    returns the single strongest-by-eps2 factor, just tagged with a
+    returns the single strongest-by-adj_r2 factor, just tagged with a
     weak/reference confidence tier instead of vanishing as "no significant
     factor". This is the "유의한 인자 없음 폐기" policy: only an empty
     candidate pool (every factor below its own min-n gate) returns None.
@@ -92,7 +92,7 @@ def test_random_noise_still_returns_a_primary_factor_with_low_confidence():
     factor = select_primary_factor(df, schema, "Y1")
 
     assert factor is not None
-    assert confidence_tier(factor.eps2, factor.p_value) in ("weak", "reference")
+    assert confidence_tier(factor.adj_r2, factor.p_value) in ("weak", "reference")
 
 
 def test_all_candidates_below_min_n_returns_none():

@@ -15,7 +15,7 @@ import pandas as pd
 from scipy import stats
 
 from src.analysis.recommendations import _recommended_range_raw
-from src.analysis.screening.effect_size import eps2_categorical
+from src.analysis.screening.effect_size import adj_r2_categorical
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import benjamini_hochberg
 from src.config_parser import config_hierarchy_series
@@ -105,10 +105,10 @@ def per_chamber_window(df: pd.DataFrame, feature: str, target: str, config_col: 
 class ConfigScreeningResult:
     n_tested: int
     n_significant_fdr: int
-    max_observed_eps2: float | None
+    max_observed_adj_r2: float | None
     max_observed_feature: str | None
     max_observed_target: str | None
-    mde_eps2: float | None
+    mde_adj_r2: float | None
     median_n_per_group: int | None
 
 
@@ -133,14 +133,14 @@ def config_main_effect_screening(
             continue
         y = df[target]
         for config_col in schema.config_cols:
-            result = eps2_categorical(df[config_col], y, min_n=min_n)
+            result = adj_r2_categorical(df[config_col], y, min_n=min_n)
             if result is None:
                 continue
             rows.append(
                 {
                     "feature": config_col,
                     "target": target,
-                    "eps2": result.eps2,
+                    "adj_r2": result.adj_r2,
                     "p_value": result.p_value,
                     "n": result.n_observed,
                     "k": result.k_groups,
@@ -153,12 +153,12 @@ def config_main_effect_screening(
     q_values = benjamini_hochberg([r["p_value"] for r in rows])
     n_significant = sum(1 for q in q_values if q < fdr_alpha)
 
-    best = max(rows, key=lambda r: r["eps2"])
+    best = max(rows, key=lambda r: r["adj_r2"])
     median_n = int(np.median([r["n"] for r in rows]))
     median_k = int(np.median([r["k"] for r in rows]))
     median_n_per_group = median_n // median_k if median_k else None
 
-    mde_eps2: float | None = None
+    mde_adj_r2: float | None = None
     if median_k and median_k >= 2 and median_n > median_k:
         from statsmodels.stats.power import FTestAnovaPower  # deferred: see chamber_interaction_p
 
@@ -166,17 +166,17 @@ def config_main_effect_screening(
             f_req = FTestAnovaPower().solve_power(
                 effect_size=None, nobs=median_n, alpha=0.05, power=0.8, k_groups=median_k
             )
-            mde_eps2 = float(f_req**2 / (1 + f_req**2))
+            mde_adj_r2 = float(f_req**2 / (1 + f_req**2))
         except Exception:
-            mde_eps2 = None
+            mde_adj_r2 = None
 
     return ConfigScreeningResult(
         n_tested=len(rows),
         n_significant_fdr=n_significant,
-        max_observed_eps2=best["eps2"],
+        max_observed_adj_r2=best["adj_r2"],
         max_observed_feature=best["feature"],
         max_observed_target=best["target"],
-        mde_eps2=mde_eps2,
+        mde_adj_r2=mde_adj_r2,
         median_n_per_group=median_n_per_group,
     )
 
@@ -195,18 +195,17 @@ class FactorMeasurementBias:
 def per_factor_measurement_bias(
     df: pd.DataFrame, factors: list, fdr_alpha: float = 0.05
 ) -> list[FactorMeasurementBias]:
-    """Per-primary-factor measurement-selection check (spec: 문구 전수 검토
-    §A-7) -- for each of the report's primary factors, does that factor's
-    *own target* defect rate differ between wafers where the factor was
-    measured vs not? This replaced an earlier whole-wafer "any R/D
-    reading at all vs none at all" aggregate test: the aggregate can
-    average away a real per-factor selection effect (e.g. every
-    individual factor biased low, but not all in the same wafers), which
-    is exactly what happened on train.CSV -- the old aggregate test found
-    no significant difference while every one of the 5 primary factors
-    did. `factors` is the caller's own list of ParetoFactor (feature/target
-    pairs) -- same primary-factor set report.py
-    already narrates, not recomputed here.
+    """Per-primary-factor measurement-selection check -- for each of the
+    report's primary factors, does that factor's *own target* defect rate
+    differ between wafers where the factor was measured vs not?
+
+    The check must stay per-factor: a whole-wafer "any R/D reading at all
+    vs none at all" aggregate averages away a real per-factor selection
+    effect (every individual factor biased low, but not all in the same
+    wafers). On train.CSV the aggregate finds no significant difference
+    while every one of the 5 primary factors does. `factors` is the
+    caller's own list of ParetoFactor (feature/target pairs) -- the same
+    primary-factor set report.py narrates, not recomputed here.
     """
     rows: list[dict] = []
     for factor in factors:
@@ -248,8 +247,8 @@ def per_factor_measurement_bias(
 
 def summarize_measurement_bias(rows: list[FactorMeasurementBias]) -> dict | None:
     """Collapses `per_factor_measurement_bias`'s per-factor rows into the
-    3 numbers a caller actually narrates (spec 문구 전수 검토 §A-7): how
-    many factors were testable, how many showed a significant
+    3 numbers a caller actually narrates: how many factors were
+    testable, how many showed a significant
     (q<0.05) measured-vs-unmeasured gap, and whether that gap points the
     same direction everywhere. `None` when there was nothing testable at
     all (not the same as "tested and found no bias" -- callers should
@@ -269,17 +268,17 @@ def summarize_measurement_bias(rows: list[FactorMeasurementBias]) -> dict | None
     }
 
 
-def judge_confidence(eps2: float, p_value: float, band_stability_value: float | None, band_width: float | None) -> str:
-    """LLM-context confidence gate (spec §2-2) -- deliberately separate from
+def judge_confidence(adj_r2: float, p_value: float, band_stability_value: float | None, band_width: float | None) -> str:
+    """LLM-context confidence gate -- deliberately separate from
     screening.selector.confidence_tier, which drives the 4-tier badge shown
     on-screen. This one folds in band stability (screen badges don't) and
     only has 3 outcomes because the report only ever says "present a band"
     or "don't": 약함/참고 both collapse to 근거부족.
     """
-    if p_value > 0.01 or eps2 < 0.02:
+    if p_value > 0.01 or adj_r2 < 0.02:
         return "근거부족"
     if band_width and band_stability_value is not None and band_stability_value > band_width * 0.5:
         return "근거부족"
-    if eps2 >= 0.10 and band_width and band_stability_value is not None and band_stability_value <= band_width * 0.2:
+    if adj_r2 >= 0.10 and band_width and band_stability_value is not None and band_stability_value <= band_width * 0.2:
         return "강함"
     return "보통"

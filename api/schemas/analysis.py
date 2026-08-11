@@ -9,7 +9,10 @@ class ParetoRankingItemSchema(BaseModel):
     feature: str
     kind: str
     step: int
-    eps2: float
+    adj_r2: float
+    # 1 | 2 for numeric factors (the polynomial degree adj_r2 was fit at);
+    # None for Config (a dummy regression has no degree).
+    degree: int | None = None
     p_value: float
     q_value: float
     significant: bool
@@ -17,7 +20,7 @@ class ParetoRankingItemSchema(BaseModel):
     n_observed: int
     contribution_pct: float
     cumulative_pct: float
-    # QA-2: 하한(30) 이상이지만 종류별 정상 판정 임계 미만 -- 배제 대신
+    # 하한(30) 이상이지만 종류별 정상 판정 임계 미만 -- 배제 대신
     # "표본 부족" 배지로 표시하고 confidence_tier는 이미 한 단계 낮춰
     # 내려온다.
     under_sampled: bool = False
@@ -28,17 +31,17 @@ class ParetoRankingResponse(BaseModel):
     target: str
     total_factor_count: int
     n80: int | None
-    # 전체 후보 풀(top-5로 잘리기 전) 기준 집계 -- 차트 표시 규칙(spec §B)의
+    # 전체 후보 풀(top-5로 잘리기 전) 기준 집계 -- 차트 표시 규칙의
     # 0개-타깃 안내 문구("검정 58건 · FDR 통과 0건 · 효과 크기 조건 통과 0건")가 쓴다.
     fdr_pass_count: int
     effect_size_pass_count: int
-    max_eps2: float | None
+    max_adj_r2: float | None
     items: list[ParetoRankingItemSchema]
     analyzable_target_samples: int = 0
     model_available: bool = False
     factor_measurement_insufficient: bool = False
     target_provenance: dict[str, Any] | None = None
-    # 작업지시 T2: 20,000행 초과 데이터셋은 로트 단위 표본으로 인자 순위를
+    # 20,000행 초과 데이터셋은 로트 단위 표본으로 인자 순위를
     # 계산했다는 고지 -- None이면 전량 기준.
     sample_info: dict[str, Any] | None = None
 
@@ -66,9 +69,8 @@ class ReferenceLineSchema(BaseModel):
     alarm_relevant: bool
     formula: str
     outside_count: int
-    # key가 "warning_lo"/"warning_hi"일 때만 채워진다 (spec 알람 판정 GBDT
-    # 전환 §C-4-1) -- 범례에 쓰는 실측 수율 차이(%p), 표본 30장 미만이면
-    # None.
+    # key가 "warning_lo"/"warning_hi"일 때만 채워진다 -- 범례에 쓰는
+    # 실측 수율 차이(%p), 표본 30장 미만이면 None.
     observed_yield_gap_pp: float | None = None
 
 
@@ -83,7 +85,7 @@ class BinProfileSchema(BaseModel):
     bin_span_ratio: float
     # An outlier-widened bin (its own [x_lo, x_hi] spans an outsized share
     # of the factor's overall range) -- the frontend draws this bin's
-    # curve segment dashed rather than solid (spec §3-4).
+    # curve segment dashed rather than solid.
     sparse: bool
 
 
@@ -117,11 +119,11 @@ class ScreeningScatterResponse(BaseModel):
     optimal_center: float | None
     # Set only when a classified optimal_center existed but was dropped
     # (fell outside its own recommended window after control-range
-    # clamping, spec §3-3) -- the frontend disables the 최적 중심 toggle
+    # clamping) -- the frontend disables the 최적 중심 toggle
     # and shows this as the tooltip reason instead of "단조 관계라...".
     optimal_center_dropped_reason: str | None
-    eps2: float
-    spearman_r: float | None
+    adj_r2: float
+    degree: int | None = None
     p_value: float
     q_value: float
     significant: bool
@@ -148,7 +150,7 @@ class CategoricalGroupSchema(BaseModel):
 
 class CategoricalScatterResponse(BaseModel):
     groups: list[CategoricalGroupSchema]
-    eps2: float
+    adj_r2: float
     p_value: float
     q_value: float
     significant: bool
@@ -167,28 +169,39 @@ class HeatmapResponse(BaseModel):
     dataset_id: str
     metric: str
     # "numeric" | "categorical" -- 프론트가 어느 그리드를 받았는지
-    # 캐시/렌더 분기에 쓴다 (spec E).
+    # 캐시/렌더 분기에 쓴다.
     kind: str = "numeric"
     features: list[str]
     targets: list[str]
+    # 셀 값 = Adjusted R²(설명력, 부호 없음). 셀 색은 이 크기 하나만
+    # 쓰는 단일 색상 그라데이션이다 -- 방향은 스칼라 부호가 아니라 아래
+    # shape/optimal_center(적합 곡선의 꼭짓점·증감)로만 전달한다. 핵심
+    # 인자 다수가 U자여서, 전체구간을 하나의 부호로 요약하면 표본 절반에
+    # 대해 반대로 읽히기 때문이다.
     values: list[list[float | None]]
-    # TC-4: numeric 보기는 항상 ε²(설명력, 부호 없음)를 values/셀 농도로
-    # 쓰고, rho(부호 있는 스피어만 상관)는 색상 방향에만 쓴다 -- U자
-    # 관계도 진하게 표시되면서 방향은 색으로 읽힌다. categorical 보기는
-    # 정의상 방향이 없어 이 그리드가 전부 None이다.
-    rho: list[list[float | None]] = Field(default_factory=list)
+    # 셀별 다항 차수(1 | 2), 표본 부족/미적합 셀은 None.
+    degree: list[list[int | None]] = Field(default_factory=list)
+    # classify_shape 결과: "u_shape" | "monotonic_increasing" |
+    # "monotonic_decreasing" | "unclear" | None.
+    shape: list[list[str | None]] = Field(default_factory=list)
+    # 2차(U자) 셀의 꼭짓점 x값 -- 1차/미분류 셀은 None.
+    optimal_center: list[list[float | None]] = Field(default_factory=list)
     n: list[list[int]]
     q: list[list[float | None]]
     significant: list[list[bool]]
     tier: list[list[str | None]]
-    # QA-3: 상관계수는 그려지지만(n>=30) 유의 인자 판정에서는 종류별
+    # 상관계수는 그려지지만(n>=30) 유의 인자 판정에서는 종류별
     # 표본 게이트(R>=100/D>=40) 미달로 빠지는 셀 -- 히트맵과 유의 인자
     # 목록이 어긋나 보이지 않도록 별도 표시(사선 등)에 쓴다.
     gate_excluded: list[list[bool]] = Field(default_factory=list)
     scale: HeatmapScaleSchema
     excluded_configs: int
+    # 셀 툴팁의 "계측률 %" 분모(= 이 그리드를 센 프레임의 행 수). 그리드
+    # 최대 n으로 대신할 수 없다 -- R 인자는 전체의 15%만 계측되므로
+    # 최대 n을 분모로 쓰면 계측률이 항상 100%가 된다.
+    total_rows: int = 0
     target_provenance: dict[str, Any] | None = None
-    # 작업지시 T2: 20,000행 초과 데이터셋은 로트 단위 표본으로 계산됐다는
+    # 20,000행 초과 데이터셋은 로트 단위 표본으로 계산됐다는
     # 고지 -- None이면 전량 기준.
     sample_info: dict[str, Any] | None = None
 
@@ -218,7 +231,7 @@ class ControlRangeListResponse(BaseModel):
 
 
 class AlertCellColorSchema(BaseModel):
-    """RC-4b: y1~y5 셀 하나의 색상 메타데이터. direction은 "red"|"blue"|
+    """y1~y5 셀 하나의 색상 메타데이터. direction은 "red"|"blue"|
     None(방향 불분명), shade는 "dark"|"medium"|"light"|"gray"|"measured"
     (실측값은 색을 쓰지 않는다 -- 프런트가 무채색으로 렌더한다)."""
 
@@ -231,12 +244,18 @@ class AlertCellColorSchema(BaseModel):
 
 
 class YieldCoreFactorCellSchema(BaseModel):
-    """VA-3/VA-4: 웨이퍼·타깃별로 실제 쓰인(폴백 포함) 핵심 인자."""
+    """웨이퍼·타깃별로 실제 쓰인(폴백 포함) 핵심 인자.
+
+    `measured=False`면 1~5위가 전부 미계측이라는 뜻이다 -- 이때도
+    `feature`/`contribution_pct`는 1위 인자를 참고용으로 채운다(계측하면
+    예측이 정확해진다는 신호), `rank_used`/`factor_value`는 실제로 쓴
+    인자가 없으므로 null이다."""
 
     feature: str | None
     contribution_pct: float | None
     rank_used: int | None
     factor_value: float | None
+    measured: bool
 
 
 class YieldReliabilityDetailItemSchema(BaseModel):
@@ -245,7 +264,7 @@ class YieldReliabilityDetailItemSchema(BaseModel):
 
 
 class YieldReliabilityInfoSchema(BaseModel):
-    """VC-1/VC-2: n/5 신뢰도와 툴팁용 계측/미계측 타깃 상세."""
+    """n/5 신뢰도와 툴팁용 계측/미계측 타깃 상세."""
 
     count: int
     measured: list[YieldReliabilityDetailItemSchema]
@@ -253,7 +272,7 @@ class YieldReliabilityInfoSchema(BaseModel):
 
 
 class YieldRecommendationSchema(BaseModel):
-    """VD-2: 두 갈래(구간 조정/계측 추가)로 조립된 권장사항 문장."""
+    """두 갈래(구간 조정/계측 추가)로 조립된 권장사항 문장."""
 
     text: str
     adjustable_targets: list[str]
@@ -272,7 +291,7 @@ class YieldCandidateSchema(BaseModel):
 
 
 class YieldFallbackSummarySchema(BaseModel):
-    """VA-3: 폴백 순위 분포 -- "58%가 전부 미계측이다" 같은 통계를 화면에
+    """폴백 순위 분포 -- "58%가 전부 미계측이다" 같은 통계를 화면에
     드러내는 데 쓴다. `rank_counts`의 키는 "1".."5"(JSON은 정수 키를
     지원하지 않는다)."""
 
@@ -282,7 +301,7 @@ class YieldFallbackSummarySchema(BaseModel):
 
 
 class YieldPredictionResponse(BaseModel):
-    """VA~VD: 수율 예측 순위 목록. 정렬 기본값은 y(=100 − Σ Y1~Y5)
+    """수율 예측 순위 목록. 정렬 기본값은 y(=100 − Σ Y1~Y5)
     오름차순이며, 그 밖의 정렬·검색·상위 10/전체 보기 전환은 프런트가
     이 전체 목록(신뢰도==0인 웨이퍼는 제외, `unmeasured_*`로 별도 제공) 위에서 수행한다."""
 
@@ -294,7 +313,7 @@ class YieldPredictionResponse(BaseModel):
     unmeasured_count: int
     fallback_summary: YieldFallbackSummarySchema
     target_provenance: dict[str, Any] | None = None
-    # SC그룹: "모델 분석" 파이프라인이 저장한 스냅샷 캐시에서 왔으면 그
+    # "모델 분석" 파이프라인이 저장한 스냅샷 캐시에서 왔으면 그
     # 스냅샷의 analysis_id, 즉석 계산이면 None -- 네 화면이 같은 분석
     # 회차를 공유하는지 프런트가 구분할 수 있게 한다.
     analysis_id: str | None = None
@@ -305,7 +324,8 @@ class TargetPerformanceSchema(BaseModel):
     no_factor_available: bool
     feature: str | None
     kind: str | None
-    eps2: float | None
+    adj_r2: float | None
+    degree: int | None = None
     contribution_pct: float | None
     relation_shape: str | None
     optimal_center: float | None
@@ -315,6 +335,11 @@ class TargetPerformanceSchema(BaseModel):
     rmse: float | None
     mae: float | None
     n: int | None
+    # 전체 Y(final_yield) 전용 -- 타깃별 항목은 None으로 내려온다.
+    # `adj_r2`(인자 스크리닝 효과 크기)와는 완전히 다른 수다.
+    mse: float | None = None
+    r2_adjusted: float | None = None
+    auc: float | None = None
 
 
 class ModelPerformanceResponse(BaseModel):
@@ -323,7 +348,7 @@ class ModelPerformanceResponse(BaseModel):
     source_filename: str | None
     targets: list[TargetPerformanceSchema]
     final_yield: TargetPerformanceSchema | None
-    # 지시서 I-2: 모델 학습 팝업의 "데이터 크기" 표시줄용.
+    # 모델 학습 팝업의 "데이터 크기" 표시줄용.
     row_count: int | None = None
     feature_count: int | None = None
 
@@ -395,10 +420,10 @@ class ReportFactorSchema(BaseModel):
     kind: str
     step: int
     rank: int
-    eps2: float
+    adj_r2: float
+    degree: int | None = None
     contribution_pct: float
     cumulative_pct: float
-    spearman_rho: float | None
     p_value: float
     q_value: float
     grade: str
@@ -440,10 +465,10 @@ class ContextFactorSchema(BaseModel):
     kind: str
     step: int
     rank: int
-    eps2: float
+    adj_r2: float
+    degree: int | None = None
     contribution_pct: float
     cumulative_pct: float
-    spearman_rho: float | None
     p_value: float
     q_value: float
     grade: str
@@ -488,10 +513,10 @@ class ReportAlarmRecordSchema(BaseModel):
 class ReportConfigScreeningSchema(BaseModel):
     n_tested: int
     n_significant_fdr: int
-    max_observed_eps2: float | None
+    max_observed_adj_r2: float | None
     max_observed_feature: str | None
     max_observed_target: str | None
-    mde_eps2: float | None
+    mde_adj_r2: float | None
     median_n_per_group: int | None
 
 
@@ -565,9 +590,8 @@ class PreprocessingModeResultSchema(BaseModel):
 
 
 class PreprocessingComparisonResponse(BaseModel):
-    """전처리 방식 A/B/C 실시간 비교 (spec 설정 패널 신설 §E) -- 데이터셋마다
-    재계산된다. 실제 파이프라인이 채택하는 방식(B)과 이 표의 1위가 다를 수
-    있다 (§E-5-1)."""
+    """전처리 방식 A/B/C 실시간 비교 -- 데이터셋마다 재계산된다. 실제
+    파이프라인이 채택하는 방식(B)과 이 표의 1위가 다를 수 있다."""
 
     dataset_id: str
     dataset_label: str

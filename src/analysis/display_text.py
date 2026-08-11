@@ -47,7 +47,7 @@ def format_2dp(value: float | None) -> str | None:
 
 
 def format_3dp(value: float | None) -> str | None:
-    """설명력(eps2) -- 화면의 `eps2.toFixed(3)`과 동일."""
+    """설명력(Adjusted R²) -- 화면의 `adj_r2.toFixed(3)`과 동일."""
     if value is None:
         return None
     return _quantize(value, 3)
@@ -102,7 +102,7 @@ def shape_text(shape: str | None) -> str | None:
 
 
 # 화면에 쓰는 4단계 등급(강함/보통/약함/참고)과 보고서 전용 3단계 판정
-# (강함/보통/근거부족) 모두를 하나의 표로 커버한다 (spec §2-4).
+# (강함/보통/근거부족) 모두를 하나의 표로 커버한다.
 CONFIDENCE_TEXT: dict[str, str] = {
     "강함": "신뢰도가 높습니다",
     "보통": "신뢰도가 보통이며 재확인이 필요합니다",
@@ -119,7 +119,7 @@ def confidence_text(grade: str | None) -> str | None:
 
 
 def chamber_interaction_text(value: bool | None) -> str | None:
-    """spec §2-3: `False`/`None`인 경우는 언급할 필요가 없다 -- 필드 자체를
+    """`False`/`None`인 경우는 언급할 필요가 없다 -- 필드 자체를
     만들지 않도록 `None`을 돌려준다."""
     if value:
         return "챔버에 따라 관계가 다르게 나타남"
@@ -147,8 +147,8 @@ def _annotate_factor(factor: dict[str, Any]) -> dict[str, Any]:
         window["range_text"] = format_range_1dp(window.get("lo"), window.get("hi"))
         out["window"] = window
 
-    if out.get("eps2") is not None:
-        out["eps2_text"] = format_3dp(out["eps2"])
+    if out.get("adj_r2") is not None:
+        out["adj_r2_text"] = format_3dp(out["adj_r2"])
     if out.get("p_value") is not None:
         out["p_value_text"] = format_4dp(out["p_value"])
     if out.get("q_value") is not None:
@@ -213,10 +213,10 @@ def add_display_text(context: dict[str, Any]) -> dict[str, Any]:
     config_screening = out.get("config_screening")
     if isinstance(config_screening, dict):
         config_screening = dict(config_screening)
-        if config_screening.get("max_observed_eps2") is not None:
-            config_screening["max_observed_eps2_text"] = format_3dp(config_screening["max_observed_eps2"])
-        if config_screening.get("mde_eps2") is not None:
-            config_screening["mde_eps2_text"] = format_3dp(config_screening["mde_eps2"])
+        if config_screening.get("max_observed_adj_r2") is not None:
+            config_screening["max_observed_adj_r2_text"] = format_3dp(config_screening["max_observed_adj_r2"])
+        if config_screening.get("mde_adj_r2") is not None:
+            config_screening["mde_adj_r2_text"] = format_3dp(config_screening["mde_adj_r2"])
         out["config_screening"] = config_screening
 
     summary = out.get("summary")

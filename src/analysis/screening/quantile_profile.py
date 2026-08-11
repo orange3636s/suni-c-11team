@@ -32,7 +32,7 @@ DEFAULT_BINS = 12
 # A bin whose own [min, max] span exceeds this fraction of the factor's
 # overall observed range is "sparse": outlier-widened rather than a
 # genuine dense cluster, and its representative x shouldn't be trusted
-# as an optimum location (spec §3-4).
+# as an optimum location.
 SPARSE_SPAN_RATIO_THRESHOLD = 0.25
 
 
@@ -41,12 +41,12 @@ def quantile_bins(x: pd.Series, y: pd.Series, bins: int | None = None) -> list[d
     the interval boundary midpoint) is every caller's definition of "where
     this bin sits" -- see module docstring for why the distinction matters.
 
-    TC-5: `bins=None` (the shared default) picks a Sturges-rule count via
-    `suggest_bin_count(len(x))` instead of the old flat `DEFAULT_BINS=12`.
-    Callers whose bin count feeds an alarm-adjacent decision (SPC recommended
-    range, method comparison) pass `bins=DEFAULT_BINS` explicitly to keep
-    that judgment byte-for-byte unchanged -- see the comments at their call
-    sites in `recommendations.py`/`window_methods.py`.
+    `bins=None` (the shared default) picks a Sturges-rule count via
+    `suggest_bin_count(len(x))`. Callers whose bin count feeds an
+    alarm-adjacent decision (SPC recommended range, method comparison) must
+    pass `bins=DEFAULT_BINS` explicitly -- letting the count float would
+    silently move those judgments. See the comments at their call sites in
+    `recommendations.py`/`window_methods.py`.
     """
     effective_bins = bins if bins is not None else suggest_bin_count(len(x))
     try:
@@ -124,7 +124,7 @@ def optimal_center_from_bins(bins: list[dict]) -> tuple[float | None, bool]:
     JSON report) must use instead of computing its own. Returns
     `(center, is_sparse)`: a sparse pick is returned rather than silently
     dropped so a caller that also has window info can still apply the
-    window-containment check (spec §3-3); a caller without window info
+    window-containment check; a caller without window info
     (shape classification) drops it on sparseness alone.
     """
     if not bins:

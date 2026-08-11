@@ -90,8 +90,8 @@ def test_floats_rounded_to_four_decimals(report):
     serialized = json.dumps(report)
     for target_entry in report["targets"]:
         for factor in target_entry["factors"]:
-            text = repr(factor["eps2"])
-            assert len(text.split(".")[-1]) <= 4, f"eps2 not rounded: {text}"
+            text = repr(factor["adj_r2"])
+            assert len(text.split(".")[-1]) <= 4, f"adj_r2 not rounded: {text}"
     assert serialized  # sanity: whole report is JSON-serializable as-is
 
 

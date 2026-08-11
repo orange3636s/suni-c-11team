@@ -8,7 +8,7 @@ features instead of imputing/clipping/frequency-encoding everything.
      frequency-encoded (reuses src.ml.hybrid.AutoFeaturePreprocessor)
   B: same full R+D+Config feature set, but NaN preserved (R unclipped, D
      still upper-clipped), Config as a native categorical column
-  C: only the single strongest-by-eps2 factor src.analysis.screening
+  C: only the single strongest-by-adj_r2 factor src.analysis.screening
      selects per target (select_primary_factor -- no significance gate),
      with a missingness flag and, for u_shape factors, a
      |value - optimal_center| deviation column

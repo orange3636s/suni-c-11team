@@ -13,13 +13,18 @@ const CHART_W = 320;
 const CHART_H = 260;
 const CHART_GAP = 24;
 const MARGIN = { top: 26, right: 10, bottom: 26, left: 36 };
-const STRONG_RHO = 0.15;
+// 부호 있는 순위상관(|rho| >= 0.15)으로 "뚜렷한 관계"를 가르던 기준을
+// 설명력 기준으로 옮겼다 -- 이 인자들 상당수가 U자라 전체구간 rho는
+// 표본 절반에 대해 반대 부호로 읽힌다. 0.02는 confidence_tier가
+// "관계 없음(참고)"을 가르는 하한(grade_thresholds.yaml의
+// min_eps2_reference)과 같은 값이라, 이 문단과 등급 배지가 어긋나지
+// 않는다.
+const STRONG_ADJ_R2 = 0.02;
 const POINT_HOVER_RADIUS = 16;
 
-// 발산(초록/빨강) 팔레트 및 관리한계(IQR LCL/UCL) 잔재 제거 (지시서 L/N-3) --
-// 그룹별 최적 중심은 --text. 구간 평균 곡선은 이 차트의 핵심 판독
-// 대상이라 신호색(--sig-red)을 쓴다. (경고선은 화면에서 완전히
-// 제거했다 -- 아래 최적 중심/구간 평균 렌더만 남는다.)
+// 그룹별 최적 중심은 무채색(--text)이다. 구간 평균 곡선은 이 차트의 핵심
+// 판독 대상이라 신호색(--sig-red)을 쓴다 -- 발산(초록/빨강) 팔레트는
+// 쓰지 않는다.
 const TEXT_COLOR = { light: "#141A22", dark: "#F5F5F7" };
 const INFERRED_COLOR = { light: "#C0392B", dark: "#EE6B76" };
 // 산점도 "기본" 모드와 동일한 --measured 단일 점 색.
@@ -46,13 +51,13 @@ function buildCurvePathD(fit: CurveFitResult, xScale: (v: number) => number, ySc
   return parts.join(" ");
 }
 
-// A target that "dominates" needs its |rho| to clear the runner-up by this
-// ratio, otherwise the spread reads as broad-and-even rather than
-// one-target-leads (spec §2-1 pattern B vs. C).
+// A target that "dominates" needs its Adjusted R2 to clear the runner-up
+// by this ratio, otherwise the spread reads as broad-and-even rather than
+// one-target-leads.
 const DOMINANCE_RATIO = 1.5;
 
 /** Korean 이/가 particle for a word ending in digit, hangul, or latin letter
- * (spec §2-4) -- picked by trailing-syllable batchim, not by hardcoding
+ * -- picked by trailing-syllable batchim, not by hardcoding
  * "이(가)" for every factor name. */
 function particle(word: string, withBatchim: string, without: string): string {
   const last = word[word.length - 1] ?? "";
@@ -68,18 +73,20 @@ function particle(word: string, withBatchim: string, without: string): string {
 }
 
 type TargetKey = (typeof TARGETS)[number];
-type KnownEntry = { target: TargetKey; rho: number; shape: RelationShape };
+type KnownEntry = { target: TargetKey; adjR2: number; shape: RelationShape };
 type DirectionKind = "up" | "down" | "mixed" | "u";
 
-/** U-shape takes priority over sign (spec §2-3): a factor that hurts both
- * tails reads as monotonic-up/down only by coincidence of which half of the
- * range has more points, so the shape check is applied before the sign
- * check rather than after. */
+/** U-shape takes priority: a factor that hurts both tails
+ * reads as monotonic-up/down only by coincidence of which half of the
+ * range has more points, so the U check runs first. Direction now comes
+ * from the classified relation shape rather than a correlation sign --
+ * the sign was removed everywhere precisely because it misreads U-shaped
+ * factors. */
 function classifyDirection(entries: KnownEntry[]): DirectionKind {
   if (entries.some((e) => e.shape === "u_shape")) return "u";
-  const signs = entries.map((e) => Math.sign(e.rho));
-  if (signs.every((s) => s >= 0)) return "up";
-  if (signs.every((s) => s <= 0)) return "down";
+  const shapes = entries.map((e) => e.shape);
+  if (shapes.every((s) => s === "monotonic_increasing")) return "up";
+  if (shapes.every((s) => s === "monotonic_decreasing")) return "down";
   return "mixed";
 }
 
@@ -99,19 +106,19 @@ const CHANGE_VERB: Record<DirectionKind, string> = {
 
 /** Plain-language read of the 5 mini-charts: which target(s) the factor
  * actually moves the needle on, in wording that doesn't require knowing
- * what rho/eps2/p-value mean (spec §5-2). Branches on how many targets
- * clear STRONG_RHO -- a single "strongest wins" reduce (the pre-existing
+ * what Adjusted R2/p-value mean. Branches on how many targets
+ * clear STRONG_ADJ_R2 -- a single "strongest wins" reduce (the pre-existing
  * approach) reads as selective even when a factor moves every target
- * together, which is a real pattern in its own right (spec §2-1).
+ * together, which is a real pattern in its own right.
  */
 function buildInterpretation(feature: string, entries: KnownEntry[]): string[] | null {
   if (entries.length === 0) return null;
 
   const featureParticle = particle(feature, "이", "가");
-  const strong = entries.filter((e) => Math.abs(e.rho) >= STRONG_RHO);
-  const sortedAbs = entries.map((e) => Math.abs(e.rho)).sort((a, b) => b - a);
-  const top = entries.reduce((best, e) => (Math.abs(e.rho) > Math.abs(best.rho) ? e : best));
-  const second = sortedAbs[1] ?? 0;
+  const strong = entries.filter((e) => e.adjR2 >= STRONG_ADJ_R2);
+  const sortedDesc = entries.map((e) => e.adjR2).sort((a, b) => b - a);
+  const top = entries.reduce((best, e) => (e.adjR2 > best.adjR2 ? e : best));
+  const second = sortedDesc[1] ?? 0;
 
   if (strong.length === 0) {
     return [
@@ -120,8 +127,8 @@ function buildInterpretation(feature: string, entries: KnownEntry[]): string[] |
     ];
   }
 
-  // 인과 표현 금지 (spec 문구 전수 검토 §A-7, prompts/report_system.md
-  // "절대 규칙 2"와 동일 기준) -- "작용함을 뜻합니다"/"영향을 주면서"는 관측된
+  // 인과 표현 금지 (prompts/report_system.md "절대 규칙 2"와 동일
+  // 기준) -- "작용함을 뜻합니다"/"영향을 주면서"는 관측된
   // 상관관계를 인과로 읽히게 하므로, "함께 나타남" 식 서술로 통일한다.
   if (strong.length === 1) {
     const main = strong[0].target;
@@ -132,7 +139,7 @@ function buildInterpretation(feature: string, entries: KnownEntry[]): string[] |
     ];
   }
 
-  if (Math.abs(top.rho) >= second * DOMINANCE_RATIO) {
+  if (top.adjR2 >= second * DOMINANCE_RATIO) {
     const others = strong.filter((e) => e.target !== top.target).map((e) => e.target);
     const direction = classifyDirection(strong);
     return [
@@ -167,7 +174,7 @@ export default function CompareAcrossTargetsModal({
   const [dataByTarget, setDataByTarget] = useState<Record<string, ScreeningScatterResponse | null>>({});
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // 모바일 반응형 패치 S-4: 패널 폭 320px -> 200px (≤767px). 가로 스크롤은
+  // 패널 폭 320px -> 200px (≤767px). 가로 스크롤은
   // 모든 폭에서 유지한다 -- 패널을 세로로 쌓지 않는다(하지 말 것 목록).
   const isMobileLayout = useIsMobileLayout();
   const chartW = isMobileLayout ? 200 : CHART_W;
@@ -194,7 +201,7 @@ export default function CompareAcrossTargetsModal({
     };
     // Mounts once per (feature, origin target) open -- this reuses no
     // cached client state by design (see design note in the parent: the
-    // heavy stats -- eps2/p-value/control limits -- were already computed
+    // heavy stats -- Adjusted R2/p-value/control limits -- were already computed
     // during "원인 분석 실행"; this call is the cheap per-target point
     // fetch, not a re-run of the screening pipeline).
   }, [datasetId, feature]);
@@ -236,7 +243,7 @@ export default function CompareAcrossTargetsModal({
     if (loading) return null;
     const known = TARGETS.map((t) => {
       const d = dataByTarget[t];
-      return d?.spearman_r != null ? { target: t, rho: d.spearman_r, shape: d.relation_shape } : null;
+      return d != null ? { target: t, adjR2: d.adj_r2, shape: d.relation_shape } : null;
     }).filter((entry): entry is KnownEntry => entry != null);
     return buildInterpretation(feature, known);
   }, [loading, dataByTarget, feature]);
@@ -310,7 +317,7 @@ function MiniChart({
   xDomain: [number, number];
   isOrigin: boolean;
   theme: "light" | "dark";
-  // 모바일 반응형 패치 S-4: 320px(데스크톱) / 200px(≤767px) -- 호출부가
+  // 320px(데스크톱) / 200px(≤767px) -- 호출부가
   // CHART_W 상수 대신 이 값을 넘긴다.
   width: number;
   onSelectTarget: () => void;
@@ -321,8 +328,9 @@ function MiniChart({
   const plotWidth = width - MARGIN.left - MARGIN.right;
   const plotHeight = CHART_H - MARGIN.top - MARGIN.bottom;
 
-  const rho = data?.spearman_r ?? null;
-  const isStrong = rho != null && Math.abs(rho) >= STRONG_RHO;
+  const adjR2 = data?.adj_r2 ?? null;
+  const degree = data?.degree ?? null;
+  const isStrong = adjR2 != null && adjR2 >= STRONG_ADJ_R2;
 
   const yDomain = useMemo<[number, number]>(() => {
     if (!data || data.points.length === 0) return [0, 1];
@@ -336,13 +344,13 @@ function MiniChart({
   const xScale = (v: number) => ((v - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * plotWidth;
   const yScale = (v: number) => plotHeight - ((v - yDomain[0]) / (yDomain[1] - yDomain[0] || 1)) * plotHeight;
 
-  // 미니 패널은 양끝 2개 눈금만 (지시서 N-3) -- 형태를 보는 화면이지 값을
+  // 미니 패널은 양끝 2개 눈금만 -- 형태를 보는 화면이지 값을
   // 읽는 화면이 아니다.
   const xTicks = useMemo(() => [xDomain[0], xDomain[1]], [xDomain]);
   const yTicks = useMemo(() => [yDomain[0], yDomain[1]], [yDomain]);
 
   const optimalCenter = data?.optimal_center ?? null;
-  // TD-3: 이 패널의 데이터(해당 타깃만)로 자체 재적합한다 -- 5개 패널이
+  // 이 패널의 데이터(해당 타깃만)로 자체 재적합한다 -- 5개 패널이
   // 서로 다른 타깃의 점을 쓰므로 이미 "그룹별 재적합"에 해당한다.
   const curveFit = useMemo(() => (data ? fitDefectRateCurve(data.points) : null), [data]);
 
@@ -378,7 +386,12 @@ function MiniChart({
     <div className={`compareMiniChart ${isOrigin ? "origin" : ""}`} style={{ width }}>
       <div className="compareMiniChartHeader">
         <span className="compareMiniChartTitle" style={{ color: titleColor }}>
-          {target}{isOrigin && " ★"} {rho != null && <span className="compareMiniChartRho">ρ={rho >= 0 ? "+" : ""}{rho.toFixed(2)}</span>}
+          {target}{isOrigin && " ★"}{" "}
+          {adjR2 != null && (
+            <span className="compareMiniChartStat">
+              R²={adjR2.toFixed(3)}{degree != null && ` (${degree}차)`}
+            </span>
+          )}
         </span>
         {data && <ConfidenceBadge tier={data.confidence_tier} />}
       </div>
@@ -399,8 +412,8 @@ function MiniChart({
             ))}
 
             {/* points painted before every reference line/curve so lines
-                stay visible on top (spec §4-1, applies to this mini chart too).
-                패널이 작으므로 반지름을 산점도보다 더 줄인다 (지시서 N-3). */}
+                stay visible on top (applies to this mini chart too).
+                패널이 작으므로 반지름을 산점도보다 더 줄인다. */}
             {data.points.map((p, i) => (
               <circle key={i} cx={xScale(p.x)} cy={yScale(p.y)} r={1.7} fill={pointColor} opacity={pointOpacity} />
             ))}
@@ -409,7 +422,7 @@ function MiniChart({
               <line x1={xScale(optimalCenter)} x2={xScale(optimalCenter)} y1={0} y2={plotHeight} stroke={textColor} strokeWidth={1.3} strokeDasharray="4 3" opacity={lineOpacity} />
             )}
 
-            {/* TD-3: 이 타깃 데이터로 재적합한 불량률 곡선 -- 폴백이면
+            {/* 이 타깃 데이터로 재적합한 불량률 곡선 -- 폴백이면
                 기존 구간 평균 꺾은선을 그대로 그린다(계산 불변). */}
             {curveFit && curveFit.fallbackReason == null && (
               <path d={buildCurvePathD(curveFit, xScale, yScale)} fill="none" stroke={inferredColor} strokeWidth={2} opacity={trendOpacity}>

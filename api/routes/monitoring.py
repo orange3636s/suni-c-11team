@@ -9,7 +9,7 @@ from api.routes.analysis import _hydrated_targets_or_409
 from api.schemas.monitoring import ConfigTreemapResponse
 from api.settings import settings
 from src.analysis.sampling import ANALYSIS_SAMPLE_MAX_ROWS, stratified_sample
-from src.analysis.screening.effect_size import eps2_categorical
+from src.analysis.screening.effect_size import adj_r2_categorical
 from src.analysis.screening.schema import FINAL_YIELD_COLUMN, Schema, parse_schema
 from src.analysis.screening.selector import DEFAULT_FDR_ALPHA, DEFAULT_MIN_N_CATEGORICAL, benjamini_hochberg
 from src.config_parser import parse_config_hierarchy_value
@@ -89,7 +89,7 @@ def get_config_treemap(dataset: str, step: int = Query(..., ge=1), target: str =
 
 
 def _current_analysis_id() -> str | None:
-    """SC그룹: "모델 분석" 파이프라인이 마지막으로 저장한 스냅샷의
+    """모델 분석 파이프라인이 마지막으로 저장한 스냅샷의
     analysis_id -- Config별 트리맵은 그 자체를 캐시하지 않고 항상
     즉석 계산하지만, 이 값을 함께 실어 보내면 프런트가 모니터링/원인
     분석/수율 예측과 같은 분석 회차를 보고 있는지 표시할 수 있다."""
@@ -99,7 +99,12 @@ def _current_analysis_id() -> str | None:
 
 
 def _is_config_significant(df, schema: Schema, config_column: str, target: str = FINAL_YIELD_COLUMN) -> bool:
-    """Whether this Config explains the selected target (ANOVA + BH-FDR).
+    """Whether this Config explains the selected target (dummy-regression
+    Adjusted R²'s one-way-ANOVA F-test + BH-FDR).
+
+    Only the significance badge comes from here -- each tile's *color* is a
+    separate mean-based calculation on the frontend (`colorForMean`) and is
+    unaffected by which effect-size statistic backs this test.
 
     The correction family is every Config step against the same target.
     """
@@ -110,7 +115,7 @@ def _is_config_significant(df, schema: Schema, config_column: str, target: str =
             continue
         if target not in df.columns:
             continue
-        result = eps2_categorical(df[column], df[target], min_n=DEFAULT_MIN_N_CATEGORICAL)
+        result = adj_r2_categorical(df[column], df[target], min_n=DEFAULT_MIN_N_CATEGORICAL)
         if result is None:
             continue
         p_values.append(result.p_value)

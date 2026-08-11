@@ -1,8 +1,7 @@
 """Shared Sturges-rule bin count -- the one place every quantile-binning
-caller gets its default bin count from, so a factor's effective bin count
-never silently disagrees between callers again (TC-5: `effect_size.py` was
-hardcoded to 8 bins, `quantile_profile.py` to 12 -- two independent
-constants computing "the same kind of thing" for the same data).
+caller gets its default bin count from. Callers must not hardcode their own
+constant: two callers binning the same factor at different bin counts
+produce "the same kind of number" that silently disagrees.
 
 Sturges' rule (k = ceil(1 + log2(n))) grows the bin count with sample size
 instead of using one fixed number for every n from 30 to 10,000. Clamped to

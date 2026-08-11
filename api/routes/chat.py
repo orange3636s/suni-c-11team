@@ -53,12 +53,12 @@ NO_ANALYSIS_MESSAGE = (
     "분석 결과를 바탕으로 보고서를 작성할 수 있습니다.\n\n[원인 분석 탭으로 이동](/root-cause)"
 )
 
-# A-4: 질문 종류와 무관하게 항상 전체 JSON을 붙이면(수 KB~수십 KB) 매
+# 질문 종류와 무관하게 항상 전체 JSON을 붙이면(수 KB~수십 KB) 매
 # 메시지가 그만큼의 토큰을 태운다. 구체적인 인자·wafer를 지목한 질문만
 # 전체(`full`)를 받고, 나머지는 요약(`digest`)이나 근거 없음(`none`)으로
 # 낮춘다. ContextLevel 판정은 키워드 매칭이 아니라 인자명/wafer ID
-# 정규식과 report 모드 여부로만 한다 -- A-2에서 "요약해줘" 같은 일반
-# 동사가 report 모드를 오분류시킨 것과 같은 함정을 여기서도 피한다.
+# 정규식과 report 모드 여부로만 한다 -- "요약해줘" 같은 일반 동사를
+# 키워드로 잡으면 평범한 질문이 그대로 오분류된다.
 ContextLevel = Literal["none", "digest", "full"]
 
 FACTOR_ID_PATTERN = re.compile(r"Step\d+_(?:[RD]\d+|Config)", re.IGNORECASE)
@@ -98,8 +98,9 @@ _DIGEST_FACTOR_KEYS = (
     "grade_text",
     "report_confidence",
     "report_confidence_text",
-    "eps2",
-    "eps2_text",
+    "adj_r2",
+    "adj_r2_text",
+    "degree",
     "p_value",
     "p_value_text",
     "relation",
@@ -159,11 +160,11 @@ def _grounding_block(dataset: str, level: ContextLevel) -> str:
     # need the record-level data, not just the aggregate counts a raw
     # report payload would give.
     #
-    # A-1 fix: this used to be a `user` message, competing for space in the
-    # same sliding history window the frontend/backend trim to the last few
-    # turns -- by the 4th turn the window no longer contained it and the
-    # model kept answering (or refusing) ungrounded. A `system` message is
-    # never subject to that window, so it survives every turn.
+    # This block must be sent as a `system` message, not a `user` one: the
+    # frontend/backend trim history to the last few turns, so a user-role
+    # block would drop out of that sliding window after a few turns and
+    # leave the model answering ungrounded. System messages are never
+    # subject to that window, so it survives every turn.
     context = build_chat_context(_build_report_payload(dataset))
     payload = context if level == "full" else _digest_context(context)
     intro = (
@@ -179,14 +180,14 @@ def _grounding_block(dataset: str, level: ContextLevel) -> str:
 
 
 def _build_messages(request: ChatRequest, mode: Literal["report", "chat"]) -> list[dict[str, str]]:
-    # A-2: report 모드도 일반 chat과 같은 경로를 탄다 -- system 프롬프트만
-    # 갈라진다. 이전에는 report 모드가 history를 아예 안 읽어서, 이미
-    # 만들어진 보고서에 대한 후속 질문("Y2는 왜 저래?")이 완전히 새
-    # 대화처럼 취급됐다.
+    # report 모드도 일반 chat과 같은 경로를 탄다 -- 질문 종류에 따라
+    # 갈라지는 것은 system 프롬프트뿐이고 history는 두 모드 모두 읽는다.
+    # 그래야 이미 만들어진 보고서에 대한 후속 질문("Y2는 왜 저래?")이
+    # 같은 대화의 연장으로 처리된다.
     system_prompt = _report_system_prompt() if mode == "report" else _chat_system_prompt()
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
-    # A-4: 화면·기능 질문(`none`)은 근거 JSON 자체가 필요 없다 --
+    # 화면·기능 질문(`none`)은 근거 JSON 자체가 필요 없다 --
     # chat_system.md의 "대시보드 기능 안내" 절만으로 답이 나온다.
     level = _context_level(request, mode)
     if level != "none":
@@ -208,15 +209,14 @@ async def _static_stream(text: str) -> AsyncIterator[str]:
     identically to an LLM answer) without any Upstage call. Used for the
     "원인 분석 미실행" guidance -- same entry point (`/api/chat`) regardless
     of whether the request came from a typed message or an example chip,
-    so the two never behave differently (spec 재지시: "같은 요청인데 경로에
-    따라 동작이 다르면 안 된다").
+    so the two can never behave differently.
     """
     yield _sse({"delta": text})
     yield _sse({"done": True})
 
 
 async def _stream_completion(request: ChatRequest, mode: Literal["report", "chat"]) -> AsyncIterator[str]:
-    # 지시서 D-1: 컨텍스트 빌드(_build_messages, CPU-bound pandas 파이프라인 --
+    # 컨텍스트 빌드(_build_messages, CPU-bound pandas 파이프라인 --
     # train.CSV 10회 재랭킹 등, 수 초가 걸릴 수 있다)를 StreamingResponse
     # 반환 *전에* 끝내면 첫 바이트가 그만큼 늦게 나가, 프런트의 idle
     # 타이머(30초, 응답 시작 전부터 이미 돌고 있다)가 "총소요 제한"처럼
@@ -291,9 +291,9 @@ async def post_chat(request: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="원인 분석을 먼저 실행해 주세요.") from exc
 
     mode = _resolve_mode(request)
-    # 지시서 D-1: 컨텍스트 빌드(CPU-bound pandas 파이프라인)는 더 이상 여기서
-    # 기다리지 않는다 -- _stream_completion 제너레이터 안으로 옮겨 첫 바이트를
-    # 즉시 내보낸다(위 함수 docstring 참고).
+    # 컨텍스트 빌드(CPU-bound pandas 파이프라인)는 여기서 기다리지 않는다
+    # -- _stream_completion 제너레이터 안에서 돌려 첫 바이트를 즉시
+    # 내보낸다(위 함수 docstring 참고).
     return StreamingResponse(
         _stream_completion(request, mode),
         media_type="text/event-stream",

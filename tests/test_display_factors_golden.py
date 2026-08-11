@@ -27,58 +27,68 @@ pytestmark = pytest.mark.skipif(
     reason="data/raw/train.CSV is not tracked in git; place the real dataset there to run golden checks.",
 )
 
-## TC-5: regenerated after `eps2_numeric` switched from a flat 8-bin qcut to
-## a Sturges-rule auto bin count (`suggest_bin_count`). Every factor's eps2
-## shifted, so the ranking pool -- not just each #1 factor -- reshuffled;
-## most #2-#5 slots changed feature identity, not just their percentage.
+## Regenerated for the epsilon-squared -> Adjusted R² swap (`adj_r2_numeric`
+## now scores numeric factors off the same degree-1/degree-2 polynomial fit
+## the scatter curve uses). Every factor's score shifted, so the ranking
+## pool -- not just each #1 factor -- reshuffled; most #2-#5 slots changed
+## feature identity, not just their percentage. Each target's #1 factor is
+## unchanged, which is the invariant the swap was specified to preserve.
 
 # target -> ordered (feature, contribution_pct) for the fixed top 5, full
 # R+D+Config pool, denominated by that same full pool.
 GOLDEN_TOP5 = {
     "Y1": [
-        ("Step28_R1", 62.5),
-        ("Step13_D1", 4.9),
-        ("Step6_R1", 2.9),
-        ("Step20_R1", 2.5),
-        ("Step19_R1", 2.4),
+        ("Step28_R1", 86.2),
+        ("Step27_D1", 2.0),
+        ("Step10_R1", 1.9),
+        ("Step18_R1", 1.4),
+        ("Step16_R1", 1.1),
     ],
     "Y2": [
-        ("Step16_R1", 64.1),
-        ("Step1_D1", 4.6),
-        ("Step8_D1", 4.4),
-        ("Step14_D1", 3.0),
-        ("Step24_R1", 2.2),
+        ("Step16_R1", 87.6),
+        ("Step8_R1", 1.3),
+        ("Step28_R1", 0.9),
+        # Config can now place inside a target's top 5 (it never did under
+        # epsilon-squared). The Pareto chart renders it fine; only the
+        # yield-prediction fallback ladder filters Config out, since that
+        # one needs a numeric value/curve/window per factor.
+        ("Step10_Config", 0.7),
+        ("Step6_D1", 0.7),
     ],
     "Y3": [
-        ("Step1_D1", 88.5),
-        ("Step13_D1", 1.5),
-        ("Step11_D1", 1.4),
-        ("Step26_R1", 0.9),
-        ("Step22_R3", 0.9),
+        ("Step1_D1", 95.7),
+        ("Step30_D1", 0.9),
+        ("Step11_D1", 0.7),
+        ("Step13_R1", 0.3),
+        ("Step24_R2", 0.2),
     ],
     "Y4": [
-        ("Step24_R1", 42.6),
-        ("Step21_D1", 8.1),
-        ("Step22_R1", 6.6),
-        ("Step14_R2", 4.3),
-        ("Step7_R2", 3.4),
+        ("Step24_R1", 65.5),
+        ("Step14_D1", 8.5),
+        ("Step21_D1", 3.4),
+        ("Step14_R2", 2.3),
+        ("Step13_R2", 1.9),
     ],
     "Y5": [
-        ("Step18_R1", 79.4),
-        ("Step27_D1", 4.8),
-        ("Step22_D1", 3.2),
-        ("Step2_R1", 3.1),
-        ("Step14_D1", 3.0),
+        ("Step18_R1", 90.9),
+        ("Step14_D1", 3.7),
+        ("Step14_R1", 0.8),
+        ("Step2_R1", 0.6),
+        ("Step6_R2", 0.6),
     ],
 }
 
-# Whether the fixed top-5's cumulative contribution reaches 80%.
-GOLDEN_CUM5 = {"Y1": (75.1, False), "Y2": (78.3, False), "Y3": (93.2, True), "Y4": (65.0, False), "Y5": (93.5, True)}
+# Whether the fixed top-5's cumulative contribution reaches 80%. Under
+# Adjusted R² every target now clears 80% within 5 factors -- the
+# parameter-count bias correction shrank the also-ran factors' scores (and
+# hence the full-pool denominator) far more than the #1 factor's.
+GOLDEN_CUM5 = {"Y1": (92.5, True), "Y2": (91.2, True), "Y3": (97.9, True), "Y4": (81.5, True), "Y5": (96.6, True)}
 
 # Confidence-tier composition across the fixed top 5 (강함/보통/약함/참고).
-# Updated for the eps2-gated grade (spec §5-2): p-value alone no longer
-# decides the tier, so most of a target's #2-#5 factors (real, but with
-# eps2 well under 2% explained) now read "참고" instead of "강함"/"보통".
+# Updated for the effect-size-gated grade (spec §5-2): p-value alone no
+# longer decides the tier, so most of a target's #2-#5 factors (real, but
+# with Adjusted R² well under 2% explained) read "참고" rather than
+# "강함"/"보통". Unchanged by the epsilon-squared -> Adjusted R² swap.
 GOLDEN_TIER_COUNTS = {
     "Y1": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
     "Y2": {"strong": 1, "moderate": 0, "weak": 0, "reference": 4},
@@ -124,7 +134,7 @@ def test_golden_cumulative_five_and_80pct_reach(train_df, schema, target):
 @pytest.mark.parametrize("target", list(GOLDEN_TIER_COUNTS))
 def test_golden_tier_composition(train_df, schema, target):
     factors = select_top_factors(train_df, schema, target, limit=5)
-    counts = Counter(confidence_tier(f.eps2, f.p_value) for f in factors)
+    counts = Counter(confidence_tier(f.adj_r2, f.p_value) for f in factors)
     expected = GOLDEN_TIER_COUNTS[target]
     for tier, expected_count in expected.items():
         assert counts.get(tier, 0) == expected_count, f"{target}/{tier}: expected {expected_count}, got {counts.get(tier, 0)}"

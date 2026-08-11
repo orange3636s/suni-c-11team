@@ -114,7 +114,7 @@ def classify_shape(x: pd.Series, y: pd.Series, bins: int = 8) -> ShapeResult:
         center, sparse = optimal_center_from_bins(optimal_bins)
         # A minimum-y bin that's itself outlier-widened (`sparse`) isn't a
         # meaningful process-window location -- no center is better than a
-        # misleading one (spec §3-4).
+        # misleading one.
         if sparse:
             center = None
         return ShapeResult(shape="u_shape", optimal_center=center, quantile_profile=profile)

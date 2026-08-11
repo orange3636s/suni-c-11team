@@ -1,11 +1,10 @@
 """Factor scoring and selection: effect size -> BH-FDR q-value -> ranking.
 
 Everything here operates on the FULL R+D+Config pool -- there is no "kind"
-split anymore (see the "원인 분석 단순화" prompt: R/D/Config tabs were
-removed, both the root-cause and training screens show one unified view).
+split: both the root-cause and training screens show one unified ranking.
 
 Three selection concepts, each serving a different caller:
-  - `select_top_factors`: fixed top-N (5) by eps2, full-pool contribution.
+  - `select_top_factors`: fixed top-N (5) by adj_r2, full-pool contribution.
     Feeds the Pareto chart / factor cards. Count never varies by target --
     layout stability matters more than a cumulative-contribution cutoff.
   - `select_primary_factor`: the single strongest factor for a target,
@@ -27,23 +26,23 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.analysis.screening.effect_size import eps2_categorical, eps2_numeric
+from src.analysis.screening.effect_size import adj_r2_categorical, adj_r2_numeric
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.shape import classify_shape
 
 DEFAULT_FDR_ALPHA = 0.05
-# QA-1: R과 D는 계측 성격이 달라(R=정기 샘플 15%, D=사후 선별 5%) 표본
-# 게이트를 하나로 묶으면 D가 구조적으로 전량 탈락한다(test.CSV D 실측
-# 48~71장 vs 옛 DEFAULT_MIN_N_NUMERIC=100). R은 기존 100을 유지하고 D만
-# 40으로 낮춘다 -- test.CSV의 D 계측 수 전부를 통과시키면서, 30장
-# 미만(effect_size.HARD_MIN_N)의 완전 무의미한 표본은 여전히 걸러진다.
+# R과 D는 계측 성격이 달라(R=정기 샘플 15%, D=사후 선별 5%) 표본 게이트를
+# 하나로 묶으면 D가 구조적으로 전량 탈락한다 -- test.CSV의 D 실측은
+# 48~71장뿐이라 R과 같은 100을 요구하면 남는 D 인자가 없다. D를 40으로
+# 두면 그 실측 수가 전부 통과하면서도, 30장 미만
+# (effect_size.HARD_MIN_N)의 완전 무의미한 표본은 여전히 걸러진다.
 DEFAULT_MIN_N_R = 100
 DEFAULT_MIN_N_D = 40
-# TC-6: 20 -> 30을 먼저 시도했으나, test.CSV(36개 Config 조합 x 30 스텝
-# 컬럼) 기준 조합당 표본 실측 분포로는 30 문턱이 조합의 56.7%를 회색
-# 처리해 트리맵이 거의 비어 보였다(지시서: "절반을 넘으면 25로
-# 낮춰라"). 25는 43.2%로 절반 미만 -- 프런트 트리맵의 MIN_TILE_N도 같은
-# 값으로 맞춘다(frontend/components/ConfigTreemap.tsx).
+# Config 조합당 최소 표본. 문턱이 높을수록 트리맵의 회색(판정 불가) 타일이
+# 늘어나므로, 회색이 조합의 절반을 넘지 않는 선에서 최대한 높게 잡는다 --
+# test.CSV(36개 Config 조합 x 30 스텝 컬럼)의 조합당 표본 분포에서 25는
+# 43.2%, 30은 56.7%가 회색이 된다. 프런트 트리맵의 MIN_TILE_N도 같은 값을
+# 써야 두 화면의 회색 타일이 일치한다(frontend/components/ConfigTreemap.tsx).
 DEFAULT_MIN_N_CATEGORICAL = 25
 DEFAULT_TOP_N = 5  # select_top_factors 기본 limit -- 학습 탭 스크리닝 등 다른 호출부가 함께 쓴다
 PARETO_TOP_N = 10  # Pareto 차트(원인 분석 탭) 표시용 -- 위와 독립적으로 조정한다
@@ -67,27 +66,27 @@ def _grade_thresholds() -> dict[str, float]:
     return {**DEFAULT_GRADE_THRESHOLDS, **loaded}
 
 
-def confidence_tier(eps2: float, p_value: float) -> str:
-    """Effect size gates first, then p-value (spec §5-2).
+def confidence_tier(adj_r2: float, p_value: float) -> str:
+    """Effect size gates first, then p-value.
 
     p-value alone answers "is the effect non-zero", not "is the effect
     big enough to act on" -- at large n, p can be tiny even for a
-    near-zero eps2 (e.g. Step6_R1 -> Y1: n=1,462, p=0.006, eps2=0.0089,
-    under 1% explained -- used to read "강함"). eps2 < min_eps2_reference
-    is always "참고" regardless of how small p is; "강함"/"보통" each add
-    their own eps2 floor on top of the p-value cut.
+    near-zero adj_r2. adj_r2 < min_eps2_reference is always "참고"
+    regardless of how small p is; "강함"/"보통" each add their own adj_r2
+    floor on top of the p-value cut. Note the `min_eps2_*` keys in
+    `config/grade_thresholds.yaml` are compared against Adjusted R², not
+    epsilon-squared -- the key names are kept for config compatibility and
+    do not describe the score.
 
-    The FDR gate (q < 0.05) still doesn't factor in here -- it's
-    informational only, surfaced in q_value. Alarm generation
-    (select_alarm_factor) is untouched: still gated on raw p < 0.05,
-    independent of this tier.
+    The FDR gate (q < 0.05) does not factor in here -- it's informational
+    only, surfaced in q_value.
     """
     thresholds = _grade_thresholds()
-    if eps2 < thresholds["min_eps2_reference"]:
+    if adj_r2 < thresholds["min_eps2_reference"]:
         return "reference"
-    if p_value < 0.01 and eps2 >= thresholds["min_eps2_strong"]:
+    if p_value < 0.01 and adj_r2 >= thresholds["min_eps2_strong"]:
         return "strong"
-    if p_value < 0.05 and eps2 >= thresholds["min_eps2_moderate"]:
+    if p_value < 0.05 and adj_r2 >= thresholds["min_eps2_moderate"]:
         return "moderate"
     if p_value < 0.20:
         return "weak"
@@ -101,11 +100,11 @@ def demote_tier(tier: str) -> str:
     return CONFIDENCE_TIERS[min(idx + 1, len(CONFIDENCE_TIERS) - 1)]
 
 
-def effective_confidence_tier(eps2: float, p_value: float, *, under_sampled: bool = False) -> str:
-    """QA-2: 표본 부족(하한 30 이상이지만 종류별 정상 판정 임계 미만)
-    인자는 배제하지 않는 대신 등급을 한 단계 낮춰 신뢰도가 낮다는 사실을
-    함께 보여준다."""
-    tier = confidence_tier(eps2, p_value)
+def effective_confidence_tier(adj_r2: float, p_value: float, *, under_sampled: bool = False) -> str:
+    """표본 부족(하한 30 이상이지만 종류별 정상 판정 임계 미만) 인자는
+    배제하지 않는 대신 등급을 한 단계 낮춰 신뢰도가 낮다는 사실을 함께
+    보여준다."""
+    tier = confidence_tier(adj_r2, p_value)
     return demote_tier(tier) if under_sampled else tier
 
 
@@ -129,11 +128,11 @@ class ParetoFactor:
     feature: str
     kind: str  # "R" | "D" | "Config"
     step: int
-    eps2: float
+    adj_r2: float
     p_value: float
     q_value: float
-    pearson_r: float | None
-    spearman_r: float | None
+    # 1 or 2 for numeric (polynomial degree); None for Config.
+    degree: int | None
     n_observed: int
     contribution_pct: float
     cumulative_pct: float
@@ -157,7 +156,7 @@ def _evaluate_all_factors(
     for feature in [*schema.r_cols, *schema.d_cols]:
         kind = schema.kind_of(feature)
         min_n = min_n_r if kind == "R" else min_n_d
-        result = eps2_numeric(df[feature], y, min_n=min_n)
+        result = adj_r2_numeric(df[feature], y, min_n=min_n)
         if result is None:
             continue
         rows.append(
@@ -165,18 +164,17 @@ def _evaluate_all_factors(
                 "feature": feature,
                 "kind": kind,
                 "step": schema.step_of(feature) or 0,
-                "eps2": result.eps2,
+                "adj_r2": result.adj_r2,
                 "p_value": result.p_value,
                 "n_observed": result.n_observed,
-                "pearson_r": result.pearson_r,
-                "spearman_r": result.spearman_r,
+                "degree": result.degree,
                 "k_groups": result.k_groups,
                 "under_sampled": result.under_sampled,
             }
         )
 
     for feature in schema.config_cols:
-        result = eps2_categorical(df[feature], y, min_n=min_n_categorical)
+        result = adj_r2_categorical(df[feature], y, min_n=min_n_categorical)
         if result is None:
             continue
         rows.append(
@@ -184,11 +182,10 @@ def _evaluate_all_factors(
                 "feature": feature,
                 "kind": "Config",
                 "step": schema.step_of(feature) or 0,
-                "eps2": result.eps2,
+                "adj_r2": result.adj_r2,
                 "p_value": result.p_value,
                 "n_observed": result.n_observed,
-                "pearson_r": None,
-                "spearman_r": None,
+                "degree": None,
                 "k_groups": result.k_groups,
                 "under_sampled": False,
             }
@@ -213,7 +210,7 @@ def score_all_factors(
     min_n_d: int = DEFAULT_MIN_N_D,
     min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
 ) -> list[dict]:
-    """Score every R/D/Config candidate factor against `target`: eps2, BH-FDR
+    """Score every R/D/Config candidate factor against `target`: adj_r2, BH-FDR
     q-value (informational only -- see confidence_tier's docstring) -- one
     target is one FDR family. Shared by every selection function below and
     by the correlation heatmap so all surfaces report identical q-values
@@ -240,18 +237,19 @@ def _ranked_rows_with_contribution(
     min_n_d: int,
     min_n_categorical: int,
 ) -> list[dict]:
-    """Every candidate factor for `target`, sorted by eps2 descending, with
-    contribution_pct/cumulative_pct populated against the FULL pool's eps2
-    sum. The single ranked list every selection function below slices.
+    """Every candidate factor for `target`, sorted by adj_r2 descending,
+    with contribution_pct/cumulative_pct populated against the FULL pool's
+    adj_r2 sum. The single ranked list every selection function below
+    slices.
     """
     rows = score_all_factors(df, schema, target, fdr_alpha, min_n_r, min_n_d, min_n_categorical)
     if not rows:
         return []
-    rows.sort(key=lambda r: r["eps2"], reverse=True)
-    total_eps2 = sum(r["eps2"] for r in rows)
+    rows.sort(key=lambda r: r["adj_r2"], reverse=True)
+    total_adj_r2 = sum(r["adj_r2"] for r in rows)
     cumulative = 0.0
     for row in rows:
-        row["contribution_pct"] = (row["eps2"] / total_eps2 * 100.0) if total_eps2 > 0 else 0.0
+        row["contribution_pct"] = (row["adj_r2"] / total_adj_r2 * 100.0) if total_adj_r2 > 0 else 0.0
         cumulative += row["contribution_pct"]
         row["cumulative_pct"] = cumulative
     return rows
@@ -264,11 +262,10 @@ def _row_to_factor(df: pd.DataFrame, target: str, row: dict) -> ParetoFactor:
         feature=row["feature"],
         kind=row["kind"],
         step=row["step"],
-        eps2=row["eps2"],
+        adj_r2=row["adj_r2"],
         p_value=row["p_value"],
         q_value=row["q_value"],
-        pearson_r=row["pearson_r"],
-        spearman_r=row["spearman_r"],
+        degree=row["degree"],
         n_observed=row["n_observed"],
         contribution_pct=row["contribution_pct"],
         cumulative_pct=row["cumulative_pct"],
@@ -288,15 +285,27 @@ def select_top_factors(
     min_n_r: int = DEFAULT_MIN_N_R,
     min_n_d: int = DEFAULT_MIN_N_D,
     min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
+    exclude_kinds: tuple[str, ...] = (),
 ) -> list[ParetoFactor]:
-    """Fixed top-`limit` factors by eps2 across the full R+D+Config pool,
+    """Fixed top-`limit` factors by adj_r2 across the full R+D+Config pool,
     contribution denominated by that same full pool. The count is always
     `limit` (or fewer if the pool itself has fewer candidates) regardless
     of whether cumulative contribution reaches 80% -- an 80%-cumulative
     cutoff would make the displayed count vary per target, which is
     exactly the layout instability this replaces.
+
+    `exclude_kinds` drops whole factor kinds from the *returned slice*
+    only -- ranking and contribution_pct are still denominated by the full
+    R+D+Config pool, so a caller that can't consume Config factors (they
+    have no numeric value, no curve fit and no recommended window; see
+    `yield_prediction._rank5_factors` and `screening/fmea.py`) gets the
+    same contribution numbers every other surface shows, just without the
+    rows it cannot render. Filtering happens before `_row_to_factor` so the
+    excluded rows never pay for shape classification.
     """
     rows = _ranked_rows_with_contribution(df, schema, target, fdr_alpha, min_n_r, min_n_d, min_n_categorical)
+    if exclude_kinds:
+        rows = [row for row in rows if row["kind"] not in exclude_kinds]
     return [_row_to_factor(df, target, row) for row in rows[:limit]]
 
 
@@ -309,7 +318,7 @@ def select_primary_factor(
     min_n_d: int = DEFAULT_MIN_N_D,
     min_n_categorical: int = DEFAULT_MIN_N_CATEGORICAL,
 ) -> ParetoFactor | None:
-    """The single strongest (highest-eps2) factor for `target`, regardless
+    """The single strongest (highest-adj_r2) factor for `target`, regardless
     of p-value -- confidence is a tier badge, not a display filter. Only
     `None` when nothing in the pool clears its own min-n gate (every
     candidate's measured sample is too small to score at all), which is

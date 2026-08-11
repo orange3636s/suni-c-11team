@@ -1,8 +1,5 @@
-"""인자별 권장 구간(recommended range) 계산 -- '개선 권장 목록'(per-wafer
-list)은 정밀도가 무작위 수준과 다르지 않아 삭제됐다 (spec 알람 신뢰도
-게이트 §B-1: train→problem 정밀도 5%). `alarm_bands.py`(사전 알람 로그의
-"구간별 평균 수율" 카드)도 그 로그 자체가 폐기되며 함께 삭제됐다.
-`compute_factor_recommendation`은 지금은 이 소비처들이 쓴다:
+"""인자별 권장 구간(recommended range) 계산. `compute_factor_recommendation`의
+소비처:
 
   - `src/analysis/report.py` -- JSON 보고서의 인자별 window 필드.
   - `src/analysis/scatter.py` -- 산점도의 권장 구간 표시.
@@ -10,8 +7,8 @@ list)은 정밀도가 무작위 수준과 다르지 않아 삭제됐다 (spec �
   - `src/analysis/yield_prediction.py` -- 수율 예측 권장사항의 구간 조정 제안.
 
 recommended range 자체는 train 기준(bin-profile threshold, see
-`_recommended_range_raw`)으로 산출되고 control range 안쪽으로 clamp된다
-(spec §5-3) -- 값을 자신의 알람 경계 밖으로 밀어내는 권장은 없다.
+`_recommended_range_raw`)으로 산출되고 control range 안쪽으로 clamp된다 --
+값을 자신의 알람 경계 밖으로 밀어내는 권장은 하지 않는다.
 """
 
 from __future__ import annotations
@@ -38,16 +35,16 @@ def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | 
     same profile the 구간 평균 불량률 curve is built from) whose average y
     sits at/below the factor's overall (train) mean y -- the SPC method's
     window on its own, without the F2/stability scoring machinery.
-    `compute_factor_recommendation` below no longer calls this directly
-    (it goes through `window_methods.compare_methods` so ML gets a fair
-    shot too); kept here as the standalone SPC-only primitive that
-    llm_stats.py's per-chamber breakdown still needs.
+    `compute_factor_recommendation` below goes through
+    `window_methods.compare_methods` (so ML gets a fair shot too) rather
+    than calling this; this stays as the standalone SPC-only primitive
+    that llm_stats.py's per-chamber breakdown needs.
     """
-    # TC-5: 권장 구간(SPC 쪽)은 자동 구간수를 적용하지 않고 기존 12로
-    # 고정한다 -- 구간 수가 바뀌면 최적 중심·권장 구간이 달라지고 이
-    # window를 그대로 쓰는 소비처(report.py/scatter.py/fmea.py/
-    # yield_prediction.py)의 판정이 조용히 변한다. 히트맵/Pareto의 eps2
-    # 계산(effect_size.py)에만 Sturges를 적용했다.
+    # 권장 구간(SPC 쪽)은 자동 구간수를 쓰지 않고 12로 고정한다 -- 구간
+    # 수가 바뀌면 최적 중심·권장 구간이 달라지고 이 window를 그대로 쓰는
+    # 소비처(report.py/scatter.py/fmea.py/yield_prediction.py)의 판정이
+    # 조용히 변한다. Sturges 자동 구간수는 히트맵/Pareto의 Adjusted R²
+    # 계산(effect_size.py)에만 적용한다.
     bins = quantile_bins(x, y, bins=DEFAULT_BINS)
     if not bins:
         return None
@@ -116,7 +113,7 @@ def compute_factor_recommendation(
     )
     ratio = in_range_mean / overall_mean if in_range_mean is not None and overall_mean != 0 else None
 
-    grade = effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled)
+    grade = effective_confidence_tier(factor.adj_r2, factor.p_value, under_sampled=factor.under_sampled)
     return FactorRecommendation(
         factor=factor,
         target=factor.target,

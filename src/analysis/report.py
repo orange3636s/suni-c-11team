@@ -6,15 +6,15 @@ or reassembling it on the frontend.
 
 Two factor sets are deliberately different and never conflated:
   - `targets[].factors`: one narrative factor per target (the single
-    strongest, eps2-ranked, from the full R+D+Config pool), included only
+    strongest, adj_r2-ranked, from the full R+D+Config pool), included only
     if raw p < 0.05. This is what an LLM should cite as "the" driver for
     that target -- including every FDR-significant factor here would let a
     borderline second factor (e.g. Y2's Step24_R1) crowd the narrative.
   - `alarms` / `summary.alarm_wafers`: a separate, already-verified
     control-limit exceedance engine (BH-FDR q<0.05 factor selection +
     IQR*1.5 control range, see `_alarm_engine_factors`) -- unrelated to the
-    (now-retired) GBDT grade/gate notification pipeline. This is the
-    report's own standalone count, not echoed from any live route.
+    notification pipeline. This is the report's own standalone count, not
+    echoed from any live route.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ from src.analysis.screening.selector import (
     select_primary_factor,
 )
 
-# E-3(perf): `_top_factor_per_target`/`_alarm_engine_factors`가 이 시그니처의
+# `_top_factor_per_target`/`_alarm_engine_factors`가 이 시그니처의
 # 콜백을 받으면(챗봇/보고서 라우트가 넘기는 캐시된 랭킹, 아래 참고)
 # select_primary_factor/select_fdr_significant_factors의 88-인자 재계산을
 # 건너뛰고 이미 나온 순위 행을 재사용한다. 콜백이 없으면(테스트 등 이
@@ -67,7 +67,7 @@ RankedRowsProvider = Callable[[str], list[dict[str, Any]]]
 REPORT_INCLUSION_P_THRESHOLD = 0.05
 BINNED_PROFILE_BINS = 12
 
-# SUNI chatbot context (spec "챗봇 알람 답변 확장" A-2): safety cap so an
+# SUNI chatbot context: safety cap so an
 # uploaded dataset with many more alarms than the bundled train.CSV can't
 # blow up the LLM context payload.
 ALARM_RECORD_TRUNCATE_THRESHOLD = 200
@@ -92,20 +92,20 @@ LIMITATIONS = [
     "설명력 지표는 통계적 연관성이며 인과가 아니다. 공정 순서상 선행·후행 관계나 교락 인자는 반영되지 않았다.",
     "Config는 장비당 표본이 적어 검출력이 부족할 수 있다. p<0.05를 만족하지 못한 것이 영향이 없다는 뜻은 아니다.",
     "관리한계는 '평소와 다른가'를 판정하며 '수율이 좋은가'를 보장하지 않는다.",
-    # 지시서 G: 화면에서 "해석 시 한계" 블록을 없애면서 챗봇이 유일한
-    # 안내 경로가 되므로, 화면에서만 쓰이던 두 캐비어트를 여기로 옮긴다.
+    # 챗봇이 이 캐비어트들의 유일한 안내 경로다 -- 화면에는 대응하는
+    # "해석 시 한계" 블록이 없다.
     "'근거 부족'·'관계 없음' 등급 인자는 통계적 신뢰도가 낮아 원인으로 단정할 근거가 부족하다.",
 ]
 
 # Below this measurement rate, "~만 분석 대상이다" (only the measured
 # subset) reads accurately; at/above it, most wafers already have a
 # reading, so the softer "~를 분석 대상으로 한다" avoids overstating how
-# exclusionary the dataset actually is (spec: 문구 전수 검토 §A-1).
+# exclusionary the dataset actually is.
 _HIGH_MEASUREMENT_RATE_THRESHOLD = 60.0
 
 
 def _measurement_rate_limitation(df: pd.DataFrame, schema: Schema) -> str:
-    """Real per-dataset R/D measurement rate (spec §A-1) -- mean of each
+    """Real per-dataset R/D measurement rate -- mean of each
     column's own non-null rate, not a flat cell-count fraction, so a
     dataset with a few densely-measured columns and many sparse ones
     isn't misrepresented as "well measured" on average.
@@ -126,11 +126,10 @@ def _measurement_rate_limitation(df: pd.DataFrame, schema: Schema) -> str:
 
 
 def _interval_calibration_limitation(train_df: pd.DataFrame, features: list[str]) -> str:
-    """예측 구간 캘리브레이션 한계 설명 -- 웨이퍼 단위 판정을 conformal
-    구간 폭으로 가부 판정하던 방식은 폐기됐다(±5.53%p 수준이면 판정
-    가능한 wafer가 6%뿐이었다). 화면이 실제로 보여주는 신뢰도 신호는
-    수율 예측 표의 "신뢰도 n/5"(핵심 인자가 계측된 타깃 수, VC-1)이므로
-    여기서는 conformal 여유를 판정 기준이 아닌 참고 통계로만 언급한다.
+    """예측 구간 캘리브레이션 한계 설명 -- conformal 여유는 판정 기준이
+    아니라 참고 통계로만 언급한다(구간 폭이 ±5%p 수준이면 그것만으로
+    가부를 가릴 수 있는 wafer가 6%밖에 안 된다). 화면이 실제로 보여주는
+    신뢰도 신호는 수율 예측 표의 "신뢰도 n/5"(핵심 인자가 계측된 타깃 수)다.
     하드코딩된 숫자를 쓰지 않고 이 데이터셋에서 실제로 낸 conformal
     margin(q)을 매번 다시 계산한다 -- 다른 데이터셋에서는 폭이 다르므로
     고정 문구를 쓰면 거짓 정보가 된다. `compute_holdout_predictions`가
@@ -184,7 +183,7 @@ def _missing_pct(df: pd.DataFrame, feature: str) -> float:
 def _resolved_optimal_center(factor: ParetoFactor, window: Any) -> float | None:
     """Same guard as scatter.py's `_resolve_optimal_center`: an
     optimal_center outside its own recommended window is a contradiction
-    (spec §3-3), never something to report as-is. `window` is the
+    -- never something to report as-is. `window` is the
     `FactorRecommendation` already computed for this factor (or None).
     """
     if factor.optimal_center is None or window is None:
@@ -240,7 +239,7 @@ def _top_factor_per_target(
     target: str,
     ranked_rows_provider: RankedRowsProvider | None = None,
 ) -> ParetoFactor | None:
-    """The single strongest (highest-eps2) factor for `target` across the
+    """The single strongest (highest-adj_r2) factor for `target` across the
     full R+D+Config pool, included only if it clears the report's own raw
     p<0.05 bar. This is the report's own narrative-inclusion rule -- a
     different, deliberately non-interchangeable concept from the alarm
@@ -285,7 +284,7 @@ def build_analysis_report(
     eval_meta: dict[str, Any],
     app_version: str,
     generated_at: str,
-    # E-3(perf): target -> 이미 계산된 랭킹 행을 돌려주는 콜백.
+    # target -> 이미 계산된 랭킹 행을 돌려주는 콜백.
     # api/routes/analysis.py의 `_build_report_payload`가 `_cached_ranked_
     # rows_versioned`로 채워 넘긴다 -- 원인 분석 탭이 이미 계산해 둔 것과
     # 완전히 같은 순위(같은 파라미터)이므로, 여기서 select_primary_factor/
@@ -357,17 +356,17 @@ def build_analysis_report(
                     "kind": factor.kind,
                     "step": factor.step,
                     "rank": 1,
-                    "eps2": factor.eps2,
+                    "adj_r2": factor.adj_r2,
+                    "degree": factor.degree,
                     "contribution_pct": factor.contribution_pct,
                     "cumulative_pct": factor.cumulative_pct,
-                    "spearman_rho": factor.spearman_r,
                     "p_value": factor.p_value,
                     "q_value": factor.q_value,
                     "grade": {"strong": "강함", "moderate": "보통", "weak": "약함", "reference": "참고"}[
-                        effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled)
+                        effective_confidence_tier(factor.adj_r2, factor.p_value, under_sampled=factor.under_sampled)
                     ],
                     "report_confidence": judge_confidence(
-                        factor.eps2, factor.p_value, entry["band_stability"], entry["band_width"]
+                        factor.adj_r2, factor.p_value, entry["band_stability"], entry["band_width"]
                     ),
                     "n_observed": factor.n_observed,
                     "n_missing_pct": _missing_pct(train_df, factor.feature),
@@ -483,14 +482,13 @@ def build_analysis_report(
         _interval_calibration_limitation(train_df, gbdt_features),
     ]
 
-    # 계측 편향 재검토 (spec 문구 전수 검토 §A-7): the old whole-wafer
-    # aggregate test ("any R/D reading at all" vs "none") can be
-    # non-significant while every individual primary factor is -- exactly
-    # what happens on train.CSV, where the aggregate found p=0.74 (no
-    # bias) but all 5 primary factors individually show a
-    # measured-vs-unmeasured defect-rate gap at q<0.0001. Report the
-    # per-factor check instead, since it's the one that actually reflects
-    # what "선정 인자" narrows the analysis to.
+    # 계측 편향은 인자별로 잰다. A whole-wafer aggregate test ("any R/D
+    # reading at all" vs "none") can be non-significant while every
+    # individual primary factor is -- exactly what happens on train.CSV,
+    # where the aggregate finds p=0.74 (no bias) but all 5 primary factors
+    # individually show a measured-vs-unmeasured defect-rate gap at
+    # q<0.0001. The per-factor check is the one that actually reflects what
+    # "선정 인자" narrows the analysis to.
     factor_bias = per_factor_measurement_bias(train_df, included_factors)
     bias_summary = summarize_measurement_bias(factor_bias)
     if bias_summary is None:
@@ -527,8 +525,8 @@ def build_analysis_report(
             },
         },
         "method": {
-            "screening": "편향보정 epsilon-squared (분위수 8구간 ANOVA) + BH-FDR",
-            "contribution_denominator": "전체 인자 풀(R+D+Config)의 eps2 합",
+            "screening": "Adjusted R² (수치형: 1/2차 다항 적합, 범주형: 더미회귀) + BH-FDR",
+            "contribution_denominator": "전체 인자 풀(R+D+Config)의 Adjusted R² 합",
             "control_limit": "IQR 1.5배 (Q1-1.5*IQR ~ Q3+1.5*IQR), X축 기준",
             "inclusion_rule": "p < 0.05",
             "missing_policy": "대체하지 않음. pairwise deletion + _miss 태그",
@@ -549,10 +547,10 @@ def build_analysis_report(
         "config_screening": {
             "n_tested": config_screening.n_tested,
             "n_significant_fdr": config_screening.n_significant_fdr,
-            "max_observed_eps2": config_screening.max_observed_eps2,
+            "max_observed_adj_r2": config_screening.max_observed_adj_r2,
             "max_observed_feature": config_screening.max_observed_feature,
             "max_observed_target": config_screening.max_observed_target,
-            "mde_eps2": config_screening.mde_eps2,
+            "mde_adj_r2": config_screening.mde_adj_r2,
             "median_n_per_group": config_screening.median_n_per_group,
         },
         "limitations": limitations,
@@ -570,7 +568,7 @@ def _lot_range(meta: dict[str, Any]) -> str | None:
 def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
     """Reshapes build_analysis_report's flat `alarms`/`recommendations`
     lists into `{summary, records[, records_truncated, records_total]}`
-    for the SUNI chatbot (spec "챗봇 알람 답변 확장" A-2) -- so a question
+    for the SUNI chatbot -- so a question
     about one specific wafer ("L401W07 알람이 왜 떴어?") can be answered
     from individual records, not just aggregates.
 
