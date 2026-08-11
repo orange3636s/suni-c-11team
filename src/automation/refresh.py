@@ -25,11 +25,7 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import numpy as np
-import pandas as pd
-
 from api.settings import settings
-from src.analysis import alarm_gbdt
 from src.automation import sql_source
 from src.runtime.datasets import DatasetRegistry, parse_uploaded_csv
 from src.runtime.store import RuntimeStore
@@ -93,9 +89,8 @@ def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
     so the user's next click doesn't pay a cold-start it doesn't need to.
 
     Deliberately narrow: only the SHARED prerequisites (target hydration,
-    parsed schema, the GBDT feature-column list, the warning-line reference
-    model). Individual scatter cards themselves are intentionally NOT
-    precomputed here -- "개별 산점도는 워밍업 대상에서 제외".
+    parsed schema). Individual scatter cards themselves are intentionally
+    NOT precomputed here -- "개별 산점도는 워밍업 대상에서 제외".
 
     `hydrate_targets` for `eval_dataset_id` is very likely already warm by
     the time this runs -- `_analyze_and_score` (called just above, in
@@ -107,25 +102,16 @@ def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
     a cache hit is a dict lookup + a frozen-dataclass rebuild, not a
     dataframe copy, so re-touching it costs effectively nothing.
 
-    `_cached_schema` / `_cached_gbdt_features` / `_cached_reference_model`
-    are NOT touched by any of those functions -- `_pareto_payload` and
-    `_fmea_payload` call `parse_schema` directly (not through the new
-    per-request caches added for the scatter endpoint), and nothing in the
-    refresh pipeline computes the warning-line reference model at all. Those
-    three are the actual cold gap this warmup closes.
+    `_cached_schema` is NOT touched by any of those functions --
+    `_pareto_payload` and `_fmea_payload` call `parse_schema` directly (not
+    through the per-request cache added for the scatter endpoint). That's
+    the actual cold gap this warmup closes.
     """
-    from api.routes.analysis import (
-        _cached_gbdt_features,
-        _cached_reference_model,
-        _cached_schema,
-        _hydrated_targets_or_409,
-    )
+    from api.routes.analysis import _cached_schema, _hydrated_targets_or_409
 
     hydrated = _hydrated_targets_or_409(eval_dataset_id)
     dataset_version = hydrated.provenance.dataset_version
     _cached_schema(eval_dataset_id, dataset_version)
-    _cached_gbdt_features(eval_dataset_id, dataset_version)
-    _cached_reference_model(eval_dataset_id, dataset_version)
 
 
 def _warmup_common_prerequisites_background(eval_dataset_id: str) -> None:
@@ -169,18 +155,13 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
     # 업로드로만 일어난다("자동화 없음" -- RA-3 데이터 흐름).
     model_meta = _current_model_meta(store)
 
-    # -- 3. 챔피언으로 예측 + 4. 원인분석 + 5. 알람 판정 ---------------
-    analysis_block, alarms_block, monitoring_block, alarm_items_for_dispatch, train_dataset_for_alarms = (
-        _analyze_and_score(store, eval_dataset_id, errors)
-    )
+    # -- 3. 챔피언으로 예측 + 4. 원인분석 ------------------------------
+    analysis_block, train_dataset_for_analysis = _analyze_and_score(store, eval_dataset_id, errors)
 
     if analysis_block is None:
         # J-2: 원인분석 전 타깃 실패 -- 스냅샷 저장을 생략하고 기존
         # 스냅샷을 보존한다(빈 payload로 덮어쓰지 않는다).
         logger.warning("auto_refresh: 원인분석 전 타깃 실패 -- 스냅샷 저장 생략")
-        return
-    if alarms_block is None:
-        logger.warning("auto_refresh: 알람 판정 실패 -- 스냅샷 저장 생략")
         return
 
     # AG: 헤더·모니터링이 "수동 · uploaded_0809.csv"처럼 파일명을 보여줄
@@ -194,10 +175,6 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
 
     snapshot = {
         "created_at": now_iso,
-        # RC-6: 모니터링·원인분석·알림기록 3종이 같은 계산 결과에서
-        # 나왔음을 확인할 수 있는 공유 id -- 이 스냅샷 하나(analysis_block
-        # +alarms_block+monitoring_block)가 이미 원자적으로 저장되므로
-        # created_at을 그대로 재사용한다(별도 채번이 필요 없다).
         "analysis_id": now_iso,
         "source": {
             "mode": mode,
@@ -208,8 +185,14 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         },
         "model": model_meta,
         "analysis": analysis_block,
-        "alarms": alarms_block,
-        "monitoring": monitoring_block,
+        # 알람 등급(심각/위험/주의)·게이트 판정 파이프라인은 폐기됐다 --
+        # 어떤 화면도 이 두 블록의 내용(counts/items_top/gate_passed/
+        # predicted_yield/gap)을 더 이상 렌더링하지 않는 것으로 확인했다
+        # (알림 발송은 수율 예측 갱신 파이프라인, 아래 7번으로 대체).
+        # 스냅샷 스키마의 키 자체는 다른 소비처가 존재를 가정할 수 있어
+        # 유지하되, 내용은 빈 상태로 남긴다.
+        "alarms": None,
+        "monitoring": {"predicted_yield": None, "gap": None, "gap_pareto": [], "treemap": None},
         "errors": errors,
     }
     store.save_refresh_snapshot(snapshot)
@@ -227,19 +210,6 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         current_bootstrap = store.get_bootstrap_status()
         if current_bootstrap is not None and current_bootstrap.get("status") == "failed":
             store.set_bootstrap_status("done", None)
-    try:
-        alarm_provenance = alarms_block.get("target_provenance") or {}
-        store.save_alert_snapshot(
-            dataset_id=eval_dataset_id,
-            model_id=alarm_provenance.get("model_id"),
-            model_version=alarm_provenance.get("model_version"),
-            criteria_version=alarms_block.get("decision_criteria_version") or alarm_gbdt.ALARM_DECISION_VERSION,
-            payload=alarms_block,
-            created_at=now_iso,
-        )
-    except Exception:
-        logger.exception("auto_refresh: immutable 알람 스냅샷 저장 실패")
-        errors.append("알람 이력 스냅샷을 저장하지 못했습니다.")
     logger.info("auto_refresh: 스냅샷 저장 완료 mode=%s eval=%s", mode, eval_dataset_id)
 
     if not dispatch:
@@ -248,45 +218,25 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         logger.info("auto_refresh: dispatch=False -- 발송 단계를 건너뜁니다 (콜드 스타트).")
         return
 
-    # -- 6. 신규 알람 자동 발송 (J-5) -- 별도 모듈, 게이트/발송 시점/
-    # 수동 업로드 10분 간격 조건은 그쪽에서 판단한다. 임포트를 함수
-    # 안에 둔 것은 순환 임포트 회피(dispatch.py가 이 모듈을 다시
-    # 참조하지 않지만, notify 쪽 모듈들이 얽혀 있어 안전하게 지연
-    # 임포트한다) 목적이다.
+    # -- 6. (폐기) 옛 알람 등급 자동 발송 -- 수율 예측 갱신 발송(7번)으로
+    # 완전히 대체됐다. 두 파이프라인을 동시에 돌리면 중복 발송이 되므로
+    # 옛 호출은 남기지 않는다.
     #
-    # EB그룹: 수동 모드(업로드로 활성화된 평가 데이터셋)도 이제
-    # 발송한다 -- 이전(AG-3)에는 여기서 통째로 건너뛰었지만, 사용자가
-    # 올린 파일의 판정 결과를 받아볼 수 있어야 한다는 요구로 바뀌었다.
-    # 대신 refresh_dispatch.dispatch_new_alarms가 메시지에 "[수동] 파일명"
-    # 출처를 붙이고 10분 최소 간격을 둔다(연속 업로드가 연속 발송이
-    # 되지 않도록).
-    from src.automation import refresh_dispatch
-
-    try:
-        refresh_dispatch.dispatch_new_alarms(
-            store,
-            mode=mode,
-            train_dataset_id=train_dataset_for_alarms,
-            eval_dataset_id=eval_dataset_id,
-            alarm_items=alarm_items_for_dispatch,
-            gate_passed=alarms_block["gate_passed"],
-            snapshot_created_at=now_iso,
-            target_yield=alarms_block["target_yield"],
-            sensitivity=alarms_block["sensitivity"],
-            model_version=(alarms_block.get("target_provenance") or {}).get("model_id") or "",
-            criteria_version=alarms_block.get("decision_criteria_version") or alarm_gbdt.ALARM_DECISION_VERSION,
-        )
-    except Exception:
-        logger.exception("auto_refresh: 신규 알람 발송 처리 실패")
-
+    # EB그룹: 수동 모드(업로드로 활성화된 평가 데이터셋)도 발송 대상이다
+    # -- source_note로 "[수동] 파일명" 출처를 붙이고, 수동 트리거는
+    # 최소 간격을 둔다(연속 업로드가 연속 발송이 되지 않도록). 이 규칙은
+    # `_dispatch_yield_update_for_refresh` -> `dispatch_yield_update`가
+    # 그대로 적용한다.
+    #
     # -- 7. 수율 예측 갱신 발송 (VE-1) -- 자동 갱신마다 발송 후보다(수동
-    # 분석 실행과 달리 timing 설정 게이트가 없다). 억제 규칙(신규분만/
-    # 시간당 예산)은 yield_update_dispatch 안에서 판단한다.
+    # 분석 실행과 달리 timing 설정 게이트가 없다). 분석이 일어날 때마다
+    # 보낸다(24시간 dedupe 없음) -- 억제 규칙은 시간당 예산/최소 간격
+    # 뿐이며 yield_update_dispatch 안에서 판단한다.
     try:
         _dispatch_yield_update_for_refresh(
             store,
             mode=mode,
-            train_dataset_id=train_dataset_for_alarms,
+            train_dataset_id=train_dataset_for_analysis,
             eval_dataset_id=eval_dataset_id,
             eval_dataset_filename=eval_dataset_filename,
             model_label=model_meta.get("champion_version"),
@@ -388,23 +338,30 @@ def _current_champion_id(store: RuntimeStore) -> str | None:
 
 def _analyze_and_score(
     store: RuntimeStore, eval_dataset_id: str, errors: list[str]
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None, list[dict[str, Any]], str | None]:
-    """원인분석(Pareto+계측 확대) + 알람 판정 + 모니터링 요약을 계산한다.
-    전 타깃 Pareto 실패는 analysis_block=None으로, 알람 계산 실패는
-    alarms_block=None으로 알린다 -- 호출부가 스냅샷 저장 여부를 그
-    신호로 결정한다(J-2 "부분 실패 정책"). 다섯 번째 반환값은 알람
-    판정에 실제로 쓰인 train 데이터셋 id다(J-5의 신뢰도 재계산이 같은
-    기준을 써야 한다)."""
-    from api.routes.analysis import _action_priority_payload, _fmea_payload, _pareto_payload, _scored_wafers
+) -> tuple[dict[str, Any] | None, str | None]:
+    """원인분석(Pareto+계측 확대)을 계산한다. 전 타깃 Pareto 실패는
+    analysis_block=None으로 알린다 -- 호출부가 스냅샷 저장 여부를 그
+    신호로 결정한다(J-2 "부분 실패 정책"). 두 번째 반환값은 이번
+    분석 사이클에 쓰인 train 데이터셋 id다(모니터링 홈 블록①·②가
+    같은 기준을 써야 한다).
+
+    이전에는 여기서 GBDT 알람 등급(심각/위험/주의)도 함께 계산했으나,
+    그 등급 판정 결과(alarms_block.counts/items_top, monitoring_block.
+    predicted_yield/gap)는 어떤 화면도 렌더링하지 않는 것으로 확인되어
+    (알람/신뢰도 게이트 파이프라인 폐기, 수율 예측 갱신 발송으로 대체)
+    제거했다 -- `_dispatch_yield_update_for_refresh`가 알림 발송을
+    전담한다.
+    """
+    from api.routes.analysis import _action_priority_payload, _fmea_payload, _pareto_payload
     from src.runtime.app_state import get_latest_state
 
     registry = _dataset_registry(store)
     try:
-        eval_df = registry.get_dataframe(eval_dataset_id)
+        registry.get_dataframe(eval_dataset_id)
     except Exception:
         logger.exception("auto_refresh: 평가 데이터셋 로드 실패")
         errors.append(f"평가 데이터셋({eval_dataset_id})을 불러오지 못했습니다.")
-        return None, None, None, [], None
+        return None, None
 
     pareto_by_target: dict[str, Any] = {}
     failed_targets: list[str] = []
@@ -417,15 +374,15 @@ def _analyze_and_score(
 
     if not pareto_by_target:
         errors.append("모든 타깃의 인자 스크리닝이 실패했습니다.")
-        return None, None, None, [], None
+        return None, None
     if failed_targets:
         errors.append(f"일부 타깃 스크리닝 실패: {', '.join(failed_targets)}")
 
-    # 알람 판정에 쓸 train 데이터셋 id를 먼저 정한다 -- 블록①(조치
-    # 우선순위)도 같은 train.CSV 기준(작업 지시서 MB-6)이라 아래에서
-    # 재사용한다.
+    # 이번 분석 사이클의 train 데이터셋 id -- 블록①(조치 우선순위)도 같은
+    # train.CSV 기준(작업 지시서 MB-6)이라 아래에서 재사용하고, 수율 예측
+    # 갱신 발송(_dispatch_yield_update_for_refresh)도 같은 값을 쓴다.
     latest = get_latest_state(store)
-    train_dataset_for_alarms = (
+    train_dataset_for_analysis = (
         (latest.get("alarms") or {}).get("train_dataset") if latest.get("alarms") else None
     ) or FALLBACK_TRAIN_DATASET
 
@@ -450,7 +407,7 @@ def _analyze_and_score(
     action_priority = None
     action_priority_error = None
     try:
-        action_priority = _action_priority_payload(train_dataset_for_alarms)
+        action_priority = _action_priority_payload(train_dataset_for_analysis)
     except Exception:
         logger.exception("auto_refresh: 조치 우선순위 계산 실패")
         errors.append("조치 우선순위 계산에 실패했습니다.")
@@ -468,111 +425,7 @@ def _analyze_and_score(
         ),
     }
 
-    # 알람 판정 -- 저장된 목표 수율·민감도를 그대로 따른다(A-3 원칙과
-    # 동일: 여러 화면의 판정 기준이 어긋나면 안 된다).
-    alarms_payload = ((latest.get("alarms") or {}).get("payload")) or {}
-    from src.analysis import alarm_gbdt
-
-    target_yield = alarms_payload.get("targetYield", alarm_gbdt.DEFAULT_TARGET_YIELD)
-    sensitivity = alarms_payload.get("sensitivity", alarm_gbdt.DEFAULT_SENSITIVITY)
-
-    try:
-        # 존재 검증만 필요하다 -- _scored_wafers는 더 이상 train_df를
-        # 받지 않는다(판정이 점추정 기준으로 바뀌며 sigma 계산이 없어짐,
-        # spec §CA-1).
-        registry.get_dataframe(train_dataset_for_alarms)
-        scored, auc_lo, gate_passed, alarm_provenance = _scored_wafers(
-            train_dataset_for_alarms, eval_dataset_id, eval_df,
-            target=target_yield, sensitivity=sensitivity,
-        )
-    except Exception:
-        logger.exception("auto_refresh: 알람 판정 실패")
-        errors.append("알람 판정에 실패했습니다.")
-        return analysis_block, None, None, [], train_dataset_for_alarms
-
-    counts: dict[str, int] = {"심각": 0, "위험": 0, "주의": 0, "정상": 0, "판별불가": 0}
-    for item in scored:
-        key = item.grade if item.grade in counts else "판별불가"
-        counts[key] += 1
-    alarm_items = sorted(
-        (item for item in scored if item.grade in ("심각", "위험", "주의")),
-        key=lambda item: item.risk_percentile,
-    )
-    items_top = [
-        {
-            "lot_wafer_id": item.lot_wafer_id,
-            "lot_id": item.lot_id,
-            "grade": item.grade,
-            "risk_percentile": item.risk_percentile,
-            "target_source": item.target_source,
-            "model_id": alarm_provenance.get("model_id"),
-            "model_version": alarm_provenance.get("model_version"),
-            "criteria_version": alarm_gbdt.ALARM_DECISION_VERSION,
-        }
-        for item in alarm_items[:200]
-    ]
-    alarms_block = {
-        "gate_passed": gate_passed,
-        "target_yield": target_yield,
-        "sensitivity": sensitivity,
-        "counts": counts,
-        "items_top": items_top,
-        "total": len(alarm_items),
-        "target_provenance": alarm_provenance,
-        "decision_criteria_version": alarm_gbdt.ALARM_DECISION_VERSION,
-        "external_delivery_suppressed_reason": (
-            None if gate_passed else (
-                f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
-                if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
-            )
-        ),
-    }
-    # spec §BC-2: 계측 없이 등급이 매겨진 wafer는 사유를 댈 수 없으므로
-    # 자동 발송(dispatch_new_alarms) 대상에서 제외한다 -- alarms_block/
-    # items_top(화면 표시용)은 걸러내지 않는다.
-    alarm_items_for_dispatch = [
-        {
-            "lot_wafer_id": item.lot_wafer_id,
-            "lot_id": item.lot_id,
-            "grade": item.grade,
-            "risk_percentile": item.risk_percentile,
-            "reason": "",
-            "target_source": item.target_source,
-            "model_id": alarm_provenance.get("model_id"),
-            "model_version": alarm_provenance.get("model_version"),
-            "criteria_version": alarm_gbdt.ALARM_DECISION_VERSION,
-        }
-        for item in alarm_items
-        if item.measured
-    ]
-
-    monitoring_block = _build_monitoring_block(scored, target_yield, errors)
-    return analysis_block, alarms_block, monitoring_block, alarm_items_for_dispatch, train_dataset_for_alarms
-
-
-def _build_monitoring_block(scored: list[Any], target_yield: float, errors: list[str]) -> dict[str, Any]:
-    if scored:
-        point = float(np.mean([item.pred_mean for item in scored]))
-        lo = float(np.mean([item.pred_lo for item in scored]))
-        hi = float(np.mean([item.pred_hi for item in scored]))
-    else:
-        point = lo = hi = None
-    gap = None
-    if point is not None:
-        gap = {"lo": round(target_yield - hi, 2), "hi": round(target_yield - lo, 2)}
-    return {
-        "predicted_yield": {"point": point, "lo": lo, "hi": hi} if point is not None else None,
-        "gap": gap,
-        # MA-3: '계측 확대' 시뮬레이션(gap_pareto의 유일한 소스였다)이
-        # 모니터링 홈 재설계로 삭제됐다 -- 이 필드는 그 이후로 항상
-        # 빈 배열이다. 스냅샷 스키마 자체는 유지한다(다른 소비처가
-        # `monitoring.gap_pareto` 키 존재를 가정할 수 있어서다).
-        "gap_pareto": [],
-        # 트리맵은 스텝별 상호작용 조회라 그 자체는 온디맨드로 유지한다
-        # (K/J 공통 원칙: "모든 상호작용이 오프라인으로 되는 것이 목표가
-        # 아니다") -- 스냅샷에는 담지 않는다.
-        "treemap": None,
-    }
+    return analysis_block, train_dataset_for_analysis
 
 
 def _dispatch_yield_update_for_refresh(

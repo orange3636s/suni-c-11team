@@ -211,107 +211,6 @@ class ControlRangeListResponse(BaseModel):
     no_significant_factor_targets: list[str] = Field(default_factory=list)
 
 
-class AlarmItemSchema(BaseModel):
-    """알람 판정 GBDT 전환 (spec §A-3) + 민감도 슬라이더를 실제
-    트레이드오프로 (spec §CA-1) -- 관리한계 이탈량이 아니라 부트스트랩
-    앙상블 예측 수율의 점추정(pred_mean) 기준. 예측 수율 절대값은 화면에
-    노출하지 않는다 -- `risk_percentile`(순위)만 내보낸다.
-    """
-
-    lot_wafer_id: str
-    lot_id: str | None
-    grade: str  # "심각" | "위험" | "주의"
-    risk_percentile: float  # 0-100, 낮을수록 위험
-    reason: str
-    target_source: str = "measured"
-
-
-class AlarmListResponse(BaseModel):
-    train_dataset_id: str
-    eval_dataset_id: str
-    items: list[AlarmItemSchema]
-    total: int
-    alarm_total: int
-    evaluated_total: int
-    alarm_share_warning: bool
-    # 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- train→eval 전이
-    # 외부 발송 신뢰도 게이트. 화면 위험도/이력은 이 값과 별개로 유지된다.
-    auc_lower_bound: float | None
-    auc_gate_passed: bool
-    auc_gate_threshold: float
-    target_provenance: dict[str, Any] | None = None
-    external_delivery_suppressed_reason: str | None = None
-
-
-class WaferPredictionSchema(BaseModel):
-    """사전 알람 로그 전면 개편 (spec §A-3) -- 등급 없는 원시 예측치 하나.
-    frontend가 목표 수율/민감도로 실시간 재분류하는 재료다."""
-
-    lot_wafer_id: str
-    lot_id: str | None
-    measured: bool
-    pred_mean: float
-    pred_lo: float
-    pred_hi: float
-    # measured=False이거나 어떤 인자도 경고선을 넘지 않았으면 None.
-    reason: str | None
-    target_source: str = "measured"
-
-
-class AlertsDataResponse(BaseModel):
-    train_dataset_id: str
-    eval_dataset_id: str
-    total_wafers: int
-    # 목표 수율 분포 불일치 경고(spec §A-1)와 "중앙값으로 설정" 버튼에 쓴다.
-    train_y_min: float
-    train_y_max: float
-    train_y_median: float
-    train_y_p1: float
-    train_y_p99: float
-    predictions: list[WaferPredictionSchema] = Field(default_factory=list)
-    # 민감도 슬라이더를 실제 트레이드오프로 (spec §CA-4) -- 랏 단위
-    # GroupKFold 홀드아웃 out-of-fold (실제 Y, 예측값) 쌍의 층화 샘플
-    # (최대 1,000쌍, `alarm_gbdt.HOLDOUT_OOF_SAMPLE_SIZE`). eval에는 실제
-    # 정답이 없으므로 이 학습 데이터 기반 추정치로 슬라이더 옆
-    # 정밀도·재현율을 클라이언트에서 즉시 재계산한다 -- "실측"이 아니라
-    # "홀드아웃 기준 추정"임을 화면에 반드시 병기한다. 랏 수 부족으로
-    # 홀드아웃을 못 냈으면(interval_conformal_q도 None인 경우와 동일
-    # 조건) 둘 다 빈 배열이다.
-    holdout_oof_actual: list[float] = Field(default_factory=list)
-    holdout_oof_predicted: list[float] = Field(default_factory=list)
-    # 외부 발송 신뢰도 게이트 -- 화면 분류에는 display_prediction_allowed를 쓴다.
-    auc_lower_bound: float | None
-    auc_gate_passed: bool
-    display_prediction_allowed: bool = True
-    auc_gate_threshold: float
-    # 예측 구간 conformal 캘리브레이션 (spec §BA-4) -- 이 세 값이 "구간을
-    # 믿어도 되는지"의 근거다. interval_coverage_actual은 eval_df에 실측
-    # Y가 있을 때만 채워진다(일반 평가 상황에서는 None -- 표시 문구는
-    # 프런트가 그 경우를 구분해서 보여준다). interval_conformal_q가
-    # None이면 랏 수 부족으로 캘리브레이션이 적용되지 않고 부트스트랩
-    # 분위수로 대체됐다는 뜻이다.
-    interval_coverage_target: float
-    interval_coverage_actual: float | None = None
-    interval_conformal_q: float | None = None
-    # 집계 수준(SUMMARY 등 eval 전체 평균) conformal 여유 (spec GA) -- 웨이퍼
-    # interval_conformal_q를 평균에 그대로 적용하면 평균의 불확실성을
-    # 과대평가한다. 랏 블록 부트스트랩으로 별도 산출한 값이며 항상
-    # interval_conformal_q보다 훨씬 좁다. None이면 웨이퍼 q와 같은 이유
-    # (랏 수 부족)로 낼 수 없었다는 뜻.
-    interval_conformal_q_agg: float | None = None
-    # 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- 이 응답이 어느
-    # max_step 기준으로 계산됐는지. None이면 전체 스텝(마스킹 없음)이다.
-    effective_max_step: int | None = None
-    # 지시서 작업 3(스텝별 신뢰도 게이트) -- max_step이 주어졌을 때만
-    # 채워진다(STEP_GRID 중 가장 가까운 격자점의 OOF AUC와 게이트 통과
-    # 여부). 둘 다 None이면 표본 부족으로 산출 불가이거나 max_step
-    # 자체가 없는 것이다.
-    max_step_auc: float | None = None
-    max_step_auc_gate_passed: bool | None = None
-    target_provenance: dict[str, Any] | None = None
-    external_delivery_suppressed_reason: str | None = None
-
-
 class AlertCellColorSchema(BaseModel):
     """RC-4b: y1~y5 셀 하나의 색상 메타데이터. direction은 "red"|"blue"|
     None(방향 불분명), shade는 "dark"|"medium"|"light"|"gray"|"measured"
@@ -481,18 +380,6 @@ class ReportPerChamberWindowSchema(BaseModel):
     n: int
 
 
-class ReportWarningLineSchema(BaseModel):
-    """알람 판정 GBDT 전환 §C-4 -- 화면에는 위치만 쓰고(경고선), 곡선/PDP
-    수치는 표시하지 않는다. JSON 보고서에는 재현성 확인용으로 남긴다."""
-
-    value: float
-    lower: float | None
-    upper: float | None
-    method: str
-    pdp_range: float
-    observed_yield_gap: float | None
-
-
 class ReportFactorSchema(BaseModel):
     feature: str
     kind: str
@@ -511,7 +398,6 @@ class ReportFactorSchema(BaseModel):
     relation: ReportRelationSchema
     binned_profile: list[dict[str, float]]
     control_limits: ReportControlLimitsSchema
-    warning_line: ReportWarningLineSchema | None = None
     band_stability: float
     band_width: float | None
     window: ReportWindowSchema | None
@@ -556,7 +442,6 @@ class ContextFactorSchema(BaseModel):
     n_missing_pct: float
     relation: ReportRelationSchema
     control_limits: ReportControlLimitsSchema
-    warning_line: ReportWarningLineSchema | None = None
     band_stability: float
     band_width: float | None
     window: ReportWindowSchema | None
@@ -660,58 +545,6 @@ class AnalysisContextResponse(BaseModel):
     alarms: ContextAlarmsSchema
     config_screening: ReportConfigScreeningSchema
     limitations: list[str]
-
-
-RELIABILITY_THRESHOLDS_DISCLAIMER = (
-    "등급 기준은 내장 데이터셋에서 구분이 되도록 설정한 경험값이며 절대 기준이 아닙니다."
-)
-
-
-class DistributionShiftSchema(BaseModel):
-    """지시서 작업 4(분포 이동 감지) -- train 대비 eval의 인자 분포 이동.
-    AUC 게이트를 대체하지 않는 경고용 참고 지표다."""
-
-    median: float | None
-    max: float | None
-    worst_feature: str | None
-    level: str  # "low" | "medium" | "high" | "unknown"
-    missing_rate_gap: float | None
-    missing_rate_worst_feature: str | None
-
-
-class ReliabilityResponse(BaseModel):
-    """종합 신뢰성 등급 (spec 알람 판정 GBDT 전환 §E, 알람 신뢰도 게이트 §D-3).
-
-    AUC는 이제 train 자기 자신이 아니라 **선택된 (train, eval) 쌍**에
-    대한 전이 성능이다 (spec 알람 신뢰도 게이트 §A-1/§A-2) -- train만
-    보는 self-CV는 eval 분포가 달라져도 값이 바뀌지 않아 게이트 목적에
-    맞지 않는다.
-    """
-
-    dataset_id: str
-    eval_dataset_id: str
-    grade: str  # "높음" | "보통" | "낮음"
-    total_score: int
-    auc_lower_bound: float | None
-    auc_score: int
-    # 알람 신뢰도 게이트 §D-3: AUC 항목에 게이트 정보를 덧붙인다.
-    auc_gate_passed: bool
-    auc_gate_message: str | None
-    n_significant_factors: int
-    n_significant_score: int
-    max_eps2: float | None
-    max_eps2_score: int
-    n_train: int
-    n_train_score: int
-    coverage_pct: float | None
-    coverage_score: int
-    deduction_reasons: list[str] = Field(default_factory=list)
-    low_holdout_sample: bool
-    thresholds_disclaimer: str = RELIABILITY_THRESHOLDS_DISCLAIMER
-    target_fallback_tier: str  # "per_target" | "final_yield_only" | "unanalyzable"
-    target_fallback_message: str | None
-    # 지시서 작업 4(분포 이동 감지) -- 계산 불가(인자 표본 부족 등)면 None.
-    distribution_shift: DistributionShiftSchema | None = None
 
 
 class PreprocessingModeResultSchema(BaseModel):

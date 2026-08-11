@@ -7599,6 +7599,11 @@ html[data-theme="dark"] .apiStatus{background:rgba(255,255,255,.06);border-color
 .headerContextStrip{display:flex;align-items:stretch;overflow:hidden;white-space:nowrap;min-width:0}
 .headerContextItem{display:flex;flex:0 0 auto;flex-direction:column;justify-content:center;gap:2px;padding:2px 12px;border-left:1px solid var(--line-soft)}
 .headerContextItem:first-child{border-left:0;padding-left:0}
+/* QE: SOURCE 항목 제거로 EVAL/WAFERS/LAST RUN 3개만 남았다 -- 4항목
+   기준으로 촘촘했던 12px 패딩 대신 살짝 더 넓혀 CURRENT TIME과의
+   간격이 짝이 안 맞아 보이지 않게 한다. */
+.headerContextStrip-noSource .headerContextItem{padding:2px 16px}
+.headerContextStrip-noSource .headerContextItem:first-child{padding-left:0}
 .headerContextKey{font:500 10px/1 var(--font-data);letter-spacing:.04em;color:var(--text-muted);text-transform:uppercase}
 .headerContextValue{display:inline-flex;align-items:center;gap:5px;font:500 11px/1.1 var(--font-data);color:var(--text-primary)}
 .headerContextDot{width:6px;height:6px;border-radius:50%;background:var(--text-muted)}
@@ -9709,11 +9714,11 @@ html[data-theme="dark"] .alertsMismatchWarning strong{ color: #FBBF24; }
 .headerMenuButton:hover{ background: var(--surface-tertiary); }
 
 /* -- S-1: 헤더 컨텍스트 스트립 축약 (768px~1023px 태블릿 티어) -----------
-   767px까지는 그대로(EVAL/WAFERS/LAST RUN/SOURCE 전부), 1023px 이하에서
-   태블릿 폭이 되면 EVAL/WAFERS를 줄이고 SOURCE·LAST RUN만 남긴다 -- 이
-   구간을 축약하는 규칙은 지금까지 없었다(그대로 767px까지 유지되다가
-   전체가 사라지기만 했다). LAST RUN이 시각적으로 첫 항목이 되므로
-   좌측 구분선을 지운다(.headerContextItem:first-child과 같은 효과). */
+   767px까지는 그대로(EVAL/WAFERS/LAST RUN 전부), 1023px 이하에서
+   태블릿 폭이 되면 EVAL/WAFERS를 줄이고 LAST RUN만 남긴다(QE: SOURCE는
+   헤더에서 완전히 제거됐다). LAST RUN이 시각적으로 첫(이자 유일한)
+   항목이 되므로 좌측 구분선을 지운다(.headerContextItem:first-child과
+   같은 효과). */
 @media (max-width: 1023px){
   .headerContextEval, .headerContextWafers{ display: none; }
   .headerContextLastRun{ border-left: 0; padding-left: 0; }

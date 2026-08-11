@@ -1880,9 +1880,10 @@ export default function ScatterChart({
         )}
 
         {/* 최적 중심 · 권장 구간 · 구간 평균 불량률 3종 -- Color By와
-            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)와 경고선은 화면에
-            더는 노출하지 않는 개념이다 (src/analysis/control_range.py,
-            warning_line.py에는 그대로 남아 있다). */}
+            무관하게 항상 동일. 관리한계(IQR/LCL/UCL)는 화면에 더는
+            노출하지 않는 개념이다 (src/analysis/control_range.py에는
+            그대로 남아 있다). 경고선(PDP 기반 임계)은 계측률에 비례해
+            반대로 작동하는 것이 검증되어 코드 자체가 삭제됐다. */}
         <div className="scatterLegendRow">
           {showOptimalLegendCard && (
             <LegendCard

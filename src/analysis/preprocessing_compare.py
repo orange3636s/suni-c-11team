@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
+from lightgbm import LGBMRegressor
 from sklearn.metrics import r2_score
 from sklearn.model_selection import GroupShuffleSplit
 
@@ -114,7 +114,7 @@ def compute_preprocessing_comparison(
     scores: dict[str, float] = {}
     for mode in ("A", "B", "C"):
         matrix = _feature_matrix(valid, features, mode)
-        model = HistGradientBoostingRegressor(max_iter=MAX_ITER, random_state=RANDOM_STATE)
+        model = LGBMRegressor(n_estimators=MAX_ITER, random_state=RANDOM_STATE, verbose=-1)
         model.fit(matrix.iloc[train_idx], y.iloc[train_idx])
         pred = model.predict(matrix.iloc[test_idx])
         r2 = float(r2_score(y.iloc[test_idx], pred))

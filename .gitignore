@@ -47,3 +47,4 @@ frontend/.next/
 *.tmp
 tmp/
 uploads/
+tests/.tmp_runtime/

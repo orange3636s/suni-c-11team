@@ -233,9 +233,65 @@ def build_slack_yield_update(payload: YieldUpdatePayload) -> dict:
 
 # -- Telegram (일반 텍스트, 고정폭 정렬) -------------------------------------
 
+TELEGRAM_MAX_CHARS = 4096  # Telegram sendMessage 하드 한계
+
 
 def build_telegram_yield_update_text(payload: YieldUpdatePayload) -> str:
+    """단일 문자열 전체 -- 짧은 페이로드/테스트/하위 호환용. 실제 발송
+    (`yield_update_dispatch.dispatch_yield_update`)은 4096자 한계를 넘을
+    수 있으므로 `build_telegram_yield_update_chunks`를 쓴다."""
     return "\n".join(_compose_body_lines(payload))
+
+
+def _telegram_blocks(payload: YieldUpdatePayload) -> list[str]:
+    """청크 분할의 최소 단위 -- 헤더+소스 한 덩어리, TOP10 표 한 덩어리,
+    Y1~Y5 타깃 섹션 각각 한 덩어리, 요약 문장, 꼬리말. 분할은 이 목록
+    경계에서만 일어난다 -- 표 중간이나 타깃 섹션 중간에서 자르지 않는다."""
+    blocks: list[str] = []
+    header = _header_line(payload)
+    if payload.source_note:
+        header = f"{payload.source_note}\n{header}"
+    blocks.append(f"{header}\n{_source_line(payload)}")
+    blocks.append(_top10_table_text(payload))
+    for block in payload.target_blocks:
+        blocks.append(_target_block_text(block))
+    if payload.summary_sentence:
+        blocks.append(payload.summary_sentence)
+    blocks.append("\n".join(_footer_lines(payload)))
+    return blocks
+
+
+def build_telegram_yield_update_chunks(payload: YieldUpdatePayload, *, max_chars: int = TELEGRAM_MAX_CHARS) -> list[str]:
+    """Telegram 하드 한계(4096자)를 넘으면 여러 메시지로 나눈다. 항상
+    `_telegram_blocks`의 온전한 블록 단위로만 자른다 -- 표를 반토막
+    내거나 타깃 섹션을 통째로 누락하지 않는다. 대개(TOP10 10행 + 타깃당
+    최대 3행 기준) 한 청크(길이 1개 리스트)로 끝난다 -- 실측치는
+    프로젝트 README/작업 보고 참고.
+
+    블록 하나가 그 자체로 `max_chars`를 넘는 극단적인 경우(예: 매우 긴
+    피처명이 반복)에는 그 블록만 단독 청크로 내보낸다 -- 잘라서 깨진
+    표를 보내는 것보다 낫다.
+    """
+    full_text = build_telegram_yield_update_text(payload)
+    if len(full_text) <= max_chars:
+        return [full_text]
+
+    blocks = _telegram_blocks(payload)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for block in blocks:
+        separator_len = 2 if current else 0  # "\n\n"으로 이어붙일 때
+        if current and current_len + separator_len + len(block) > max_chars:
+            chunks.append("\n\n".join(current))
+            current = [block]
+            current_len = len(block)
+        else:
+            current.append(block)
+            current_len += separator_len + len(block)
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
 
 
 # -- Gmail (HTML 표, 이스케이프 필수) ----------------------------------------

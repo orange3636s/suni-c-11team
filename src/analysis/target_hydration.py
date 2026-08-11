@@ -279,9 +279,9 @@ def _view_with_cache_flag(result: HydratedTargets, *, cache_hit: bool) -> Hydrat
     mutates `hydrated.dataframe` in place -- verified by inspecting every
     call site (`api/routes/analysis.py`, `api/routes/monitoring.py`) and every
     module that receives it transitively (`src/analysis/scatter.py`,
-    `control_range.py`, `screening/*.py`, `warning_line.py`,
+    `control_range.py`, `screening/*.py`,
     `measurement_expansion.py`, `alarm_gbdt.py`, `report.py`,
-    `distribution_shift.py`, `recommendations.py`, `alarm_bands.py`): every
+    `recommendations.py`, `alarm_bands.py`): every
     one of them either reads columns (`df[...]`, boolean-mask selection,
     which always returns a new object in pandas) or builds a brand-new local
     frame from the columns it needs (e.g. `scatter.py`'s `build_scatter_data`

@@ -14,6 +14,9 @@ import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
 // M-2) -- 신규 API 조회를 만들지 않고 사이드바 하단 상태 블록이 이미 쓰는
 // 스냅샷 컨텍스트(AnalysisStateProvider의 snapshot, J그룹 자동 갱신
 // 파이프라인 산출물)를 그대로 재사용한다.
+// QE: SOURCE(SQL 연결 상태) 항목은 여기서 제거했다 -- 같은 정보가
+// 사이드바 "모델 분석·자동화" 버튼의 상태 점 툴팁(Sidebar.tsx)에
+// 이미 있어 두 곳에 중복 표시할 이유가 없다.
 function formatHeaderClock(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -24,8 +27,9 @@ function formatHeaderClock(iso: string | null | undefined): string | null {
 export default function Header() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   // Sidebar의 연결 상태 점과 같은 훅을 구독한다 -- 폴링은 앱 전체에서
-  // 한 번만 돈다 (frontend/lib/useApiStatus.ts). SOURCE 항목의 title
-  // 툴팁으로 흡수되어 더 이상 별도 배지를 그리지 않는다.
+  // 한 번만 돈다 (frontend/lib/useApiStatus.ts). 데스크톱 헤더의 SOURCE
+  // 항목은 제거됐다(사이드바 상태 점 툴팁과 중복); ≤767px 모바일 요약
+  // 바가 이 값을 쓰는 마지막 소비처다.
   const apiStatus = useApiStatus();
   const { snapshot } = useAnalysisState();
   const headerRef = useRef<HTMLElement>(null);
@@ -117,14 +121,16 @@ export default function Header() {
       <div className="headerMeta" aria-label="현재 시각">
         {!isMobileLayout && (
           <>
-            <div className="headerContextStrip" aria-label="현재 데이터 컨텍스트">
+            <div className="headerContextStrip headerContextStrip-noSource" aria-label="현재 데이터 컨텍스트">
               {/* 모바일 반응형 패치 S-1: 768~1023px(태블릿) 구간에서는
-                  SOURCE/LAST RUN만 남기고 EVAL/WAFERS를 줄인다 -- 이
-                  두 항목만 새 클래스로 구분해 globals.css의
-                  1023px 티어에서 숨긴다.
+                  LAST RUN만 남기고 EVAL/WAFERS를 줄인다 -- globals.css의
+                  1023px 티어가 이 항목들을 숨긴다.
                   NE-5: snapshot이 아직 없을 때(콜드 스타트 진행 중) 항목
-                  자체를 없애면 헤더가 SOURCE 하나만 남아 흔들린다 -- 항목은
-                  항상 그리고 값만 "—"로 채운다. */}
+                  자체를 없애면 헤더 항목 수가 흔들린다 -- 항목은 항상
+                  그리고 값만 "—"로 채운다.
+                  QE: SOURCE 항목은 사이드바 상태 점 툴팁으로 옮겨갔다 --
+                  세 항목만 남으면서 headerContextStrip-noSource가
+                  간격을 다시 맞춘다(globals.css). */}
               <div className="headerContextItem headerContextEval">
                 <span className="headerContextKey">EVAL</span>
                 <span className="headerContextValue">{snapshot ? snapshot.source.eval_dataset : "—"}</span>
@@ -137,33 +143,9 @@ export default function Header() {
                 <span className="headerContextKey">LAST RUN</span>
                 <span className="headerContextValue">{snapshot ? (formatHeaderClock(snapshot.created_at) ?? "-") : "—"}</span>
               </div>
-              <div
-                className="headerContextItem headerContextSource"
-                title={
-                  snapshot
-                    ? snapshot.source.mode === "sql"
-                      ? "SQL 데이터소스에 연결되어 있습니다."
-                      : "SQL 미연결 -- 데모(폴백) 데이터를 보고 있습니다."
-                    : apiStatus === "online"
-                      ? "API 서버가 정상적으로 연결되어 있습니다."
-                      : apiStatus === "offline"
-                        ? "API 서버에 연결할 수 없습니다."
-                        : "API 연결 상태를 확인하고 있습니다."
-                }
-              >
-                <span className="headerContextKey">SOURCE</span>
-                <span
-                  className={`headerContextValue headerContextSource-${
-                    snapshot ? (snapshot.source.mode === "sql" ? "online" : "fallback") : apiStatus === "offline" ? "offline" : "checking"
-                  }`}
-                >
-                  <span className="headerContextDot" aria-hidden="true" />
-                  {snapshot ? (snapshot.source.mode === "sql" ? "SQL" : "데모") : apiStatus === "offline" ? "연결 끊김" : "확인 중"}
-                </span>
-              </div>
             </div>
-            {/* ZC: EVAL/WAFERS/LAST RUN/SOURCE와 같은 .headerContextItem
-                모양을 그대로 써서 폰트(모노스페이스)·크기·대문자 표기를
+            {/* ZC: EVAL/WAFERS/LAST RUN과 같은 .headerContextItem 모양을
+                그대로 써서 폰트(모노스페이스)·크기·대문자 표기를
                 통일한다 -- 이 항목만 다른 서체·크기를 쓰던 게 헤더 안에서
                 눈에 띄게 어긋나 보였다. */}
             <div className="headerContextItem headerContextTime" title="현재 시각">

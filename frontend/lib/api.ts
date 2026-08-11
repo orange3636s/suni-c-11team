@@ -1,6 +1,4 @@
 import type {
-  AlarmListResponse,
-  AlertsDataResponse,
   CategoricalScatterResponse,
   ConfigTreemapResponse,
   DatasetListResponse,
@@ -20,7 +18,6 @@ import type {
   NotificationSettingsSummary,
   ParetoRankingResponse,
   PromotionHistoryResponse,
-  ReliabilityResponse,
   ScreeningScatterResponse,
   SendTestResponse,
   SnapshotMetaResponse,
@@ -267,45 +264,13 @@ export function getScreeningScatterCategorical(dataset: string, target: string, 
   return getJson(`/api/screening/scatter/categorical?${new URLSearchParams({ dataset, target, feature }).toString()}`);
 }
 
-export function getAlarms(
-  trainDataset: string,
-  evalDataset: string,
-  options?: { grade?: string; target?: number; sensitivity?: number },
-): Promise<AlarmListResponse> {
-  const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
-  if (options?.grade) params.set("grade", options.grade);
-  // 지시서: 원인 분석 탭의 알람 삼각형이 수율 예측에서 저장한 목표
-  // 수율·민감도를 그대로 넘겨 두 화면의 판정 기준을 일치시킨다.
-  // 생략하면(최초 실행 등 저장된 값이 없을 때) 백엔드 기본값을 쓴다.
-  if (options?.target != null) params.set("target", String(options.target));
-  if (options?.sensitivity != null) params.set("sensitivity", String(options.sensitivity));
-  return getJson(`/api/alarms?${params.toString()}`);
-}
-
-// 지시서 작업 2(특정 스텝까지의 정보만으로 예측) -- maxStep을 생략하면
-// 기존 동작과 완전히 같다(전체 스텝 기준).
-export function getAlertsData(
-  trainDataset: string,
-  evalDataset: string,
-  maxStep?: number | null,
-): Promise<AlertsDataResponse> {
-  const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
-  if (maxStep != null) params.set("max_step", String(maxStep));
-  return getJson(`/api/alarms/predictions?${params.toString()}`);
-}
-
 // VA~VD: y(=100 − Σ Y1~Y5) 오름차순 전체 목록(신뢰도==0 웨이퍼 제외) --
-// 수율 예측 화면이 쓰는 유일한 판정 엔드포인트다(위 getAlertsData/구
-// 5분류 체계는 더 이상 수율 예측에서 호출하지 않는다). 상위 10/전체
+// 수율 예측 화면이 쓰는 유일한 판정 엔드포인트다. 상위 10/전체
 // 보기·검색·정렬은 프런트가 이 전체 목록 위에서 수행한다(VB-4: 검색
 // 중에는 상위 10 제한을 해제해야 하므로 서버가 미리 자르면 안 된다).
 export function getYieldPrediction(trainDataset: string, evalDataset: string): Promise<YieldPredictionResponse> {
   const params = new URLSearchParams({ train: trainDataset, eval: evalDataset });
   return getJson(`/api/alerts/ranking?${params.toString()}`);
-}
-
-export function getReliability(dataset: string, evalDataset: string): Promise<ReliabilityResponse> {
-  return getJson(`/api/analysis/reliability?${new URLSearchParams({ dataset, eval: evalDataset }).toString()}`);
 }
 
 export function getModelPerformance(): Promise<ModelPerformanceResponse> {

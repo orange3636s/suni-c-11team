@@ -3,7 +3,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import { ALARM_GRADE_COLOR } from "@/lib/constants";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import {
   connectGmail,
@@ -17,12 +16,9 @@ import {
 } from "@/lib/api";
 import type { NotificationGrade, NotificationSettingsSummary, NotificationTiming } from "@/types/data";
 
-const GRADE_OPTIONS: NotificationGrade[] = ["심각", "위험", "주의"];
-
-// DF그룹: 발송 시점 다중 선택 -- 옵션이 2개("분석 실행 직후"/"매일 오전
-// 9시")에서 3개(오후 1시 추가)로 늘고, 단일 선택에서 다중 선택으로
-// 바뀐다. 오후 1시는 "신규분만" 발송하지만(서버 dedupe 재사용) 그 정책은
-// 화면에는 드러나지 않는다.
+// DF그룹: 발송 시점 다중 선택 -- 분석 실행 직후 / 매일 오전 9시 / 매일
+// 오후 1시. 하나도 선택하지 않으면(빈 배열) 어떤 트리거로도 발송되지
+// 않는다.
 const TIMING_OPTIONS: { value: NotificationTiming; label: string }[] = [
   { value: "on_analysis", label: "분석 실행 직후" },
   { value: "daily_9am", label: "매일 오전 9시" },
@@ -65,7 +61,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
         <div className="settingsPanelBody">
           <section className="settingsSection">
             <h3>알림 받기</h3>
-            <p className="settingsSectionDesc">심각·위험 등급 알람이 발생하면 선택한 채널로 발송합니다.</p>
+            <p className="settingsSectionDesc">수율 예측이 갱신되면 선택한 채널로 발송합니다.</p>
             <div className="notifyChannelList">
               <SlackCard summary={notifications} onUpdate={setNotifications} />
               <TelegramCard summary={notifications} onUpdate={setNotifications} />
@@ -504,12 +500,6 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
     }
   }
 
-  function toggleGrade(grade: NotificationGrade) {
-    const has = conditions.grades.includes(grade);
-    const next = has ? conditions.grades.filter((g) => g !== grade) : [...conditions.grades, grade];
-    void persist(next, conditions.timing);
-  }
-
   // DF그룹: 단일 선택(교체)에서 다중 선택(토글)으로 -- 하나도 선택하지
   // 않은 상태(빈 배열)도 유효한 사용자 선택이라 그대로 저장한다.
   function toggleTiming(timing: NotificationTiming) {
@@ -520,27 +510,6 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
 
   return (
     <div className="notifyConditions">
-      <div className="notifyConditionsRow">
-        <span className="notifyConditionsLabel">발송 대상 등급</span>
-        <div className="notifyGradeToggles">
-          {GRADE_OPTIONS.map((grade) => {
-            const active = conditions.grades.includes(grade);
-            return (
-              <button
-                key={grade}
-                type="button"
-                className="notifyGradeToggle"
-                style={active ? { borderColor: ALARM_GRADE_COLOR[grade], color: ALARM_GRADE_COLOR[grade] } : undefined}
-                onClick={() => toggleGrade(grade)}
-                disabled={saving}
-                aria-pressed={active}
-              >
-                {grade}
-              </button>
-            );
-          })}
-        </div>
-      </div>
       <div className="notifyConditionsRow">
         <span className="notifyConditionsLabel">발송 시점</span>
         <div className="scatterViewToggle" role="group" aria-label="발송 시점">
@@ -568,21 +537,6 @@ function ConditionsForm({ summary, onUpdate }: ChannelProps) {
         <p className="notifyFieldError">발송 시점이 선택되지 않아 알림이 전송되지 않습니다</p>
       )}
       {error && <p className="notifyFieldError">{error}</p>}
-      {/* EB-5: 현재 발송 정책을 그대로 보여주기만 한다 -- 토글로 켜고
-          끄는 옵션이 아니다(조건이 늘수록 "왜 안 왔는지" 추적이
-          어려워진다). */}
-      <p className="notifyDispatchPolicyNote">
-        발송 대상: 자동 갱신 · 수동 업로드 · 데모 데이터
-        <br />
-        게이트 미달 시에는 발송하지 않습니다
-      </p>
-      <p className="notifyReliabilityGateNote">
-        신뢰도 낮은 데이터셋은 발송하지 않습니다
-        <br />
-        분석 신뢰도가 낮음 등급이면 알람이 발생해도 발송을 건너뜁니다.
-        <br />
-        근거 없는 알림이 반복되면 신뢰를 잃습니다.
-      </p>
     </div>
   );
 }

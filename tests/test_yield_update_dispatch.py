@@ -1,7 +1,8 @@
 """Tests for src/notifications/yield_update_dispatch.py (VE-1) -- 억제
-규칙(신규분만/시간당 예산/수동 최소 간격)이 알람 발송과 같은 세 가지를
-유지하는지 검증한다. RuntimeStore는 test_notify_dispatch.py와 같은
-임시 sqlite 파일 패턴을 쓴다."""
+규칙(시간당 예산/수동 최소 간격) 두 가지만 유지하는지 검증한다. 24시간/
+신규분 dedupe는 없다 -- 분석이 일어날 때마다 보낸다(같은 내용이 반복돼도
+스킵하지 않는다). RuntimeStore는 test_notify_dispatch.py와 같은 임시
+sqlite 파일 패턴을 쓴다."""
 
 from __future__ import annotations
 
@@ -69,7 +70,9 @@ def test_connected_channel_sends(monkeypatch):
         _cleanup(path)
 
 
-def test_identical_content_is_skipped_as_no_new_data(monkeypatch):
+def test_identical_content_sends_again_no_dedupe(monkeypatch):
+    """QD-1: 24시간/신규분 dedupe는 제거됐다 -- 같은 내용이 반복돼도
+    매 분석마다 발송한다."""
     store, path = _store()
     try:
         _connect_slack(store)
@@ -79,8 +82,7 @@ def test_identical_content_is_skipped_as_no_new_data(monkeypatch):
         assert first["skipped"] is False
 
         second = yud.dispatch_yield_update(store, _payload(), trigger=yud.TRIGGER_REFRESH)
-        assert second["skipped"] is True
-        assert "신규분" in second["reason"]
+        assert second["skipped"] is False
     finally:
         _cleanup(path)
 

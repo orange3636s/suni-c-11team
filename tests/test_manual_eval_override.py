@@ -90,9 +90,11 @@ def test_resolve_source_keeps_previous_train_dataset_in_manual_mode(tmp_path: Pa
 
 
 def test_dispatch_is_called_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """EB그룹: 이전(AG-3)에는 수동 모드에서 발송 자체를 건너뛰었지만,
-    이제는 refresh_dispatch.dispatch_new_alarms를 정상 호출한다 -- 차단
-    여부(신규 0건/10분 간격/게이트 등)는 그 함수 내부가 판단한다."""
+    """EB그룹: 수동 모드에서도 발송을 건너뛰지 않는다. 옛 알람 등급
+    파이프라인(refresh_dispatch.dispatch_new_alarms)은 폐기됐다 -- 자동
+    갱신마다 수율 예측 갱신 발송(_dispatch_yield_update_for_refresh ->
+    dispatch_yield_update)이 그 역할을 대신하며, 차단 여부(시간당 예산/
+    최소 간격 등)는 그 함수 내부가 판단한다."""
     store, registry = _store_and_registry(tmp_path)
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
@@ -102,34 +104,20 @@ def test_dispatch_is_called_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr(
         refresh,
         "_analyze_and_score",
-        lambda s, eid, e: (
-            {"paretoByTarget": {}, "measurementExpansion": None},
-            {"gate_passed": True, "target_yield": 85.0, "sensitivity": 0.2, "counts": {}, "items_top": [], "total": 0},
-            {"predicted_yield": None, "gap": None, "gap_pareto": [], "treemap": None},
-            [],
-            "train",
-        ),
+        lambda s, eid, e: ({"paretoByTarget": {}, "measurementExpansion": None}, "train"),
     )
-    dispatch_called = {"n": 0}
 
-    class _FakeDispatch:
-        @staticmethod
-        def dispatch_new_alarms(*args, **kwargs):
-            dispatch_called["n"] += 1
-
-    # refresh.py는 함수 안에서 매번 `from src.automation import
-    # refresh_dispatch`를 실행한다 -- `src.automation` 패키지가 이미
-    # (다른 테스트 모듈이 먼저 real import했을 수 있어) `refresh_dispatch`
-    # 속성을 캐싱하고 있으면, CPython의 fromlist 처리(`hasattr(module, x)`가
-    # 참이면 sys.modules를 다시 보지 않는다)는 sys.modules만 바꿔서는
-    # 우회되지 않는다 -- 패키지 객체 자체의 속성을 갈아끼워야 한다.
-    import src.automation as automation_pkg
-
-    monkeypatch.setattr(automation_pkg, "refresh_dispatch", _FakeDispatch)
+    dispatch_calls: list[dict] = []
+    monkeypatch.setattr(
+        refresh,
+        "_dispatch_yield_update_for_refresh",
+        lambda store, **kwargs: dispatch_calls.append(kwargs),
+    )
 
     refresh.run_refresh_pipeline()
 
-    assert dispatch_called["n"] == 1
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0]["mode"] == "manual"
     status = store.get_refresh_snapshot_status()
     assert status["snapshot"] is not None
     assert status["snapshot"]["source"]["mode"] == "manual"

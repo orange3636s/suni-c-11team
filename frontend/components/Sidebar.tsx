@@ -90,7 +90,15 @@ export default function Sidebar({
   // 같다.
   const analysisStatus: "connected" | "offline" | "error" =
     snapshot && snapshot.errors.length > 0 ? "error" : snapshot?.source.mode === "sql" ? "connected" : "offline";
-  const analysisStatusLabel = { connected: "SQL 연결됨", offline: "SQL 미연결", error: "오류" }[analysisStatus];
+  // QE: 헤더의 SOURCE 항목(연결 상태 배지)이 제거되면서, 이 점의 툴팁이
+  // "SQL에 연결돼 있는지"를 확인할 수 있는 유일한 자리가 됐다 -- 상태
+  // 이름뿐 아니라 마지막 스캔 시각/오류 사유까지 함께 보여준다.
+  const analysisStatusLabel =
+    analysisStatus === "connected"
+      ? `SQL 연결됨 · 마지막 스캔 ${formatSidebarDot(snapshot?.created_at)}`
+      : analysisStatus === "error"
+        ? `연결 오류 — ${snapshot?.errors[0] ?? "알 수 없는 오류"}`
+        : "SQL 미연결 · 내장 데이터 사용 중";
 
   // ME-2: 모델 학습 -- 이 세션에서 수동 업로드로 학습을 실행한 적이
   // 있으면(TrainingState가 채워진다) 그 파일·시각을 보여주고, 없으면
@@ -260,9 +268,9 @@ export default function Sidebar({
           {/* AD그룹: 예전에는 여기 CHAMPION/SNAPSHOT/SQL 연결 세 줄이
               있었다 -- 모델 ID가 길어 200px 사이드바를 넘쳤고, 정보의
               소속도 모델 학습·자동화다(TrainingPanel.tsx로 이전).
-              헤더에 이미 SOURCE 항목(연결 상태, Header.tsx의
-              .headerContextSource)이 있어 사이드바에 점을 새로
-              만들지 않는다(중복 표시 금지) -- 세 줄만 제거한다. */}
+              QE: 헤더의 SOURCE 항목(연결 상태 배지)이 중복이라 제거된
+              뒤로는, 아래 "모델 분석·자동화" 버튼의 상태 점 툴팁이
+              연결 상태를 보여주는 유일한 자리다. */}
           {/* ME-2: 세 버튼(모델 학습·모델 분석·자동화·알림 설정) 모두
               상태 점을 붙인다(RA-1 시절에는 분석에만 있었다) -- 같은
               SidebarStatusDot 컴포넌트를 재사용해 색·크기가 갈리지

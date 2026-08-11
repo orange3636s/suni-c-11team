@@ -739,7 +739,7 @@ async def train_model(
     try:
         response = TrainResponse(
             target=TARGET_COLUMN,
-            best_model="HistGradientBoostingRegressor",
+            best_model="LGBMRegressor",
             split=DatasetSplit(
                 train_rows=len(internal_train),
                 validation_rows=0,
@@ -757,7 +757,7 @@ async def train_model(
             },
             model_comparison=[
                 ModelComparisonItem(
-                    model_name=f"{target}_HistGradientBoostingRegressor",
+                    model_name=f"{target}_LGBMRegressor",
                     status="no_significant_factor" if detail["no_factor_available"] else "trained",
                     validation=(
                         None

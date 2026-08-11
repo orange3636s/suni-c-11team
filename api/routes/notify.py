@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
-from api.routes.analysis import _auc_gate, _cached_reliability, _dataframe_or_404, _hydrated_targets_or_409, compute_alarm_notification_items
+from api.routes.analysis import _dataframe_or_404, _hydrated_targets_or_409
 from api.routes.datasets import get_dataset_registry
 from api.schemas.notify import (
     ConditionsSaveRequest,
@@ -21,9 +21,7 @@ from api.schemas.notify import (
     TelegramVerifyRequest,
 )
 from api.settings import settings
-from src.analysis import alarm_gbdt
-from src.notifications import dispatch, senders, settings_store, telegram_bot
-from src.runtime.app_state import get_latest_state
+from src.notifications import senders, settings_store, telegram_bot
 from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -173,100 +171,43 @@ def disconnect_channel(channel: str) -> dict[str, Any]:
     return settings_store.get_settings_summary(store)
 
 
-def _target_sensitivity_from_payload(payload: dict[str, Any] | None) -> tuple[float, float]:
-    """A-3: 수율 예측 탭(알람 삼각형과 같은 화면)에 저장된 목표 수율·
-    민감도를 읽어온다 -- 발송이 이 값을 무시하고 항상 기본값(88.0/0.2)을
-    쓰면 알림 이력·원인 분석·발송 세 곳의 판정 기준이 어긋난다. 저장된
-    적이 없으면(키 없음) 기존 기본값을 그대로 쓴다.
-    """
-    payload = payload or {}
-    target = payload.get("targetYield", alarm_gbdt.DEFAULT_TARGET_YIELD)
-    sensitivity = payload.get("sensitivity", alarm_gbdt.DEFAULT_SENSITIVITY)
-    return target, sensitivity
-
-
-@router.post("/dispatch", response_model=DispatchResponse)
-def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
-    """§C-4 "분석 실행 직후" 발송 트리거 -- 원인 분석 실행이 끝난 직후
-    프런트엔드가 fire-and-forget으로 호출한다. 알람/신뢰도는 이미
-    lru_cache된 계산을 재사용하므로 대개 즉시 끝난다."""
-    store = _store()
-    alarms_state = get_latest_state(store).get("alarms")
-    target, sensitivity = _target_sensitivity_from_payload((alarms_state or {}).get("payload"))
-    auc_lo, gate_passed = _auc_gate(body.train_dataset, body.eval_dataset)
-    if not gate_passed:
-        reason = (
-            f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
-            if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
-        )
-        store.record_refresh_dispatch(
-            new_alarm_count=0, blocked_reason=reason, summarized=False, channels={}, source="manual_dispatch"
-        )
-        return {"skipped": True, "reason": reason, "sent_count": None, "results": None}
-    items = compute_alarm_notification_items(body.train_dataset, body.eval_dataset, target=target, sensitivity=sensitivity)
-    if items is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.")
-
-    reliability = _cached_reliability(body.train_dataset, body.eval_dataset)
-    registry = get_dataset_registry()
-    summary = registry.get_summary(body.eval_dataset)
-    dataset_label = summary["original_filename"] if summary else body.eval_dataset
-    active = store.active_model() or {}
-
-    result = dispatch.dispatch_alarm_notifications(
-        store,
-        trigger=settings_store.TIMING_ON_ANALYSIS,
-        dataset_id=body.eval_dataset,
-        dataset_label=dataset_label,
-        alarms=items,
-        reliability_grade=reliability["grade"],
-        reliability_score=reliability["total_score"],
-        dashboard_url=body.dashboard_url,
-        target_yield=target,
-        sensitivity=sensitivity,
-        model_version=active.get("active_model_id") or "",
-        criteria_version=alarm_gbdt.ALARM_DECISION_VERSION,
-    )
-    _dispatch_yield_update_for_manual_analysis(
-        store,
-        train_dataset=body.train_dataset,
-        eval_dataset=body.eval_dataset,
-        dataset_label=dataset_label,
-        model_label=active.get("active_model_id"),
-        dashboard_url=body.dashboard_url,
-    )
-    return result
-
-
-@router.post("/yield-update/dispatch", response_model=DispatchResponse)
-def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
-    """YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러
-    지금 보낸다. `/dispatch`(옛 알람 발송)와 달리 AUC 게이트·목표
-    수율/민감도와 무관하다 -- 억제 규칙(신규분만·시간당 예산·수동
-    최소 간격 10분)은 `dispatch_yield_update`가 그대로 적용한다."""
+def _dispatch_yield_update(
+    store: RuntimeStore,
+    *,
+    train_dataset: str,
+    eval_dataset: str,
+    trigger: str,
+    dashboard_url: str | None = None,
+) -> dict[str, Any]:
+    """공유 헬퍼 -- 수율 예측 화면(alerts/page.tsx)이 쓰는 것과 같은
+    `build_yield_prediction_table`로 `YieldUpdatePayload`를 만들고
+    `dispatch_yield_update`를 호출한다. `/dispatch`(분석 실행 직후),
+    `/yield-update/dispatch`(YD 버튼), 09:00/13:00 스케줄 잡이 모두 이
+    구성을 공유한다 -- 호출부마다 따로 만들지 않는다. 데이터셋을 찾을
+    수 없으면 `_dataframe_or_404`/`_hydrated_targets_or_409`가 그대로
+    HTTPException을 올린다(호출부가 각자의 정책대로 처리한다: 라우트는
+    전파, 스케줄 잡은 삼킨다)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     from src.analysis.yield_prediction import build_yield_prediction_table
-    from src.notifications.yield_update_dispatch import TRIGGER_MANUAL_BUTTON, dispatch_yield_update
+    from src.notifications.yield_update_dispatch import dispatch_yield_update
     from src.notifications.yield_update_senders import build_yield_update_payload
 
-    store = _store()
-    train_df = _dataframe_or_404(body.train_dataset)
-    eval_df = _dataframe_or_404(body.eval_dataset)
-    hydrated = _hydrated_targets_or_409(body.eval_dataset)
+    train_df = _dataframe_or_404(train_dataset)
+    eval_df = _dataframe_or_404(eval_dataset)
+    hydrated = _hydrated_targets_or_409(eval_dataset)
     registry = get_dataset_registry()
     table = build_yield_prediction_table(
         train_df,
         eval_df,
         hydrated.dataframe,
-        dataset_id=body.eval_dataset,
-        train_dataset_id=body.train_dataset,
-        train_dataset_version=registry.content_version(body.train_dataset),
+        dataset_id=eval_dataset,
+        train_dataset_id=train_dataset,
+        train_dataset_version=registry.content_version(train_dataset),
     )
-
-    summary = registry.get_summary(body.eval_dataset)
-    dataset_label = summary["original_filename"] if summary else body.eval_dataset
+    summary = registry.get_summary(eval_dataset)
+    dataset_label = summary["original_filename"] if summary else eval_dataset
     active = store.active_model() or {}
     timestamp_label = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M")
     payload = build_yield_update_payload(
@@ -274,9 +215,12 @@ def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
         dataset_label=dataset_label,
         timestamp_label=timestamp_label,
         model_label=active.get("active_model_id"),
-        dashboard_url=body.dashboard_url,
+        dashboard_url=dashboard_url,
     )
-    result = dispatch_yield_update(store, payload, trigger=TRIGGER_MANUAL_BUTTON)
+    return dispatch_yield_update(store, payload, trigger=trigger)
+
+
+def _dispatch_response(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("skipped"):
         return {"skipped": True, "reason": result.get("reason"), "sent_count": None, "results": None}
     channel_results = result.get("results") or {}
@@ -284,127 +228,86 @@ def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
     return {"skipped": False, "reason": None, "sent_count": sent_count, "results": channel_results}
 
 
-def _dispatch_yield_update_for_manual_analysis(
-    store: RuntimeStore,
-    *,
-    train_dataset: str,
-    eval_dataset: str,
-    dataset_label: str,
-    model_label: str | None,
-    dashboard_url: str | None,
-) -> None:
-    """VE-1: "분석 실행 직후" 발송 트리거 -- 알람과 별개로 수율 예측
-    갱신도 같은 시점에 발송한다(conditions["timing"]에 on_analysis가
-    없으면 yield_update_dispatch가 스킵한다). 실패해도 알람 발송 결과
-    응답에는 영향을 주지 않는다(best-effort)."""
-    try:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+@router.post("/dispatch", response_model=DispatchResponse)
+def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
+    """§C-4 "분석 실행 직후" 발송 트리거 -- 원인 분석 실행이 끝난 직후
+    프런트엔드가 fire-and-forget으로 호출한다. 옛 알람 등급/AUC 게이트
+    파이프라인은 폐기됐다 -- 수율 예측 갱신 파이프라인(TRIGGER_MANUAL)
+    으로 발송하며, 저장된 발송 시점 설정에 '분석 실행 직후'가 포함됐을
+    때만 실제로 보낸다(dispatch_yield_update 내부 판단)."""
+    from src.notifications.yield_update_dispatch import TRIGGER_MANUAL
 
-        from src.analysis.yield_prediction import build_yield_prediction_table
-        from src.notifications.yield_update_dispatch import TRIGGER_MANUAL, dispatch_yield_update
-        from src.notifications.yield_update_senders import build_yield_update_payload
+    store = _store()
+    result = _dispatch_yield_update(
+        store,
+        train_dataset=body.train_dataset,
+        eval_dataset=body.eval_dataset,
+        trigger=TRIGGER_MANUAL,
+        dashboard_url=body.dashboard_url,
+    )
+    return _dispatch_response(result)
 
-        train_df = _dataframe_or_404(train_dataset)
-        eval_df = _dataframe_or_404(eval_dataset)
-        hydrated = _hydrated_targets_or_409(eval_dataset)
-        table = build_yield_prediction_table(
-            train_df,
-            eval_df,
-            hydrated.dataframe,
-            dataset_id=eval_dataset,
-            train_dataset_id=train_dataset,
-            train_dataset_version=get_dataset_registry().content_version(train_dataset),
-        )
-        timestamp_label = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%H:%M")
-        payload = build_yield_update_payload(
-            table,
-            dataset_label=dataset_label,
-            timestamp_label=timestamp_label,
-            model_label=model_label,
-            dashboard_url=dashboard_url,
-        )
-        dispatch_yield_update(store, payload, trigger=TRIGGER_MANUAL)
-    except Exception:
-        logger.exception("수율 예측 갱신(분석 실행 직후) 발송 처리 실패")
+
+@router.post("/yield-update/dispatch", response_model=DispatchResponse)
+def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
+    """YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러
+    지금 보낸다. `/dispatch`(분석 실행 직후)와 달리 발송 시점 설정과
+    무관하게 시도한다 -- 억제 규칙(시간당 예산·수동 최소 간격 10분)은
+    `dispatch_yield_update`가 그대로 적용한다."""
+    from src.notifications.yield_update_dispatch import TRIGGER_MANUAL_BUTTON
+
+    store = _store()
+    result = _dispatch_yield_update(
+        store,
+        train_dataset=body.train_dataset,
+        eval_dataset=body.eval_dataset,
+        trigger=TRIGGER_MANUAL_BUTTON,
+        dashboard_url=body.dashboard_url,
+    )
+    return _dispatch_response(result)
 
 
 def _run_scheduled_dispatch_job(trigger: str, *, label: str) -> None:
     """APScheduler가 매일 정해진 시각에 호출하는 정기 발송 잡의 공통
-    본문 -- 09:00/13:00 둘 다 이 함수를 쓴다(DF그룹). 가장 최근에 저장된
-    알람 조회(사전 알람 로그 탭에서 마지막으로 조회한 train/eval
-    데이터셋 쌍)를 기준으로 재계산해 발송한다 -- 저장된 조회가 없으면
-    (한 번도 조회한 적이 없으면) 조용히 건너뛴다.
+    본문 -- 09:00/13:00 둘 다 이 함수를 쓴다(DF그룹). 가장 최근 자동
+    갱신 스냅샷(`run_refresh_pipeline`이 매 주기마다 갱신)의
+    train/eval 데이터셋 쌍을 기준으로 수율 예측 갱신을 다시 만들어
+    발송한다.
 
-    "신규분만" 정책(DF그룹)은 여기서 별도로 구현하지 않는다 --
-    `dispatch.dispatch_alarm_notifications`가 이미 채널별 24시간 dedupe로
-    "직전 발송에서 이미 보낸(등급도 그대로인) 항목"을 걸러내므로, 전체
-    후보를 그대로 넘기기만 하면 자연히 신규분만 나간다. 09:00과 13:00이
-    4~20시간 간격이라 이 dedupe 창(24시간) 안에 항상 들어온다.
+    이전에는 `GET /api/state/alarms`에 저장된(사전 알람 로그 탭이
+    쓰던) train/eval 쌍을 읽었으나, 그 저장 경로를 부르는 화면이 이제
+    없어 이 값이 항상 비어 있었다 -- 두 잡 모두 실제로는 한 번도
+    발송하지 못하는 상태였다(Task D 검증 중 확인). 자동 갱신 스냅샷은
+    APScheduler `auto_refresh` 잡이 주기적으로 채우므로 항상 최신값을
+    가진다.
     """
     store = _store()
     try:
-        latest = get_latest_state(store)
-        alarms_state = latest.get("alarms")
-        if not alarms_state:
-            logger.info("%s 알림 발송 스킵: 저장된 알람 조회 없음", label)
-            return
-        train_dataset = alarms_state.get("train_dataset")
-        eval_dataset = alarms_state.get("eval_dataset")
+        snapshot = store.get_refresh_snapshot_status().get("snapshot")
+        source = (snapshot or {}).get("source") or {}
+        train_dataset = source.get("train_dataset")
+        eval_dataset = source.get("eval_dataset")
         if not train_dataset or not eval_dataset:
+            logger.info("%s 알림 발송 스킵: 저장된 자동 갱신 스냅샷 없음", label)
             return
-        # A-3: 데이터셋만 읽고 target/sensitivity는 버리던 버그 -- 같은
-        # alarms_state.payload에서 함께 읽어야 원인 분석 삼각형과 같은
-        # 기준으로 판정한다.
-        target, sensitivity = _target_sensitivity_from_payload(alarms_state.get("payload"))
-
-        auc_lo, gate_passed = _auc_gate(train_dataset, eval_dataset)
-        if not gate_passed:
-            reason = (
-                f"AUC 하한 {auc_lo:.3f}가 발송 기준 {alarm_gbdt.AUC_GATE:.2f} 미만입니다."
-                if auc_lo is not None else "AUC 하한을 산출할 수 없어 외부 알림을 차단했습니다."
-            )
-            store.record_refresh_dispatch(
-                new_alarm_count=0, blocked_reason=reason, summarized=False, channels={}, source=label
-            )
-            return
-
-        items = compute_alarm_notification_items(train_dataset, eval_dataset, target=target, sensitivity=sensitivity)
-        if items is None:
-            return
-        reliability = _cached_reliability(train_dataset, eval_dataset)
-        registry = get_dataset_registry()
-        summary = registry.get_summary(eval_dataset)
-        dataset_label = summary["original_filename"] if summary else eval_dataset
-        active = store.active_model() or {}
-
-        dispatch.dispatch_alarm_notifications(
-            store,
-            trigger=trigger,
-            dataset_id=eval_dataset,
-            dataset_label=dataset_label,
-            alarms=items,
-            reliability_grade=reliability["grade"],
-            reliability_score=reliability["total_score"],
-            target_yield=target,
-            sensitivity=sensitivity,
-            model_version=active.get("active_model_id") or "",
-            criteria_version=alarm_gbdt.ALARM_DECISION_VERSION,
-        )
+        _dispatch_yield_update(store, train_dataset=train_dataset, eval_dataset=eval_dataset, trigger=trigger)
     except Exception:
         logger.exception("%s 알림 발송 잡 실행 실패", label)
 
 
 def run_daily_dispatch_job() -> None:
     """APScheduler가 매일 09:00에 호출한다 (지시서 N-2: 8시 -> 9시)."""
-    _run_scheduled_dispatch_job(settings_store.TIMING_DAILY_9AM, label="09:00")
+    from src.notifications.yield_update_dispatch import TRIGGER_DAILY_9AM
+
+    _run_scheduled_dispatch_job(TRIGGER_DAILY_9AM, label="09:00")
 
 
 def run_daily_13_dispatch_job() -> None:
-    """DF그룹: APScheduler가 매일 13:00에 호출한다. 발송 조건(등급/신뢰도
-    게이트)과 신규분 판정(24시간 dedupe 재사용)은 09:00 잡과 완전히
-    같다 -- trigger만 다르다."""
-    _run_scheduled_dispatch_job(settings_store.TIMING_DAILY_13, label="13:00")
+    """DF그룹: APScheduler가 매일 13:00에 호출한다. trigger만 09:00
+    잡과 다르다."""
+    from src.notifications.yield_update_dispatch import TRIGGER_DAILY_13
+
+    _run_scheduled_dispatch_job(TRIGGER_DAILY_13, label="13:00")
 
 
 # H-3②: notify_sent_log는 24시간 재발송 방지 조회에만 쓰이므로 그보다 훨씬

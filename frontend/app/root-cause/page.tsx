@@ -525,10 +525,11 @@ function RootCauseContent() {
 
       await scatterPromise;
       setRunState("done");
-      // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 신뢰도 게이트·
-      // 중복 발송 방지·연결된 채널 유무는 전부 서버(dispatch_alarm_notifications)
-      // 가 판단한다: 이 호출은 그저 "지금 막 분석이 끝났다"는 신호일 뿐이고,
-      // 실패해도 분석 결과 화면에는 아무 영향이 없어야 한다.
+      // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 발송 시점 설정
+      // 일치 여부·시간당 예산·연결된 채널 유무는 전부 서버(수율 예측 갱신
+      // 파이프라인, dispatch_yield_update)가 판단한다: 이 호출은 그저
+      // "지금 막 분석이 끝났다"는 신호일 뿐이고, 실패해도 분석 결과
+      // 화면에는 아무 영향이 없어야 한다.
       void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {
         setDispatchNotifyError("알림 발송에 실패했습니다. 수율 예측 탭에서 채널 연결 상태를 확인해 주세요.");
       });

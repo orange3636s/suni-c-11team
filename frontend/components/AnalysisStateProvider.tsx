@@ -231,12 +231,16 @@ function synthesizeAnalysisFromSnapshot(snap: RefreshSnapshot): AnalysisState {
 }
 
 function synthesizeAlarmsFromSnapshot(snap: RefreshSnapshot): AlarmsState {
+  // 옛 알람 등급/게이트 판정 파이프라인이 폐기되면서 백엔드 스냅샷의
+  // `alarms` 블록은 항상 null이다(src/automation/refresh.py) -- 여기서
+  // 읽던 target_yield/sensitivity는 더 이상 서버가 채우지 않으므로
+  // 기본값으로 폴백한다.
   return {
     trainDataset: snap.source.train_dataset,
     evalDataset: snap.source.eval_dataset,
     createdAt: snap.created_at,
-    targetYield: snap.alarms.target_yield,
-    sensitivity: snap.alarms.sensitivity,
+    targetYield: snap.alarms?.target_yield ?? DEFAULT_TARGET_YIELD,
+    sensitivity: snap.alarms?.sensitivity ?? DEFAULT_SENSITIVITY,
     data: null,
   };
 }

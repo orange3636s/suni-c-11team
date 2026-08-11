@@ -143,9 +143,7 @@ export type ReferenceLineKey =
   | "s3_lo"
   | "s3_hi"
   | "s6_lo"
-  | "s6_hi"
-  | "warning_lo"
-  | "warning_hi";
+  | "s6_hi";
 
 export type ReferenceLine = {
   key: ReferenceLineKey;
@@ -154,10 +152,6 @@ export type ReferenceLine = {
   alarm_relevant: boolean;
   formula: string;
   outside_count: number;
-  /** key가 "warning_lo"/"warning_hi"일 때만 채워진다 (알람 판정 GBDT 전환
-   * §C-4-1) -- 경고선 밖 실측 수율 차이(%p, 예측값 아님). 표본 30장 미만이면
-   * null. */
-  observed_yield_gap_pp: number | null;
 };
 
 export type BinProfile = {
@@ -255,81 +249,6 @@ export type CategoricalScatterResponse = {
   target_provenance: TargetProvenance | null;
 };
 
-/** 알람 판정 GBDT 전환 (spec §A-2) -- 관리한계 이탈량이 아니라 부트스트랩
- * 앙상블 예측 수율의 신뢰구간 상한 기준 등급. "개선 권고" 등급은 삭제됐다
- * (spec 알람 신뢰도 게이트 §B-1: 정밀도가 무작위 수준과 다르지 않았다). */
-export type AlarmGrade = "심각" | "위험" | "주의";
-
-export type AlarmItem = {
-  lot_wafer_id: string;
-  lot_id: string | null;
-  grade: AlarmGrade;
-  /** 0-100, 낮을수록 위험. 예측 수율 절대값·신뢰구간은 화면에 노출하지
-   * 않는다 (spec §A-3: 오차가 Y 표준편차의 72~80%). */
-  risk_percentile: number;
-  reason: string;
-  target_source: string;
-};
-
-export type AlarmListResponse = {
-  train_dataset_id: string;
-  eval_dataset_id: string;
-  items: AlarmItem[];
-  total: number;
-  alarm_total: number;
-  evaluated_total: number;
-  alarm_share_warning: boolean;
-  // 알람 신뢰도 게이트 (spec 알람 신뢰도 게이트 §A-2) -- auc_gate_passed가
-  // false면 외부 발송만 차단된다. 화면 위험도는 계속 제공된다.
-  auc_lower_bound: number | null;
-  auc_gate_passed: boolean;
-  auc_gate_threshold: number;
-  target_provenance: TargetProvenance | null;
-  external_delivery_suppressed_reason: string | null;
-};
-
-export type ReliabilityGrade = "높음" | "보통" | "낮음";
-
-export type ReliabilityResponse = {
-  dataset_id: string;
-  eval_dataset_id: string;
-  grade: ReliabilityGrade;
-  total_score: number;
-  auc_lower_bound: number | null;
-  auc_score: number;
-  // 알람 신뢰도 게이트 §D-3: AUC 항목에 게이트 통과 여부를 덧붙인다.
-  auc_gate_passed: boolean;
-  auc_gate_message: string | null;
-  n_significant_factors: number;
-  n_significant_score: number;
-  max_eps2: number | null;
-  max_eps2_score: number;
-  n_train: number;
-  n_train_score: number;
-  coverage_pct: number | null;
-  coverage_score: number;
-  deduction_reasons: string[];
-  low_holdout_sample: boolean;
-  thresholds_disclaimer: string;
-  target_fallback_tier: "per_target" | "final_yield_only" | "unanalyzable";
-  target_fallback_message: string | null;
-  // 지시서 작업 4(분포 이동 감지) -- train 대비 eval의 인자 분포 이동.
-  // AUC 게이트를 대체하지 않는 참고 지표. null이면 계산 불가(표본 부족)
-  // 이거나 train==eval이라 비교 자체를 건너뛴 경우다.
-  distribution_shift: DistributionShiftReport | null;
-};
-
-export type DistributionShiftLevel = "low" | "medium" | "high" | "unknown";
-
-export type DistributionShiftReport = {
-  median: number | null;
-  max: number | null;
-  worst_feature: string | null;
-  level: DistributionShiftLevel;
-  missing_rate_gap: number | null;
-  missing_rate_worst_feature: string | null;
-};
-
 // -- 알림 연동 (설정 패널 신설 §C/§D) -----------------------------------
 
 export type NotificationTiming = "on_analysis" | "daily_9am" | "daily_13";
@@ -384,9 +303,10 @@ export type DispatchResponse = {
 
 // -- 전처리 방식 A/B/C 실시간 비교 (설정 패널 신설 §E) ----------------------
 
-// 사전 알람 로그 전면 개편 (spec §A-3) -- 등급 없는 wafer별 원시 예측치.
-// 목표 수율/민감도를 조절할 때마다 이 배열을 다시 받아올 필요가 없다 --
-// lib/alertsClassify.ts의 classifyWafer가 여기서 즉시 5분류를 계산한다.
+// 옛 사전 알람 로그(§A-3, 등급 없는 wafer별 원시 예측치 + 클라이언트
+// 재분류)는 폐기됐다 -- AlertsDataResponse/WaferPrediction 타입은 더 이상
+// 어떤 fetch 경로에서도 채워지지 않지만, AnalysisStateProvider의
+// AlarmsState.data 필드가 여전히 이 모양을 선언하고 있어 타입만 남긴다.
 export type WaferPrediction = {
   lot_wafer_id: string;
   lot_id: string | null;
@@ -415,8 +335,6 @@ export type AlertsDataResponse = {
   // 홀드아웃을 못 냈으면 둘 다 빈 배열이다.
   holdout_oof_actual: number[];
   holdout_oof_predicted: number[];
-  // 알람 신뢰도 게이트 -- AlarmListResponse와 같은 (train,eval) 쌍이면
-  // 항상 일치한다.
   auc_lower_bound: number | null;
   auc_gate_passed: boolean;
   display_prediction_allowed: boolean;
@@ -860,7 +778,11 @@ export type RefreshSnapshot = {
     actionPriorityError: string | null;
     target_provenance: TargetProvenance | null;
   };
-  alarms: RefreshSnapshotAlarms;
+  // 옛 알람 등급/게이트 판정 파이프라인 폐기 이후 항상 null이다
+  // (src/automation/refresh.py -- 알림 발송은 수율 예측 갱신 파이프라인이
+  // 전담한다). 타입/스냅샷 스키마의 키 자체는 다른 소비처가 존재를
+  // 가정할 수 있어 유지한다.
+  alarms: RefreshSnapshotAlarms | null;
   monitoring: RefreshSnapshotMonitoring;
   errors: string[];
 };
@@ -880,6 +802,12 @@ export type BootstrapStatus = {
   // null이고, 화면은 "첫 분석 진행 중"만 보여준다.
   stage: string | null;
   error: string | null;
+  // RA-B5: status가 "failed"일 때만 의미가 있다 -- "bundled_train_data_missing"
+  // 이면 재시도해도 소용없는 진짜 복구 불가능 케이스(내장 학습 데이터
+  // 자체가 없음)다. 그 외(null)는 일시적 실패로 취급한다 -- 다음 런타임
+  // 요청이 자동으로 재시도한다(api/main.py::ensure_usable_champion).
+  // 구버전 백엔드가 저장한 레코드에는 이 키가 아예 없을 수 있어 옵셔널.
+  reason?: string | null;
   updated_at: string;
 };
 
