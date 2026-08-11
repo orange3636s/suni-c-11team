@@ -10,13 +10,10 @@ import SuniAvatar from "@/components/SuniAvatar";
 import { useApiStatus } from "@/lib/useApiStatus";
 import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
 
-// 헤더를 "지금 어느 데이터를 보고 있나"를 보여주는 상태 바로 전환 (지시서
-// M-2) -- 신규 API 조회를 만들지 않고 사이드바 하단 상태 블록이 이미 쓰는
-// 스냅샷 컨텍스트(AnalysisStateProvider의 snapshot, J그룹 자동 갱신
-// 파이프라인 산출물)를 그대로 재사용한다.
-// QE: SOURCE(SQL 연결 상태) 항목은 여기서 제거했다 -- 같은 정보가
-// 사이드바 "모델 분석·자동화" 버튼의 상태 점 툴팁(Sidebar.tsx)에
-// 이미 있어 두 곳에 중복 표시할 이유가 없다.
+// 헤더는 "지금 어느 데이터를 보고 있나"를 보여주는 상태 바다 -- 신규 API
+// 조회를 만들지 않고, 사이드바 하단 상태 블록이 이미 쓰는 스냅샷
+// 컨텍스트(AnalysisStateProvider의 snapshot, 자동 갱신 파이프라인
+// 산출물)를 그대로 재사용한다.
 function formatHeaderClock(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -27,18 +24,16 @@ function formatHeaderClock(iso: string | null | undefined): string | null {
 export default function Header() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   // Sidebar의 연결 상태 점과 같은 훅을 구독한다 -- 폴링은 앱 전체에서
-  // 한 번만 돈다 (frontend/lib/useApiStatus.ts). 데스크톱 헤더의 SOURCE
-  // 항목은 제거됐다(사이드바 상태 점 툴팁과 중복); ≤767px 모바일 요약
-  // 바가 이 값을 쓰는 마지막 소비처다.
+  // 한 번만 돈다 (frontend/lib/useApiStatus.ts). 이 값을 쓰는 곳은
+  // ≤767px 모바일 요약 바 하나뿐이다.
   const apiStatus = useApiStatus();
   const { snapshot } = useAnalysisState();
   const headerRef = useRef<HTMLElement>(null);
   const { aiPanelOpen, setAiPanelOpen, setSidebarDrawerOpen } = usePanelState();
-  // ≤1023px: AiPanel no longer renders its own always-visible floating
-  // toggle circle once it's an overlay/full-screen drawer (spec §B-5) --
-  // this header button is the only way to open it there (spec §B-7:
-  // "SUNI 버튼은 항상 표시"). ≥1024px keeps using AiPanel's own circle,
-  // unchanged, so this button stays hidden there.
+  // ≤1023px: AiPanel is an overlay/full-screen drawer there and renders
+  // no always-visible floating toggle circle, so this header button is
+  // the only way to open it ("SUNI 버튼은 항상 표시"). ≥1024px uses
+  // AiPanel's own circle, so this button stays hidden there.
   const isTabBarLayout = useIsTabBarLayout();
   const isMobileLayout = useIsMobileLayout();
 
@@ -46,7 +41,7 @@ export default function Header() {
   // and the sidebar/AI panel's clearance below the header -- measuring
   // the real rendered box (border included) instead of hardcoding a
   // guess is what keeps the segment from sticking a few pixels too high
-  // and rendering partly behind the header (spec §1-3).
+  // and rendering partly behind the header.
   useEffect(() => {
     const node = headerRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
@@ -66,15 +61,14 @@ export default function Header() {
     }
 
     updateCurrentTime();
-    // ZC: 분 단위 표시로 바뀌어(초 없음) 매초 갱신할 이유가 없다.
+    // 표시가 분 단위(초 없음)라 매초 갱신할 이유가 없다.
     const intervalId = window.setInterval(updateCurrentTime, 15_000);
     return () => window.clearInterval(intervalId);
   }, []);
 
-  // ZC: EVAL/WAFERS/LAST RUN 등 다른 헤더 항목은 분 단위(HH:MM)까지만
-  // 보여준다 -- Current Time만 초 단위였던 게 다른 항목과 다른 폭·리듬을
-  // 만들었다. 분 단위로 맞추고, 날짜도 연도 없이 월-일만 남겨 한 줄에
-  // 들어가게 한다("08-11 00:17").
+  // 다른 헤더 항목(LAST RUN)과 같은 분 단위(HH:MM) 표기를 쓴다 -- 이
+  // 항목만 초 단위면 폭·리듬이 어긋나 보인다. 날짜도 연도 없이 월-일만
+  // 써서 한 줄에 들어가게 한다("08-11 00:17").
   const currentDate = currentTime
     ? [String(currentTime.getMonth() + 1).padStart(2, "0"), String(currentTime.getDate()).padStart(2, "0")].join("-")
     : "-- --";
@@ -86,7 +80,7 @@ export default function Header() {
     <>
     <header className="topHeader" ref={headerRef}>
       <div className="headerContext">
-        {/* 모바일 반응형 패치 S-1: ≤767px에서는 <Sidebar>가 오프캔버스
+        {/* ≤767px에서는 <Sidebar>가 오프캔버스
             드로어로 바뀌어 DOM에서 항상 보이지 않으므로, 여는 트리거가
             헤더에 하나는 있어야 한다 -- .headerSuniButton과 같은
             아이콘 버튼 시각 패턴을 그대로 따른다. */}
@@ -103,10 +97,9 @@ export default function Header() {
         )}
         {/* SUNI C brand mark -- separate from the sidebar's character logo
             (SuniAvatar), not a replacement for it. Links to 모니터링 홈 like
-            any header logo would (지시서 I: 모델 학습은 더 이상 탭이 아니라
-            사이드바 하단의 팝업이라 로고 링크가 될 수 없다). ≤767px: the full
-            wordmark image gives way to the compact character mark alone
-            (spec §B-7: "로고는 767px 이하에서 아이콘만") -- SuniAvatar is
+            any header logo would. ≤767px: the full wordmark image gives
+            way to the compact character mark alone
+            ("로고는 767px 이하에서 아이콘만") -- SuniAvatar is
             the only square icon-shaped brand asset in the project;
             there's no separate icon-only crop of the wordmark to use. */}
         <Link href="/monitoring" className="headerLogoLink" aria-label="SUNI C - 모니터링 홈으로 이동">
@@ -122,32 +115,18 @@ export default function Header() {
         {!isMobileLayout && (
           <>
             <div className="headerContextStrip headerContextStrip-noSource" aria-label="현재 데이터 컨텍스트">
-              {/* 모바일 반응형 패치 S-1: 768~1023px(태블릿) 구간에서는
-                  LAST RUN만 남기고 EVAL/WAFERS를 줄인다 -- globals.css의
-                  1023px 티어가 이 항목들을 숨긴다.
-                  NE-5: snapshot이 아직 없을 때(콜드 스타트 진행 중) 항목
-                  자체를 없애면 헤더 항목 수가 흔들린다 -- 항목은 항상
-                  그리고 값만 "—"로 채운다.
-                  QE: SOURCE 항목은 사이드바 상태 점 툴팁으로 옮겨갔다 --
-                  세 항목만 남으면서 headerContextStrip-noSource가
-                  간격을 다시 맞춘다(globals.css). */}
-              <div className="headerContextItem headerContextEval">
-                <span className="headerContextKey">EVAL</span>
-                <span className="headerContextValue">{snapshot ? snapshot.source.eval_dataset : "—"}</span>
-              </div>
-              <div className="headerContextItem headerContextWafers">
-                <span className="headerContextKey">WAFERS</span>
-                <span className="headerContextValue">{snapshot ? snapshot.source.row_count.toLocaleString() : "—"}</span>
-              </div>
+              {/* snapshot이 아직 없을 때(콜드 스타트 진행 중) 항목 자체를
+                  없애면 헤더 항목 수가 흔들린다 -- 항목은 항상 그리고
+                  값만 "—"로 채운다. */}
               <div className="headerContextItem headerContextLastRun">
                 <span className="headerContextKey">LAST RUN</span>
                 <span className="headerContextValue">{snapshot ? (formatHeaderClock(snapshot.created_at) ?? "-") : "—"}</span>
               </div>
             </div>
-            {/* ZC: EVAL/WAFERS/LAST RUN과 같은 .headerContextItem 모양을
-                그대로 써서 폰트(모노스페이스)·크기·대문자 표기를
-                통일한다 -- 이 항목만 다른 서체·크기를 쓰던 게 헤더 안에서
-                눈에 띄게 어긋나 보였다. */}
+            {/* LAST RUN과 같은 .headerContextItem 모양을 그대로 써서
+                폰트(모노스페이스)·크기·대문자 표기를 통일한다 -- 이
+                항목만 다른 서체·크기를 쓰면 헤더 안에서 눈에 띄게
+                어긋나 보인다. */}
             <div className="headerContextItem headerContextTime" title="현재 시각">
               <span className="headerContextKey">CURRENT TIME</span>
               <time className="headerContextValue" dateTime={currentTime?.toISOString()}>
@@ -169,7 +148,7 @@ export default function Header() {
         )}
       </div>
     </header>
-    {/* 모바일 반응형 패치 S-1: ≤767px에서는 .headerContextStrip 전체가
+    {/* ≤767px에서는 .headerContextStrip 전체가
         렌더되지 않으므로(위 !isMobileLayout 분기), 데이터셋/행 수/최종
         실행 시각/연결 상태가 화면에서 완전히 사라진다 -- 그 정보가
         생존하는 유일한 자리로 헤더 바로 아래 한 줄짜리 요약 바를 둔다.
