@@ -229,6 +229,11 @@ def get_snapshot_meta() -> dict[str, Any]:
         # source.mode가 "manual"로 바뀌기 전)에도 배너가 "수동 모드"를
         # 바로 보여줄 수 있게, 스냅샷과 별개로 override 자체를 싣는다.
         "manual_eval_override": store.get_manual_eval_override(),
+        # 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"이
+        # 백그라운드에서 조용히 실패해도(`triggered: true`는 이미 받은
+        # 뒤) 프런트가 원인을 보여줄 수 있게 최근 실행 결과를 함께 싣는다.
+        # 실행이 한 번도 없었으면 null.
+        "last_run": store.get_last_run(),
     }
 
 

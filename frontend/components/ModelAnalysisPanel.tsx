@@ -23,6 +23,19 @@ function sourceLabel(mode: "sql" | "fallback" | "manual" | undefined): string {
   return "-";
 }
 
+// src/automation/refresh.py STAGE_LABELS와 같은 문구 -- 실패 단계를
+// 사용자에게 보여줄 때 원시 키("pareto") 대신 이 라벨을 쓴다.
+const STAGE_LABEL_KO: Record<string, string> = {
+  resolve: "데이터 확인",
+  hydrate_eval: "모델 추론 (분석 데이터)",
+  fmea: "데이터 한계 진단",
+  action_priority: "조치 우선순위 (학습 데이터)",
+  treemap_warmup: "Config별 트리맵",
+  pareto: "원인 분석",
+  yield_prediction: "수율 예측",
+  save: "저장",
+};
+
 function measuredStatusLabel(provenance: { measured_rows: number; predicted_rows: number; mixed_rows: number } | null | undefined): string {
   if (!provenance) return "-";
   const { measured_rows, predicted_rows, mixed_rows } = provenance;
@@ -44,7 +57,7 @@ type PendingRegistration = {
 };
 
 export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { snapshot, manualEvalOverride, notifications, refreshRunning, analysisProgress, refreshSnapshotNow } = useAnalysisState();
+  const { snapshot, manualEvalOverride, notifications, refreshRunning, analysisProgress, refreshSnapshotNow, lastRun } = useAnalysisState();
   const [pending, setPending] = useState<PendingRegistration | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, open);
@@ -159,6 +172,12 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
   }
 
   const progressLabel = analysisProgress ? `분석 진행 중… (${analysisProgress.index}/${analysisProgress.total}) ${analysisProgress.stage}` : refreshRunning ? "분석 진행 중…" : null;
+  // 작업지시(Config 하이드레이션 실패 수정) T4: "triggered: true"를 받은
+  // 뒤에도 백그라운드 실행이 조용히 실패할 수 있다 -- lastRun.status가
+  // "failed"면 실패 단계·사유를 그대로 보여준다. 실패해도 마지막 정상
+  // 스냅샷은 그대로 보존되므로, "지금 화면은 이전 결과"임을 함께 안내한다
+  // (최근 실패와 혼동하지 않도록 분리해서 표시).
+  const lastRunFailed = !refreshRunning && lastRun?.status === "failed";
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
@@ -262,6 +281,15 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
             </div>
             {progressLabel && <p className="settingsSectionDesc">{progressLabel} · 팝업을 닫아도 계속됩니다.</p>}
             {startError && <p className="notifyFieldError">{startError}</p>}
+            {lastRunFailed && (
+              <p className="notifyFieldError">
+                최근 분석 실패
+                {lastRun?.failed_stage && ` (${STAGE_LABEL_KO[lastRun.failed_stage] ?? lastRun.failed_stage} 단계)`}
+                {": "}
+                {lastRun?.error_message ?? "알 수 없는 오류"}
+                {snapshot && " · 지금 화면에 보이는 결과는 이전 분석 그대로입니다."}
+              </p>
+            )}
           </section>
         </div>
       </div>

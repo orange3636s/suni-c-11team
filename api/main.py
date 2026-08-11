@@ -326,9 +326,13 @@ async def lifespan(app: FastAPI):
     # 강제 재시작 등)가 남긴 고아 진행 상태다. 그대로 두면 화면에 "분석
     # 진행 중… (N/8)"이 영구히 남는다.
     try:
-        RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir).clear_orphaned_analysis_progress_on_boot()
+        _boot_store = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+        _boot_store.clear_orphaned_analysis_progress_on_boot()
+        # 작업지시(Config 하이드레이션 실패 수정) T4: last_run도 같은 이유로
+        # 부팅 시 정리한다 -- "running"으로 고아가 됐으면 failed로 바꾼다.
+        _boot_store.reconcile_last_run_on_boot()
     except Exception:
-        logger.exception("부팅 시 고아 analysis_progress 정리 실패")
+        logger.exception("부팅 시 고아 analysis_progress/last_run 정리 실패")
     try:
         recover_interrupted_training_jobs()
     except Exception:

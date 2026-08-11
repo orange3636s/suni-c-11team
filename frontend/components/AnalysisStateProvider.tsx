@@ -12,6 +12,7 @@ import type {
   CategoricalScatterResponse,
   FmeaTablePayload,
   HeatmapResponse,
+  LastRunStatus,
   ManualEvalOverride,
   ModelPerformanceResponse,
   NotificationSettingsSummary,
@@ -221,6 +222,9 @@ type AnalysisStateValue = {
   // SC-2: 등록된 활성 분석 데이터가 업로드/DB 불러오기로 설정된 것이면
   // 그 정보. null이면 내장(기본) 데이터.
   manualEvalOverride: ManualEvalOverride | null;
+  // 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"의 최근 실행
+  // 결과 -- 백그라운드 실행이 조용히 실패했을 때 원인을 보여주는 데 쓴다.
+  lastRun: LastRunStatus | null;
 };
 
 // W-1: 부트스트랩/주기 자동 갱신이 채운 스냅샷을, 한 번도 저장된 적
@@ -291,6 +295,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [refreshRunning, setRefreshRunning] = useState(false);
   // SF-3: 네 화면이 공유하는 진행 표시.
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  // 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"의 최근 실행
+  // 결과 -- 실행이 끝난 뒤에도 남아 백그라운드 실패를 화면에 드러낸다.
+  const [lastRun, setLastRun] = useState<LastRunStatus | null>(null);
   // SC-2: 업로드/DB 불러오기로 등록된 활성 분석 데이터 -- 있으면 셸
   // 레벨 배너가 "수동 · {filename}"을 보여준다.
   const [manualEvalOverride, setManualEvalOverride] = useState<ManualEvalOverride | null>(null);
@@ -468,6 +475,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         setRefreshRunning(meta.refresh_running);
         setAnalysisProgress(meta.analysis_progress ?? null);
         setManualEvalOverride(meta.manual_eval_override ?? null);
+        setLastRun(meta.last_run ?? null);
         const cachedCreatedAt = snapshotRef.current?.created_at ?? null;
         if (meta.created_at && meta.created_at !== cachedCreatedAt) {
           const full = await getSnapshot();
@@ -541,11 +549,12 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       refreshRunning,
       analysisProgress,
       manualEvalOverride,
+      lastRun,
     }),
     [
       hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome,
       notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated, bootstrapStatus, refreshSnapshotNow,
-      refreshRunning, analysisProgress, manualEvalOverride,
+      refreshRunning, analysisProgress, manualEvalOverride, lastRun,
     ],
   );
 

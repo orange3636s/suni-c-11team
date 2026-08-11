@@ -30,12 +30,13 @@ def test_concurrent_run_refresh_pipeline_calls_do_not_overlap(monkeypatch) -> No
     call_count = 0
     lock = threading.Lock()
 
-    def fake_inner(store, *, dispatch: bool = True) -> None:
+    def fake_inner(store, *, dispatch: bool = True) -> refresh._PipelineOutcome:
         nonlocal call_count
         with lock:
             call_count += 1
         started.set()
         release.wait(timeout=5)
+        return refresh._PipelineOutcome(True)
 
     monkeypatch.setattr(refresh, "_run_refresh_pipeline_inner", fake_inner)
 

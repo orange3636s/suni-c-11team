@@ -38,6 +38,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -146,6 +147,22 @@ def _compute_analysis_id(registry: DatasetRegistry, eval_dataset_id: str, train_
     raw = f"{eval_dataset_id}:{eval_version}:{train_dataset_id}:{train_version}:{model_id}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
+
+@dataclass(frozen=True)
+class _PipelineOutcome:
+    """작업지시(Config 하이드레이션 수정) T4: `run_refresh_pipeline`이 이
+    결과를 `RuntimeStore.finish_last_run_*`에 그대로 기록한다.
+    `success=True`는 정확히 "스냅샷을 저장했다"와 같다(SC-3의 원자적
+    저장 지점) -- 부분 실패(`errors`에만 쌓이고 스냅샷은 저장되는 경우,
+    예: FMEA 실패)는 `success=True`로 남는다. 그건 T8-4의 errors 배너가
+    이미 따로 알린다; `last_run.status`는 "이번 실행이 화면을 갱신했는가"
+    만 답한다."""
+
+    success: bool
+    failed_stage: str | None = None
+    error_message: str | None = None
+
+
 # AF/AG: 주기 잡(APScheduler)과 수동 최신화 버튼·업로드 연동이 전부 이
 # 함수 하나를 호출한다 -- 두 경로가 동시에 들어와도 파이프라인이 두 번
 # 돌지 않도록 진입점 자체를 non-blocking 락으로 감싼다.
@@ -184,16 +201,31 @@ def run_refresh_pipeline(*, dispatch: bool = True) -> None:
         return
     try:
         store = _runtime_store()
+        outcome = _PipelineOutcome(False, None, "파이프라인이 시작되지 못했습니다.")
         try:
-            _run_refresh_pipeline_inner(store, dispatch=dispatch)
-        except Exception:
+            outcome = _run_refresh_pipeline_inner(store, dispatch=dispatch)
+        except Exception as exc:
             # 개별 단계는 각자 try/except하지만, 예상하지 못한 예외가 여기까지
             # 올라오면 스케줄러 자체가 죽지 않도록 마지막 방어선에서 삼킨다.
             # T8-3: MemoryError를 포함한 어떤 예외든(개별 단계가 던지지 않은
             # 예상 밖 실패까지) 진행 상태를 지우지 않고는 빠져나가지 않는다 --
             # 안 지우면 화면에 "분석 진행 중… (N/8)"이 영원히 남는다.
             logger.exception("auto_refresh: 파이프라인 실행 중 예기치 않은 오류")
+            outcome = _PipelineOutcome(False, None, f"예기치 않은 오류: {exc}")
         finally:
+            # 작업지시(Config 하이드레이션 수정) T4: 어떤 경로로 빠져나가든
+            # (성공/부분실패/예기치 않은 예외) last_run이 항상 최종 상태로
+            # 남는다 -- 지금까지는 실패가 로그에만 남고 프런트는 영원히
+            # "triggered: true" 이후를 기다렸다.
+            if outcome is None:
+                # 방어적 처리 -- `_run_refresh_pipeline_inner`는 항상
+                # `_PipelineOutcome`을 반환하는 계약이지만, 테스트 더블처럼
+                # 그 계약을 지키지 않는 호출부가 있어도 여기서 죽지 않는다.
+                outcome = _PipelineOutcome(False, None, "파이프라인이 결과를 반환하지 않았습니다.")
+            if outcome.success:
+                store.finish_last_run_success()
+            else:
+                store.finish_last_run_failure(stage=outcome.failed_stage, message=outcome.error_message)
             store.clear_analysis_progress()
     finally:
         _refresh_lock.release()
@@ -309,7 +341,7 @@ def _yield_prediction_stage(
         return None
 
 
-def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -> None:
+def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -> _PipelineOutcome:
     errors: list[str] = []
     registry = _dataset_registry(store)
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -318,6 +350,11 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         # -- 1/8 데이터 확인 --------------------------------------------
         mode, train_dataset_id, eval_dataset_id, source_row_count = _resolve_source(store, registry, errors)
         analysis_id = _compute_analysis_id(registry, eval_dataset_id, train_dataset_id, store)
+        # 작업지시(Config 하이드레이션 수정) T4: 이 실행의 진행상태 기록을
+        # 시작한다 -- 아래 어떤 단계에서 멈추더라도(중간에 `return`하든,
+        # 이 함수를 감싼 바깥 try/except가 예상 밖 예외를 잡든)
+        # `run_refresh_pipeline`이 이 레코드를 최종 상태로 갱신한다.
+        store.start_last_run(analysis_id=analysis_id)
         checkpoint = store.get_refresh_checkpoint(analysis_id)
         completed = set((checkpoint or {}).get("completed_stages") or [])
         if checkpoint:
@@ -338,8 +375,9 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             registry.get_dataframe(eval_dataset_id)
         except Exception:
             logger.exception("auto_refresh: 평가 데이터셋 로드 실패")
-            errors.append(f"평가 데이터셋({eval_dataset_id})을 불러오지 못했습니다.")
-            return
+            message = f"평가 데이터셋({eval_dataset_id})을 불러오지 못했습니다."
+            errors.append(message)
+            return _PipelineOutcome(False, "resolve", message)
         logger.info("auto_refresh[1/8 데이터 확인] %.1fs", time.perf_counter() - t_stage)
 
         latest = get_latest_state(store)
@@ -357,10 +395,11 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             from api.routes.analysis import _hydrated_targets_or_409
 
             _hydrated_targets_or_409(eval_dataset_id)
-        except Exception:
+        except Exception as exc:
             logger.exception("auto_refresh: 분석 데이터 모델 추론 실패 -- 스냅샷 저장 생략")
+            message = f"분석 데이터 모델 추론에 실패했습니다: {exc}"
             errors.append("분석 데이터 모델 추론에 실패했습니다.")
-            return
+            return _PipelineOutcome(False, "hydrate_eval", message)
         logger.info("auto_refresh[2/8 모델 추론] %.1fs", time.perf_counter() - t_stage)
 
         # -- 3/8 데이터 한계 진단 -------------------------------------------
@@ -400,10 +439,11 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         t_stage = time.perf_counter()
         try:
             _warmup_common_prerequisites(eval_dataset_id)
-        except Exception:
+        except Exception as exc:
             logger.exception("auto_refresh: Config별 트리맵 선행 조건 계산 실패 -- 스냅샷 저장 생략")
+            message = f"Config별 트리맵 계산에 실패했습니다: {exc}"
             errors.append("Config별 트리맵 계산에 실패했습니다.")
-            return
+            return _PipelineOutcome(False, "treemap_warmup", message)
         logger.info("auto_refresh[5/8 Config별 트리맵] %.1fs", time.perf_counter() - t_stage)
 
         # -- 6/8 원인 분석 -----------------------------------------------
@@ -428,9 +468,10 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
                     },
                 )
         if not pareto_by_target:
-            errors.append("모든 타깃의 인자 스크리닝이 실패했습니다.")
+            message = "모든 타깃의 인자 스크리닝이 실패했습니다."
+            errors.append(message)
             logger.warning("auto_refresh: 원인분석 전 타깃 실패 -- 스냅샷 저장 생략")
-            return
+            return _PipelineOutcome(False, "pareto", message)
         if failed_targets:
             errors.append(f"일부 타깃 스크리닝 실패: {', '.join(failed_targets)}")
 
@@ -443,7 +484,8 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         logger.info("auto_refresh[7/8 수율 예측] %.1fs", time.perf_counter() - t_stage)
         if yield_table is None:
             logger.warning("auto_refresh: 수율 예측 계산 실패 -- 스냅샷 저장 생략")
-            return
+            message = errors[-1] if errors else "수율 예측 계산에 실패했습니다."
+            return _PipelineOutcome(False, "yield_prediction", message)
 
         # -- 8/8 저장 -----------------------------------------------------
         _stage("save")
@@ -521,6 +563,8 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
     # 함수는 알림 파이프라인을 부르지 않는다.
     if not dispatch:
         logger.info("auto_refresh: dispatch=False (콜드 스타트) -- 알림은 애초에 이 파이프라인 책임이 아니다.")
+
+    return _PipelineOutcome(True)
 
 
 def _resolve_source(

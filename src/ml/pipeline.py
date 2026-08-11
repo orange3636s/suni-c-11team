@@ -43,6 +43,7 @@ from src.analysis.screening.selector import (
     effective_confidence_tier,
     select_primary_factor,
 )
+from src.ml.feature_builder import FactorFeatureSpec, build_feature_frame, numeric_series, trained_categories_from_model
 
 FAIL_RATE_TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"]
 FINAL_YIELD_COLUMN = "Y"
@@ -56,8 +57,7 @@ LGBM_PARAMS = dict(
 )
 
 
-def _numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce")
+_numeric = numeric_series  # 하위 호환 별칭 -- 이 모듈 밖에서 import하는 곳은 없지만 이름을 남긴다.
 
 
 def build_features(df: pd.DataFrame, factors: list[ParetoFactor]) -> pd.DataFrame:
@@ -66,20 +66,24 @@ def build_features(df: pd.DataFrame, factors: list[ParetoFactor]) -> pd.DataFram
     `factors` must come from a selector run on training data only; this
     function only reads `df` for the raw factor values, never re-derives
     `optimal_center`.
+
+    작업지시(Config 하이드레이션 수정) T1: 실제 컬럼 구성은
+    `src.ml.feature_builder.build_feature_frame`이 담당한다 -- 추론 경로
+    (`target_hydration._screening_features`)도 같은 함수를 거치므로 두
+    경로가 다시 갈라질 수 없다. 여기서는 `categories`를 넘기지 않는다
+    (학습 시점에는 컬럼이 스스로 가진 범주를 그대로 쓰는 것이 정의다 --
+    범주 목록은 학습 결과에서 *발견*되는 것이지, 제한할 대상이 아니다).
     """
-    columns: dict[str, pd.Series] = {}
-    for factor in factors:
-        if factor.kind == "Config":
-            raw = df[factor.feature].astype("category")
-            columns[factor.feature] = raw
-            columns[f"{factor.feature}_miss"] = raw.isna().astype("int8")
-            continue
-        raw = _numeric(df[factor.feature])
-        columns[factor.feature] = raw.astype("float32")
-        columns[f"{factor.feature}_miss"] = raw.isna().astype("int8")
-        if factor.relation_shape == "u_shape" and factor.optimal_center is not None:
-            columns[f"{factor.feature}_dev"] = (raw - factor.optimal_center).abs().astype("float32")
-    return pd.DataFrame(columns, index=df.index)
+    specs = [
+        FactorFeatureSpec(
+            feature=factor.feature,
+            kind=factor.kind,
+            relation_shape=factor.relation_shape,
+            optimal_center=factor.optimal_center,
+        )
+        for factor in factors
+    ]
+    return build_feature_frame(df, specs)
 
 
 @dataclass
@@ -241,6 +245,10 @@ def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str
             "rmse": metrics["rmse"],
             "mae": metrics["mae"],
             "n": metrics["n"],
+            # 작업지시(Config 하이드레이션 수정) T2: Config 인자의 학습 시점
+            # 범주 목록 -- 추론 시 새 범주/결측을 정리하는 기준이 된다.
+            # R/D는 해당 없음(None).
+            "categories": trained_categories_from_model(result.model) if factor.kind == "Config" else None,
         }
     return summary
 

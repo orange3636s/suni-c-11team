@@ -72,6 +72,11 @@ REFRESH_CHECKPOINT_STATE_KEY = "automation:refresh_checkpoint"
 # 오판한다.
 ANALYSIS_PROGRESS_STATE_KEY = "automation:analysis_progress"
 
+# 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"의 최근 실행
+# 결과(성공/실패 + 실패 단계·사유) -- ANALYSIS_PROGRESS_STATE_KEY와 달리
+# 실행이 끝난 뒤에도 남는다(다음 실행이 시작될 때만 덮어써진다).
+LAST_RUN_STATE_KEY = "automation:last_run"
+
 # SD: 자동화(주기 SQL 수율 예측 발송) 설정 -- "모델 학습" 팝업이 쓰던
 # `training` 슬롯과 분리한다(자동화는 학습과 무관한 별개 개념이므로 같은
 # 슬롯에 얹으면 "학습 데이터 저장"과 "자동화 설정 저장"이 서로의 필드를
@@ -1238,6 +1243,69 @@ class RuntimeStore:
         그건 죽은 이전 프로세스가 남긴 고아 상태다) 무조건 지운다."""
         if self.clear_analysis_progress():
             logger.warning("analysis_progress: 부팅 시 고아 진행 상태를 정리했습니다.")
+
+    # -- 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작" 최근 실행
+    # 상태 -- `analysis_progress`(위)는 "지금 도는 중"만 말하고 완료·실패
+    # 여부는 남기지 않는다. 이 레코드는 실행이 끝난 뒤에도 남아, 백그라운드
+    # 실행이 조용히 실패했을 때("triggered: true"는 받았는데 스냅샷이
+    # 안 생기는 상태) 프런트가 원인을 보여줄 수 있게 한다.
+
+    def start_last_run(self, *, analysis_id: str) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.set_app_state(
+            LAST_RUN_STATE_KEY,
+            {
+                "status": "running",
+                "analysis_id": analysis_id,
+                "failed_stage": None,
+                "error_message": None,
+                "started_at": now_iso,
+                "finished_at": None,
+            },
+        )
+
+    def finish_last_run_success(self) -> None:
+        current = self.get_last_run() or {}
+        self.set_app_state(
+            LAST_RUN_STATE_KEY,
+            {
+                **current,
+                "status": "succeeded",
+                "failed_stage": None,
+                "error_message": None,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    def finish_last_run_failure(self, *, stage: str | None, message: str | None) -> None:
+        current = self.get_last_run() or {}
+        self.set_app_state(
+            LAST_RUN_STATE_KEY,
+            {
+                **current,
+                "status": "failed",
+                "failed_stage": stage,
+                "error_message": message,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    def get_last_run(self) -> dict[str, Any] | None:
+        return self.get_app_state(LAST_RUN_STATE_KEY)
+
+    def reconcile_last_run_on_boot(self) -> None:
+        """`api/main.py`의 lifespan이 기동 시 1회 부른다 -- 방금 새로 뜬
+        프로세스는 정의상 어떤 실행도 진행 중일 수 없으므로, "running"으로
+        남아 있는 last_run은(예: OOM 강제 종료로 finally조차 못 돈 경우)
+        고아 상태다. 이걸 그대로 두면 화면이 "실행 중"으로 영구히 멈춘
+        것처럼 보인다."""
+        current = self.get_last_run()
+        if current and current.get("status") == "running":
+            self.finish_last_run_failure(
+                stage=current.get("failed_stage"),
+                message="서버가 재시작되어 이전 분석 실행이 중단되었습니다.",
+            )
+            logger.warning("last_run: 부팅 시 고아 실행 상태를 failed로 정리했습니다.")
 
     # -- SD: 자동화(주기 SQL 수율 예측 발송) 설정 --------------------------
     # "모델 학습" 슬롯(`training`)과 분리된 전용 슬롯 -- SD-1 팝업이 읽고

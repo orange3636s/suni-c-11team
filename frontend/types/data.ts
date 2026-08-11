@@ -916,6 +916,19 @@ export type AnalysisProgress = {
   estimated_seconds?: number | null;
 };
 
+// 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"의 최근 실행
+// 결과 -- `analysis_progress`(위)와 달리 실행이 끝난 뒤에도 남는다.
+// 백그라운드 실행이 조용히 실패했을 때(`triggered: true`는 받았는데
+// 스냅샷이 안 생기는 상태) 화면이 원인을 보여줄 수 있게 한다.
+export type LastRunStatus = {
+  status: "running" | "succeeded" | "failed";
+  analysis_id: string | null;
+  failed_stage: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
 export type SnapshotMetaResponse = {
   created_at: string | null;
   bootstrap: BootstrapStatus | null;
@@ -924,6 +937,8 @@ export type SnapshotMetaResponse = {
   refresh_running: boolean;
   analysis_progress: AnalysisProgress | null;
   manual_eval_override: ManualEvalOverride | null;
+  // 실행이 한 번도 없었으면 null.
+  last_run: LastRunStatus | null;
 };
 
 // -- 즐겨찾기 (지시서 J) -------------------------------------------------

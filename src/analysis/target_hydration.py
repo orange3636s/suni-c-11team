@@ -19,6 +19,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
+from src.ml.feature_builder import FactorFeatureSpec, build_feature_frame, trained_categories_from_model
 from src.ml.inference import InferenceInputError, ModelLoadError, load_prediction_model
 
 
@@ -189,24 +190,44 @@ def _active_model(store: Any, model_dir: str | Path) -> tuple[Any, dict[str, Any
 
 
 def _screening_features(dataframe: pd.DataFrame, metadata: dict[str, Any], target: str, model: Any) -> tuple[pd.DataFrame, str | None]:
+    """작업지시(Config 하이드레이션 수정) T1: 학습(`src.ml.pipeline.build_features`)과
+    반드시 같은 `build_feature_frame`을 거친다 -- 예전에는 여기서 종류
+    구분 없이 전부 숫자로 강제 변환해, Config 인자가 대표로 뽑힌 타깃(예:
+    Y3/`Step10_Config`)에서 전량 NaN float32가 `category`로 학습된
+    LightGBM에 들어가 "승인 모델의 예측에 실패했습니다"가 났다.
+    """
     details = (metadata.get("target_metrics") or {}).get(target) or {}
     raw_feature = details.get("feature")
     if not isinstance(raw_feature, str) or not raw_feature:
         raise TargetHydrationError(f"승인 모델의 {target} feature 메타데이터가 없습니다.")
-    raw = (
-        _finite_numeric(dataframe[raw_feature])
-        if raw_feature in dataframe.columns
-        else pd.Series(np.nan, index=dataframe.index, dtype=float)
-    )
-    available: dict[str, pd.Series] = {
-        raw_feature: raw.astype("float32"),
-        f"{raw_feature}_miss": raw.isna().astype("int8"),
-    }
+    kind = details.get("kind") or "R"
+
     center = details.get("optimal_center")
-    if details.get("relation_shape") == "u_shape" and isinstance(center, (int, float)) and math.isfinite(float(center)):
-        available[f"{raw_feature}_dev"] = (raw - float(center)).abs().astype("float32")
-    expected = [str(value) for value in getattr(model, "feature_names_in_", list(available))]
-    features = pd.DataFrame(available, index=dataframe.index).reindex(columns=expected)
+    optimal_center = float(center) if isinstance(center, (int, float)) and math.isfinite(float(center)) else None
+
+    categories = None
+    if kind == "Config":
+        # T2/§2-2: 새로 학습된 모델은 메타데이터에 범주 목록이 있다 --
+        # 없으면(기존 활성 모델 등 구형 메타데이터) booster에서 직접
+        # 꺼내는 폴백을 쓴다. 이 폴백이 없으면 기존 활성 모델이 이
+        # 배포 이후 죽는다.
+        stored_categories = details.get("categories")
+        categories = (
+            [str(value) for value in stored_categories]
+            if isinstance(stored_categories, list) and stored_categories
+            else trained_categories_from_model(model)
+        )
+
+    spec = FactorFeatureSpec(
+        feature=raw_feature,
+        kind=kind,
+        relation_shape=details.get("relation_shape"),
+        optimal_center=optimal_center,
+        categories=categories,
+    )
+    features = build_feature_frame(dataframe, [spec])
+    expected = [str(value) for value in getattr(model, "feature_names_in_", list(features.columns))]
+    features = features.reindex(columns=expected)
     return features, raw_feature
 
 
@@ -232,14 +253,22 @@ def _predict_targets(dataframe: pd.DataFrame, loaded: Any) -> tuple[dict[str, np
         if is_screening:
             features, raw_feature = _screening_features(dataframe, metadata, target, model)
             raw_columns = [raw_feature] if raw_feature else []
+            factor_kind = ((metadata.get("target_metrics") or {}).get(target) or {}).get("kind")
         else:
             raw_columns = [str(value) for value in metadata.get("feature_columns", [])]
             features = dataframe.reindex(columns=raw_columns)
+            factor_kind = None
         required_raw.extend(raw_columns)
         existing = [column for column in raw_columns if column in dataframe.columns]
         cell_total = len(dataframe) * len(raw_columns)
+        # T3: Config 컬럼에 _finite_numeric(숫자 강제 변환)을 걸면 전량
+        # NaN이 되어 measured_cell_coverage가 항상 0.0으로 잘못 기록된다 --
+        # Config는 원본 시리즈의 notna()를 그대로 센다.
         measured_cells = int(
-            sum(_finite_numeric(dataframe[column]).notna().sum() for column in existing)
+            sum(
+                (dataframe[column].notna().sum() if factor_kind == "Config" else _finite_numeric(dataframe[column]).notna().sum())
+                for column in existing
+            )
         )
         coverage_by_target[target] = {
             "required_features": len(raw_columns),

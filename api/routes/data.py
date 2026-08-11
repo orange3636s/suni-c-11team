@@ -51,7 +51,7 @@ from api.schemas.data import (
 from api.schemas.jobs import TrainJobAccepted, TrainJobResult, TrainJobStatus
 from api.settings import settings
 from src.analysis.screening.schema import parse_schema
-from src.analysis.target_hydration import invalidate_target_hydration_cache
+from src.analysis.target_hydration import inspect_target_status, invalidate_target_hydration_cache
 from src.data_validation import load_data_schema, validate_dataframe
 from src.dataset_normalization import normalize_dataset
 from src.ml.dataset import (
@@ -600,6 +600,17 @@ async def train_model(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Y1~Y5 타깃 열이 없어 학습할 수 없습니다.",
+        )
+    # 작업지시(Config 하이드레이션 실패 수정) §6: `test_config.csv`처럼
+    # Y/Y1~Y5 컬럼은 존재하지만 값이 전량 결측인 평가 전용 파일(정답이
+    # 제거된 파일)을 학습용으로 올리면 위 컬럼 존재 검사는 통과하고도
+    # 학습이 불가능하다 -- 명확한 안내로 막는다("분석 데이터로 등록하라"가
+    # 정답이지, 이 파일로 학습이 되게 만드는 게 목표가 아니다).
+    target_status = inspect_target_status(dataframe)
+    if target_status.state in ("missing_columns", "all_missing"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="타깃 값이 없어 학습할 수 없습니다. 분석 데이터로 등록하세요.",
         )
 
     lot_column = "Lot_ID"
