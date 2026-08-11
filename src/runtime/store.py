@@ -279,6 +279,31 @@ class RuntimeStore:
         value["metadata"] = json.loads(value.pop("active_metadata_json") or "{}")
         return value
 
+    def clear_active_model(self, *, also_clear_previous: bool = False) -> None:
+        """RA-B3: `active_model_id`가 가리키는 아티팩트가 `models/`에 실제로
+        없을 때(파일이 지워졌거나 커밋되지 않은 채 배포된 경우) 호출한다.
+        레지스트리 행 자체는 남겨 두되(다음 `promote_model`이 그대로
+        UPDATE할 수 있도록) 포인터만 비워 `active_model()`이 다시 None을
+        반환하게 한다 -- 그래야 부트스트랩/런타임 복구 훅이 "챔피언 없음"과
+        같은 경로로 재학습을 트리거한다. `previous_model_id`는 롤백 대상
+        이므로 그 아티팩트도 확인해 실제로 없을 때만(호출부가 판단해
+        `also_clear_previous=True`로 넘길 때만) 함께 비운다 -- 아직
+        살아있는 롤백 후보를 섣불리 지우지 않는다."""
+        with _lock, self._connect() as connection:
+            if also_clear_previous:
+                connection.execute(
+                    "UPDATE model_slots SET active_model_id=NULL, status='empty', previous_model_id=NULL WHERE singleton=1"
+                )
+            else:
+                connection.execute(
+                    "UPDATE model_slots SET active_model_id=NULL, status='empty' WHERE singleton=1"
+                )
+        # promote_model과 같은 이유로 캐시를 무효화한다: 이 시점부터
+        # target_hydration의 "챔피언 있음" 판단이 바뀌어야 한다.
+        from src.analysis.target_hydration import invalidate_target_hydration_cache
+
+        invalidate_target_hydration_cache()
+
     def promote_model(self, *, model_id: str, pipeline_version: str, dataset_version: int, metadata: dict[str, Any]) -> dict[str, Any]:
         """Atomically switch only the pointer; model files are never overwritten."""
         now = datetime.now(timezone.utc).isoformat()
@@ -999,19 +1024,33 @@ class RuntimeStore:
         self.delete_app_state(BOOTSTRAP_LOCK_STATE_KEY)
 
     def set_bootstrap_status(
-        self, status: str, stage: str | None, *, error: str | None = None
+        self,
+        status: str,
+        stage: str | None,
+        *,
+        error: str | None = None,
+        reason: str | None = None,
     ) -> None:
         """W-4: 프런트가 `/api/state/snapshot/meta`로 읽어 진행 배너에
         쓴다. 실제 학습 진행률(0~99%)은 이미 `training_jobs.progress`가
         갖고 있으므로 여기서는 다시 만들지 않고, 큰 단계 이름(stage)만
         남긴다 -- 없으면 프런트는 '첫 분석 진행 중'만 보여주고 가짜
-        진행률을 만들지 않는다."""
+        진행률을 만들지 않는다.
+
+        RA-B5: `reason`은 `status="failed"`일 때만 의미가 있는, 실패
+        원인을 구분하는 짧은 코드다(예: 내장 학습 데이터 자체가 없는
+        "bundled_train_data_missing" -- 이 경우만 정말 복구 불가능이라
+        `BootstrapStatusBanner`가 재시도 버튼 없는 구체적 안내를 보여준다).
+        그 외 예외는 reason 없이 기존 일반 실패 문구를 유지한다 -- B2/B4의
+        런타임 복구 훅이 다음 요청에서 다시 시도할 수 있는 일시적
+        실패이기 때문이다."""
         self.set_app_state(
             BOOTSTRAP_STATUS_STATE_KEY,
             {
                 "status": status,
                 "stage": stage,
                 "error": error,
+                "reason": reason,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
         )

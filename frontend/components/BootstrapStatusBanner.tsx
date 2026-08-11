@@ -10,6 +10,11 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 // 쓴다).
 const BOOTSTRAP_STAGES = ["데이터 확인 중", "학습 중", "평가 · 원인분석 중"];
 
+// RA-B5: api/main.py의 BOOTSTRAP_FAILURE_REASON_DATA_MISSING과 같은
+// 문자열이어야 한다 -- 이 값일 때만 재시도해도 소용없는 진짜 복구
+// 불가능 케이스(내장 학습 데이터 자체가 없음)로 취급한다.
+const BOOTSTRAP_FAILURE_REASON_DATA_MISSING = "bundled_train_data_missing";
+
 /** W-4: 첫 기동 부트스트랩(스냅샷이 아직 없을 때 서버가 1회 학습+분석을
  * 돌리는 동안) 진행 상태 -- DashboardShell이 셸 레벨에서 한 번만
  * 렌더한다(위 .degradedStateBanner와 같은 원칙: 페이지마다 따로 넣으면
@@ -23,9 +28,24 @@ export default function BootstrapStatusBanner() {
 
   // NE-3: SQL 미연결로 내장 데이터를 쓰는 것은 정상 경로이므로 그 자체를
   // 실패로 취급하지 않는다 -- 여기 도달하는 "failed"는 내장 데이터
-  // 분석 자체가 깨진, 사용자가 조치할 수 없는 데이터·코드 문제다. 재시도
-  // 버튼을 두지 않는다(눌러도 같은 이유로 다시 실패한다).
+  // 분석 자체가 깨진 문제다.
+  //
+  // RA-B5: 이제 두 종류를 구분한다.
+  //   - reason === "bundled_train_data_missing": 내장 학습 데이터 파일
+  //     자체가 없는, 사용자가 조치할 수 없는 진짜 복구 불가능 케이스다.
+  //     재시도 버튼을 두지 않는다(눌러도 같은 이유로 다시 실패한다).
+  //   - 그 외(reason 없음): api/main.py의 런타임 복구 훅(ensure_usable_
+  //     champion)이 다음 요청에서 자동으로 재시도하므로, 사실상 일시적
+  //     실패로 남는 경우가 드물다 -- 그래도 지금 이 화면이 보이고 있다면
+  //     지시서 원칙대로 새 문구를 지어내지 않고 기존 일반 문구를 유지한다.
   if (bootstrapStatus.status === "failed") {
+    if (bootstrapStatus.reason === BOOTSTRAP_FAILURE_REASON_DATA_MISSING) {
+      return (
+        <div className="bootstrapStateBanner error" role="alert">
+          <span>내장 학습 데이터를 찾을 수 없습니다 (data/bundled/train.CSV)</span>
+        </div>
+      );
+    }
     return (
       <div className="bootstrapStateBanner error" role="alert">
         <span>내장 데이터 분석에 실패했습니다. 서버 로그를 확인하세요.</span>

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Coroutine
@@ -121,6 +122,19 @@ def _bootstrap_runtime_store() -> RuntimeStore:
     return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
 
 
+class BundledTrainingDataMissingError(RuntimeError):
+    """RA-B5: 부트스트랩/복구 재학습이 내장 학습 데이터(data/bundled/train.CSV)
+    자체를 찾지 못해 실패한 경우 -- 다음 요청이 재시도해도 파일이
+    저절로 생기지 않으므로, 다른 예외(일시적 실패)와 구분해 배너가
+    재시도 없는 구체적 안내를 보여줄 수 있게 한다."""
+
+
+# RA-B5: `bootstrap_status.reason`에 싣는 코드 -- 프런트 BootstrapStatusBanner가
+# 이 문자열로 "정말 복구 불가능한" 경우만 골라 재시도 버튼 없는 구체적
+# 안내를 보여준다. 다른 문자열이 새로 필요해지면 여기 추가한다.
+BOOTSTRAP_FAILURE_REASON_DATA_MISSING = "bundled_train_data_missing"
+
+
 def _has_usable_champion(store: RuntimeStore) -> bool:
     """NE-4: `store.active_model()`은 DB의 `model_slots` 행이 있는지만
     보고, 그 `active_model_id`가 가리키는 아티팩트가 `models/`에 실제로
@@ -129,7 +143,13 @@ def _has_usable_champion(store: RuntimeStore) -> bool:
     `active_model()`이 여전히 값을 반환해 `_run_bootstrap`이 재학습을
     건너뛰고, 이후 `run_refresh_pipeline`의 모델 로드가 조용히 실패해
     스냅샷이 저장되지 않는다 -- 그 결과가 "첫 스냅샷 생성 실패" 배너다.
-    여기서 실제로 로드를 시도해 그 간극을 메운다."""
+    여기서 실제로 로드를 시도해 그 간극을 메운다.
+
+    RA-B3: 로드에 실패하면(파일이 실제로 없음) 레지스트리에 남은 포인터를
+    그대로 두지 않는다 -- 이 함수가 매 요청(RA-B4의 런타임 복구 훅)마다
+    불릴 수 있으므로, 지우지 않으면 같은 죽은 model_id에 대해 매번 같은
+    로드 실패를 반복하게 된다. `previous_model_id`(롤백 대상)는 그
+    아티팩트가 실제로 살아있으면 보존하고, 그것도 없을 때만 함께 지운다."""
     active = store.active_model()
     model_id = str((active or {}).get("active_model_id") or "").strip()
     if not model_id:
@@ -140,6 +160,19 @@ def _has_usable_champion(store: RuntimeStore) -> bool:
         load_prediction_model(model_id, settings.model_dir)
     except (InferenceInputError, ModelLoadError):
         logger.warning("bootstrap: 챔피언 모델 ID는 있으나 로드할 수 없습니다 (%s) -- 재학습합니다.", model_id)
+        previous_id = str((active or {}).get("previous_model_id") or "").strip()
+        clear_previous = False
+        if previous_id:
+            try:
+                load_prediction_model(previous_id, settings.model_dir)
+            except (InferenceInputError, ModelLoadError):
+                clear_previous = True
+        store.clear_active_model(also_clear_previous=clear_previous)
+        logger.warning(
+            "models: 레지스트리에서 존재하지 않는 모델 ID %s 제거%s",
+            model_id,
+            " (previous_model_id도 함께 제거)" if clear_previous else "",
+        )
         return False
     return True
 
@@ -158,6 +191,10 @@ async def _train_bootstrap_champion() -> None:
     from api.routes.data import train_model
 
     train_path = settings.bundled_dataset_dir / BUNDLED_DATASET_FILES["train"]
+    if not train_path.is_file():
+        # RA-B5: 이 파일 자체가 배포에 빠져 있으면 재시도해도 저절로
+        # 생기지 않는다 -- 진짜 복구 불가능 케이스로 구분한다.
+        raise BundledTrainingDataMissingError(str(train_path))
     with train_path.open("rb") as source:
         upload = UploadFile(file=source, filename=BUNDLED_DATASET_FILES["train"])
         await train_model(upload)
@@ -179,7 +216,22 @@ async def _run_bootstrap(store: RuntimeStore) -> None:
             raise RuntimeError("첫 스냅샷 생성에 실패했습니다 (원인분석/알람 판정 단계를 확인하세요).")
         store.set_bootstrap_status("done", None)
         logger.info("bootstrap: 첫 스냅샷 생성 완료")
+    except BundledTrainingDataMissingError as exc:
+        # RA-B5: 다른 예외와 달리 reason을 남긴다 -- BootstrapStatusBanner가
+        # 이 코드일 때만 재시도 버튼 없는 구체적 안내("내장 학습 데이터를
+        # 찾을 수 없습니다 (data/bundled/train.CSV)")로 갈아탄다.
+        logger.error("bootstrap: 내장 학습 데이터를 찾을 수 없습니다 (%s)", exc)
+        store.set_bootstrap_status(
+            "failed",
+            None,
+            error=f"내장 학습 데이터를 찾을 수 없습니다 ({exc})",
+            reason=BOOTSTRAP_FAILURE_REASON_DATA_MISSING,
+        )
     except Exception as exc:
+        # RA-B5: reason 없는 "failed"는 일시적 실패로 취급한다 -- 이
+        # 상태 자체가 다음 재시도를 막지 않는다(B2/B4의 복구 훅은 오직
+        # `_has_usable_champion`/`has_valid_snapshot`만 보고 재시도
+        # 여부를 결정하지, 이 bootstrap_status 값을 게이트로 쓰지 않는다).
         logger.exception("bootstrap: 첫 스냅샷 생성 실패")
         store.set_bootstrap_status("failed", None, error=str(exc))
 
@@ -189,10 +241,21 @@ async def _bootstrap_snapshot_background() -> None:
     `_spawn_background_task`로 fire-and-forget한다(89행 주석과 동일한
     이유 -- 헬스체크가 실패하면 배포가 롤백된다). NE-6: 수동 override로
     활성화된 평가 데이터셋이 있으면 그 자체가 사용자의 최근 작업이므로
-    내장 데이터로 부트스트랩을 돌려 덮어쓰지 않는다."""
+    내장 데이터로 부트스트랩을 돌려 덮어쓰지 않는다.
+
+    RA-B1 (근본 원인): `has_valid_snapshot()`은 스냅샷 행의 스키마
+    버전과, 그 안에 기록된 model_id가 현재 `model_slots.active_model_id`와
+    같은지만 본다 -- 그 모델 파일이 `models/`에 실제로 있는지는 확인하지
+    않는다. 스냅샷이 이미 저장된 뒤 `models/`가 비워지고(예: 배포 볼륨
+    유실) 서버가 재시작되면, 이 게이트가 "유효한 스냅샷 있음"으로 잘못
+    판단해 `_run_bootstrap`을 건너뛰었다 -- 그 결과 런타임 요청은 영원히
+    409로 막히고 아무도 재학습을 트리거하지 않았다(실제 재현 시나리오).
+    `_has_usable_champion`으로 파일 존재까지 확인해야만 건너뛴다."""
     store = _bootstrap_runtime_store()
     try:
-        if store.has_valid_snapshot() or store.get_manual_eval_override() is not None:
+        if store.get_manual_eval_override() is not None:
+            return
+        if store.has_valid_snapshot() and _has_usable_champion(store):
             return
         if not store.acquire_bootstrap_lock():
             logger.info("bootstrap: 다른 인스턴스가 이미 진행 중이라 건너뜁니다.")
@@ -203,6 +266,50 @@ async def _bootstrap_snapshot_background() -> None:
             store.release_bootstrap_lock()
     except Exception:
         logger.exception("bootstrap: 예기치 않은 오류")
+
+
+def ensure_usable_champion(store: RuntimeStore) -> bool:
+    """RA-B2/B4: 런타임 요청(`api/routes/analysis.py::_hydrated_targets_or_409`
+    등, 409를 올리기 직전)이 챔피언 모델을 로드하지 못했을 때 호출하는
+    복구 훅. `_bootstrap_snapshot_background`/`_run_bootstrap`과 같은
+    락(`acquire_bootstrap_lock`)과 같은 `bootstrap_status` 상태 머신을
+    그대로 재사용한다 -- 그래야 `BootstrapStatusBanner`가 새 폴링
+    인프라 없이 이 런타임발 재학습도 "첫 분석 진행 중" 배너로 보여준다.
+
+    이 함수는 이제 (부트스트랩 1회가 아니라) 409가 발생하는 요청마다
+    호출될 수 있으므로 빠른 경로(`_has_usable_champion`)가 저렴해야
+    한다 -- 실제로 파일 존재를 확인하는 로드 시도 정도라 무겁지 않다.
+
+    Returns:
+        True  -- 챔피언을 이미 즉시 쓸 수 있다(호출부는 그대로 진행).
+        False -- 복구가 필요하다. 이 호출로 막 새 복구를 스폰했거나,
+                 이미 다른 복구/부트스트랩이 진행 중이라 스폰하지 않았다
+                 -- 어느 쪽이든 호출부는 지금 이 요청에 대해서는 여전히
+                 409를 올리되(재학습은 초 단위가 아니라 분 단위로 걸려
+                 요청을 막고 기다릴 수 없다), 응답에 "복구 진행 중"
+                 신호를 함께 실어 보낸다.
+    """
+    if _has_usable_champion(store):
+        return True
+    if not store.acquire_bootstrap_lock():
+        logger.info("model recovery: 이미 다른 복구/부트스트랩이 진행 중이라 새로 시작하지 않습니다.")
+        return False
+    logger.warning("model recovery: 런타임 요청이 챔피언 모델 로드 실패를 감지해 재학습을 시작합니다.")
+
+    def _runner() -> None:
+        try:
+            asyncio.run(_run_bootstrap(store))
+        finally:
+            store.release_bootstrap_lock()
+
+    # RA-B4: 호출부(현재 요청을 처리 중인 FastAPI 스레드풀 워커)에는
+    # 실행 중인 asyncio 이벤트 루프가 없다(동기 `def` 라우트 핸들러에서
+    # 온 호출이므로) -- `asyncio.create_task`를 쓸 수 없다. 별도 데몬
+    # 스레드에서 자신만의 이벤트 루프로 `_run_bootstrap`을 돌려, 현재
+    # 요청을 절대 블록하지 않으면서도 기동 시 부트스트랩과 정확히 같은
+    # 코루틴을 재사용한다.
+    threading.Thread(target=_runner, name="model-recovery", daemon=True).start()
+    return False
 
 
 @asynccontextmanager
