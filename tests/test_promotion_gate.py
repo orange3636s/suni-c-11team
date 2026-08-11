@@ -28,8 +28,10 @@ def _cleanup(path: Path) -> None:
         path.parent.rmdir()
 
 
-def _metadata(r2: float, model_id: str, target_metrics: dict | None = None) -> dict:
-    metadata = {"model_id": model_id, "metrics": {"test": {"r2": r2}}}
+def _metadata(r2_adjusted: float, model_id: str, target_metrics: dict | None = None) -> dict:
+    # 전체 지표는 Adjusted R²(metrics.test.r2_adjusted) -- 학습 팝업의
+    # "모델 성능" 첫 줄과 같은 수를 이력에도 남긴다.
+    metadata = {"model_id": model_id, "metrics": {"test": {"r2_adjusted": r2_adjusted}}}
     if target_metrics is not None:
         metadata["target_metrics"] = target_metrics
     return metadata
@@ -72,6 +74,7 @@ def test_much_worse_challenger_is_still_promoted_unconditionally():
 
         events = store.list_promotion_events()
         assert events[0]["promoted"] == 1
+        assert "Adj R²" in events[0]["reason"]
         assert "0.2000" in events[0]["reason"] or "0.0100" in events[0]["reason"]
     finally:
         _cleanup(path)

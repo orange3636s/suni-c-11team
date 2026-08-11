@@ -17,11 +17,16 @@ from api.settings import settings
 logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 
-# RB-4: 승격 게이트(R² 임계 판정)는 제거됐다 -- 학습이 성공하면 무조건
-# 교체한다. 이 값은 "막는" 기준이 아니라 "경고하는" 기준으로만 남는다:
-# 모드별(Y1~Y5) R²가 활성 모델 대비 이 비율 이상 떨어지면 교체는 그대로
-# 하되 reason에 저하 사실을 남긴다("교체는 하되 침묵하지 마라").
+# "막는" 기준이 아니라 "경고하는" 기준이다 -- 모드별(Y1~Y5) R²가 활성
+# 모델 대비 이 비율 이상 떨어지면 교체는 그대로 하되 reason에 저하 사실을
+# 남긴다. 학습이 성공하면 교체 자체는 언제나 일어난다.
 REGRESSION_WARNING_RATIO = 0.5
+
+
+# 교체 이력 문자열에 찍는 지표 이름 -- 키 이름(`r2_adjusted`)을 그대로
+# 노출하지 않는다. 학습 팝업의 "모델 성능" 첫 줄과 같은 지표를 같은
+# 이름으로 부르기 위한 매핑이다.
+_METRIC_LABELS = {"r2": "R²", "r2_adjusted": "Adj R²"}
 
 
 def _per_target_r2_regressions(
@@ -30,7 +35,7 @@ def _per_target_r2_regressions(
     *,
     warning_ratio: float,
 ) -> list[str]:
-    """RB-4: 모드별(Y1~Y5) R² 저하 목록 -- 활성 모델 대비 `warning_ratio`
+    """모드별(Y1~Y5) R² 저하 목록 -- 활성 모델 대비 `warning_ratio`
     이상 떨어진 타깃만 문자열로 반환한다(정상 범위 변동은 조용히
     넘어간다). 활성 R²가 0 이하이면 비율 계산이 무의미해 건너뛴다."""
     if not candidate or not active:
@@ -49,41 +54,36 @@ def _per_target_r2_regressions(
             regressions.append(f"{target} R² {active_r2:.2f} → {candidate_r2:.2f} (저하)")
     return regressions
 
-# J-3: 자동 갱신 스냅샷 스키마 버전 -- 필드 모양이 호환되지 않게 바뀌면
-# 올린다. 복원 시 이 값이 다르면 옛 스냅샷을 쓰지 않는다(그대로 쓰면
-# 백엔드 로직이 바뀐 뒤에도 옛 스냅샷이 새 화면을 덮어쓴다).
-# v4: analysis 블록에 FMEA 분석표(fmea)가 추가됐다 -- 모니터링 홈 재편
-# (지시서 IA)로 옛 스냅샷에는 이 키가 없다.
-# v6: 사이드바 4버튼 재편(지시서 SA~SF) -- analysis 블록에 수율 예측
-# 테이블(yieldPrediction)이 추가됐다. 네 화면(모니터링/트리맵/원인분석/
-# 수율예측)이 하나의 analysis_id를 공유하도록 "모델 분석" 파이프라인이
-# 수율 예측도 함께 계산해 캐시한다 -- 옛 스냅샷에는 이 키가 없다.
+# 자동 갱신 스냅샷 스키마 버전 -- analysis 블록의 필드 모양이 호환되지
+# 않게 바뀌면(키 추가/이름 변경 포함) 반드시 올린다. 복원 시 이 값이
+# 다르면 저장된 스냅샷을 버린다. 올리지 않으면 백엔드 로직이 바뀐 뒤에도
+# 예전 모양의 스냅샷이 새 화면을 덮어쓴다.
 REFRESH_SNAPSHOT_SCHEMA_VERSION = 6
 REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
-# 작업지시 T4: 파이프라인 재시작 시 이어하기 판정용 체크포인트 -- 화면이
-# 읽는 REFRESH_SNAPSHOT_STATE_KEY와 별개다(아래 save_refresh_checkpoint
+# 파이프라인 재시작 시 이어하기 판정용 체크포인트 -- 화면이 읽는
+# REFRESH_SNAPSHOT_STATE_KEY와 별개다(아래 save_refresh_checkpoint
 # 독스트링 참고).
 REFRESH_CHECKPOINT_STATE_KEY = "automation:refresh_checkpoint"
 
-# SA~SF: 4화면 원자적 분석 진행 상태 -- "분석 시작"이 도는 동안 네 화면이
+# 4화면 원자적 분석 진행 상태 -- "분석 시작"이 도는 동안 네 화면이
 # 같은 진행 표시("분석 진행 중… (2/4) 원인 분석")를 보여줄 수 있게
 # app_state에 얹는다(전용 테이블을 새로 만들지 않는다 -- bootstrap_status와
 # 같은 패턴). 완료/실패 시 지운다 -- 값이 남아 있으면 "아직 진행 중"으로
 # 오판한다.
 ANALYSIS_PROGRESS_STATE_KEY = "automation:analysis_progress"
 
-# 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"의 최근 실행
-# 결과(성공/실패 + 실패 단계·사유) -- ANALYSIS_PROGRESS_STATE_KEY와 달리
-# 실행이 끝난 뒤에도 남는다(다음 실행이 시작될 때만 덮어써진다).
+# "분석 시작"의 최근 실행 결과(성공/실패 + 실패 단계·사유) --
+# ANALYSIS_PROGRESS_STATE_KEY와 달리 실행이 끝난 뒤에도 남는다(다음
+# 실행이 시작될 때만 덮어써진다).
 LAST_RUN_STATE_KEY = "automation:last_run"
 
-# SD: 자동화(주기 SQL 수율 예측 발송) 설정 -- "모델 학습" 팝업이 쓰던
+# 자동화(주기 SQL 수율 예측 발송) 설정 -- "모델 학습" 팝업이 쓰는
 # `training` 슬롯과 분리한다(자동화는 학습과 무관한 별개 개념이므로 같은
 # 슬롯에 얹으면 "학습 데이터 저장"과 "자동화 설정 저장"이 서로의 필드를
 # 덮어쓸 위험이 있다).
 AUTOMATION_SETTINGS_STATE_KEY = "automation:settings"
 
-# W-2/W-6: 첫 기동 스냅샷 부트스트랩 -- 단일 실행 잠금과 진행 상태를
+# 첫 기동 스냅샷 부트스트랩 -- 단일 실행 잠금과 진행 상태를
 # app_state 테이블에 얹는다(전용 테이블을 새로 만들지 않는다). 잠금은
 # 프로세스가 죽어 release가 호출되지 못한 경우를 대비해 일정 시간이
 # 지나면 다른 프로세스가 가져갈 수 있게 한다(영구 데드락 방지).
@@ -91,12 +91,12 @@ BOOTSTRAP_LOCK_STATE_KEY = "automation:bootstrap_lock"
 BOOTSTRAP_STATUS_STATE_KEY = "automation:bootstrap_status"
 BOOTSTRAP_LOCK_STALE_SECONDS = 3600
 
-# AG: 업로드로 활성화된 수동 평가 데이터셋 (RuntimeStore.set/get/clear_manual_eval_override).
+# 업로드로 활성화된 수동 평가 데이터셋 (RuntimeStore.set/get/clear_manual_eval_override).
 MANUAL_EVAL_OVERRIDE_STATE_KEY = "automation:manual_eval_override"
 
 
 def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
-    """D-1: 같은 (dataset, target, feature, viewType)는 같은 즐겨찾기로
+    """같은 (dataset, target, feature, viewType)는 같은 즐겨찾기로
     본다 -- viewType을 빼면 Box 뷰로 저장하려는 클릭이 기존 Scatter
     즐겨찾기와 같은 키로 잡혀 그것을 지워버린다(프런트가 dedupe 판단에
     쓰는 키와 반드시 같아야 한다, root-cause/page.tsx의 favoriteKeyOf)."""
@@ -104,9 +104,8 @@ def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
 
 
 class RuntimeStore:
-    # E-1: 매 요청마다 새 RuntimeStore(...)를 만드는 라우트가 30여 곳이다
-    # (Depends 기반 싱글턴으로 전부 바꾸는 건 이 배치 범위를 넘는 리팩터라
-    # 하지 않는다) -- 진짜 비용은 인스턴스 생성 자체가 아니라
+    # 매 요청마다 새 RuntimeStore(...)를 만드는 라우트가 30여 곳이다 --
+    # 진짜 비용은 인스턴스 생성 자체가 아니라
     # `_initialize()`가 매번 CREATE TABLE 9개 + ALTER TABLE 점검을 전역
     # `_lock` 아래 다시 실행해, 모든 설정 조회가 학습 잡의 쓰기와 경합하는
     # 것이다. DB 파일 경로별로 프로세스당 한 번만 실행되도록 막는다 --
@@ -286,11 +285,11 @@ class RuntimeStore:
                 ON notify_history(sent_at DESC);
                 """
             )
-            # D-7: notify_sent_log은 원래 채널 구분 없이 (dataset, wafer,
-            # grade)만 기록했다 -- 한 채널만 성공해도 발송 완료로 찍혀서
-            # 실패한 채널은 24시간 동안 재시도되지 않았다. CREATE TABLE IF
-            # NOT EXISTS는 이미 만들어진 테이블에 컬럼을 추가하지 않으므로
-            # 여기서 직접 확인 후 ALTER TABLE한다.
+            # 이미 만들어진 배포 DB에는 이 컬럼들이 없을 수 있다 --
+            # CREATE TABLE IF NOT EXISTS는 기존 테이블에 컬럼을 추가하지
+            # 않으므로 여기서 직접 확인 후 ALTER TABLE한다. channel이 없으면
+            # 한 채널만 성공해도 발송 완료로 찍혀 실패한 채널이 24시간 동안
+            # 재시도되지 않는다.
             existing_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notify_sent_log)")}
             if "channel" not in existing_columns:
                 connection.execute("ALTER TABLE notify_sent_log ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
@@ -302,7 +301,7 @@ class RuntimeStore:
                 """CREATE INDEX IF NOT EXISTS idx_notify_sent_log_dedupe
                 ON notify_sent_log(dataset_id, channel, model_version, criteria_version, wafer_id, sent_at DESC)"""
             )
-            # EB그룹: 발송/차단 이력에서 출처(수동 업로드/폴백 데모)를
+            # 발송/차단 이력에서 출처(수동 업로드/폴백 데모)를
             # 나중에 추적할 수 있도록 컬럼을 추가한다 -- 위와 같은 이유로
             # CREATE TABLE IF NOT EXISTS만으로는 기존 DB에 반영되지 않는다.
             dispatch_log_columns = {row["name"] for row in connection.execute("PRAGMA table_info(refresh_dispatch_log)")}
@@ -370,19 +369,25 @@ class RuntimeStore:
         pipeline_version: str,
         dataset_version: int,
         metadata: dict[str, Any],
-        metric_path: tuple[str, ...] = ("metrics", "test", "r2"),
+        metric_path: tuple[str, ...] = ("metrics", "test", "r2_adjusted"),
         regression_warning_ratio: float = REGRESSION_WARNING_RATIO,
     ) -> dict[str, Any]:
-        """RB-4: 승격 게이트를 제거했다 -- 학습이 성공하면 무조건 교체한다
-        (기존 R² 임계 판정과 GATING 상태 전이는 없다). 다만 "교체는 하되
-        침묵하지 마라" -- 활성 모델 대비 전체 지표 변화를 reason에 남기고,
-        모드별(Y1~Y5) R²가 어느 하나라도 `regression_warning_ratio`
-        (기본 50%) 이상 떨어졌으면 그 사실을 reason에 "(저하)"로 덧붙여
-        경고로 구분한다. `TrainingPanel`은 reason에 "저하"가 있으면 경고
-        스타일로 보여준다 -- 별도 배지 필드를 새로 만들지 않는다.
+        """학습이 성공하면 챔피언 모델을 무조건 교체한다 -- 성능을 근거로
+        교체를 막지 않는다. 다만 교체하되 침묵하지는 않는다: 활성 모델 대비
+        전체 지표 변화를 reason에 남기고, 모드별(Y1~Y5) R²가 어느 하나라도
+        `regression_warning_ratio`(기본 50%) 이상 떨어졌으면 그 사실을
+        reason에 "(저하)"로 덧붙여 경고로 구분한다. `TrainingPanel`은
+        reason에 "저하"가 있으면 경고 스타일로 보여준다 -- 별도 배지 필드를
+        두지 않는다.
 
         수동 학습("수동 학습 실행")과 자동 재학습이 이 메서드 하나를
         공유하므로 두 경로 모두 같은 방식으로 교체·기록된다.
+
+        전체 지표는 학습 팝업의 "모델 성능" 첫 줄과 같은 Adjusted R²
+        (`metrics.test.r2_adjusted`, src/ml/pipeline.py::_pooled_metrics)를
+        쓴다 -- 화면에 두 종류의 R²가 나란히 보이지 않게 하기 위함이다.
+        그 키가 없는 활성 모델을 만나면 "지표 비교 불가(Adj R² 없음)"로 한
+        번 남고, 다음 교체부터 정상 비교된다.
         """
         def _dig(source: dict[str, Any] | None) -> float | None:
             node: Any = source
@@ -392,7 +397,7 @@ class RuntimeStore:
                 node = node.get(key)
             return float(node) if isinstance(node, (int, float)) else None
 
-        metric_name = metric_path[-1]
+        metric_name = _METRIC_LABELS.get(metric_path[-1], metric_path[-1])
         active = self.active_model()
         candidate_metric = _dig(metadata)
         active_metadata = active.get("metadata") if active else None
@@ -463,7 +468,7 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def create_favorite(self, favorite_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-        """D-1: (dataset, target, feature, viewType)가 같은 즐겨찾기가 이미
+        """(dataset, target, feature, viewType)가 같은 즐겨찾기가 이미
         있으면 새로 만들지 않고 그 레코드를 그대로 돌려준다 -- 프런트의
         더블클릭 가드(ref 기반)는 같은 브라우저 탭 안에서만 막는다. 두 탭
         에서 거의 동시에 누르거나 요청이 늦게 도착하는 경우까지 막으려면
@@ -826,11 +831,11 @@ class RuntimeStore:
         return {key: found.get(key) for key in state_keys}
 
     def has_corrupted_app_state(self, state_keys: list[str]) -> bool:
-        """D-2: true if any of these keys holds a value that failed to
+        """True if any of these keys holds a value that failed to
         JSON-decode -- `get_all_app_state` silently maps that to the same
         `None` a never-saved key returns, so a caller that needs to
-        distinguish "restore failed" from "nothing to restore" (spec:
-        복원 실패와 DB 손상이 조용히 '결과 없음'과 같아 보이면 안 된다)
+        distinguish "restore failed" from "nothing to restore" -- 복원
+        실패와 DB 손상이 조용히 "결과 없음"과 같아 보이면 안 된다 --
         must check separately here rather than inferring it from `None`.
         """
         if not state_keys:
@@ -853,8 +858,8 @@ class RuntimeStore:
             cursor = connection.execute("DELETE FROM app_state WHERE state_key=?", (state_key,))
             return cursor.rowcount > 0
 
-    # -- 알림 발송 이력 (spec 알림 연동 §C-7: 동일 (dataset, wafer, grade) 조합은
-    # 24시간 내 재발송하지 않는다) --
+    # -- 알림 발송 이력 (동일 (dataset, wafer, grade) 조합은 24시간 내
+    # 재발송하지 않는다) --
 
     def recent_notifications(
         self,
@@ -865,7 +870,7 @@ class RuntimeStore:
         model_version: str = "",
         criteria_version: str = "",
     ) -> list[dict[str, Any]]:
-        """D-7: channel별로 조회한다 -- 채널을 구분하지 않으면 한 채널만
+        """channel별로 조회한다 -- 채널을 구분하지 않으면 한 채널만
         성공해도 다른(실패한) 채널까지 24시간 동안 "이미 발송됨"으로
         보여 재시도되지 않는다."""
         with _lock, self._connect() as connection:
@@ -900,7 +905,7 @@ class RuntimeStore:
             )
 
     def purge_old_notification_log(self, *, older_than_iso: str) -> int:
-        """H-3②: notify_sent_log는 24시간 재발송 방지 조회(recent_notifications)
+        """notify_sent_log는 24시간 재발송 방지 조회(recent_notifications)
         용도라 그보다 훨씬 오래된 행은 볼 일이 없다 -- 지우지 않으면 이
         테이블이 무한히 커진다. 발송 잡과는 별도 스케줄 id로 도는 주기
         정리 잡이 호출한다."""
@@ -911,7 +916,7 @@ class RuntimeStore:
             return cursor.rowcount
 
     def notifications_sent_since(self, since_iso: str) -> int:
-        """J-5: 시간당 발송 예산 확인용 -- 채널·데이터셋 구분 없이 최근
+        """시간당 발송 예산 확인용 -- 채널·데이터셋 구분 없이 최근
         발송 건수를 센다(과도한 발송 자체를 막는 전역 안전판이다)."""
         with _lock, self._connect() as connection:
             row = connection.execute(
@@ -962,13 +967,13 @@ class RuntimeStore:
             results.append(item)
         return results
 
-    # -- 자동 갱신 파이프라인 스냅샷 (J-3) --------------------------------
+    # -- 자동 갱신 파이프라인 스냅샷 -------------------------------------
 
     def save_refresh_snapshot(self, snapshot: dict[str, Any]) -> None:
         """model/analysis/alarms/monitoring 네 블록을 하나의 JSON
         문서로 묶어 단일 UPSERT로 저장한다 -- 네 번 나눠 쓰면 중간에
         실패했을 때 화면마다 다른 시점의 데이터가 섞인다(예: 알람은 새
-        목표 기준인데 모니터링은 옛 기준인 상태가 실제로 있었다). 하나의
+        목표 기준인데 모니터링은 낡은 기준을 그리는 상태가 된다). 하나의
         SQL 문 = 하나의 트랜잭션이므로 이 방식 자체로 원자성이 보장된다.
         """
         record = {**snapshot, "schema_version": REFRESH_SNAPSHOT_SCHEMA_VERSION}
@@ -982,7 +987,7 @@ class RuntimeStore:
 
     def get_refresh_snapshot_status(self) -> dict[str, Any]:
         """`schema_version`이 다르면 복원하지 않는다 -- 백엔드 로직이
-        바뀐 뒤 옛 스냅샷이 새 화면을 조용히 덮어쓰는 사고를 막는다.
+        바뀐 뒤 낡은 스냅샷이 새 화면을 조용히 덮어쓰는 사고를 막는다.
         "저장된 적 없음"과 "저장은 됐는데 버전이 옛날 것이라 못 씀"을
         구분해야 안내 문구가 달라지므로 `stale_version`을 따로 둔다."""
         raw = self.get_app_state(REFRESH_SNAPSHOT_STATE_KEY)
@@ -1006,9 +1011,9 @@ class RuntimeStore:
             }
         return {"snapshot": raw, "stale_version": False}
 
-    # -- 작업지시 T4: 파이프라인 단계별 체크포인트 -------------------------
+    # -- 파이프라인 단계별 체크포인트 -------------------------------------
     #
-    # "화면이 보는" `REFRESH_SNAPSHOT_STATE_KEY`와는 별개의 키다 -- SC-3의
+    # "화면이 보는" `REFRESH_SNAPSHOT_STATE_KEY`와는 별개의 키다 -- 원자적
     # "넷 다 성공해야 교체" 원자성 원칙은 그대로 지킨다(화면은 여전히
     # 완주한 분석만 본다). 이 체크포인트는 오직 파이프라인 자기 자신이
     # "재시작 후 이미 끝낸 단계를 건너뛸 수 있는지" 판단하는 데만 쓴다 --
@@ -1025,7 +1030,7 @@ class RuntimeStore:
 
     def get_refresh_checkpoint(self, analysis_id: str) -> dict[str, Any] | None:
         """`analysis_id`가 일치할 때만 돌려준다 -- 입력(데이터셋/모델
-        버전)이 바뀌었으면 옛 체크포인트는 무의미하다."""
+        버전)이 바뀌었으면 낡은 체크포인트는 무의미하다."""
         checkpoint = self.get_app_state(REFRESH_CHECKPOINT_STATE_KEY)
         if checkpoint is None or checkpoint.get("analysis_id") != analysis_id:
             return None
@@ -1043,12 +1048,12 @@ class RuntimeStore:
         return {"created_at": status["snapshot"].get("created_at")}
 
     def has_valid_snapshot(self) -> bool:
-        """W-2: 스키마 버전이 맞는 스냅샷이 이미 있으면 부트스트랩을
-        건너뛴다는 판단에 쓰는 헬퍼."""
+        """스키마 버전이 맞는 스냅샷이 이미 있으면 부트스트랩을 건너뛴다는
+        판단에 쓰는 헬퍼."""
         status = self.get_refresh_snapshot_status()
         return status["snapshot"] is not None and not status["stale_version"]
 
-    # -- AG: 업로드로 활성화된 "수동 평가 데이터셋" ------------------------
+    # -- 업로드로 활성화된 "수동 평가 데이터셋" ---------------------------
     # 원인 분석·수율 예측에서 새 파일을 올리면 이 값이 채워지고,
     # `src.automation.refresh._resolve_source`가 SQL/폴백보다 먼저
     # 이 값을 본다 -- 주기 잡이 도는 동안에도 사용자가 올린 파일이
@@ -1066,7 +1071,7 @@ class RuntimeStore:
     def clear_manual_eval_override(self) -> bool:
         return self.delete_app_state(MANUAL_EVAL_OVERRIDE_STATE_KEY)
 
-    # -- 첫 기동 스냅샷 부트스트랩 단일 실행 잠금 (W-2) -------------------
+    # -- 첫 기동 스냅샷 부트스트랩 단일 실행 잠금 -------------------------
 
     def acquire_bootstrap_lock(self) -> bool:
         """app_state를 잠금으로 재사용한다(전용 잠금 테이블을 새로 만들지
@@ -1099,13 +1104,13 @@ class RuntimeStore:
         error: str | None = None,
         reason: str | None = None,
     ) -> None:
-        """W-4: 프런트가 `/api/state/snapshot/meta`로 읽어 진행 배너에
+        """프런트가 `/api/state/snapshot/meta`로 읽어 진행 배너에
         쓴다. 실제 학습 진행률(0~99%)은 이미 `training_jobs.progress`가
         갖고 있으므로 여기서는 다시 만들지 않고, 큰 단계 이름(stage)만
         남긴다 -- 없으면 프런트는 '첫 분석 진행 중'만 보여주고 가짜
         진행률을 만들지 않는다.
 
-        RA-B5: `reason`은 `status="failed"`일 때만 의미가 있는, 실패
+        `reason`은 `status="failed"`일 때만 의미가 있는, 실패
         원인을 구분하는 짧은 코드다(예: 내장 학습 데이터 자체가 없는
         "bundled_train_data_missing" -- 이 경우만 정말 복구 불가능이라
         `BootstrapStatusBanner`가 재시도 버튼 없는 구체적 안내를 보여준다).
@@ -1137,7 +1142,7 @@ class RuntimeStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    # -- 자동 갱신 알림 발송 기록 (J-5) -----------------------------------
+    # -- 자동 갱신 알림 발송 기록 ------------------------------------------
 
     def record_refresh_dispatch(
         self,
@@ -1149,7 +1154,7 @@ class RuntimeStore:
         source: str | None = None,
     ) -> None:
         """차단된 경우에도 기록한다 -- "왜 안 보냈는지"가 수율 예측
-        화면에서 보여야 한다. `source`(EB그룹)는 이 사이클이 어느 데이터
+        화면에서 보여야 한다. `source`는 이 사이클이 어느 데이터
         출처(수동 업로드/폴백 데모/None=SQL 자동 갱신)에서 나온 것인지
         -- 나중에 "이 알람이 왜 왔지"를 추적할 수 있게 남긴다."""
         with _lock, self._connect() as connection:
@@ -1181,9 +1186,9 @@ class RuntimeStore:
             results.append(value)
         return results
 
-    # -- SC/SF-3: "분석 시작"(8단계 원자적 파이프라인) 진행 상태 ----------
+    # -- "분석 시작"(8단계 원자적 파이프라인) 진행 상태 -------------------
     #
-    # 작업지시 T5/T8-3: 프로세스가 죽으면(OOM 등으로 컨테이너가 강제
+    # 프로세스가 죽으면(OOM 등으로 컨테이너가 강제
     # 재시작되면) 이 값을 지우는 정상 종료 경로(`clear_analysis_progress`)가
     # 실행될 기회 자체가 없다 -- DB에는 "진행 중… (3/8)"가 그대로 남아
     # 프런트 배너가 영원히 "진행 중"을 보여준다. `heartbeat_at`을 함께
@@ -1203,7 +1208,7 @@ class RuntimeStore:
         row_count: int | None = None,
         estimated_seconds: int | None = None,
     ) -> None:
-        # T7-2: row_count/estimated_seconds는 옵셔널이다 -- 부트스트랩 등
+        # row_count/estimated_seconds는 옵셔널이다 -- 부트스트랩 등
         # 행 수를 아직 모르는 호출부는 생략해도 된다(배너는 그 값이 없으면
         # 행수/예상 소요 문구를 그냥 붙이지 않는다).
         self.set_app_state(
@@ -1244,7 +1249,7 @@ class RuntimeStore:
         if self.clear_analysis_progress():
             logger.warning("analysis_progress: 부팅 시 고아 진행 상태를 정리했습니다.")
 
-    # -- 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작" 최근 실행
+    # -- "분석 시작" 최근 실행
     # 상태 -- `analysis_progress`(위)는 "지금 도는 중"만 말하고 완료·실패
     # 여부는 남기지 않는다. 이 레코드는 실행이 끝난 뒤에도 남아, 백그라운드
     # 실행이 조용히 실패했을 때("triggered: true"는 받았는데 스냅샷이
@@ -1307,9 +1312,9 @@ class RuntimeStore:
             )
             logger.warning("last_run: 부팅 시 고아 실행 상태를 failed로 정리했습니다.")
 
-    # -- SD: 자동화(주기 SQL 수율 예측 발송) 설정 --------------------------
-    # "모델 학습" 슬롯(`training`)과 분리된 전용 슬롯 -- SD-1 팝업이 읽고
-    # 쓴다. 저장되지 않은 값은 전부 비활성/미설정으로 취급한다.
+    # -- 자동화(주기 SQL 수율 예측 발송) 설정 ------------------------------
+    # "모델 학습" 슬롯(`training`)과 분리된 전용 슬롯 -- "알림·자동화 설정"
+    # 팝업이 읽고 쓴다. 저장되지 않은 값은 전부 비활성/미설정으로 취급한다.
 
     _AUTOMATION_SETTINGS_DEFAULTS: dict[str, Any] = {
         "enabled": False,
@@ -1329,7 +1334,7 @@ class RuntimeStore:
 
     def save_automation_settings(self, **fields: Any) -> dict[str, Any]:
         """부분 갱신 -- 넘긴 필드만 덮어쓰고 나머지는 기존 값을 유지한다
-        (SD-1 폼 저장과 SD-2 잡의 lastRunAt 갱신이 서로의 필드를 지우지
+        (설정 폼 저장과 주기 잡의 lastRunAt 갱신이 서로의 필드를 지우지
         않게 한다)."""
         current = self.get_automation_settings()
         current.update(fields)
@@ -1353,9 +1358,9 @@ class RuntimeStore:
         message_text: str | None = None,
         sent_count: int = 0,
     ) -> None:
-        """SE-3: 발송 당시의 메시지 원문을 그대로 저장한다 -- 나중에
-        재계산하지 않는다(지금 데이터로 다시 만들면 다른 결과가 나온다).
-        발송/건너뜀 둘 다 기록한다(SE-2 "건너뜀도 표시")."""
+        """발송 당시의 메시지 원문을 그대로 저장한다 -- 나중에 재계산하지
+        않는다(지금 데이터로 다시 만들면 다른 결과가 나온다). 발송/건너뜀
+        둘 다 기록한다."""
         now = datetime.now(timezone.utc).isoformat()
         with _lock, self._connect() as connection:
             connection.execute(
@@ -1377,7 +1382,7 @@ class RuntimeStore:
         self._purge_notify_history_locked()
 
     def _purge_notify_history_locked(self) -> int:
-        """SE-4: 최근 100건 또는 30일 중 더 좁은 쪽을 넘는 행은 지운다 --
+        """최근 100건 또는 30일 중 더 좁은 쪽을 넘는 행은 지운다 --
         무한히 쌓이면 DB가 커진다. 쓰기 경로에서 매번 호출해 별도 정리
         잡 없이도 상한을 유지하고, 정리 잡(run_notify_history_cleanup_job)은
         서버가 오래 안 쓰여 자연 삽입이 없는 경우를 위한 보조 수단이다."""

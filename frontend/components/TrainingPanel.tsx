@@ -13,14 +13,13 @@ import {
 } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import type { ModelPerformanceResponse, PromotionEvent, TargetPerformance } from "@/types/data";
+import type { ModelPerformanceResponse, PromotionEvent } from "@/types/data";
 
-// RA-1: 모델 학습·자동화 통합 팝업을 둘로 나눈다 -- 이 팝업은 학습
-// 전용(수동 업로드만, RB-3)이다. SQL 연결·refresh time은
-// ModelAnalysisPanel.tsx로 옮겼다(RA-2: 자동화는 분석의 입력이므로
-// 분석 팝업에 속한다 -- 이 팝업에 다시 두지 않는다).
+// 이 팝업은 학습 전용(수동 업로드만)이다. SQL 연결·refresh time은
+// 자동화 설정이고 자동화는 분석의 입력이므로 ModelAnalysisPanel.tsx가
+// 담당한다 -- 여기에 두지 않는다.
 //
-// B-11: ModelAnalysisPanel과 같은 3구획 형태로 맞춘다 -- ① 현재 학습
+// ModelAnalysisPanel과 같은 3구획 형태로 맞춘다 -- ① 현재 학습
 // 데이터(모델 성능 포함) ② 학습 데이터 변경 ③ 학습 시작. 클래스는
 // settingsSection/settingsSectionDesc를 그대로 쓴다.
 function formatNextRefresh(createdAtIso: string | null | undefined, refreshIntervalMinutes: number | null | undefined): string | null {
@@ -30,22 +29,51 @@ function formatNextRefresh(createdAtIso: string | null | undefined, refreshInter
   return formatLastRun(new Date(created.getTime() + refreshIntervalMinutes * 60_000).toISOString());
 }
 
-// B-6: R²가 음수이거나 없으면 "-0.00"처럼 오해를 부르는 숫자를 찍지
-// 않는다 -- 실제로 -0.0025 같은 값이 나온 이력이 있다. RMSE는 R²의
-// 부호와 무관하게 여전히 유효한 오차 크기라 별도로 판단한다.
-function formatR2(r2: number | null): string {
-  if (r2 == null || r2 < 0) return "학습 데이터에 신호가 없어 평가 불가";
-  return `R² ${r2.toFixed(2)}`;
+// "모델 성능" 개편: 이 팝업은 전체 Y(홀드아웃) 하나만 보여준다 --
+// 모드별(Y1~Y5) R²/RMSE 나열과 그에 딸린 "신호 없음" 문구는 원인분석
+// 화면(모드별 근거 강도)의 몫이라 여기서 뺐다.
+//
+// 값이 없으면(이 변경 전에 학습된 모델, 또는 홀드아웃이 축퇴해 AUC가
+// 정의되지 않는 경우) 숫자를 지어내지 않고 "-"를 찍는다.
+const NO_VALUE = "-";
+
+// 단위 규칙: RMSE·MAE만 %p. Adjusted R²·AUC는 무차원, MSE는 제곱값이라
+// 어떤 단위도 붙이지 않는다("%p²"로 쓰지 않는다 -- 설명 문구가 대신한다).
+function formatAdjR2(value: number | null | undefined): string {
+  return value == null ? NO_VALUE : value.toFixed(4);
 }
 
-function formatRmse(rmse: number | null): string | null {
-  if (rmse == null) return null;
-  return `RMSE ${rmse.toFixed(2)} %p`;
+function formatRmse(value: number | null | undefined): string {
+  return value == null ? NO_VALUE : `${value.toFixed(2)} %p`;
 }
 
-function targetPerformanceLine(t: TargetPerformance): string {
-  const parts = [formatR2(t.r2), formatRmse(t.rmse)].filter((part): part is string => part != null);
-  return `${t.target} ${parts.join(" · ")}`;
+function formatMae(value: number | null | undefined): string {
+  return value == null ? NO_VALUE : `${value.toFixed(2)} %p`;
+}
+
+function formatMse(value: number | null | undefined): string {
+  return value == null ? NO_VALUE : value.toFixed(2);
+}
+
+function formatAuc(value: number | null | undefined): string {
+  return value == null ? NO_VALUE : value.toFixed(3);
+}
+
+// 평가 근거 한 줄 -- evidenceLine과 같은 규칙으로 있는 값만 잇는다.
+function evaluationBasisLine(performance: ModelPerformanceResponse | null | undefined): string | null {
+  if (!performance) return null;
+  const parts: string[] = ["전체 Y"];
+  const n = performance.final_yield?.n;
+  if (n != null) parts.push(`홀드아웃 n=${n.toLocaleString()}`);
+  if (performance.feature_count != null) parts.push(`피처 ${performance.feature_count.toLocaleString()}`);
+  return parts.length > 1 ? parts.join(" · ") : null;
+}
+
+// 모델 ID는 같은 초에 끝난 학습끼리 충돌하지 않도록 마이크로초까지
+// 붙는다(LGBM_Y_20260811_162827_727307). 교체 이력 한 줄에서는 초까지만
+// 보여주고 전체 값은 title 툴팁에 남긴다.
+function shortModelId(modelId: string): string {
+  return /^(.+_\d{8}_\d{6})_\d+$/.exec(modelId)?.[1] ?? modelId;
 }
 
 // B-6④: "표본 10,000장 · 강함 등급 인자 3/5" -- 있는 값만 쓰고 없는 값은
@@ -71,24 +99,23 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  // 지시서 §2-2: 승격 여부와 무관한 최근 학습 시도 -- 게이트 미달로
-  // 교체되지 않았을 때 "학습은 돌았는데 모델은 그대로"임을 보여준다.
-  // RB-4: 승격 게이트 자체는 제거됐지만(무조건 교체), 성능 저하 시
-  // 경고를 보여주는 데 여전히 같은 이력을 재사용한다.
+  // 최근 학습 시도 이력. 학습이 끝나면 모델은 승격 게이트 없이 무조건
+  // 교체되지만, 이 이력의 reason에 담긴 성능 저하 여부로 경고를
+  // 띄운다.
   const [latestPromotion, setLatestPromotion] = useState<PromotionEvent | null>(null);
-  // A-4: promotion-history 라우트가 죽어 있어도(예: /models/{model_id}에
+  // promotion-history 라우트가 죽어 있어도(예: /models/{model_id}에
   // 가려짐) 조용히 "승격 이력 없음"으로 보이면 저하 사실이 통째로
   // 숨는다 -- 조회 실패와 "이력 없음"을 구분해서 보여준다.
   const [promotionHistoryError, setPromotionHistoryError] = useState(false);
-  // B-10-3: 잡 큐(jobId)와 별개인 동기 재학습 호출 -- "내장 데이터로
+  // 잡 큐(jobId)와 별개인 동기 재학습 호출 -- "내장 데이터로
   // 재학습" 진행 중임을 나타낸다. isRunning은 둘 중 하나만 있어도 true다.
   const [retraining, setRetraining] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // D-6: 폴링 이펙트(아래)는 deps가 [jobId]뿐이라 학습이 도는 동안 다른
+  // 폴링 이펙트(아래)는 deps가 [jobId]뿐이라 학습이 도는 동안 다른
   // 탭(모델 분석 팝업)에서 고친 sqlHost/refreshMinutes를 클로저가 시작
-  // 시점 값으로 붙잡고 있다 -- 완료 시점에 그 옛 값을 서버에 저장해
-  // 사용자가 학습 중 고친 값을 덮어써 버렸다. ref로 항상 최신값을 읽는다.
+  // 시점 값으로 붙잡고 있다 -- 완료 시점에 그 낡은 값을 서버에 저장하면
+  // 사용자가 학습 중 고친 값을 덮어쓴다. ref로 항상 최신값을 읽는다.
   const trainingRef = useRef(training);
   useEffect(() => {
     trainingRef.current = training;
@@ -131,7 +158,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
     const performance = await getModelPerformance().catch(() => null);
     if (!performance) return;
     const dataset = performance.source_filename || "training";
-    // D-6: 클로저의 training이 아니라 ref로 완료 시점의 최신
+    // 클로저의 training이 아니라 ref로 완료 시점의 최신
     // sqlHost/sqlPort/refreshIntervalMinutes(모델 분석 팝업이
     // 관리)를 읽어 그대로 보존한다 -- 이 팝업은 그 값을 모른다.
     const latestTraining = trainingRef.current;
@@ -221,6 +248,22 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   const performance = training?.performance;
   const isRunning = Boolean(jobId) || retraining;
 
+  // 순서 고정: Adjusted R² → RMSE → MAE → MSE → AUC.
+  const finalYield = performance?.final_yield ?? null;
+  const featureCount = performance?.feature_count ?? null;
+  const metricRows: { label: string; value: string; note: string }[] = [
+    {
+      label: "Adjusted R²",
+      value: formatAdjR2(finalYield?.r2_adjusted),
+      note: featureCount != null ? `값 설명력 (피처 ${featureCount.toLocaleString()} 보정)` : "값 설명력",
+    },
+    { label: "RMSE", value: formatRmse(finalYield?.rmse), note: "큰 오차 가중" },
+    { label: "MAE", value: formatMae(finalYield?.mae), note: "평균 오차" },
+    { label: "MSE", value: formatMse(finalYield?.mse), note: "제곱 오차 (RMSE의 원값)" },
+    // "하위 10%"는 백엔드의 AUC_BOTTOM_DECILE(0.10)을 그대로 가리킨다.
+    { label: "AUC", value: formatAuc(finalYield?.auc), note: "하위 10% 식별력" },
+  ];
+
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
       <div
@@ -276,37 +319,34 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
               </div>
             </dl>
 
-            {/* B-6: "모드별 R²" -> "모델 성능" -- 최종 수율(Y) 성능을 맨
-                위에, 타깃별은 R²·RMSE를 함께 보여준다(R²만으로는 오차
-                크기를 알 수 없다). */}
+            {/* "모델 성능" -- 전체 Y(홀드아웃) 하나에 대한 5개 지표를
+                Adjusted R² → RMSE → MAE → MSE → AUC 순으로 세로 나열한다.
+                모드별(Y1~Y5) 설명은 여기 넣지 않는다(원인분석 화면 몫). */}
             <p className="sectionLabel" style={{ marginTop: 14 }}>모델 성능</p>
-            <dl className="trainingInfoList">
-              <div>
-                <dt>최종 수율(Y)</dt>
-                <dd>
-                  {performance?.final_yield
-                    ? [formatR2(performance.final_yield.r2), formatRmse(performance.final_yield.rmse)]
-                        .filter((part): part is string => part != null)
-                        .join(" · ")
-                    : "-"}
-                </dd>
-              </div>
-            </dl>
-            {performance?.targets && performance.targets.length > 0 && (
-              <p className="sectionCaption" style={{ margin: "6px 0 0" }}>
-                {performance.targets.map(targetPerformanceLine).join(" / ")}
-              </p>
+            {evaluationBasisLine(performance) && (
+              <p className="sectionCaption" style={{ margin: "2px 0 8px" }}>{evaluationBasisLine(performance)}</p>
             )}
-            {evidenceLine(performance) && <p className="sectionCaption" style={{ margin: "2px 0 0" }}>{evidenceLine(performance)}</p>}
+            <dl className="modelMetricList">
+              {metricRows.map((row) => (
+                <div key={row.label}>
+                  <dt>
+                    <span className="modelMetricName">{row.label}</span>
+                    <span className="modelMetricNote">{row.note}</span>
+                  </dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+            {evidenceLine(performance) && <p className="sectionCaption" style={{ margin: "8px 0 0" }}>{evidenceLine(performance)}</p>}
 
-            {/* RB-4: 승격 게이트를 제거했으므로(무조건 교체) 여기 문구도
-                "게이트 미달"이 아니라 "교체됨 + 성능 변화"로 바뀐다.
-                latestPromotion.promoted는 이제 항상 true지만, reason에
-                성능 저하 여부가 담겨 있으면 그대로 보여준다(RB-4 "교체는
-                하되 침묵하지 마라"). */}
+            {/* 학습이 끝나면 모델은 무조건 교체되므로 문구도 "게이트
+                미달"이 아니라 "교체됨 + 성능 변화"다. latestPromotion.
+                promoted는 항상 true지만, reason에 성능 저하 여부가 담겨
+                있으면 교체 사실과 함께 그대로 보여준다. */}
             {latestPromotion && latestPromotion.promoted === 1 && (
               <p className={latestPromotion.reason.includes("저하") ? "notifyFieldError" : "notifyTestResult ok"}>
-                모델 {latestPromotion.candidate_model_id}로 교체됨 · {formatLastRun(latestPromotion.created_at)} · {latestPromotion.reason}
+                모델 <span title={latestPromotion.candidate_model_id}>{shortModelId(latestPromotion.candidate_model_id)}</span>로 교체됨 ·{" "}
+                {formatLastRun(latestPromotion.created_at)} · {latestPromotion.reason}
               </p>
             )}
             {promotionHistoryError && (

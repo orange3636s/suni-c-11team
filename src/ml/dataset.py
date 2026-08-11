@@ -33,7 +33,7 @@ def _duplicates(values: list[str]) -> list[str]:
 
 
 def has_target_column(dataframe: pd.DataFrame, target: str = TARGET_COLUMN) -> bool:
-    """단일 판정 기준(지시서 자동 수집 파이프라인 §1-4) -- 학습
+    """단일 판정 기준 -- 학습
     (`prepare_dataset`)과 자동 수집(`src/automation/ingest.py`)이 이
     함수 하나로 "Y 있음"을 판정한다. 최종 수율 컬럼 `Y`의 유무만 본다 --
     Y1~Y5나 Y6~Y10 같은 부분 라벨은 이 기준에서 "Y 없음"이다(학습

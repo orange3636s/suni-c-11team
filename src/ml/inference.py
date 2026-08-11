@@ -193,9 +193,9 @@ def _load_prediction_model_cached(
     model_mtime_ns: int,
     metadata_mtime_ns: int,
 ) -> LoadedPredictionModel:
-    # 지시서 E-2: mtime_ns 두 개는 캐시 키에만 쓰인다(_read_bundled_csv와
-    # 같은 패턴, src/runtime/datasets.py:199) -- 재학습으로 같은 model_id
-    # 파일이 덮어써져도 캐시가 stale 모델을 계속 돌려주지 않는다.
+    # mtime_ns 두 개는 캐시 키에만 쓰인다(_read_bundled_csv와 같은 패턴,
+    # src/runtime/datasets.py) -- 재학습으로 같은 model_id 파일이
+    # 덮어써져도 캐시가 stale 모델을 계속 돌려주지 않는다.
     del model_mtime_ns, metadata_mtime_ns
     model_path = Path(model_path_str)
     metadata_path = Path(metadata_path_str)
@@ -231,7 +231,7 @@ def load_prediction_model(
         raise InferenceInputError(
             "존재하지 않거나 사용할 수 없는 모델 ID입니다."
         )
-    # 지시서 E-2: target_hydration의 산점도 choke point(캐시 조회 전
+    # target_hydration의 산점도 choke point(캐시 조회 전
     # 단계)가 요청마다 이 함수를 부른다 -- joblib.load + JSON 파싱을 매번
     # 다시 하지 않도록 파일이 안 바뀐 동안은(mtime 동일) 로드 결과를
     # 재사용한다.
@@ -528,10 +528,10 @@ def _delete_prediction_model_locked(
             "심볼릭 링크 또는 Junction인 모델 Bundle은 삭제할 수 없습니다.",
             failed_files=[f"{model_id}/"],
         )
-    # H-1: model_id는 위에서 이미 `_validate_model_id`를 통과했으므로, 여기서
+    # model_id는 위에서 이미 `_validate_model_id`를 통과했으므로, 여기서
     # `_model_paths`가 여전히 `InvalidModelIdError`를 던질 수 있는 유일한
     # 경로는 "flat 파일이 심볼릭 링크를 통해 root 밖으로 resolve된다"는
-    # 삭제 안전성 문제뿐이다(§147-148) -- 잘못된 ID 형식과는 다른 오류이므로
+    # 삭제 안전성 문제뿐이다 -- 잘못된 ID 형식과는 다른 오류이므로
     # 삭제 경로에서는 `ModelDeletionError`로 다시 던져 호출자가 구분하게
     # 한다.
     try:
@@ -755,9 +755,9 @@ def delete_prediction_model(
     return delete_model_bundle(model_id, model_dir).deleted_files
 
 
-# ND-4: 보관 정책 -- 최근 이 개수만큼의 세트(+ 현재 챔피언)만 남긴다.
-# 학습 라이브러리가 바뀌면 옛 세트는 로드조차 안 되므로 무기한 쌓아둘
-# 이유가 없다 (지시서 ND-3/ND-4).
+# 보관 정책 -- 최근 이 개수만큼의 세트(+ 현재 챔피언)만 남긴다. 학습
+# 라이브러리가 바뀌면 오래된 세트는 로드조차 안 되므로 무기한 쌓아둘
+# 이유가 없다.
 MODEL_RETENTION_KEEP = 3
 
 

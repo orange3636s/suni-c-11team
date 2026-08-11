@@ -66,7 +66,7 @@ def test_golden_selected_factor(evaluation, target):
 
 
 def test_each_target_uses_exactly_one_factor(evaluation):
-    """The model always uses the single strongest-by-eps2 factor per
+    """The model always uses the single strongest-by-adj_r2 factor per
     target now -- Y2's second FDR-significant factor (Step24_R1) still
     feeds the alarm engine (select_fdr_significant_factors) but is no
     longer a training feature; removing it changed Y2's R²/MAE by less

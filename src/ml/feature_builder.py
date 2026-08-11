@@ -1,12 +1,11 @@
 """Shared feature-frame construction for the screening Pareto pipeline.
 
-작업지시 "Config 인자 모델의 타깃 하이드레이션 실패 수정": 학습
-(`src/ml/pipeline.py`)과 추론(`src/analysis/target_hydration.py`)이 각자
-따로 피처 프레임을 만들다가 Config 인자 처리가 갈라졌다 -- 학습은
-`category` dtype을 유지했지만 추론은 종류 구분 없이 숫자로 강제 변환해
-Config 컬럼이 전량 NaN이 됐고, `category`로 학습된 LightGBM에 float32를
-넘기면서 예외가 났다("승인 모델의 Y3 예측에 실패했습니다"). 이 모듈
-하나만 두 경로가 함께 거치게 해 다시 갈라지지 않게 한다.
+학습(`src/ml/pipeline.py`)과 추론(`src/analysis/target_hydration.py`)은
+반드시 이 모듈 하나를 함께 거쳐야 한다. 각자 피처 프레임을 만들면 Config
+인자 처리가 갈라진다 -- 한쪽이 `category` dtype을 유지하는데 다른 쪽이
+종류 구분 없이 숫자로 강제 변환하면 Config 컬럼이 전량 NaN이 되고,
+`category`로 학습된 LightGBM에 float32를 넘기면서 "승인 모델의 Y3 예측에
+실패했습니다"로 터진다.
 
 빌드 규칙:
   - Config: `category` dtype 유지, `_miss`(int8)만 추가, `_dev`는 만들지 않는다.

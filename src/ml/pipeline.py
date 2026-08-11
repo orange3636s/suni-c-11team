@@ -34,7 +34,7 @@ from datetime import datetime
 from lightgbm import LGBMRegressor
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
 
 from src.analysis.screening.schema import Schema
 from src.analysis.screening.selector import (
@@ -47,6 +47,12 @@ from src.ml.feature_builder import FactorFeatureSpec, build_feature_frame, numer
 
 FAIL_RATE_TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"]
 FINAL_YIELD_COLUMN = "Y"
+
+# 전체 Y의 "저수율 웨이퍼 식별력"(AUC)을 재는 기준 분위수 -- 실제 Y가
+# 하위 10%에 들어가는지를 양성 라벨로 삼는다. 학습 팝업의 "하위 10%
+# 식별력" 문구는 이 상수를 그대로 가리키므로, 이 값을 바꾸면 프런트
+# 문구도 함께 바꿔야 한다.
+AUC_BOTTOM_DECILE = 0.10
 
 # ND: fixed, untuned config -- see module docstring. Never add hyperparameter
 # search here; the bottleneck is measurement coverage, not model capacity.
@@ -67,7 +73,7 @@ def build_features(df: pd.DataFrame, factors: list[ParetoFactor]) -> pd.DataFram
     function only reads `df` for the raw factor values, never re-derives
     `optimal_center`.
 
-    작업지시(Config 하이드레이션 수정) T1: 실제 컬럼 구성은
+    실제 컬럼 구성은
     `src.ml.feature_builder.build_feature_frame`이 담당한다 -- 추론 경로
     (`target_hydration._screening_features`)도 같은 함수를 거치므로 두
     경로가 다시 갈라질 수 없다. 여기서는 `categories`를 넘기지 않는다
@@ -103,7 +109,7 @@ def fit_target_pipeline(
     *,
     fdr_alpha: float = DEFAULT_FDR_ALPHA,
 ) -> TargetPipelineResult:
-    """The model always uses the single strongest (by eps2) factor for this
+    """The model always uses the single strongest (by adj_r2) factor for this
     target, regardless of its p-value -- confidence is communicated via a
     tier badge on the summary card, not by falling back to a baseline
     model. The baseline-constant fallback only fires when NO factor in the
@@ -156,12 +162,69 @@ def _metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
     }
 
 
+def _adjusted_r2(r2: float | None, n: int, p: int) -> float | None:
+    """1 - (1 - R²)(n - 1)/(n - p - 1). `p`는 5개 타깃 모델이 쓰는 피처
+    컬럼의 합집합 크기(보수적 선택 -- 타깃별 부분집합이 아니다)로,
+    번들 메타데이터의 `feature_count`와 같은 수여야 한다. 자유도가
+    남지 않으면(n <= p + 1) 정의되지 않으므로 None."""
+    if r2 is None or not np.isfinite(r2):
+        return None
+    denominator = n - p - 1
+    if denominator <= 0:
+        return None
+    return float(1.0 - (1.0 - float(r2)) * (n - 1) / denominator)
+
+
+def _bottom_decile_auc(actual: np.ndarray, predicted: np.ndarray) -> float | None:
+    """실제 Y가 하위 `AUC_BOTTOM_DECILE` 분위에 드는지를 양성으로 두고,
+    점수는 -예측값(예측 수율이 낮을수록 위험이 크다)으로 매긴 ROC AUC.
+
+    분위수가 경계에 몰려 라벨이 한 종류만 나오는 경우(표본이 아주
+    작거나 값이 상수인 경우)에는 roc_auc_score가 ValueError를 던지므로
+    None을 돌려준다 -- 화면은 "-"로 표시한다."""
+    if len(actual) < 2:
+        return None
+    threshold = float(np.quantile(actual, AUC_BOTTOM_DECILE))
+    labels = actual <= threshold
+    if labels.all() or not labels.any():
+        return None
+    try:
+        return float(roc_auc_score(labels, -predicted))
+    except ValueError:
+        return None
+
+
+def _pooled_metrics(actual: np.ndarray, predicted: np.ndarray, *, feature_count: int) -> dict[str, float | None]:
+    """전체 Y(홀드아웃 단일 집계) 전용 지표 -- `_metrics`의 회귀 지표에
+    Adjusted R²와 하위 10% 식별 AUC를 더한다. 타깃별(Y1~Y5) 카드는
+    모드별 근거 강도를 원인분석 화면에서 따로 보여주므로 여기에
+    해당하지 않는다."""
+    metrics: dict[str, float | None] = dict(_metrics(actual, predicted))
+    valid = np.isfinite(actual) & np.isfinite(predicted)
+    metrics["r2_adjusted"] = _adjusted_r2(metrics["r2"], int(metrics["n"]), feature_count)
+    metrics["auc"] = _bottom_decile_auc(actual[valid], predicted[valid])
+    return metrics
+
+
+def union_feature_columns(target_results: dict[str, TargetPipelineResult]) -> list[str]:
+    """5개 타깃 모델이 쓰는 피처 컬럼의 합집합 -- 번들 메타데이터의
+    `feature_columns`/`feature_count`와 Adjusted R²의 `p`가 같은 수를
+    가리키도록 한 곳에서만 센다(화면이 "n=X · 피처 Y"로 나란히 보여준다)."""
+    return sorted(
+        {
+            column
+            for target in FAIL_RATE_TARGETS
+            for column in target_results[target].feature_columns
+        }
+    )
+
+
 @dataclass
 class PipelineEvaluation:
     target_results: dict[str, TargetPipelineResult]
     test_predictions: dict[str, np.ndarray]
     final_yield_prediction: np.ndarray
-    metrics: dict[str, dict[str, float]] = field(default_factory=dict)
+    metrics: dict[str, dict[str, float | None]] = field(default_factory=dict)
 
 
 def train_and_evaluate(
@@ -173,7 +236,7 @@ def train_and_evaluate(
 ) -> PipelineEvaluation:
     target_results: dict[str, TargetPipelineResult] = {}
     test_predictions: dict[str, np.ndarray] = {}
-    metrics: dict[str, dict[str, float]] = {}
+    metrics: dict[str, dict[str, float | None]] = {}
 
     for target in FAIL_RATE_TARGETS:
         result = fit_target_pipeline(train_df, schema, target, fdr_alpha=fdr_alpha)
@@ -186,8 +249,10 @@ def train_and_evaluate(
     for target in FAIL_RATE_TARGETS:
         clipped_sum += np.maximum(test_predictions[target], 0.0)
     final_yield_prediction = np.clip(100.0 - clipped_sum, 0.0, 100.0)
-    metrics[FINAL_YIELD_COLUMN] = _metrics(
-        _numeric(test_df[FINAL_YIELD_COLUMN]).to_numpy(), final_yield_prediction
+    metrics[FINAL_YIELD_COLUMN] = _pooled_metrics(
+        _numeric(test_df[FINAL_YIELD_COLUMN]).to_numpy(),
+        final_yield_prediction,
+        feature_count=len(union_feature_columns(target_results)),
     )
 
     return PipelineEvaluation(
@@ -214,7 +279,8 @@ def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str
                 "no_factor_available": True,
                 "feature": None,
                 "kind": None,
-                "eps2": None,
+                "adj_r2": None,
+                "degree": None,
                 "contribution_pct": None,
                 "relation_shape": None,
                 "optimal_center": None,
@@ -233,19 +299,20 @@ def target_metrics_summary(evaluation: PipelineEvaluation) -> dict[str, dict[str
             "no_factor_available": False,
             "feature": factor.feature,
             "kind": factor.kind,
-            "eps2": factor.eps2,
+            "adj_r2": factor.adj_r2,
+            "degree": factor.degree,
             "contribution_pct": factor.contribution_pct,
             "relation_shape": factor.relation_shape,
             "optimal_center": factor.optimal_center,
             "cumulative_pct": factor.cumulative_pct,
             "p_value": factor.p_value,
             "q_value": factor.q_value,
-            "confidence_tier": effective_confidence_tier(factor.eps2, factor.p_value, under_sampled=factor.under_sampled),
+            "confidence_tier": effective_confidence_tier(factor.adj_r2, factor.p_value, under_sampled=factor.under_sampled),
             "r2": metrics["r2"],
             "rmse": metrics["rmse"],
             "mae": metrics["mae"],
             "n": metrics["n"],
-            # 작업지시(Config 하이드레이션 수정) T2: Config 인자의 학습 시점
+            # Config 인자의 학습 시점
             # 범주 목록 -- 추론 시 새 범주/결측을 정리하는 기준이 된다.
             # R/D는 해당 없음(None).
             "categories": trained_categories_from_model(result.model) if factor.kind == "Config" else None,
@@ -281,13 +348,8 @@ def build_hybrid_training_result(
     )
 
     target_models = {target: evaluation.target_results[target].model for target in FAIL_RATE_TARGETS}
-    all_feature_columns = sorted(
-        {
-            column
-            for target in FAIL_RATE_TARGETS
-            for column in evaluation.target_results[target].feature_columns
-        }
-    )
+    # Adjusted R²의 p와 같은 정의를 쓴다 -- union_feature_columns 참고.
+    all_feature_columns = union_feature_columns(evaluation.target_results)
     bundle = HybridMultiYBundle(feature_columns=all_feature_columns, target_models=target_models)
 
     target_metrics = target_metrics_summary(evaluation)
