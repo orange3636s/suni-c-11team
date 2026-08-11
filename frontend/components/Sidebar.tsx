@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Database, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Activity, Cpu, Monitor, Moon, Settings, Sun } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,11 +15,10 @@ import { type ThemePreference, useTheme } from "@/components/ThemeProvider";
 // out of sync with this one.
 export const navigationItems = [
   { label: "모니터링 홈", href: "/monitoring", icon: "monitor" },
-  // WH: Config별 트리맵 -- 모니터링 홈에서 분리한 설비 구성 트리맵 전용 탭.
   { label: "Config별 트리맵", href: "/config-treemap", icon: "treemap" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "수율 예측", href: "/alerts", icon: "alert" },
-  // SA-2: 사용자가 알림을 받고 접속했을 때 그 내용을 다시 볼 곳 --
+  // 사용자가 알림을 받고 접속했을 때 그 내용을 다시 볼 곳 --
   // 수율 예측 바로 아래, 즐겨찾기 위에 둔다.
   { label: "알림 기록", href: "/notify-history", icon: "history" },
   { label: "즐겨찾기", href: "/favorites", icon: "star" },
@@ -27,9 +26,8 @@ export const navigationItems = [
 
 export type NavigationLabel = (typeof navigationItems)[number]["label"];
 
-// ME-2: 세 하단 버튼(모델 학습·모델 분석·자동화·알림 설정)이 공유하는
-// 상태 점 -- 색·크기·aria-label을 한 곳에서만 정의해 각자 구현하다
-// 갈리는 일을 막는다(지시서 "하지 말 것: 각자 구현하지 마라").
+// 하단 버튼(모델 학습·모델 분석·자동화·알림 설정)이 공유하는 상태 점 --
+// 색·크기·aria-label을 한 곳에서만 정의해 버튼마다 갈리는 일을 막는다.
 export function SidebarStatusDot({ status, label }: { status: "connected" | "offline" | "error"; label: string }) {
   return <span className={`sidebarStatusDot ${status === "connected" ? "" : status}`} aria-label={label} />;
 }
@@ -42,7 +40,7 @@ export function formatSidebarDot(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// U-4: 화면 모드는 은유 아이콘(☀/☾) 대신 글자로 말한다 -- 계측 도구에서는
+// 화면 모드는 은유 아이콘(☀/☾) 대신 글자로 말한다 -- 계측 도구에서는
 // 상태를 텍스트로 표시하는 편이 정확하다.
 const THEME_LABELS: Record<ThemePreference, string> = {
   system: "시스템",
@@ -50,8 +48,8 @@ const THEME_LABELS: Record<ThemePreference, string> = {
   dark: "다크",
 };
 
-// 접힘 상태 화면 모드 드롭다운 크기 추정치 (spec §D-2/§D-3) -- 실제 렌더
-// 전에는 높이를 알 수 없으므로, flip 여부를 결정하는 데 쓸 넉넉한 상한.
+// 접힘 상태 화면 모드 드롭다운 크기 추정치 -- 실제 렌더 전에는 높이를
+// 알 수 없으므로, flip 여부를 결정하는 데 쓸 넉넉한 상한.
 const THEME_MENU_MAX_HEIGHT = 170;
 const THEME_MENU_WIDTH = 140;
 const VIEWPORT_EDGE_PADDING = 8;
@@ -60,10 +58,10 @@ type SidebarProps = {
   activeItem?: NavigationLabel;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
-  // 모바일 반응형 패치 S-1: ≤767px에서는 DashboardShell이 이 컴포넌트를
-  // "drawer" 모드로 렌더한다 -- 아이콘 레일(collapsed)이 아니라 오프캔버스
-  // 전체 패널(설정 전용 접근)이다. "shell" 모드(기본값)는 기존 데스크톱/
-  // 태블릿 사이드바 그대로다.
+  // ≤767px에서는 DashboardShell이 이 컴포넌트를 "drawer" 모드로
+  // 렌더한다 -- 아이콘 레일(collapsed)이 아니라 오프캔버스 전체
+  // 패널(설정 전용 접근)이다. "shell" 모드(기본값)는 데스크톱/태블릿
+  // 사이드바다.
   mode?: "shell" | "drawer";
   drawerOpen?: boolean;
   onCloseDrawer?: () => void;
@@ -88,13 +86,11 @@ export default function Sidebar({
     setAnalysisPanelOpen,
   } = usePanelState();
   const { snapshot, training, notifications } = useAnalysisState();
-  // SA-1: 세 하단 버튼(모델 학습·모델 분석·알림·자동화 설정) 모두 같은
-  // 점을 쓴다 -- 오류(있으면)를 연결 여부보다 먼저 본다는 우선순위도
-  // 셋이 같다.
-  // 모델 분석: 초록(분석 완료) · 회색(미실행) · 주황(실패) -- SQL 연결
-  // 여부는 더 이상 이 점의 몫이 아니다(그건 "알림·자동화 설정" 버튼이
-  // 보여준다, 자동화의 SQL 연결과 모델 분석의 "데이터베이스에서
-  // 불러오기"가 같은 소스를 공유한다).
+  // 하단 버튼(모델 학습·모델 분석·알림·자동화 설정) 모두 같은 점을
+  // 쓴다 -- 오류(있으면)를 연결 여부보다 먼저 본다는 우선순위도 같다.
+  // 모델 분석: 초록(분석 완료) · 회색(미실행) · 주황(실패). SQL 연결
+  // 여부는 "알림·자동화 설정" 버튼의 점이 보여준다(자동화의 SQL 연결과
+  // 모델 분석의 "데이터베이스에서 불러오기"가 같은 소스를 공유한다).
   const analysisStatus: "connected" | "offline" | "error" =
     snapshot && snapshot.errors.length > 0 ? "error" : snapshot ? "connected" : "offline";
   const analysisStatusLabel =
@@ -104,7 +100,7 @@ export default function Sidebar({
         ? `분석 실패 — ${snapshot?.errors[0] ?? "알 수 없는 오류"}`
         : "미실행";
 
-  // ME-2: 모델 학습 -- 이 세션에서 수동 업로드로 학습을 실행한 적이
+  // 모델 학습 -- 이 세션에서 수동 업로드로 학습을 실행한 적이
   // 있으면(TrainingState가 채워진다) 그 파일·시각을 보여주고, 없으면
   // 콜드 스타트가 쓴 내장 train.csv가 여전히 활성 모델이라는 뜻이다.
   // 학습 실패는 팝업이 닫히면 사라지는 일시적 폼 상태라 여기(항상 보이는
@@ -114,7 +110,7 @@ export default function Sidebar({
     ? `수동 학습 · ${training.performance?.source_filename ?? "-"} · ${formatSidebarDot(training.createdAt)}`
     : "내장 데이터로 학습됨";
 
-  // SA-1: 알림·자동화 설정 -- 초록(채널 연결 + 자동화 켜짐) · 회색
+  // 알림·자동화 설정 -- 초록(채널 연결 + 자동화 켜짐) · 회색
   // (미설정) · 주황(오류, 마지막 자동화 실행이 실패).
   const connectedChannelNames = [
     notifications.slack.connected ? "Slack" : null,
@@ -137,11 +133,10 @@ export default function Sidebar({
         : "연결된 채널 없음";
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
-  // 접힘 상태 전용 (spec §D-2) -- 트리거 아이콘의 실제 위치를 읽어 패널을
+  // 접힘 상태 전용 -- 트리거 아이콘의 실제 위치를 읽어 패널을
   // document.body에 포털로 띄운다. .sidebarSurface가 overflow:hidden이라
   // (좁은 rail 폭에 갇혀) 펼침 상태처럼 컨테이너 안에 absolute로 두면
-  // 잘린다. 펼침 상태는 그대로 컨테이너 내부에 렌더돼 기존 동작을
-  // 건드리지 않는다.
+  // 잘린다. 펼침 상태는 컨테이너 내부에 그대로 렌더한다.
   const themeTriggerButtonRef = useRef<HTMLButtonElement>(null);
   const themePortalRef = useRef<HTMLDivElement>(null);
   const [themeMenuPos, setThemeMenuPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
@@ -175,16 +170,16 @@ export default function Sidebar({
     if (collapsed && !themeMenuOpen) {
       const rect = themeTriggerButtonRef.current?.getBoundingClientRect();
       if (rect) {
-        // 아이콘 우측에 띄운다 (spec §D-2) -- 접힌 rail 폭이 좁아 아래로
-        // 띄우면 화면을 벗어난다. 기본은 right-end: 패널의 아래 끝을
-        // 버튼 아래 끝에 맞추고 위로 펼친다 -- 버튼이 사이드바 하단에
-        // 있으므로 아래로 펼치면 화면을 벗어나기 때문이다. 위쪽 공간이
-        // 부족할 때만 아래로 반전한다 (spec §D-3 flip).
+        // 아이콘 우측에 띄운다 -- 접힌 rail 폭이 좁아 아래로 띄우면
+        // 화면을 벗어난다. 기본은 right-end: 패널의 아래 끝을 버튼 아래
+        // 끝에 맞추고 위로 펼친다 -- 버튼이 사이드바 하단에 있으므로
+        // 아래로 펼치면 화면을 벗어나기 때문이다. 위쪽 공간이 부족할
+        // 때만 아래로 반전한다(flip).
         const spaceAbove = rect.bottom;
         const spaceBelow = window.innerHeight - rect.top;
         const flipDown = spaceAbove < THEME_MENU_MAX_HEIGHT && spaceBelow > spaceAbove;
         let left = rect.right + 8;
-        // 화면 경계에서 8px 안쪽으로 밀어 넣는다 (spec §D-3 shift).
+        // 화면 경계에서 8px 안쪽으로 밀어 넣는다(shift).
         left = Math.min(left, window.innerWidth - THEME_MENU_WIDTH - VIEWPORT_EDGE_PADDING);
         left = Math.max(left, VIEWPORT_EDGE_PADDING);
         if (flipDown) {
@@ -217,11 +212,10 @@ export default function Sidebar({
           <SuniAvatar size={collapsed ? 32 : 28} />
           {!collapsed && <span className="shellLogoBlockTitle">써니C 11팀</span>}
           {/* Collapsed rail: the chevron is unmounted entirely, not just
-              hidden -- the logo itself is the only (and now sole) way to
-              expand, so a "collapsed" affordance chevron pointing the
-              wrong way (there's nothing left to collapse further) no
-              longer makes sense here (spec §1-1). Expanded state keeps
-              its `<` chevron unchanged. */}
+              hidden -- the logo itself is the only way to expand, and a
+              chevron pointing the wrong way (there's nothing left to
+              collapse further) would read as a broken affordance. The
+              expanded state keeps its `<` chevron. */}
           {!collapsed && (
             <span className="shellLogoBlockChevron" aria-hidden="true">
               <ChevronIcon direction="left" />
@@ -259,12 +253,12 @@ export default function Sidebar({
                       href={item.href}
                       aria-current={isActive ? "page" : undefined}
                     >
-                      {/* U-2: 펼침 상태는 텍스트만 -- 활성 상태는 이미 왼쪽
-                          2px 인디케이터(.navigationItem.active::before)가
-                          표시하므로 아이콘이 추가 정보를 주지 않는다.
-                          항목이 4개뿐이고 라벨이 짧아 텍스트만으로 계측기
-                          다운 인상이 더 강하다. 접힘 상태(railNav, 위)는
-                          라벨이 없으므로 아이콘을 유지한다. */}
+                      {/* 접힘 상태(railNav)와 같은 아이콘을 재사용한다 --
+                          아이콘 열 폭이 고정돼 있어 라벨 시작점이 항목마다
+                          어긋나지 않는다. */}
+                      <span className="navigationItemIcon" aria-hidden="true">
+                        <NavIcon name={item.icon} />
+                      </span>
                       <span>{item.label}</span>
                     </Link>
                   </li>
@@ -274,22 +268,15 @@ export default function Sidebar({
           </nav>
         )}
 
-        {/* 설정 패널 신설 §A-2: Theme + 설정 2분할. 접힘 상태에서도 항상
-            렌더링하되(§A-2 체크리스트 4번: "접힘 상태에서 아이콘만 표시"),
-            .sidebar.collapsed 쪽 CSS가 라벨/셰브론을 숨기고 세로로 쌓는다 --
-            분기를 늘리는 대신 같은 마크업을 CSS로만 다르게 보이게 한다. */}
+        {/* Theme + 설정 2분할. 접힘 상태에서도 항상 렌더링하고
+            (접힘에서는 아이콘만 보인다), .sidebar.collapsed 쪽 CSS가
+            라벨/셰브론을 숨기고 세로로 쌓는다 -- 분기를 늘리는 대신 같은
+            마크업을 CSS로만 다르게 보이게 한다. */}
         <div className="sidebarFooter">
-          {/* AD그룹: 예전에는 여기 CHAMPION/SNAPSHOT/SQL 연결 세 줄이
-              있었다 -- 모델 ID가 길어 200px 사이드바를 넘쳤고, 정보의
-              소속도 모델 학습·자동화다(TrainingPanel.tsx로 이전).
-              QE: 헤더의 SOURCE 항목(연결 상태 배지)이 중복이라 제거된
-              뒤로는, 아래 "모델 분석·자동화" 버튼의 상태 점 툴팁이
-              연결 상태를 보여주는 유일한 자리다. */}
-          {/* ME-2: 세 버튼(모델 학습·모델 분석·자동화·알림 설정) 모두
-              상태 점을 붙인다(RA-1 시절에는 분석에만 있었다) -- 같은
-              SidebarStatusDot 컴포넌트를 재사용해 색·크기가 갈리지
-              않는다. 순서: 모델 학습 → 모델 분석·자동화 → 알림 설정 →
-              화면 모드. */}
+          {/* 세 버튼(모델 학습·모델 분석·자동화·알림 설정) 모두 상태 점을
+              붙인다 -- 같은 SidebarStatusDot 컴포넌트를 재사용해 색·크기가
+              갈리지 않는다. 순서: 모델 학습 → 모델 분석·자동화 → 알림
+              설정 → 화면 모드. */}
           <button
             type="button"
             className={`themeToggle trainingTrigger ${collapsed ? "railIconButton" : ""}`}
@@ -299,7 +286,7 @@ export default function Sidebar({
             title={`모델 학습 (${trainingStatusLabel})`}
             onClick={() => setTrainingPanelOpen((open) => !open)}
           >
-            <span className="themeTriggerIcon" aria-hidden="true"><Database size={16} strokeWidth={1.5} /></span>
+            <span className="themeTriggerIcon" aria-hidden="true"><Cpu size={16} strokeWidth={1.5} /></span>
             <span className="themeTriggerLabel">모델 학습</span>
             <SidebarStatusDot status={trainingStatus} label={trainingStatusLabel} />
           </button>
@@ -330,8 +317,8 @@ export default function Sidebar({
             <SidebarStatusDot status={notificationStatus} label={notificationStatusLabel} />
           </button>
           <div className="themeTriggerCol" ref={themeMenuRef}>
-            {/* 펼침 상태는 기존 그대로 컨테이너 내부에 렌더 (spec §D-2 대상은
-                접힘 상태뿐이라 여기는 건드리지 않는다). */}
+            {/* 펼침 상태는 컨테이너 내부에 렌더한다 (아래 포털은 접힘
+                상태 전용이다). */}
             {themeMenuOpen && !collapsed && (
               <div className="themeMenu" role="menu" aria-label="화면 모드 선택">
                 <strong>화면 모드</strong>
@@ -350,7 +337,7 @@ export default function Sidebar({
             >
               {/* 접힘 상태(라벨 없음)에서만 아이콘이 보인다 -- CSS
                   (.sidebar:not(.collapsed) .themeTriggerIcon{display:none}).
-                  펼침 상태는 현재 값을 글자로 말한다 (U-4). */}
+                  펼침 상태는 현재 값을 글자로 말한다. */}
               <span className="themeTriggerIcon" aria-hidden="true"><ThemeIcon theme={theme} /></span>
               <span className="themeTriggerLabel">화면 모드 · {THEME_LABELS[theme]}</span>
               <ChevronDown />
@@ -358,7 +345,7 @@ export default function Sidebar({
           </div>
         </div>
       </div>
-      {/* 접힘 상태 전용 포털 (spec §D-2) -- document.body에 그려 .sidebarSurface의
+      {/* 접힘 상태 전용 포털 -- document.body에 그려 .sidebarSurface의
           overflow:hidden을 벗어난다. 위치는 themeTriggerButtonRef의
           getBoundingClientRect()로 매 오픈마다 계산한다. */}
       {themeMenuOpen && collapsed && themeMenuPos && createPortal(
@@ -379,8 +366,8 @@ export default function Sidebar({
 }
 
 // 펼침 상태(컨테이너 내부)와 접힘 상태(포털)가 옵션 목록 마크업을 공유한다.
-// U-4: 이 드롭다운은 트리거가 접혀 있어도 항상 뜨는 별도 팝업이라 글자
-// 넣을 공간이 있다 -- 은유 아이콘(🖥️/☀️/🌙) 대신 이름 텍스트만 쓴다.
+// 이 드롭다운은 트리거가 접혀 있어도 항상 뜨는 별도 팝업이라 글자 넣을
+// 공간이 있다 -- 은유 아이콘(🖥️/☀️/🌙) 대신 이름 텍스트만 쓴다.
 function ThemeOptionsList({ theme, onSelect }: { theme: ThemePreference; onSelect: (value: ThemePreference) => void }) {
   return (
     <div className="themeOptions">
@@ -412,10 +399,10 @@ function NavIcon({ name }: { name: string }) {
   return <svg className="navigationIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-// 설정 패널 신설 §B: 이모지(🖥️☀️🌙) 대신 lucide-react 컴포넌트를 쓴다 --
-// OS/브라우저마다 이모지 모양이 달라지는 문제가 없다. U-4: 펼침 상태는
-// 텍스트("화면 모드 · 시스템")로 말하므로 이 아이콘은 접힘 상태(라벨을
-// 놓을 자리가 없는 40px 레일)에서만 보인다.
+// 이모지(🖥️☀️🌙) 대신 lucide-react 컴포넌트를 쓴다 -- 이모지는 OS/브라우저
+// 마다 모양이 달라진다. 펼침 상태는 텍스트("화면 모드 · 시스템")로
+// 말하므로 이 아이콘은 접힘 상태(라벨을 놓을 자리가 없는 40px 레일)
+// 에서만 보인다.
 function ThemeIcon({ theme }: { theme: ThemePreference }) {
   const Icon = theme === "dark" ? Moon : theme === "system" ? Monitor : Sun;
   return <Icon className="themeIcon" aria-hidden="true" size={16} strokeWidth={1.5} />;
