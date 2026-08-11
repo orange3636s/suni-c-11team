@@ -5,6 +5,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -181,15 +182,23 @@ def _validate_metadata(metadata: dict[str, Any]) -> None:
         )
 
 
-def load_prediction_model(
+_PREDICTION_MODEL_CACHE_SIZE = 2
+
+
+@lru_cache(maxsize=_PREDICTION_MODEL_CACHE_SIZE)
+def _load_prediction_model_cached(
     model_id: str,
-    model_dir: str | Path = DEFAULT_MODEL_DIR,
+    model_path_str: str,
+    metadata_path_str: str,
+    model_mtime_ns: int,
+    metadata_mtime_ns: int,
 ) -> LoadedPredictionModel:
-    model_path, metadata_path = _model_paths(model_id, model_dir)
-    if not metadata_path.is_file() or not model_path.is_file():
-        raise InferenceInputError(
-            "존재하지 않거나 사용할 수 없는 모델 ID입니다."
-        )
+    # 지시서 E-2: mtime_ns 두 개는 캐시 키에만 쓰인다(_read_bundled_csv와
+    # 같은 패턴, src/runtime/datasets.py:199) -- 재학습으로 같은 model_id
+    # 파일이 덮어써져도 캐시가 stale 모델을 계속 돌려주지 않는다.
+    del model_mtime_ns, metadata_mtime_ns
+    model_path = Path(model_path_str)
+    metadata_path = Path(metadata_path_str)
     try:
         metadata = load_metadata(metadata_path)
     except (OSError, ValueError) as exc:
@@ -210,6 +219,28 @@ def load_prediction_model(
         model_id=model_id,
         model=model,
         metadata=metadata,
+    )
+
+
+def load_prediction_model(
+    model_id: str,
+    model_dir: str | Path = DEFAULT_MODEL_DIR,
+) -> LoadedPredictionModel:
+    model_path, metadata_path = _model_paths(model_id, model_dir)
+    if not metadata_path.is_file() or not model_path.is_file():
+        raise InferenceInputError(
+            "존재하지 않거나 사용할 수 없는 모델 ID입니다."
+        )
+    # 지시서 E-2: target_hydration의 산점도 choke point(캐시 조회 전
+    # 단계)가 요청마다 이 함수를 부른다 -- joblib.load + JSON 파싱을 매번
+    # 다시 하지 않도록 파일이 안 바뀐 동안은(mtime 동일) 로드 결과를
+    # 재사용한다.
+    return _load_prediction_model_cached(
+        model_id,
+        str(model_path),
+        str(metadata_path),
+        model_path.stat().st_mtime_ns,
+        metadata_path.stat().st_mtime_ns,
     )
 
 

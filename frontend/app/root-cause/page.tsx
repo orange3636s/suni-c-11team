@@ -87,6 +87,11 @@ async function fetchAllScatterData(
     type: "numeric" | "categorical";
     data: ScreeningScatterResponse | CategoricalScatterResponse;
   }) => void,
+  // E-1: 호출부(useEffect cleanup)가 취소를 알리는 신호. 이게 없으면
+  // 이펙트가 재실행돼 새 워커 배치가 시작된 뒤에도, 취소된 이전 배치의
+  // 워커가 남은 잡을 끝까지 쏘아 보낸다(결과만 버려질 뿐 요청은 계속
+  // 나간다) -- in-flight 요청이 실행마다 계속 누적되는 원인이었다.
+  isCancelled?: () => boolean,
 ): Promise<{
   scatterMap: Record<string, ScreeningScatterResponse>;
   categoricalMap: Record<string, CategoricalScatterResponse>;
@@ -99,6 +104,7 @@ async function fetchAllScatterData(
   let nextJob = 0;
   const worker = async () => {
     while (nextJob < jobs.length) {
+      if (isCancelled?.()) return;
       const job = jobs[nextJob++];
       const key = `${job.target}::${job.item.feature}`;
       try {
@@ -362,33 +368,48 @@ function RootCauseContent() {
   // 복원된 결과는 산점도 좌표를 담고 있지 않다 (spec §3-1) -- 배경에서 한
   // 번 다시 채운다. 채우는 동안에도 스크리닝 표/Pareto/비교 카드 등 좌표가
   // 필요 없는 부분은 이미 즉시 보인다.
+  //
+  // E-1: 의존성을 `analysis` 객체 전체가 아니라 이 이펙트가 실제로 반응
+  // 해야 하는 스칼라 값만으로 좁힌다. onResult 콜백이 매 응답마다
+  // setAnalysis로 scatterByKey/categoricalByKey를 새 객체로 갈아끼우는데,
+  // `analysis`를 의존성에 두면 그 새 객체 참조 자체가 이펙트를 다시
+  // 실행시킨다 -- 실행 #2가 같은 50개 잡을 처음부터 다시 발사하고,
+  // cleanup으로 취소된 실행 #1은 (위 isCancelled 없이는) 남은 잡을 계속
+  // 쏘며 결과만 버렸다. 그 결과 in-flight 요청이 계속 쌓이며 무한
+  // 반복됐다. dataset/createdAt/pointsComplete 세 값이 실제로 바뀔 때만
+  // (새 실행이 복원되거나 채움이 끝났을 때만) 다시 돌면 충분하다.
   useEffect(() => {
     if (!analysis || analysis.pointsComplete) return;
     let cancelled = false;
     const { dataset, paretoByTarget: restoredPareto } = analysis;
     void (async () => {
       try {
-        await fetchAllScatterData(dataset, restoredPareto, (result) => {
-          if (cancelled) return;
-          setAnalysis((previous) => {
-            if (!previous || previous.dataset !== dataset) return previous;
-            return result.type === "categorical"
-              ? {
-                  ...previous,
-                  categoricalByKey: {
-                    ...previous.categoricalByKey,
-                    [result.key]: result.data as CategoricalScatterResponse,
-                  },
-                }
-              : {
-                  ...previous,
-                  scatterByKey: {
-                    ...previous.scatterByKey,
-                    [result.key]: result.data as ScreeningScatterResponse,
-                  },
-                };
-          });
-        });
+        await fetchAllScatterData(
+          dataset,
+          restoredPareto,
+          (result) => {
+            if (cancelled) return;
+            setAnalysis((previous) => {
+              if (!previous || previous.dataset !== dataset) return previous;
+              return result.type === "categorical"
+                ? {
+                    ...previous,
+                    categoricalByKey: {
+                      ...previous.categoricalByKey,
+                      [result.key]: result.data as CategoricalScatterResponse,
+                    },
+                  }
+                : {
+                    ...previous,
+                    scatterByKey: {
+                      ...previous.scatterByKey,
+                      [result.key]: result.data as ScreeningScatterResponse,
+                    },
+                  };
+            });
+          },
+          () => cancelled,
+        );
         if (cancelled) return;
         setAnalysis((previous) =>
           previous && previous.dataset === dataset
@@ -404,7 +425,7 @@ function RootCauseContent() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysis, setAnalysis]);
+  }, [analysis?.dataset, analysis?.createdAt, analysis?.pointsComplete, setAnalysis]);
 
   const analysisVisible = analysis != null && runState === "done";
 
