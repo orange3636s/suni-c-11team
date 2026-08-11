@@ -63,12 +63,18 @@ const MARQUEE_ROW_2: ExampleChip[] = [
   { icon: "info", text: "자동 갱신은 어떻게 동작하나요?" },
   { icon: "info", text: "알림은 언제 발송되나요?" },
 ];
-const REPORT_KEYWORD_PATTERN = /보고서|리포트|report|요약해줘|정리해줘/i;
+// api/routes/chat.py의 REPORT_KEYWORDS와 반드시 같은 키워드 집합을
+// 유지한다 -- "요약해줘"·"정리해줘"는 후속 질문에서도 흔히 쓰이는 일반
+// 동사라 report 모드로 잘못 분류되던 원인이었다.
+const REPORT_KEYWORD_PATTERN = /보고서|리포트|report/i;
 // Reveals streamed text one character per tick regardless of how large the
 // underlying network chunk was (spec §5-3: "한 글자씩 이어 붙인다").
 const TYPEWRITER_INTERVAL_MS = 14;
 const AUTO_SCROLL_THRESHOLD_PX = 40;
-const HISTORY_MESSAGES = 4; // last 2 user/suni turns
+// api/routes/chat.py의 HISTORY_TURNS * 2와 반드시 같은 값이어야 한다 --
+// 근거 JSON이 system 메시지로 옮겨진 뒤(A-1)에는 이 창이 순수 대화용이라
+// 늘려도 안전하지만, 두 값이 어긋나면 둘 중 더 짧은 쪽이 실효 창이 된다.
+const HISTORY_MESSAGES = 12; // last 6 user/suni turns
 // Trailing spacer so the last real message always lands in the mask's fully
 // opaque zone, never the fade -- must be >= the fade band's own length
 // (48px) or the last line would still dim on auto-scroll.

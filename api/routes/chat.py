@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
@@ -30,9 +31,18 @@ router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
-REPORT_KEYWORDS = ("보고서", "리포트", "report", "요약해줘", "정리해줘")
+# "요약해줘"·"정리해줘"는 뺐다 -- 후속 질문에서도 흔히 쓰이는 일반 동사라
+# ("방금 답 요약해줘") report 모드로 잘못 분류돼 매번 보고서를 처음부터
+# 다시 쓰는 원인이었다. 프런트의 REPORT_KEYWORD_PATTERN(AiPanel.tsx)과
+# 반드시 같은 키워드 집합을 유지해야 한다.
+REPORT_KEYWORDS = ("보고서", "리포트", "report")
 CHAT_TIMEOUT_SECONDS = 90
-HISTORY_TURNS = 2
+# 근거 JSON을 system 메시지로 옮긴 뒤(_grounding_block)로는 history가 순수
+# 대화용이라 늘려도 근거가 밀려날 위험이 없다. 프런트의
+# AiPanel.tsx#HISTORY_MESSAGES(= 이 값 * 2)와 반드시 같은 턴수를 봐야 한다 --
+# 한쪽만 고치면 둘 중 더 짧은 창이 실효 창이 되어 이 파일의 상수를 바꾼
+# 의미가 없어진다.
+HISTORY_TURNS = 6
 MAX_RETRIES = 1
 # 프런트의 idle 타임아웃(frontend/lib/api.ts의 CHAT_STREAM_IDLE_TIMEOUT_MS,
 # 30초)보다 훨씬 짧게 잡는다 -- 컨텍스트 빌드가 이보다 오래 걸리는 동안
@@ -42,6 +52,77 @@ NO_ANALYSIS_MESSAGE = (
     "원인 분석을 먼저 실행해 주세요. 원인 분석 탭에서 실행 버튼을 누르면 "
     "분석 결과를 바탕으로 보고서를 작성할 수 있습니다.\n\n[원인 분석 탭으로 이동](/root-cause)"
 )
+
+# A-4: 질문 종류와 무관하게 항상 전체 JSON을 붙이면(수 KB~수십 KB) 매
+# 메시지가 그만큼의 토큰을 태운다. 구체적인 인자·wafer를 지목한 질문만
+# 전체(`full`)를 받고, 나머지는 요약(`digest`)이나 근거 없음(`none`)으로
+# 낮춘다. ContextLevel 판정은 키워드 매칭이 아니라 인자명/wafer ID
+# 정규식과 report 모드 여부로만 한다 -- A-2에서 "요약해줘" 같은 일반
+# 동사가 report 모드를 오분류시킨 것과 같은 함정을 여기서도 피한다.
+ContextLevel = Literal["none", "digest", "full"]
+
+FACTOR_ID_PATTERN = re.compile(r"Step\d+_(?:[RD]\d+|Config)", re.IGNORECASE)
+WAFER_ID_PATTERN = re.compile(r"L\d+W\d+", re.IGNORECASE)
+
+# 화면·기능·컨트롤의 동작 원리를 묻는 질문 -- 데이터 해석이 아니라
+# prompts/chat_system.md의 "## 대시보드 기능 안내"/"## 예측 구간과 판정
+# 체계" 절만으로 답이 나오므로 근거 JSON이 전혀 필요 없다. 오탐의 비용이
+# 비대칭이다: 기능 질문을 여기서 놓쳐 digest로 흘려보내도 답의 품질은
+# 그대로다(그냥 JSON을 조금 더 보낼 뿐)이지만, 데이터 질문을 여기 잘못
+# 걸리면 근거 없이 답하게 된다 -- 그래서 애매하면 이 목록에 넣지 않는다.
+UI_QUESTION_PATTERN = re.compile(
+    r"화면|기능|탭에서|탭은|컨트롤|자동\s*갱신|자동화는|리프레시\s*주기|승격\s*게이트|"
+    r"언제\s*발송|발송\s*이력|이미지\s*저장|저장\s*버튼|즐겨찾기(는|가|란)?|"
+    r"Color\s*by|그룹\s*강조|SPC.{0,6}ML|민감도(를|는)?\s*(올리면|낮추면|조절)"
+)
+
+
+def _context_level(request: ChatRequest, mode: Literal["report", "chat"]) -> ContextLevel:
+    if mode == "report":
+        return "full"
+    if FACTOR_ID_PATTERN.search(request.message) or WAFER_ID_PATTERN.search(request.message):
+        return "full"
+    if UI_QUESTION_PATTERN.search(request.message):
+        return "none"
+    return "digest"
+
+
+# digest에 남기는 인자 필드 -- 타깃별 1위 인자를 "이름·등급·설명력·관계
+# 형태" 정도로만 요약한다. `_text` 형제 필드가 있으면 함께 남겨 LLM이
+# 반올림을 다시 하지 않게 한다.
+_DIGEST_FACTOR_KEYS = (
+    "feature",
+    "kind",
+    "step",
+    "grade",
+    "grade_text",
+    "report_confidence",
+    "report_confidence_text",
+    "eps2",
+    "eps2_text",
+    "p_value",
+    "p_value_text",
+    "relation",
+)
+
+
+def _digest_factor(factor: dict[str, Any]) -> dict[str, Any]:
+    return {key: factor[key] for key in _DIGEST_FACTOR_KEYS if key in factor}
+
+
+def _digest_context(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": context["summary"],
+        "config_screening": context["config_screening"],
+        "limitations": context["limitations"],
+        "targets": [
+            {
+                "target": target_entry["target"],
+                "top_factor": _digest_factor(target_entry["factors"][0]) if target_entry["factors"] else None,
+            }
+            for target_entry in context["targets"]
+        ],
+    }
 
 
 @lru_cache(maxsize=1)
@@ -72,32 +153,45 @@ def _resolve_mode(request: ChatRequest) -> Literal["report", "chat"]:
     return "report" if any(keyword in request.message for keyword in REPORT_KEYWORDS) else "chat"
 
 
-def _context_user_message(dataset: str, message: str) -> str:
+def _grounding_block(dataset: str, level: ContextLevel) -> str:
     # Grouped {summary, records} alarms (see build_chat_context's
     # docstring) -- individual-wafer questions ("L401W07 알람이 왜 떴어?")
     # need the record-level data, not just the aggregate counts a raw
     # report payload would give.
+    #
+    # A-1 fix: this used to be a `user` message, competing for space in the
+    # same sliding history window the frontend/backend trim to the last few
+    # turns -- by the 4th turn the window no longer contained it and the
+    # model kept answering (or refusing) ungrounded. A `system` message is
+    # never subject to that window, so it survives every turn.
     context = build_chat_context(_build_report_payload(dataset))
+    payload = context if level == "full" else _digest_context(context)
+    intro = (
+        "아래는 이번 분석의 결과 요약 JSON이다(타깃별 1위 인자만 포함)."
+        if level == "digest"
+        else "아래는 이번 분석의 결과 전체 JSON이다."
+    )
     return (
-        f"다음은 분석 결과 JSON이다.\n\n```json\n{json.dumps(context, ensure_ascii=False)}\n```\n\n"
-        f"요청: {message}"
+        f"{intro} 이후 사용자의 모든 질문에 이 JSON만을 근거로 답한다. "
+        "JSON에 없는 수치나 사실을 만들어내지 않는다.\n\n"
+        f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
     )
 
 
 def _build_messages(request: ChatRequest, mode: Literal["report", "chat"]) -> list[dict[str, str]]:
-    if mode == "report":
-        return [
-            {"role": "system", "content": _report_system_prompt()},
-            {"role": "user", "content": _context_user_message(request.dataset, request.message)},
-        ]
+    # A-2: report 모드도 일반 chat과 같은 경로를 탄다 -- system 프롬프트만
+    # 갈라진다. 이전에는 report 모드가 history를 아예 안 읽어서, 이미
+    # 만들어진 보고서에 대한 후속 질문("Y2는 왜 저래?")이 완전히 새
+    # 대화처럼 취급됐다.
+    system_prompt = _report_system_prompt() if mode == "report" else _chat_system_prompt()
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": _chat_system_prompt()}]
-    if not request.history:
-        # First chat turn: attach the full analysis JSON once.
-        messages.append({"role": "user", "content": _context_user_message(request.dataset, request.message)})
-        return messages
+    # A-4: 화면·기능 질문(`none`)은 근거 JSON 자체가 필요 없다 --
+    # chat_system.md의 "대시보드 기능 안내" 절만으로 답이 나온다.
+    level = _context_level(request, mode)
+    if level != "none":
+        messages.append({"role": "system", "content": _grounding_block(request.dataset, level)})
 
-    # Follow-up turns: only the last few turns, no JSON re-send (spec §3-5).
     for turn in request.history[-(HISTORY_TURNS * 2) :]:
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": request.message})
