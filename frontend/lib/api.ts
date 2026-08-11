@@ -156,6 +156,14 @@ export async function createTrainingJob(
   return response.json() as Promise<TrainingJobCreateResponse>;
 }
 
+// B-10-3: 학습 쪽 "내장 데이터로 되돌리기"는 분석 쪽(deactivateDataset)과
+// 달리 등록 해제 상태가 없다 -- 유일한 되돌리기 방법은 내장 train.CSV로
+// 즉시 재학습하는 것뿐이다. 잡 큐(createTrainingJob)를 거치지 않고
+// 서버가 학습을 끝낼 때까지 기다리는 동기 호출이다(수 초~수십 초).
+export function retrainBundled(): Promise<{ model_id: string }> {
+  return postJson("/api/train/bundled", {}, UPLOAD_TIMEOUT_MS);
+}
+
 export async function getTrainingJob(
   jobId: string,
   signal?: AbortSignal,

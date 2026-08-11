@@ -80,6 +80,7 @@ from src.ml.inference import (
     get_latest_model_metadata,
 )
 from src.preprocessing import preprocess_dataframe
+from src.runtime.datasets import BUNDLED_DATASET_FILES
 from src.runtime.store import RuntimeStore
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -833,6 +834,26 @@ async def train_model(
     del dataframe, internal_train, internal_test, evaluation, hybrid_result
     gc.collect()
     return response
+
+
+@router.post("/train/bundled", response_model=TrainResponse)
+async def train_bundled() -> TrainResponse:
+    """B-10-3: 학습 쪽 "내장 데이터로 되돌리기"는 분석 쪽과 의미가 다르다
+    -- 등록을 지우는 상태가 없고(학습은 업로드 즉시 학습·챔피언 교체가
+    끝나는 구조), 되돌리는 유일한 방법은 내장 train.CSV로 재학습하는
+    것뿐이다. 새 학습 파이프라인을 만들지 않고, 콜드 스타트 부트스트랩
+    (`api.main._train_bootstrap_champion`)과 같은 방식으로 내장 파일을
+    UploadFile로 감싸 기존 `train_model`을 그대로 재사용한다.
+    """
+    train_path = settings.bundled_dataset_dir / BUNDLED_DATASET_FILES["train"]
+    if not train_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"내장 학습 데이터를 찾을 수 없습니다 ({train_path}).",
+        )
+    with train_path.open("rb") as source:
+        upload = UploadFile(file=source, filename=BUNDLED_DATASET_FILES["train"])
+        return await train_model(upload)
 
 
 @router.post("/train/jobs", response_model=TrainJobAccepted, status_code=status.HTTP_202_ACCEPTED)
