@@ -165,8 +165,8 @@ function RootCauseContent() {
   // 페이지가 마운트된 채로 다른 즐겨찾기를 또 여는 경우는(같은 라우트라
   // 리마운트가 안 됨) target/feature 딥링크와 동일한 기존 한계다.
   // 지시서 JC-1: 폴백 모드(SQL 미연결)의 원인 분석 기본 데이터셋은
-  // train.CSV가 아니라 test.CSV다 -- 상단 배지(FallbackModeBadge: "학습
-  // train.CSV → 평가 test.CSV")와 일치시킨다(JC-2). URL의 즐겨찾기
+  // train.CSV가 아니라 test.CSV다 -- 헤더의 "훈련 데이터 train.CSV ·
+  // 분석 데이터 test.CSV" 표기(PageHeaderMeta)와 일치시킨다(JC-2). URL의 즐겨찾기
   // 딥링크(dataset 파라미터)나 복원된 분석 결과(아래 syncedFromRestore
   // 이펙트)가 있으면 이 기본값보다 항상 우선한다 -- SQL 연결 상태에서는
   // 그 복원 값이 자동화가 실제로 정한 평가 데이터셋이므로 그대로 따른다.

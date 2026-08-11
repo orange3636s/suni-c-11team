@@ -8241,15 +8241,6 @@ html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
 .datasetMismatchWarningRich strong{ font-weight: 600; }
 .datasetMismatchWarningDetail{ margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .datasetMismatchWarningActions{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
-/* J-6: 폴백(SQL 미연결) 표기 -- 중립색이다(경고색 아님, 오류가 아니라
-   상태다). 옵션으로 끄지 못한다(지시서). */
-.fallbackModeBadge{
-  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
-  padding: 2px 9px; border-radius: 999px; font-size: var(--fs-micro); font-weight: 600; white-space: nowrap;
-  background: var(--surface-tertiary); color: var(--text-secondary); border: 1px solid var(--border);
-}
-.fallbackModeBadge-sql{ color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); }
-
 /* Target segmented control with factor-count badges (원인분석 tab) */
 /* Shared by 모델 학습 and 원인 분석 (spec §2): centered between the heatmap
    and Pareto cards with equal margin on both sides -- a single margin
@@ -10809,7 +10800,6 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 .reliabilityBadge,
 .severityBadge,
 .confidenceBadge,
-.fallbackModeBadge,
 .meRecommendationBadge{
   font-family: var(--font-data);
   font-variant-numeric: tabular-nums;
@@ -11059,14 +11049,6 @@ html[data-theme="dark"] .reliabilityBadge-low{ color: var(--sig-red); border-col
 html[data-theme="dark"] .reliabilityGradeText.grade-high{ color: var(--sig-green); }
 html[data-theme="dark"] .reliabilityGradeText.grade-medium{ color: var(--sig-amber); }
 html[data-theme="dark"] .reliabilityGradeText.grade-low{ color: var(--sig-red); }
-
-.fallbackModeBadge{
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--text-secondary);
-}
-.fallbackModeBadge-sql{ color: var(--sig-green); border-color: var(--sig-green); }
 
 .alertsClassCardGatedBadge{
   border: 1px solid currentColor;

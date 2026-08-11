@@ -4,7 +4,6 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import DashboardShell from "@/components/DashboardShell";
-import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { PageHeaderMeta } from "@/components/LastRunNote";
 import ParetoChart from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
@@ -77,10 +76,7 @@ export default function FavoritesPage() {
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">저장된 그래프</span>
         <h1>즐겨찾기</h1>
-        <p>
-          원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.
-          <FallbackModeBadge />
-        </p>
+        <p>원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.</p>
         <PageHeaderMeta label="현재 분석 기준" />
       </section>
 

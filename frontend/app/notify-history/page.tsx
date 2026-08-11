@@ -2,7 +2,6 @@
 
 import { Fragment, useEffect, useState } from "react";
 import DashboardShell from "@/components/DashboardShell";
-import FallbackModeBadge from "@/components/FallbackModeBadge";
 import { PageHeaderMeta } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { getNotifyHistory } from "@/lib/api";
@@ -53,7 +52,6 @@ export default function NotifyHistoryPage() {
           <p>
             발송된 알림과 건너뛴 이력을 최신순으로 모아 봅니다. 메시지는 발송 당시의 원문을 그대로 보관합니다(재계산하지
             않습니다).
-            <FallbackModeBadge />
           </p>
           {/* T9-2: 이 화면의 항목들은 각자의 발송 시점 데이터셋으로 만들어졌다
               (아래 표의 "시각" 열이 항목별 실제 발송 시각이다) -- 헤더의

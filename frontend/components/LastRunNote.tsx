@@ -31,9 +31,8 @@ export function LastRunNote({
  * AnalysisStateProvider가 한 번만 불러온 값(training.performance.
  * source_filename / snapshot.source.eval_dataset_filename)이라 이 컴포넌트
  * 자체는 API를 부르지 않는다. 세 화면이 각자 구현을 복붙하지 않도록
- * 이 파일 하나로 공유한다(지시서: "한 화면씩 만들지 마라"). 데모/폴백
- * 모드 안내는 이미 FallbackModeBadge가 하므로 여기서는 파일명만 있는
- * 그대로 보여준다 -- "데모 모드" 문구를 여기서 중복하지 않는다. */
+ * 이 파일 하나로 공유한다(지시서: "한 화면씩 만들지 마라"). 파일명만 있는
+ * 그대로 보여준다. */
 export function TrainingAnalysisDataNote({
   trainFilename,
   evalFilename,
@@ -46,7 +45,7 @@ export function TrainingAnalysisDataNote({
     <span className="trainingAnalysisDataNote">
       {trainFilename && (
         <span className="trainingAnalysisDataNoteItem" title={trainFilename}>
-          학습 데이터 {trainFilename}
+          훈련 데이터 {trainFilename}
         </span>
       )}
       {trainFilename && evalFilename && " · "}
@@ -60,9 +59,10 @@ export function TrainingAnalysisDataNote({
 }
 
 /** 작업지시 T9: 여섯 화면(모니터링/원인분석/수율예측/Config별 트리맵/
- * 알림 기록/즐겨찾기) 제목 아래에 "마지막 실행 14:10 · test · 학습 데이터
+ * 알림 기록/즐겨찾기) 제목 아래에 "마지막 실행 14:10 · 훈련 데이터
  * train_config.csv · 분석 데이터 test_remove_y.CSV"를 동일한 구분자·순서로
- * 보여준다. 세 화면이 이미 이 조합을 각자 미세하게 다르게 조립하고 있어
+ * 보여준다. 데이터셋 id(train/test)는 파일명과 중복이라 따로 표시하지
+ * 않는다. 세 화면이 이미 이 조합을 각자 미세하게 다르게 조립하고 있어
  * (구분자 유무, 데이터셋 id 표시 여부) 하나로 합친다 -- `AnalysisStateProvider`에서
  * 직접 읽으므로 호출부는 prop을 넘기지 않는다(새 API 호출 없음).
  * `created_at`이 없으면(분석 미실행) 아무것도 렌더하지 않는다 -- 빈
@@ -74,7 +74,7 @@ export function PageHeaderMeta({ label }: { label?: string } = {}) {
   if (!snapshot?.created_at) return null;
   return (
     <p className="sectionCaption pageHeaderMeta">
-      <LastRunNote createdAt={snapshot.created_at} label={label} /> · {snapshot.source.eval_dataset}
+      <LastRunNote createdAt={snapshot.created_at} label={label} />
       <TrainingAnalysisDataNote
         trainFilename={training?.performance?.source_filename ?? null}
         evalFilename={snapshot.source.eval_dataset_filename}
