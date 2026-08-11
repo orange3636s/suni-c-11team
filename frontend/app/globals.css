@@ -9248,17 +9248,6 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 }
 .bootstrapStateBanner > .button{ flex: 0 0 auto; }
 
-/* AG-3/AG-4: 수동 평가 데이터셋(업로드로 활성화) 배너 -- 위 두 배너와
-   같은 레이아웃, 톤은 "정보"(주기 잡이 잠시 멈췄다는 안내)라 amber
-   계열을 쓴다(에러가 아니다). */
-.manualModeBanner{
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 20px; font-size: var(--fs-body); line-height: 1.5;
-  border-bottom: 1px solid var(--warning-soft); background: var(--warning-soft); color: var(--warning);
-}
-.manualModeBanner > .button{ flex: 0 0 auto; }
-.manualModeBannerError{ color: var(--sig-red); }
-
 /* SF-3: 네 화면이 공유하는 "분석 시작" 진행 표시. */
 .analysisProgressBanner{
   margin: 0; padding: 10px 20px; font-size: var(--fs-body); line-height: 1.5;

@@ -116,15 +116,6 @@ export default function MonitoringPage() {
           </section>
         ) : (
           <>
-            {(snapshot.fmea?.target_provenance?.uses_predictions || snapshot.actionPriority?.target_provenance?.uses_predictions) && (() => {
-              const provenance = snapshot.fmea?.target_provenance ?? snapshot.actionPriority?.target_provenance;
-              return provenance ? (
-                <p className="analysisDataNotice" role="note">
-                  이 분석은 실측값이 없는 항목을 모델 예측값으로 보완해 계산했습니다. 예측값 기반 관계는 실제 공정 원인과 다를 수 있으므로 공정 검증과 함께 사용해 주세요. 모델 {provenance.model_version ?? provenance.model_id ?? "정보 없음"} · 예측 {provenance.predicted_target_cells.toLocaleString()}셀
-                </p>
-              ) : null;
-            })()}
-
             <DatasetMismatchWarning
               mismatch={datasetMismatch}
               datasets={{
