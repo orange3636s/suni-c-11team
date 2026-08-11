@@ -46,10 +46,10 @@ const MARQUEE_ROW_1: ExampleChip[] = [
   { icon: "chart", text: "지금 가장 위험한 wafer는?" },
   { icon: "chart", text: "Y1~Y5 중 어디에 집중해야 하나요?" },
   // 판정 기준
-  { icon: "help", text: "심각·위험·주의는 어떻게 나뉘나요?" },
-  { icon: "help", text: "민감도를 올리면 무엇이 달라지나요?" },
+  { icon: "help", text: "수율 변동은 어느 불량모드에서 오나요?" },
   { icon: "help", text: "상관성 강함·보통 기준이 뭔가요?" },
   { icon: "help", text: "미분류는 왜 생기나요?" },
+  { icon: "help", text: "계측이 없는 웨이퍼는 어떻게 처리되나요?" },
 ];
 const MARQUEE_ROW_2: ExampleChip[] = [
   // 한계·신뢰도
