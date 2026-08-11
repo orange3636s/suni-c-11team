@@ -1,14 +1,24 @@
 "use client";
 
-import type { FmeaTablePayload } from "@/types/data";
+import type { ActionPriorityPayload, FmeaTablePayload } from "@/types/data";
 
 /** 데이터 한계 진단 (모니터링 홈, 작업 지시서 WL) -- 조치 블록 바로
  * 다음에 둔다("계측을 늘려야 한다"의 근거가 여기 있다). 계측 편향(MNAR)
- * 과 분산 분해를 한 블록에 나란히, 둘 다 상시 표시한다(접지 않는다). */
-export default function DataLimitationDiagnostics({ fmea }: { fmea: FmeaTablePayload | null }) {
+ * 과 분산 분해를 한 블록에 나란히, 둘 다 상시 표시한다(접지 않는다).
+ * 분산 분해 하단의 불량모드별 변동 기여는 fmea(eval 기준)가 아니라
+ * actionPriority(항상 train.CSV 실측 기준)에서 온다 -- eval 내장본은
+ * Y가 전량 결측이라 값이 100% 모델 예측값이라 이 지표를 왜곡한다. */
+export default function DataLimitationDiagnostics({
+  fmea,
+  actionPriority,
+}: {
+  fmea: FmeaTablePayload | null;
+  actionPriority?: ActionPriorityPayload | null;
+}) {
   if (!fmea) return null;
   const mnarRows = [...fmea.mnar_rate_report].sort((a, b) => b.ratio - a.ratio);
   const vd = fmea.variance_decomposition;
+  const modeShare = actionPriority?.mode_variance_share ?? null;
 
   if (mnarRows.length === 0 && !vd) return null;
 
@@ -110,6 +120,53 @@ export default function DataLimitationDiagnostics({ fmea }: { fmea: FmeaTablePay
                 ICC(1,1) = {vd.icc.toFixed(3)}. 수율 변동의 {vd.within_lot_pct.toFixed(1)}%가 같은 랏 안에서 wafer마다
                 발생합니다. 랏 단위 순위표를 제공하지 않는 이유입니다.
               </p>
+
+              {modeShare && modeShare.length > 0 && (
+                <div className="modeShareSection">
+                  <div className="modeShareHeading">
+                    <h4 className="modeShareTitle">불량모드별 변동 기여</h4>
+                    <span className="modeShareBasis">train.CSV 실측 기준</span>
+                  </div>
+
+                  <div className="modeShareLegend">
+                    {modeShare.map((r, i) => (
+                      <span key={r.target} className="modeShareLegendItem">
+                        <i className="modeShareSwatch" style={{ background: `var(--mode-share-${i + 1})` }} />
+                        {r.target}
+                      </span>
+                    ))}
+                  </div>
+
+                  <div className="modeShareBar">
+                    {modeShare.map((r, i) => (
+                      <div
+                        key={r.target}
+                        className="modeShareSeg"
+                        style={{ flexGrow: r.variance_share_pct, background: `var(--mode-share-${i + 1})` }}
+                        title={`${r.target} · 변동 기여 ${r.variance_share_pct.toFixed(1)}% · 평균 손실 ${r.mean_loss_pp.toFixed(2)}%p (비중 ${r.mean_share_pct.toFixed(1)}%)`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="modeShareLabels">
+                    {modeShare.map((r) => (
+                      <div key={r.target} className="modeShareLabel" style={{ flexGrow: r.variance_share_pct }}>
+                        {r.variance_share_pct >= 10 ? (
+                          <>
+                            {r.target} <b>{r.variance_share_pct.toFixed(1)}%</b>
+                          </>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="fmeaFootnote">
+                    {modeShare[0].target} 한 모드가 수율 변동의 {modeShare[0].variance_share_pct.toFixed(1)}%를
+                    만듭니다. 랏 내 변동 {vd ? `${vd.within_lot_pct.toFixed(1)}%` : ""}가 어느 불량모드에서 오는지를
+                    나눈 값이며, 평균 손실 비중이 아니라 <b>웨이퍼별 편차를 만드는 몫</b>입니다.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>

@@ -3,16 +3,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from src.analysis.data_limitations import (
     build_mnar_rate_report,
+    compute_mode_variance_share,
     compute_variance_decomposition,
     overall_measurement_rate,
     worst_decile_measurement_rate,
 )
+
+BUNDLED_TRAIN_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "bundled" / "train.CSV"
 
 
 def test_worst_decile_measurement_rate_detects_post_hoc_measurement():
@@ -95,3 +100,51 @@ def test_compute_variance_decomposition_matches_naive_ratio_and_no_effect_line()
 def test_compute_variance_decomposition_none_when_too_few_lots():
     df = pd.DataFrame({"Lot_ID": ["L1"] * 5, "Y": [1.0, 2.0, 3.0, 4.0, 5.0]})
     assert compute_variance_decomposition(df) is None
+
+
+def _synthetic_mode_share_df(n: int = 500, seed: int = 3) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame(
+        {
+            "Y1": rng.normal(loc=2.0, scale=0.5, size=n),
+            "Y2": rng.normal(loc=3.5, scale=1.5, size=n),
+            "Y3": rng.normal(loc=1.5, scale=0.8, size=n),
+            "Y4": rng.normal(loc=2.5, scale=1.0, size=n),
+            "Y5": rng.normal(loc=0.5, scale=0.2, size=n),
+        }
+    )
+
+
+def test_mode_variance_share_sums_to_100():
+    df = _synthetic_mode_share_df()
+    rows = compute_mode_variance_share(df)
+    assert rows is not None
+    assert sum(r.variance_share_pct for r in rows) == pytest.approx(100.0, abs=1e-6)
+
+
+def test_mode_variance_share_sorted_desc():
+    df = _synthetic_mode_share_df()
+    rows = compute_mode_variance_share(df)
+    assert rows is not None
+    shares = [r.variance_share_pct for r in rows]
+    assert shares == sorted(shares, reverse=True)
+
+
+def test_mode_variance_share_none_when_target_missing():
+    df = _synthetic_mode_share_df().drop(columns=["Y3"])
+    assert compute_mode_variance_share(df) is None
+
+
+@pytest.mark.skipif(
+    not BUNDLED_TRAIN_CSV_PATH.exists(),
+    reason="data/bundled/train.CSV not present",
+)
+def test_mode_variance_share_matches_train_reference():
+    df = pd.read_csv(BUNDLED_TRAIN_CSV_PATH)
+    rows = compute_mode_variance_share(df)
+    assert rows is not None
+    shares = {r.target: r.variance_share_pct for r in rows}
+    expected = {"Y2": 44.6, "Y3": 22.5, "Y1": 17.7, "Y4": 13.6, "Y5": 1.5}
+    for target, expected_pct in expected.items():
+        assert shares[target] == pytest.approx(expected_pct, abs=0.1)
+    assert [r.target for r in rows] == ["Y2", "Y3", "Y1", "Y4", "Y5"]

@@ -3379,6 +3379,14 @@ html[data-theme="dark"] .savedModelList > button.active{
   --heatmap-fdr-border: #1d1d1f;
   --heatmap-text: #1d1d1f;
   --heatmap-text-inverse: #ffffff;
+  /* 불량모드별 변동 기여 막대(모니터링 홈 블록③) -- 단일 색상 서열(ordinal)
+     램프, 1위가 가장 진하다. 팔레트 검증기 전 항목 PASS 확인된 값이라
+     임의로 바꾸지 않는다. */
+  --mode-share-1: #104281;
+  --mode-share-2: #1c5cab;
+  --mode-share-3: #2a78d6;
+  --mode-share-4: #5598e7;
+  --mode-share-5: #86b6ef;
 }
 
 html{
@@ -5569,6 +5577,15 @@ html[data-theme="dark"]{
   --heatmap-fdr-border: #f5f5f7;
   --heatmap-text: #f5f5f7;
   --heatmap-text-inverse: #ffffff;
+  /* 불량모드별 변동 기여 막대 -- 다크는 밝을수록 큰 값이다(어두운 배경에서
+     밝은 쪽이 전면에 온다). 라이트를 그대로 뒤집으면 어두운 끝이 배경
+     대비 2:1을 못 넘어 검증기 FAIL -- 팔레트 검증기 전 항목 PASS 확인된
+     값이라 임의로 바꾸지 않는다. */
+  --mode-share-1: #cde2fb;
+  --mode-share-2: #9ec5f4;
+  --mode-share-3: #6da7ec;
+  --mode-share-4: #3987e5;
+  --mode-share-5: #256abf;
 
   /* --ink intentionally NOT overridden here: the sidebar is a fixed
      ink-navy brand surface in both themes (see the dashboard-shell
@@ -11269,3 +11286,19 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .varianceDecompExpectedLine{ position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 2px dashed var(--sig-amber); }
 .varianceDecompValue{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .varianceDecompExpectedLabel{ margin: 6px 2px 0; font-size: var(--fs-xs); color: var(--sig-amber); }
+
+.modeShareSection{ margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.modeShareHeading{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.modeShareTitle{ margin:0; font-size: var(--fs-sm); font-weight:600; }
+.modeShareBasis{ font-size: var(--fs-xs); color: var(--text-muted); }
+.modeShareLegend{ display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.modeShareLegendItem{ display:inline-flex; align-items:center; gap:5px; }
+.modeShareSwatch{ width:10px; height:10px; border-radius:3px; display:inline-block; }
+.modeShareBar{ display:flex; gap:2px; height:20px; }
+.modeShareSeg{ flex-basis:0; min-width:2px; border-radius:2px; }
+.modeShareSeg:first-child{ border-radius:4px 2px 2px 4px; }
+.modeShareSeg:last-child{ border-radius:2px 4px 4px 2px; }
+.modeShareLabels{ display:flex; gap:2px; margin-top:6px; }
+.modeShareLabel{ flex-basis:0; min-width:0; overflow:hidden; white-space:nowrap;
+  font-size: var(--fs-xs); color: var(--text-secondary); }
+.modeShareLabel b{ color: var(--text-primary); font-variant-numeric: tabular-nums; }

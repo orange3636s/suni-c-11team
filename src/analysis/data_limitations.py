@@ -156,3 +156,60 @@ def compute_variance_decomposition(df: pd.DataFrame, *, lot_column: str = "Lot_I
         no_effect_expected_pct=no_effect_expected_pct,
         icc=float(icc),
     )
+
+
+MIN_SAMPLE_FOR_MODE_SHARE = 30  # 랏 간/랏 내 분해의 MIN_SAMPLE_FOR_RATE와 같은 하한
+
+
+@dataclass(frozen=True)
+class ModeVarianceShareRow:
+    """모니터링 홈 블록③ 「분산 분해」 하단 -- 랏 간/랏 내로 쪼갠 변동을
+    불량모드(Y1~Y5)로 한 번 더 쪼갠다."""
+
+    target: str
+    mean_loss_pp: float
+    mean_share_pct: float
+    variance_share_pct: float
+
+
+def compute_mode_variance_share(
+    df: pd.DataFrame, targets: tuple[str, ...] = ("Y1", "Y2", "Y3", "Y4", "Y5")
+) -> list[ModeVarianceShareRow] | None:
+    """불량모드별 "변동 기여"(수율 wafer간 편차를 만드는 몫).
+
+    총 손실 L = Y1+...+Y5, Y = 100 - L 이므로 var(Y) = var(L)이다.
+    공분산의 선형성에 의해 var(L) = sum_i cov(Y_i, L)이 정확히 성립하므로
+
+        variance_share_pct(i) = cov(Y_i, L) / var(L) * 100
+
+    로 정의하면 합이 반드시 100%가 된다. 단순히 var(Y_i)의 비율을 쓰면
+    모드 간 상관 성분이 누락돼 합이 100%가 되지 않는다 -- 그래서 이
+    정의를 쓴다. ddof=1로 랏 간/랏 내 분해와 표기를 통일한다.
+    """
+    if any(t not in df.columns for t in targets):
+        return None
+    frame = df[list(targets)].apply(pd.to_numeric, errors="coerce")
+    frame = frame.dropna()
+    if len(frame) < MIN_SAMPLE_FOR_MODE_SHARE:
+        return None
+
+    total_loss = frame.sum(axis=1)
+    var_total = float(total_loss.var(ddof=1))
+    if var_total <= 0:
+        return None
+
+    rows: list[ModeVarianceShareRow] = []
+    mean_total_loss = float(total_loss.mean())
+    for t in targets:
+        mean_loss = float(frame[t].mean())
+        cov = float(np.cov(frame[t], total_loss, ddof=1)[0, 1])
+        rows.append(
+            ModeVarianceShareRow(
+                target=t,
+                mean_loss_pp=mean_loss,
+                mean_share_pct=(mean_loss / mean_total_loss * 100.0) if mean_total_loss > 0 else 0.0,
+                variance_share_pct=cov / var_total * 100.0,
+            )
+        )
+    rows.sort(key=lambda r: r.variance_share_pct, reverse=True)
+    return rows

@@ -153,7 +153,7 @@ export default function MonitoringPage() {
                 믿을 수 있나(데이터 한계). 트리맵은 별도 탭(WH)에 남는다. */}
             <ActionPriorityBlock data={snapshot.actionPriority} error={snapshot.actionPriorityError} />
             <CoverageBlock data={snapshot.actionPriority} error={snapshot.actionPriorityError} />
-            <DataLimitationDiagnostics fmea={snapshot.fmea} />
+            <DataLimitationDiagnostics fmea={snapshot.fmea} actionPriority={snapshot.actionPriority} />
           </>
         )}
       </div>

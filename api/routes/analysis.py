@@ -500,6 +500,7 @@ def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
     즉시 반환된다.
     """
     from src.analysis.action_priority import build_action_priority_table
+    from src.analysis.data_limitations import compute_mode_variance_share
 
     hydrated = _hydrated_targets_or_409(train_dataset_id)
     df = hydrated.dataframe
@@ -509,6 +510,7 @@ def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
         t: list(_ranked_rows_for_provenance(train_dataset_id, t, hydrated.provenance)) for t in usable_targets
     }
     table = build_action_priority_table(df, rows_by_target)
+    mode_share = compute_mode_variance_share(df)
 
     return round_floats(
         {
@@ -538,6 +540,19 @@ def _action_priority_payload(train_dataset_id: str) -> dict[str, Any]:
                 }
                 for r in table.rows
             ],
+            "mode_variance_share": (
+                [
+                    {
+                        "target": r.target,
+                        "mean_loss_pp": r.mean_loss_pp,
+                        "mean_share_pct": r.mean_share_pct,
+                        "variance_share_pct": r.variance_share_pct,
+                    }
+                    for r in mode_share
+                ]
+                if mode_share is not None
+                else None
+            ),
             "target_provenance": hydrated.provenance.as_dict(),
         }
     )

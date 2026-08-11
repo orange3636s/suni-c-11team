@@ -578,12 +578,24 @@ export type ActionPriorityNoQualifyingTarget = {
   max_contribution_pct: number;
 };
 
+// 모니터링 홈 블록③(데이터 한계) 하단 -- 랏 간/랏 내로 쪼갠 분산을
+// 불량모드(Y1~Y5)로 한 번 더 쪼갠 값. cov(Y_i, L)/var(L)로 정의해 합이
+// 정확히 100%가 된다. _action_priority_payload가 내려보내므로 항상
+// train.CSV 기준(블록③의 나머지는 eval 기준인 것과 다르다).
+export type ModeVarianceShareRow = {
+  target: string;
+  mean_loss_pp: number;
+  mean_share_pct: number;
+  variance_share_pct: number;
+};
+
 export type ActionPriorityPayload = {
   dataset_id: string;
   total_wafers: number;
   estimated_additional_action_wafers: number; // MC-4 캡션의 "계측 +10%p 시 추가 조치 대상" 추정치
   no_qualifying_factor: ActionPriorityNoQualifyingTarget[];
   rows: ActionPriorityRow[]; // 기대 회수 내림차순
+  mode_variance_share: ModeVarianceShareRow[] | null; // 변동 기여 내림차순
   target_provenance: TargetProvenance | null;
 };
 
