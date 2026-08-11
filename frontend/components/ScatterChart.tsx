@@ -652,7 +652,6 @@ export default function ScatterChart({
   height = HEIGHT,
   reliabilityText,
   thumbnail = false,
-  svgExportRef,
 }: {
   data: ScreeningScatterResponse;
   colorMode: ScatterColorMode;
@@ -678,10 +677,6 @@ export default function ScatterChart({
   // 중심 하나만, 축은 눈금/라벨 없이 선만 남긴다. 식별용이라 값을 읽을
   // 필요가 없다.
   thumbnail?: boolean;
-  // 지시서 WI-4: 이미지 저장 버튼이 이 SVG를 직렬화해 PNG로 굽는다 --
-  // 이 컴포넌트 내부에서도 이미 자신만의 svgRef(드래그 선택 좌표 계산
-  // 등)를 쓰므로, 별도 콜백 ref로 두 곳 모두에 같은 노드를 채운다.
-  svgExportRef?: React.RefObject<SVGSVGElement | null>;
 }) {
   const activeMethod: WindowMethod = method ?? "spc";
   const methodColor = METHOD_COLOR[activeMethod];
@@ -691,12 +686,6 @@ export default function ScatterChart({
   const isMobileLayout = useIsMobileLayout();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  // 내부 svgRef(드래그/포인터 좌표 계산)와 부모가 넘긴 svgExportRef(WI-4
-  // 이미지 저장) 둘 다 같은 <svg> 노드를 가리켜야 하므로 콜백 ref로 합친다.
-  function setSvgRef(node: SVGSVGElement | null) {
-    (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = node;
-    if (svgExportRef) svgExportRef.current = node;
-  }
   const [containerWidth, setContainerWidth] = useState(680);
   // 남은 2개 참조 요소(최적 중심/권장 구간)는 기본으로 켜져 있다 (spec §4-2,
   // 경고선 제거로 3개에서 2개로 줄었다).
@@ -1421,7 +1410,7 @@ export default function ScatterChart({
       <InterpretationCard rows={interpretationRows} />
 
       <div className="scatterPlotWrap">
-      <svg ref={setSvgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
+      <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {/* dark-mode-only plot background (spec §4 재지시) -- painted
               first so every other layer sits on top of it. */}

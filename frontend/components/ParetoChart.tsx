@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import InterpretationCard, { type InterpretationRow } from "@/components/InterpretationCard";
 import { TIER_LABEL } from "@/lib/confidenceTier";
 import { useResolvedTheme } from "@/lib/useResolvedTheme";
@@ -112,7 +112,7 @@ export default function ParetoChart({
   height,
   thumbnail = false,
   reliabilityText,
-  svgExportRef,
+  cardRef,
   headerActions,
 }: {
   target: string;
@@ -137,9 +137,10 @@ export default function ParetoChart({
   // Pareto 종합 문구("해석")와 카드 하나로 합친다. 빈 문자열/undefined면
   // "신뢰도" 행을 만들지 않는다.
   reliabilityText?: string;
-  // 지시서 WI-4: 이미지 저장 버튼이 이 SVG를 직렬화해 PNG로 굽는다 --
-  // non-embedded(독립 카드) 모드에서만 의미가 있다.
-  svgExportRef?: React.RefObject<SVGSVGElement | null>;
+  // 지시서 "차트 이미지 저장": 이미지 저장 버튼이 이 카드 루트 노드를
+  // DOM 캡처해 PNG로 굽는다 -- non-embedded(독립 카드) 모드에서만 의미가
+  // 있다.
+  cardRef?: RefObject<HTMLElement | null>;
   // 지시서 WI-1/WI-4: 타깃당 1개로 고정된 카드의 헤더에 얹을 액션(이미지
   // 저장 버튼 등) -- root-cause/page.tsx가 소유한 상태(export 진행 여부
   // 등)를 이 컴포넌트에 넣지 않기 위해 완성된 노드를 그대로 받는다.
@@ -237,7 +238,6 @@ export default function ParetoChart({
               onMouseLeave={() => setTooltip(null)}
             >
               <svg
-                ref={svgExportRef}
                 className="paretoOverlay"
                 width={layout.plotWidth}
                 height={plotHeight}
@@ -372,7 +372,7 @@ export default function ParetoChart({
   }
 
   return (
-    <section className="resultCard paretoChartCard">
+    <section className="resultCard paretoChartCard" ref={cardRef}>
       <div className="paretoChartHeader">
         <div>
           <span className="sectionLabel">PARETO</span>

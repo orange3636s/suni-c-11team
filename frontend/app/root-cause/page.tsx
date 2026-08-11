@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
@@ -14,7 +14,7 @@ import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type QuickLookView, type ScatterColorMode } from "@/components/ScatterChart";
-import { buildExportFilename, buildFactorCaptionText, buildParetoCaptionText, exportChartAsPng } from "@/lib/chartExport";
+import { buildExportFilename, buildFactorCaptionText, buildParetoCaptionText, exportNodeAsPng } from "@/lib/chartExport";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
 import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
@@ -1041,17 +1041,17 @@ function PinnedParetoCard({
   datasetId: string;
   onBarClick: (item: ParetoRankingItem) => void;
 }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
   return (
     <ParetoChart
       target={target}
       items={items}
       n80={n80}
       onBarClick={onBarClick}
-      svgExportRef={svgRef}
+      cardRef={cardRef}
       headerActions={
         <ExportPngButton
-          svgRef={svgRef}
+          nodeRef={cardRef}
           buildOptions={() => ({
             filename: buildExportFilename({ feature: null, target, view: "pareto" }),
             captionText: buildParetoCaptionText({ target, factorCount: items.length, datasetId }),
@@ -1062,26 +1062,26 @@ function PinnedParetoCard({
   );
 }
 
-/** 지시서 WI-4: 파레토·산점도·박스플롯 카드 우상단, 즐겨찾기(☆) 옆에
- * 붙는 이미지 저장 버튼. SVG를 클론해 계산된 스타일을 인라인으로 굽고
- * (lib/chartExport.ts) canvas에 그려 PNG로 내려받는다 -- 세 차트가 이
+/** 지시서 "차트 이미지 저장": 파레토·산점도·박스플롯·Config 박스플롯 카드
+ * 우상단, 즐겨찾기(☆) 옆에 붙는 이미지 저장 버튼. 카드 루트 DOM 노드를
+ * 통째로 html-to-image로 캡처한다(lib/chartExport.ts) -- 네 차트가 이
  * 컴포넌트 하나를 공유한다. `buildOptions`를 클릭 시점에 지연 평가하는
  * 것은 파일명·캡션에 들어가는 시각을 "카드가 열린 시각"이 아니라
  * "다운로드를 누른 시각"으로 맞추기 위함이다. */
 function ExportPngButton({
-  svgRef,
+  nodeRef,
   buildOptions,
 }: {
-  svgRef: React.RefObject<SVGSVGElement | null>;
+  nodeRef: RefObject<HTMLElement | null>;
   buildOptions: () => { filename: string; captionText: string };
 }) {
   const [busy, setBusy] = useState(false);
   async function handleClick() {
-    const svg = svgRef.current;
-    if (!svg || busy) return;
+    const node = nodeRef.current;
+    if (!node || busy) return;
     setBusy(true);
     try {
-      await exportChartAsPng(svg, buildOptions());
+      await exportNodeAsPng(node, buildOptions());
     } catch (error) {
       console.warn("차트 이미지 저장 실패", error);
     } finally {
@@ -1201,10 +1201,11 @@ function NumericFactorCard({
   // 쓰는 것과 같은 fitDefectRateCurve를 이미 받아온 산점도 좌표 위에서
   // 그대로 다시 계산한다(같은 순수 함수·같은 입력이라 값이 어긋나지 않는다).
   const curveFit = useMemo(() => (numericData ? fitDefectRateCurve(numericData.points) : null), [numericData]);
-  // 지시서 WI-4: 이미지 저장 버튼이 이 SVG를 직렬화한다.
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  // 지시서 "차트 이미지 저장": 이미지 저장 버튼이 이 카드 루트를 DOM
+  // 캡처한다.
+  const cardRef = useRef<HTMLElement | null>(null);
   return (
-    <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
+    <article className="resultCard factorChartCard" id={`factor-${item.feature}`} ref={cardRef}>
       <div className="factorChartHeader">
         <div className="factorChartHeaderRow">
           <div className="factorChartTitleRow">
@@ -1236,9 +1237,9 @@ function NumericFactorCard({
                 })
               }
             />
-            {/* 지시서 WI-4: 이미지 저장 버튼은 즐겨찾기 별 바로 옆. */}
+            {/* 지시서 "차트 이미지 저장": 이미지 저장 버튼은 즐겨찾기 별 바로 옆. */}
             <ExportPngButton
-              svgRef={svgRef}
+              nodeRef={cardRef}
               buildOptions={() => ({
                 filename: buildExportFilename({ feature: item.feature, target: activeTarget, view }),
                 captionText: buildFactorCaptionText({
@@ -1291,7 +1292,6 @@ function NumericFactorCard({
             onSelectWafer={onSelectWafer}
             height={chartHeight}
             reliabilityText={buildModerateInterpretation(item.confidence_tier, item.eps2)}
-            svgExportRef={svgRef}
           />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>
@@ -1327,8 +1327,9 @@ function CategoricalFactorCard({
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
   championVersion: string | null;
 }) {
+  const cardRef = useRef<HTMLElement | null>(null);
   return (
-    <article className="resultCard factorChartCard" id={`factor-${item.feature}`}>
+    <article className="resultCard factorChartCard" id={`factor-${item.feature}`} ref={cardRef}>
       <div className="factorChartMeta">
         <div className="factorChartTitleBlock">
           <span className="sectionLabel">{index + 1}위</span>
@@ -1349,6 +1350,19 @@ function CategoricalFactorCard({
                   championVersion,
                 })
               }
+            />
+            <ExportPngButton
+              nodeRef={cardRef}
+              buildOptions={() => ({
+                filename: buildExportFilename({ feature: item.feature, target: activeTarget, view: "box" }),
+                captionText: buildFactorCaptionText({
+                  feature: item.feature,
+                  target: activeTarget,
+                  eps2: item.eps2,
+                  n: categoricalData?.n ?? item.n_observed,
+                  datasetId: dataset,
+                }),
+              })}
             />
           </div>
         </div>
