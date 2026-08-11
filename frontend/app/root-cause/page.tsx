@@ -689,12 +689,6 @@ function RootCauseContent() {
         )}
       </section>
 
-      {analysisVisible && analysis.targetProvenance?.uses_predictions && (
-        <p className="analysisDataNotice" role="note">
-          이 분석은 실측값이 없는 항목을 모델 예측값으로 보완해 계산했습니다. 예측값 기반 관계는 실제 공정 원인과 다를 수 있으므로 공정 검증과 함께 사용해 주세요. 모델 {analysis.targetProvenance.model_version ?? analysis.targetProvenance.model_id ?? "정보 없음"} · 예측 {analysis.targetProvenance.predicted_target_cells.toLocaleString()}셀 · 실측/예측 혼합 행 {analysis.targetProvenance.mixed_rows.toLocaleString()}개
-        </p>
-      )}
-
       {analysisVisible && <SampleNotice sampleInfo={activeParetoResponse?.sample_info} />}
 
       <HeatmapParetoSection
