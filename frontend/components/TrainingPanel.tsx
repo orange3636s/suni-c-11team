@@ -3,21 +3,63 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import { createTrainingJob, getModelPerformance, getPromotionHistory, getTrainingJob, saveTrainingState } from "@/lib/api";
+import {
+  createTrainingJob,
+  getModelPerformance,
+  getPromotionHistory,
+  getTrainingJob,
+  retrainBundled,
+  saveTrainingState,
+} from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import type { PromotionEvent } from "@/types/data";
+import type { ModelPerformanceResponse, PromotionEvent, TargetPerformance } from "@/types/data";
 
 // RA-1: 모델 학습·자동화 통합 팝업을 둘로 나눈다 -- 이 팝업은 학습
 // 전용(수동 업로드만, RB-3)이다. SQL 연결·refresh time은
 // ModelAnalysisPanel.tsx로 옮겼다(RA-2: 자동화는 분석의 입력이므로
-// 분석 팝업에 속한다 -- 이 팝업에 다시 두지 않는다). 넣는 것은 둘뿐 --
-// 3줄 읽기전용 정보, 파일 첨부·수동 학습 실행 버튼.
+// 분석 팝업에 속한다 -- 이 팝업에 다시 두지 않는다).
+//
+// B-11: ModelAnalysisPanel과 같은 3구획 형태로 맞춘다 -- ① 현재 학습
+// 데이터(모델 성능 포함) ② 학습 데이터 변경 ③ 학습 시작. 클래스는
+// settingsSection/settingsSectionDesc를 그대로 쓴다.
 function formatNextRefresh(createdAtIso: string | null | undefined, refreshIntervalMinutes: number | null | undefined): string | null {
   if (!createdAtIso || !refreshIntervalMinutes) return null;
   const created = new Date(createdAtIso);
   if (Number.isNaN(created.getTime())) return null;
   return formatLastRun(new Date(created.getTime() + refreshIntervalMinutes * 60_000).toISOString());
+}
+
+// B-6: R²가 음수이거나 없으면 "-0.00"처럼 오해를 부르는 숫자를 찍지
+// 않는다 -- 실제로 -0.0025 같은 값이 나온 이력이 있다. RMSE는 R²의
+// 부호와 무관하게 여전히 유효한 오차 크기라 별도로 판단한다.
+function formatR2(r2: number | null): string {
+  if (r2 == null || r2 < 0) return "학습 데이터에 신호가 없어 평가 불가";
+  return `R² ${r2.toFixed(2)}`;
+}
+
+function formatRmse(rmse: number | null): string | null {
+  if (rmse == null) return null;
+  return `RMSE ${rmse.toFixed(2)} %p`;
+}
+
+function targetPerformanceLine(t: TargetPerformance): string {
+  const parts = [formatR2(t.r2), formatRmse(t.rmse)].filter((part): part is string => part != null);
+  return `${t.target} ${parts.join(" · ")}`;
+}
+
+// B-6④: "표본 10,000장 · 강함 등급 인자 3/5" -- 있는 값만 쓰고 없는 값은
+// 만들지 않는다.
+function evidenceLine(performance: ModelPerformanceResponse | null | undefined): string | null {
+  if (!performance) return null;
+  const parts: string[] = [];
+  if (performance.row_count != null) parts.push(`표본 ${performance.row_count.toLocaleString()}장`);
+  const withTier = performance.targets.filter((t) => t.confidence_tier != null);
+  if (withTier.length > 0) {
+    const strongCount = withTier.filter((t) => t.confidence_tier === "strong").length;
+    parts.push(`강함 등급 인자 ${strongCount}/${withTier.length}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 export default function TrainingPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -38,6 +80,9 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   // 가려짐) 조용히 "승격 이력 없음"으로 보이면 저하 사실이 통째로
   // 숨는다 -- 조회 실패와 "이력 없음"을 구분해서 보여준다.
   const [promotionHistoryError, setPromotionHistoryError] = useState(false);
+  // B-10-3: 잡 큐(jobId)와 별개인 동기 재학습 호출 -- "내장 데이터로
+  // 재학습" 진행 중임을 나타낸다. isRunning은 둘 중 하나만 있어도 true다.
+  const [retraining, setRetraining] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // D-6: 폴링 이펙트(아래)는 deps가 [jobId]뿐이라 학습이 도는 동안 다른
@@ -79,6 +124,38 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
+  // 학습 완료(잡 폴링 또는 동기 재학습) 후 공통으로 하는 일 -- 최신
+  // 성능을 읽어와 패널 상태·서버 저장을 갱신한다. 잡 큐 경로와
+  // 내장-재학습 경로가 이 로직을 그대로 공유한다(새 파이프라인 아님).
+  async function applyTrainedPerformance() {
+    const performance = await getModelPerformance().catch(() => null);
+    if (!performance) return;
+    const dataset = performance.source_filename || "training";
+    // D-6: 클로저의 training이 아니라 ref로 완료 시점의 최신
+    // sqlHost/sqlPort/refreshIntervalMinutes(모델 분석 팝업이
+    // 관리)를 읽어 그대로 보존한다 -- 이 팝업은 그 값을 모른다.
+    const latestTraining = trainingRef.current;
+    const nextTraining = {
+      dataset,
+      createdAt: performance.trained_at ?? new Date().toISOString(),
+      performance,
+      sqlHost: latestTraining?.sqlHost ?? "",
+      sqlPort: latestTraining?.sqlPort ?? "",
+      sqlDb: latestTraining?.sqlDb ?? "",
+      sqlUser: latestTraining?.sqlUser ?? "",
+      refreshIntervalMinutes: latestTraining?.refreshIntervalMinutes ?? null,
+    };
+    setTraining(nextTraining);
+    void saveTrainingState(dataset, {
+      performance,
+      sqlHost: nextTraining.sqlHost,
+      sqlPort: nextTraining.sqlPort,
+      sqlDb: nextTraining.sqlDb,
+      sqlUser: nextTraining.sqlUser,
+      refreshIntervalMinutes: nextTraining.refreshIntervalMinutes,
+    }).catch(() => {});
+  }
+
   useEffect(() => {
     if (!jobId) return;
     const timer = window.setInterval(async () => {
@@ -90,33 +167,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
           setJobId(null);
           setMessage("모델 학습이 완료되었습니다.");
           refreshPromotionHistory();
-          const performance = await getModelPerformance().catch(() => null);
-          if (performance) {
-            const dataset = performance.source_filename || "training";
-            // D-6: 클로저의 training이 아니라 ref로 완료 시점의 최신
-            // sqlHost/sqlPort/refreshIntervalMinutes(모델 분석 팝업이
-            // 관리)를 읽어 그대로 보존한다 -- 이 팝업은 그 값을 모른다.
-            const latestTraining = trainingRef.current;
-            const nextTraining = {
-              dataset,
-              createdAt: performance.trained_at ?? new Date().toISOString(),
-              performance,
-              sqlHost: latestTraining?.sqlHost ?? "",
-              sqlPort: latestTraining?.sqlPort ?? "",
-              sqlDb: latestTraining?.sqlDb ?? "",
-              sqlUser: latestTraining?.sqlUser ?? "",
-              refreshIntervalMinutes: latestTraining?.refreshIntervalMinutes ?? null,
-            };
-            setTraining(nextTraining);
-            void saveTrainingState(dataset, {
-              performance,
-              sqlHost: nextTraining.sqlHost,
-              sqlPort: nextTraining.sqlPort,
-              sqlDb: nextTraining.sqlDb,
-              sqlUser: nextTraining.sqlUser,
-              refreshIntervalMinutes: nextTraining.refreshIntervalMinutes,
-            }).catch(() => {});
-          }
+          await applyTrainedPerformance();
         } else if (job.status === "failed" || job.status === "interrupted") {
           window.clearInterval(timer);
           setJobId(null);
@@ -133,7 +184,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   }, [jobId]);
 
   async function runManualTraining() {
-    if (!file || jobId) return;
+    if (!file || jobId || retraining) return;
     setError("");
     setMessage("");
     setStage("학습 Job을 등록하는 중입니다.");
@@ -145,10 +196,30 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
     }
   }
 
+  // B-10-3: 학습 쪽 되돌리기는 등록 해제가 아니라 내장 train.CSV로 즉시
+  // 재학습하는 것뿐이다(분석 쪽 deactivateDataset과 의미가 다르다) --
+  // 서버가 학습을 마칠 때까지 기다리는 동기 호출이라 잡 큐를 타지 않는다.
+  async function runBundledRetrain() {
+    if (jobId || retraining) return;
+    setError("");
+    setMessage("");
+    setRetraining(true);
+    try {
+      await retrainBundled();
+      setMessage("내장 데이터로 재학습을 완료했습니다.");
+      refreshPromotionHistory();
+      await applyTrainedPerformance();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "내장 데이터로 재학습하지 못했습니다.");
+    } finally {
+      setRetraining(false);
+    }
+  }
+
   if (!open) return null;
 
   const performance = training?.performance;
-  const isRunning = Boolean(jobId);
+  const isRunning = Boolean(jobId) || retraining;
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
@@ -169,7 +240,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
         </div>
         <div className="settingsPanelBody">
           <section className="settingsSection">
-            <h3>현재 학습 모델</h3>
+            <h3>현재 학습 데이터</h3>
             <dl className="trainingInfoList">
               <div>
                 <dt>출처</dt>
@@ -203,15 +274,31 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
                   {snapshot?.model.champion_version ?? "-"}
                 </dd>
               </div>
+            </dl>
+
+            {/* B-6: "모드별 R²" -> "모델 성능" -- 최종 수율(Y) 성능을 맨
+                위에, 타깃별은 R²·RMSE를 함께 보여준다(R²만으로는 오차
+                크기를 알 수 없다). */}
+            <p className="sectionLabel" style={{ marginTop: 14 }}>모델 성능</p>
+            <dl className="trainingInfoList">
               <div>
-                <dt>모드별 R²</dt>
+                <dt>최종 수율(Y)</dt>
                 <dd>
-                  {performance?.targets && performance.targets.length > 0
-                    ? performance.targets.map((t) => `${t.target} ${t.r2 != null ? t.r2.toFixed(2) : "-"}`).join(" · ")
+                  {performance?.final_yield
+                    ? [formatR2(performance.final_yield.r2), formatRmse(performance.final_yield.rmse)]
+                        .filter((part): part is string => part != null)
+                        .join(" · ")
                     : "-"}
                 </dd>
               </div>
             </dl>
+            {performance?.targets && performance.targets.length > 0 && (
+              <p className="sectionCaption" style={{ margin: "6px 0 0" }}>
+                {performance.targets.map(targetPerformanceLine).join(" / ")}
+              </p>
+            )}
+            {evidenceLine(performance) && <p className="sectionCaption" style={{ margin: "2px 0 0" }}>{evidenceLine(performance)}</p>}
+
             {/* RB-4: 승격 게이트를 제거했으므로(무조건 교체) 여기 문구도
                 "게이트 미달"이 아니라 "교체됨 + 성능 변화"로 바뀐다.
                 latestPromotion.promoted는 이제 항상 true지만, reason에
@@ -233,7 +320,8 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
           </section>
 
           <section className="settingsSection">
-            <h3>수동 모델 학습</h3>
+            <h3>학습 데이터 변경</h3>
+            <p className="settingsSectionDesc">파일을 선택하면 학습 대상으로 지정됩니다. [모델 학습 시작]을 눌러야 실제 학습이 실행됩니다.</p>
             <input
               ref={fileInputRef}
               type="file"
@@ -243,13 +331,29 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
             />
             <div className="notifyFormActions">
               <button type="button" className="button secondary" onClick={() => fileInputRef.current?.click()} disabled={isRunning}>
-                파일 선택{file ? `: ${file.name}` : ""}
+                파일 선택
               </button>
-              <button type="button" className="button primary" onClick={() => void runManualTraining()} disabled={!file || isRunning}>
-                {isRunning ? "학습 중…" : "CSV 업로드"}
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void runBundledRetrain()}
+                disabled={isRunning}
+                title="내장 train.CSV로 즉시 재학습합니다. 수 초~수십 초 걸립니다."
+              >
+                {retraining ? "학습 중…" : "내장 데이터로 재학습"}
               </button>
             </div>
-            {isRunning && <p className="trainingProgress" role="status">{stage}</p>}
+            {file && <p className="sectionCaption" style={{ margin: "6px 0 0" }}>선택한 파일: {file.name}</p>}
+          </section>
+
+          <section className="settingsSection">
+            <h3>학습 시작</h3>
+            <div className="notifyFormActions">
+              <button type="button" className="button primary" onClick={() => void runManualTraining()} disabled={!file || isRunning}>
+                {isRunning ? "학습 중…" : "모델 학습 시작"}
+              </button>
+            </div>
+            {isRunning && <p className="trainingProgress" role="status">{stage || "내장 데이터로 재학습 중…"}</p>}
             {error && <p className="notifyFieldError">{error}</p>}
             {message && <p className="notifyTestResult ok">{message}</p>}
           </section>
