@@ -9,7 +9,7 @@ import ConfidenceBadge from "@/components/ConfidenceBadge";
 import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
-import { DatasetMismatchWarning, LastRunNote, PageHeaderMeta } from "@/components/LastRunNote";
+import { DatasetMismatchWarning, PageHeaderMeta } from "@/components/LastRunNote";
 import SampleNotice from "@/components/SampleNotice";
 import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
@@ -43,40 +43,39 @@ import type {
   WindowMethod,
 } from "@/types/data";
 
-// Stable empty-object fallbacks (spec: avoid a fresh `{}` literal every
-// render feeding a useMemo/useEffect dependency array, which would defeat
-// memoization and refire effects needlessly).
+// Stable empty-object fallbacks -- a fresh `{}` literal on every render would
+// feed a useMemo/useEffect dependency array, defeating memoization and
+// refiring effects needlessly.
 const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
 const EMPTY_HEATMAP_CACHE: Record<string, HeatmapResponse> = {};
 
 type ColorMode = ScatterColorMode;
-// SF-1: 이 화면은 더 이상 스스로 분석을 실행하지 않는다 -- "running"/
-// "error"는 이제 쓰이지 않지만(자체 실행 경로가 없어졌다), 복원/스냅샷
-// 동기화 경로가 여전히 "idle" -> "done"만 오간다.
+// 이 화면은 스스로 분석을 실행하지 않는다 -- 복원/스냅샷 동기화만 이
+// 상태를 움직이므로 "idle" -> "done" 두 값이면 충분하다.
 type RunState = "idle" | "done";
 
-/** `보통` 등급 인자의 설명력이 낮은 편임을 알리는 한 줄 캡션 (spec §C-4).
- * train.CSV의 Step24_R1 → Y4(ε² 0.073)가 여기 해당한다. */
-/** DE그룹: 즐겨찾기 스냅샷 저장 시 재사용하기 위해 텍스트 생성 로직을
- * 분리했다 -- `보통` 등급이 아니면 해석 문구 자체가 없다(빈 문자열). */
-function buildModerateInterpretation(tier: ConfidenceTier, eps2: number): string {
+/** `보통` 등급 인자의 설명력이 낮은 편임을 알리는 한 줄 캡션.
+ * train.CSV의 Step24_R1 → Y4(Adj R² 0.094)가 여기 해당한다.
+ * 즐겨찾기 스냅샷 저장 때도 같은 문구를 쓰므로 컴포넌트 밖에 둔다 --
+ * `보통` 등급이 아니면 해석 문구 자체가 없다(빈 문자열). */
+function buildModerateInterpretation(tier: ConfidenceTier, adjR2: number): string {
   if (tier !== "moderate") return "";
-  return `이 인자의 설명력은 ${(eps2 * 100).toFixed(1)}%로 낮은 편입니다. 다른 요인의 영향이 더 클 수 있습니다.`;
+  return `이 인자의 설명력은 ${(adjR2 * 100).toFixed(1)}%로 낮은 편입니다. 다른 요인의 영향이 더 클 수 있습니다.`;
 }
 
-function ModerateTierCaption({ tier, eps2 }: { tier: ConfidenceTier; eps2: number }) {
-  const text = buildModerateInterpretation(tier, eps2);
+function ModerateTierCaption({ tier, adjR2 }: { tier: ConfidenceTier; adjR2: number }) {
+  const text = buildModerateInterpretation(tier, adjR2);
   if (!text) return null;
-  // DC그룹: 해석 문구를 옅은 카드(.interpretCard)에 담는다 -- 메타 줄
-  // 바로 아래 텍스트로 붙어 겹쳐 보이던 것을 시각적으로 분리한다.
-  // Pareto·Scatter·Box 세 뷰가 전부 이 컴포넌트/클래스를 공유한다.
+  // 해석 문구를 옅은 카드(.interpretCard)에 담아 바로 위 메타 줄과
+  // 시각적으로 분리한다. Pareto·Scatter·Box 세 뷰가 전부 이
+  // 컴포넌트/클래스를 공유한다.
   return <p className="interpretCard">{text}</p>;
 }
 
 
-/** Step 2 of a run (or a restore's background point-fill, spec §3-1/§4-2):
+/** Step 2 of a run (or a restore's background point-fill):
  * fetch every displayed factor's full scatter/categorical data for all 5
  * targets' Pareto items. Shared so a live run and a restored-but-lean
  * result refill through the exact same code path. */
@@ -88,10 +87,10 @@ async function fetchAllScatterData(
     type: "numeric" | "categorical";
     data: ScreeningScatterResponse | CategoricalScatterResponse;
   }) => void,
-  // E-1: 호출부(useEffect cleanup)가 취소를 알리는 신호. 이게 없으면
+  // 호출부(useEffect cleanup)가 취소를 알리는 신호. 이게 없으면
   // 이펙트가 재실행돼 새 워커 배치가 시작된 뒤에도, 취소된 이전 배치의
   // 워커가 남은 잡을 끝까지 쏘아 보낸다(결과만 버려질 뿐 요청은 계속
-  // 나간다) -- in-flight 요청이 실행마다 계속 누적되는 원인이었다.
+  // 나간다) -- in-flight 요청이 실행마다 계속 누적된다.
   isCancelled?: () => boolean,
 ): Promise<{
   scatterMap: Record<string, ScreeningScatterResponse>;
@@ -138,35 +137,33 @@ export default function RootCausePage() {
 function RootCauseContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // RD-1: 원인분석 화면의 자체 업로드 경로를 제거했다 -- 데이터셋
-  // 전환은 이제 모델 분석 팝업에서만 일어난다.
+  // 데이터셋 전환은 모델 분석 팝업에서만 일어난다.
   const { setAnalysisDataset, setAnalysisPanelOpen } = usePanelState();
-  // 원인 분석 결과 상태 유지 (spec: 학습·분석 결과 상태 유지) -- the actual
-  // result (Pareto/스크리닝/산점도) lives in the shared AnalysisStateProvider
-  // context, not local useState, so tab switching renders it from memory
-  // with zero network calls (checklist §탭 이동 #1/#4), and a page
-  // reload/reconnect restores a lean (points-less) version of it via
+  // 원인 분석 결과 상태 유지 -- the actual result (Pareto/스크리닝/산점도)
+  // lives in the shared AnalysisStateProvider context, not local useState,
+  // so tab switching renders it from memory with zero network calls, and a
+  // page reload/reconnect restores a lean (points-less) version of it via
   // GET /api/state/latest.
   const {
     analysis, setAnalysis, hydrated, analysisSnapshotStale, datasetFallbackNotice,
     training,
   } = useAnalysisState();
-  // DE그룹: 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언)을 함께
+  // 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언)을 함께
   // 담는다 -- 이후 재학습/재승격으로 model_id가 바뀌면 "이전 분석 기준"
   // 배지를 붙일 수 있다. 학습 기록이 아직 없으면 null.
   const championVersion = training?.performance.model_id ?? null;
-  // ≤767px: 산점도/박스플롯 높이 240px (spec §B-6).
+  // ≤767px: 산점도/박스플롯 높이 240px.
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 420;
-  // B-5: 즐겨찾기 딥링크(`?dataset=&target=&feature=`)가 저장해 둔
+  // 즐겨찾기 딥링크(`?dataset=&target=&feature=`)가 저장해 둔
   // 데이터셋으로 연다 -- 이게 없으면 즐겨찾기가 항상 "현재 선택된
   // 데이터셋"으로 열려서, train에서 저장한 카드를 test 상태에서 열면
   // 같은 인자명의 다른 데이터셋 차트가 경고 없이 표시된다. 이미 이
   // 페이지가 마운트된 채로 다른 즐겨찾기를 또 여는 경우는(같은 라우트라
   // 리마운트가 안 됨) target/feature 딥링크와 동일한 기존 한계다.
-  // 지시서 JC-1: 폴백 모드(SQL 미연결)의 원인 분석 기본 데이터셋은
-  // train.CSV가 아니라 test.CSV다 -- 헤더의 "훈련 데이터 train.CSV ·
-  // 분석 데이터 test.CSV" 표기(PageHeaderMeta)와 일치시킨다(JC-2). URL의 즐겨찾기
+  // 폴백 모드(SQL 미연결)의 원인 분석 기본 데이터셋은 train.CSV가
+  // 아니라 test.CSV다 -- 헤더의 "훈련 데이터 train.CSV ·
+  // 분석 데이터 test.CSV" 표기(PageHeaderMeta)와 일치시킨다. URL의 즐겨찾기
   // 딥링크(dataset 파라미터)나 복원된 분석 결과(아래 syncedFromRestore
   // 이펙트)가 있으면 이 기본값보다 항상 우선한다 -- SQL 연결 상태에서는
   // 그 복원 값이 자동화가 실제로 정한 평가 데이터셋이므로 그대로 따른다.
@@ -180,17 +177,15 @@ function RootCauseContent() {
   const [trellisFactor, setTrellisFactor] = useState<{ feature: string; step: number } | null>(null);
 
   const [runState, setRunState] = useState<RunState>("idle");
-  // 복원/스냅샷 동기화 때마다 factor 카드 key에 접어 넣는다 -- 같은
-  // 인자가 같은 목록 위치에 다시 나타나도 per-card Color By 상태(spec
-  // §5-3)가 "기본"으로 리셋되게 한다. 이 화면 자체는 더 이상 분석을
-  // 실행하지 않으므로 값 자체는 항상 0이지만, 각 factor 카드는 여전히
-  // 이 값을 key에 포함한다(안정적인 상수 접두사로 남는다).
+  // factor 카드 key에 접어 넣는 세대 번호. 이 화면은 스스로 분석을
+  // 실행하지 않으므로 값은 늘 0이며, 카드 key의 안정적인 상수 접두사
+  // 역할만 한다.
   const runGeneration = 0;
 
   const paretoByTarget = analysis?.paretoByTarget ?? EMPTY_PARETO_BY_TARGET;
   const scatterByKey = analysis?.scatterByKey ?? EMPTY_SCATTER_BY_KEY;
   const categoricalByKey = analysis?.categoricalByKey ?? EMPTY_CATEGORICAL_BY_KEY;
-  // 셀렉터를 바꿨는데 화면은 이전 데이터셋 결과인 경우 (spec §5-3).
+  // 셀렉터를 바꿨는데 화면은 이전 데이터셋 결과인 경우.
   const datasetMismatch = Boolean(analysis && analysis.dataset !== datasetId);
 
   useEffect(() => {
@@ -207,8 +202,8 @@ function RootCauseContent() {
     };
   }, [datasetId]);
 
-  // 즐겨찾기 (지시서 J) -- `${dataset}::${target}::${feature}::${viewType}` ->
-  // favorite_id. D-1: viewType을 키에 포함해야 한다 -- 안 그러면 같은
+  // 즐겨찾기 -- `${dataset}::${target}::${feature}::${viewType}` ->
+  // favorite_id. viewType을 키에 포함해야 한다 -- 안 그러면 같은
   // 인자를 Box 뷰로 저장하려는 별 클릭이 기존 Scatter 즐겨찾기와 같은
   // 키로 잡혀 그것을 지워버린다. 목록은 마운트 시 한 번만 불러온다
   // (브라우저 저장소 금지, 서버가 유일한 출처). 별 버튼은 이 맵에 키가
@@ -234,10 +229,10 @@ function RootCauseContent() {
     };
   }, []);
 
-  // D-1: 생성/삭제 요청이 아직 끝나지 않은 키는 다시 받지 않는다 --
+  // 생성/삭제 요청이 아직 끝나지 않은 키는 다시 받지 않는다 --
   // 빠른 더블클릭 시 두 호출 모두 같은(아직 갱신 전) favoriteIdByKey를
   // 보고 둘 다 "생성" 경로로 들어가 중복 레코드가 생기고, 클라이언트는
-  // 마지막 id만 기억해 나머지 하나는 지울 수 없는 좀비로 남았다. 이
+  // 마지막 id만 기억해 나머지 하나는 지울 수 없는 좀비로 남는다. 이
   // 가드는 useState가 아니라 ref다 -- 같은 렌더에서 연달아 호출되면
   // useState는 아직 반영 전(stale)이라 막지 못한다.
   const pendingFavoriteKeysRef = useRef<Set<string>>(new Set());
@@ -289,7 +284,7 @@ function RootCauseContent() {
   // target/feature via its own `key`), this quick-look card is a single
   // persistent instance reused across every heatmap-cell/Pareto-bar/alarm
   // deep-link click -- so its view state needs an explicit reset back to
-  // Scatter Plot whenever the selected factor changes (spec §2-2/§8).
+  // Scatter Plot whenever the selected factor changes.
   // Adjusting state during render (React's documented alternative to an
   // effect for "reset when a prop changes") instead of useEffect, so it
   // doesn't cause an extra cascading render pass.
@@ -300,11 +295,11 @@ function RootCauseContent() {
     setQuickLookView("scatter");
   }
 
-  // A dataset change no longer wipes the displayed result (spec §5-3:
-  // "결과를 자동으로 지우지 마라") -- only the quick-look popover, which is
-  // scoped to whatever factor/dataset it was opened for and would show a
-  // stale chart otherwise. The mismatch banner (datasetMismatch, above)
-  // is what tells the user the selector and the result have diverged.
+  // A dataset change must not wipe the displayed result -- it only closes
+  // the quick-look popover, which is scoped to whatever factor/dataset it
+  // was opened for and would show a stale chart otherwise. The mismatch
+  // banner (datasetMismatch, above) is what tells the user the selector and
+  // the result have diverged.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setQuickLook(null);
@@ -317,24 +312,20 @@ function RootCauseContent() {
   // 이펙트가 처리한다 -- `hydrated`는 앱 전체에서 한 번만 false->true로
   // 바뀌므로, 이미 하이드레이션이 끝난 뒤에 이 페이지가 (재)마운트되면
   // 즉시 실행된다. 셀렉터/타깃/실행 상태를 컨텍스트의 결과에 맞춰 한 번만
-  // 동기화한다 (spec §4-3) -- 이후 사용자가 셀렉터를 바꿔도 다시 개입하지
-  // 않는다.
+  // 동기화한다 -- 이후 사용자가 셀렉터를 바꿔도 다시 개입하지 않는다.
   //
-  // 지시서 JC-1 진단: `hydrated`(GET /api/state/latest)와 `analysis`가
-  // 채워지는 시점(저장된 결과가 있으면 즉시, 없으면 자동 갱신 스냅샷의
-  // W-1 대체 채움이 나중에 도착)은 서로 다른 요청이라 순서가 보장되지
-  // 않는다. 예전 코드는 `hydrated`가 먼저 되면(=이 시점엔 `analysis`가
-  // 아직 null) `syncedFromRestore.current`를 바로 true로 세워버려, 이후
-  // W-1이 `analysis`를 채워도 이 이펙트가 다시 돌지 않았다 -- 그 결과
-  // 데이터셋 셀렉터가 초기값(폴백 모드에서 마땅히 test.CSV여야 할 값)에
-  // 영원히 멈춰 있었다. `analysis`가 실제로 왔을 때만 ref를 세워
-  // "한 번만 동기화"를 지킨다.
+  // `hydrated`(GET /api/state/latest)와 `analysis`가 채워지는 시점(저장된
+  // 결과가 있으면 즉시, 없으면 자동 갱신 스냅샷의 대체 채움이 나중에
+  // 도착)은 서로 다른 요청이라 순서가 보장되지 않는다. 그래서 ref는
+  // `analysis`가 실제로 왔을 때만 세운다 -- `hydrated`만 보고 세우면
+  // (그 시점엔 `analysis`가 아직 null) 나중에 `analysis`가 채워져도 이
+  // 이펙트가 다시 돌지 않아, 데이터셋 셀렉터가 초기값에 영원히 멈춘다.
   const syncedFromRestore = useRef(false);
   useEffect(() => {
     if (!hydrated || syncedFromRestore.current || !analysis) return;
     syncedFromRestore.current = true;
     const timer = window.setTimeout(() => {
-      // B-5: 즐겨찾기 딥링크가 dataset을 지정했으면 복원된 결과의
+      // 즐겨찾기 딥링크가 dataset을 지정했으면 복원된 결과의
       // dataset으로 덮어쓰지 않는다 -- 안 그러면 URL이 가리키는(favorite이
       // 저장된) 데이터셋이 이 타이머 한 번으로 조용히 되돌아가, 곧 열릴
       // quickLook이 엉뚱한 데이터셋의 동명 인자를 보여주게 된다.
@@ -347,15 +338,14 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, analysis]);
 
-  // SF-1: 이 화면은 더 이상 스스로 분석을 실행하지 않는다("다시 분석"
-  // 버튼도, 조용한 자동 실행도 없다) -- 모든 실행은 모델 분석 팝업의
-  // [분석 시작] 하나로 일원화됐다. 보통은 부트스트랩/[분석 시작]이
-  // 채운 스냅샷이 W-1 대체 채움(AnalysisStateProvider)을 거쳐 위
-  // syncedFromRestore 이펙트로 반영된다. 그마저 없는 진짜 콜드 상태
-  // (스냅샷도 저장된 결과도 없음)에서는 아래 렌더가 "분석 결과가
-  // 없습니다 -- 모델 분석에서 분석을 시작하세요" 안내를 보여준다.
+  // 분석 실행은 전부 모델 분석 팝업의 [분석 시작]에서 일어나고, 이
+  // 화면은 그 결과를 받아 그리기만 한다 -- 부트스트랩/[분석 시작]이 채운
+  // 스냅샷이 AnalysisStateProvider를 거쳐 위 syncedFromRestore 이펙트로
+  // 반영된다. 스냅샷도 저장된 결과도 없는 진짜 콜드 상태에서는 아래
+  // 렌더가 "분석 결과가 없습니다 -- 모델 분석에서 분석을 시작하세요"
+  // 안내를 보여준다.
 
-  // RD-2: 모델 분석 팝업에서 데이터셋을 바꾸면(activate-dataset ->
+  // 모델 분석 팝업에서 데이터셋을 바꾸면(activate-dataset ->
   // 스냅샷 갱신 -> analysis.dataset 변경) 이 화면의 라벨도 따라간다 --
   // 위 syncedFromRestore와 달리 최초 1회가 아니라 analysis.dataset이
   // 바뀔 때마다 계속 동작한다. 즐겨찾기 딥링크(?dataset=)가 있으면
@@ -366,18 +356,18 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis?.dataset]);
 
-  // 복원된 결과는 산점도 좌표를 담고 있지 않다 (spec §3-1) -- 배경에서 한
+  // 복원된 결과는 산점도 좌표를 담고 있지 않다 -- 배경에서 한
   // 번 다시 채운다. 채우는 동안에도 스크리닝 표/Pareto/비교 카드 등 좌표가
   // 필요 없는 부분은 이미 즉시 보인다.
   //
-  // E-1: 의존성을 `analysis` 객체 전체가 아니라 이 이펙트가 실제로 반응
+  // 의존성을 `analysis` 객체 전체가 아니라 이 이펙트가 실제로 반응
   // 해야 하는 스칼라 값만으로 좁힌다. onResult 콜백이 매 응답마다
   // setAnalysis로 scatterByKey/categoricalByKey를 새 객체로 갈아끼우는데,
   // `analysis`를 의존성에 두면 그 새 객체 참조 자체가 이펙트를 다시
   // 실행시킨다 -- 실행 #2가 같은 50개 잡을 처음부터 다시 발사하고,
   // cleanup으로 취소된 실행 #1은 (위 isCancelled 없이는) 남은 잡을 계속
-  // 쏘며 결과만 버렸다. 그 결과 in-flight 요청이 계속 쌓이며 무한
-  // 반복됐다. dataset/createdAt/pointsComplete 세 값이 실제로 바뀔 때만
+  // 쏘며 결과만 버려서, in-flight 요청이 계속 쌓이며 무한 반복된다.
+  // dataset/createdAt/pointsComplete 세 값이 실제로 바뀔 때만
   // (새 실행이 복원되거나 채움이 끝났을 때만) 다시 돌면 충분하다.
   useEffect(() => {
     if (!analysis || analysis.pointsComplete) return;
@@ -435,7 +425,7 @@ function RootCauseContent() {
     () => activeParetoResponse?.items ?? [],
     [activeParetoResponse],
   );
-  // 지시서 WI-2/YG: 표시 기준은 파레토 기여율 10% 이상 고정(토글 없음) --
+  // 표시 기준은 파레토 기여율 10% 이상 고정(토글 없음) --
   // selectDisplayFactors가 그 필터를 적용한다.
   const displayFactors = useMemo(() => selectDisplayFactors(activeParetoItems), [activeParetoItems]);
   const activeTargetIsEmpty = Boolean(
@@ -444,8 +434,8 @@ function RootCauseContent() {
   // 이 타깃에서 그릴 차트가 0개인지 -- 순위 자체는 있지만(activeParetoItems
   // 비어있지 않음) 그중 기여율 10% 이상인 인자가 하나도 없는 경우.
   const activeTargetHasNoChart = activeParetoItems.length > 0 && displayFactors.length === 0;
-  // WI-2 안내 문구("Y4는 기여율 10% 이상 인자가 없습니다 (최대 8.3%)")의
-  // 최대값 -- items는 이미 ε² 내림차순이라 기여율도 같은 순서이지만,
+  // 안내 문구("Y4는 기여율 10% 이상 인자가 없습니다 (최대 8.3%)")의
+  // 최대값 -- items는 이미 Adjusted R² 내림차순이라 기여율도 같은 순서이지만,
   // 그 가정에 기대지 않고 직접 최댓값을 구한다.
   const maxContributionPct = useMemo(
     () => (activeParetoItems.length === 0 ? 0 : Math.max(...activeParetoItems.map((item) => item.contribution_pct))),
@@ -469,7 +459,7 @@ function RootCauseContent() {
   function renderFactorCard(target: string, item: ParetoRankingItem, index: number) {
     const isConfig = item.kind === "Config";
     const key = `${target}::${item.feature}`;
-    // D-1: viewType별로 별도 즐겨찾기이므로, 채움 여부도 viewType별로
+    // viewType별로 별도 즐겨찾기이므로, 채움 여부도 viewType별로
     // 따로 물어야 한다 -- NumericFactorCard는 자기 view 상태를 알므로
     // 함수로 넘겨 카드 내부에서 평가하게 한다.
     const isFavorited = (viewType: string) => Boolean(favoriteIdByKey[`${datasetId}::${target}::${item.feature}::${viewType}`]);
@@ -528,13 +518,11 @@ function RootCauseContent() {
     setAnalysis((previous) => (previous ? { ...previous, activeTarget: target } : previous));
   }
 
-  // QB-1: Config 여부는 스키마(config_columns)로 판정한다 -- 예전에는
-  // `/_Config$/` 이름 패턴에 기대는 휴리스틱이었다. 데이터셋 컬럼명
-  // 규칙(Step{n}_Config)이 우연히 일치해 지금까지는 사고가 나지 않았지만,
-  // 400 응답을 받고서야 분기하는 방식이 아니라 요청 전에 권위 있는
-  // 근거(스키마)로 미리 분기해야 한다(하지 말 것: 400 왕복 후 재호출).
-  // 스키마가 아직 없는 극히 짧은 창(딥링크 최초 진입)에서만 이름 패턴을
-  // 폴백으로 쓴다.
+  // Config 여부는 스키마(config_columns)로 판정한다 -- 요청 전에 권위
+  // 있는 근거로 미리 분기해야 한다(400 응답을 받고서야 재호출하는 왕복은
+  // 금지). 이름 패턴 `/_Config$/`은 데이터셋 컬럼명 규칙(Step{n}_Config)에
+  // 우연히 기댄 휴리스틱이라, 스키마가 아직 도착하지 않은 극히 짧은
+  // 창(딥링크 최초 진입)에서만 폴백으로 쓴다.
   function isConfigFeature(feature: string): boolean {
     if (analysisSchema) return analysisSchema.config_columns.includes(feature);
     return /_Config$/.test(feature);
@@ -548,7 +536,7 @@ function RootCauseContent() {
     setQuickLookData(null);
     setQuickLookError("");
     // Every newly opened quick-look factor starts at 기본, same as the
-    // main list's per-card Color By (spec §5-3).
+    // main list's per-card Color By.
     setQuickLookColorMode("default");
     const isDisplayed = (paretoByTarget[target]?.items ?? []).some((f) => f.feature === feature);
     if (isDisplayed) {
@@ -621,7 +609,7 @@ function RootCauseContent() {
 
   const quickLookNumeric = quickLook && !quickLook.isConfig ? (quickLookData as ScreeningScatterResponse | null) : null;
   const quickLookCategorical = quickLook && quickLook.isConfig ? (quickLookData as CategoricalScatterResponse | null) : null;
-  // 지시서 WI-3: p-value 대신 표시할 R²(차수) -- Quick Look도 같은
+  // 화면에 표시하는 R²(차수) -- Quick Look도 같은
   // fitDefectRateCurve(ScatterChart가 추세선을 그릴 때 쓰는 것과 동일
   // 함수)를 이 인자의 산점도 좌표 위에서 그대로 계산한다.
   const quickLookCurveFit = useMemo(
@@ -636,46 +624,30 @@ function RootCauseContent() {
       <section className="uploadIntro pageHeading">
         <span className="eyebrow">인자 진단</span>
         <h1>원인 분석</h1>
-        {/* 지시서 U-1: 기능 안내 문구(계측 확대 시 기대 효과…)는 삭제했다
-            (이전 지시서 G의 삭제 기준 -- 기능 설명이지 수치 정보가 아니다).
-            첫 줄은 1280px에서 한 줄에 들어가도록 (spec §A-1) word-break:
-            keep-all만 쓴다 -- white-space: nowrap과 함께 쓰지 않는다(좁은
-            화면에서 잘림). */}
+        {/* 첫 줄은 1280px에서 한 줄에 들어가도록 word-break: keep-all만
+            쓴다 -- white-space: nowrap과 함께 쓰지 않는다(좁은 화면에서
+            잘림). */}
         <p className="rootCauseIntro">
           타깃별 Pareto와 강함·보통 등급 인자의 산점도·Box Plot을 확인합니다.
           <br />
           권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
         </p>
-        {/* 작업지시 T9: 여섯 화면 공통 헤더 메타(마지막 실행·데이터셋·
-            학습/분석 데이터 파일명) -- 837행 부근의 실행 바 안 LastRunNote는
-            상단이 아니라 실행 버튼 옆의 보조 표시라 중복 렌더하지 않는다. */}
+        {/* 여섯 화면 공통 헤더 메타(마지막 실행·데이터셋·학습/분석 데이터
+            파일명). 화면 하단에 같은 정보를 중복 렌더하지 않는다. */}
         <PageHeaderMeta />
       </section>
 
-      {/* SF-1: "분석 대상 [변경]" 카드와 "다시 분석" 실행 버튼, 그리고
-          이 화면 자신의 조용한 자동 실행 경로까지 전부 제거했다 -- 모든
-          실행은 모델 분석 팝업의 [분석 시작] 하나로 일원화됐다.
-          datasetMismatch는 즐겨찾기 딥링크(?dataset=)가 현재 분석과 다른
-          데이터셋을 가리키는 경우에도 발생하므로(선택 카드와 무관) 계속
-          보여준다. */}
+      {/* 즐겨찾기 딥링크(?dataset=)가 현재 분석과 다른 데이터셋을 가리키는
+          경우에도 불일치가 발생하므로 항상 렌더한다. */}
       <DatasetMismatchWarning mismatch={datasetMismatch} />
 
-      <section className="uploadCard">
-        <div className="paretoRunBar">
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h2 style={{ margin: 0, fontSize: "var(--fs-title)" }}>원인 분석</h2>
-              <LastRunNote createdAt={analysis?.createdAt} />
-            </div>
-          </div>
-        </div>
-        {/* SF-2: 빈 상태 안내를 화면마다 다르게 두지 않는다 -- "분석
-            결과가 없습니다. 모델 분석에서 분석을 시작하세요."로 통일하고
-            [열기]가 항상 같은 모델 분석 팝업을 연다. 저장된 결과가 낡은
-            버전이거나(analysisSnapshotStale) 가리키던 데이터셋이 삭제돼
-            버려진 경우(datasetFallbackNotice)도 같은 안내로 합친다 --
-            사유가 달라도 사용자가 취할 다음 행동은 같다. */}
-        {runState === "idle" && !analysis && (
+      {/* 분석 결과가 아예 없을 때만 렌더하는 빈 상태 안내. 저장된 결과가
+          낡은 버전이거나(analysisSnapshotStale) 가리키던 데이터셋이 삭제돼
+          버려진 경우(datasetFallbackNotice)도 같은 안내로 합친다 -- 사유가
+          달라도 사용자가 취할 다음 행동은 같다. [열기]는 항상 같은 모델
+          분석 팝업을 연다. */}
+      {runState === "idle" && !analysis && (
+        <section className="uploadCard">
           <div className="analysisErrorBox" role="status">
             <div className="analysisErrorBody">
               <p className="analysisErrorMessage">
@@ -686,8 +658,8 @@ function RootCauseContent() {
             </div>
             <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {analysisVisible && <SampleNotice sampleInfo={activeParetoResponse?.sample_info} />}
 
@@ -736,34 +708,37 @@ function RootCauseContent() {
                   {quickLookNumeric && (
                     <div className="factorChartMetaLine">
                       <span className="metaItem">n={quickLookNumeric.n.toLocaleString()}</span>
-                      <span className="metaItem">ε² {quickLookNumeric.eps2.toFixed(3)}</span>
-                      {quickLookCurveFit && (
-                        <span className="metaItem">R² {quickLookCurveFit.r2.toFixed(3)} ({quickLookCurveFit.degree}차)</span>
-                      )}
+                      {/* 서버가 낸 Adjusted R² 하나만 쓴다 -- 히트맵 셀·파레토
+                          막대와 같은 값이라 세 화면이 절대 어긋나지 않는다
+                          (예전에는 ε²와 클라이언트 재적합 R²를 나란히
+                          띄워 두 숫자가 서로 달랐다). */}
+                      <span className="metaItem">
+                        R² {quickLookNumeric.adj_r2.toFixed(3)}
+                        {quickLookNumeric.degree != null && ` (${quickLookNumeric.degree}차)`}
+                      </span>
                       <span className="metaItem">등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}</span>
                     </div>
                   )}
                 </div>
               </div>
-              {/* 모니터링 트리맵 타일 클릭으로 들어온 경우 (지시서 §4③
-                  "Config 필터 적용") -- 어떤 Config 값을 보고 왔는지
-                  알려준다. Box Plot 자체는 항상 전체 카테고리를 함께
+              {/* 모니터링 트리맵 타일 클릭으로 들어온 경우 -- 어떤 Config
+                  값을 보고 왔는지 알려준다. Box Plot 자체는 항상 전체 카테고리를 함께
                   보여주는 게 맞으므로(비교가 목적), 특정 카테고리만
                   숨기는 대신 배너로 표시한다. */}
               {quickLook.isConfig && configFromTreemap && (
                 <p className="sectionCaption">트리맵에서 선택: {configFromTreemap}</p>
               )}
               {quickLookError && <p className="errorMessage">{quickLookError}</p>}
-              {quickLookCategorical && <ModerateTierCaption tier={quickLookCategorical.confidence_tier} eps2={quickLookCategorical.eps2} />}
+              {quickLookCategorical && <ModerateTierCaption tier={quickLookCategorical.confidence_tier} adjR2={quickLookCategorical.adj_r2} />}
               {!quickLookError && quickLookNumeric && !hasReliableEvidence(quickLookNumeric.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
-                  이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (ε² = {quickLookNumeric.eps2.toFixed(3)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
+                  이 인자와 {quickLook.target}의 통계적 연관성은 신뢰도가 낮습니다 (Adj R² = {quickLookNumeric.adj_r2.toFixed(3)}, 등급 {TIER_LABEL[quickLookNumeric.confidence_tier]}).
                   원인으로 단정할 근거는 부족합니다.
                 </p>
               )}
               {!quickLookError && quickLookCategorical && !hasReliableEvidence(quickLookCategorical.confidence_tier) && (
                 <p className="heatmapSignificanceBanner">
-                  통계적 신뢰도가 낮습니다 (ε² = {quickLookCategorical.eps2.toFixed(3)}, 등급 {TIER_LABEL[quickLookCategorical.confidence_tier]}).
+                  통계적 신뢰도가 낮습니다 (Adj R² = {quickLookCategorical.adj_r2.toFixed(3)}, 등급 {TIER_LABEL[quickLookCategorical.confidence_tier]}).
                 </p>
               )}
               {quickLookNumeric ? (
@@ -773,7 +748,7 @@ function RootCauseContent() {
                   view={quickLookView}
                   onSelectWafer={setSelectedWafer}
                   height={chartHeight}
-                  reliabilityText={buildModerateInterpretation(quickLookNumeric.confidence_tier, quickLookNumeric.eps2)}
+                  reliabilityText={buildModerateInterpretation(quickLookNumeric.confidence_tier, quickLookNumeric.adj_r2)}
                 />
               ) : quickLookCategorical ? (
                 <PlotlyChart spec={buildCategoricalSpec(quickLookCategorical)} height={chartHeight} />
@@ -798,9 +773,8 @@ function RootCauseContent() {
             </section>
           ) : (
             <>
-              {/* 지시서 WI-1: 파레토는 타깃당 1개, 화면 상단에 고정 -- 인자
-                  카드마다 반복해 그리던 것을 걷어냈다. 인자 카드는 그
-                  아래에 나열된다. 표시 기준(WI-2/YG, 기여율 10% 이상)과
+              {/* 파레토는 타깃당 1개, 화면 상단에 고정하고 인자 카드는 그
+                  아래에 나열된다. 인자 카드 표시 기준(기여율 10% 이상)과
                   무관하게 이 타깃에 순위가 있는 한(activeParetoItems가
                   비어있지 않은 한) 항상 보인다 -- "이 타깃의 인자 순위"
                   전체를 보여주는 차트라 10% 미만 인자도 막대로는 남는다. */}
@@ -815,8 +789,8 @@ function RootCauseContent() {
               )}
 
               {activeTargetHasNoChart ? (
-                // 지시서 WI-2/YG: 기여율 10% 이상 인자가 하나도 없으면
-                // 카드 대신 이 안내를 띄운다(문구 형식은 지시서 예시 그대로).
+                // 기여율 10% 이상 인자가 하나도 없으면 카드 대신 이 안내를
+                // 띄운다.
                 <section className="resultCard noChartMessage">
                   <h2>{activeTarget}는 기여율 10% 이상 인자가 없습니다 (최대 {maxContributionPct.toFixed(1)}%)</h2>
                 </section>
@@ -862,9 +836,9 @@ function RootCauseContent() {
 }
 
 /** "비교" 줄 -- Y1~Y5 비교/장비별 Trellis 모달을 여는 트리거다. `보기`
- * 토글과 같은 `.scatterViewToggle*` 마크업을 쓰지만 상태 토글이 아니므로
- * (지시서 A: "눌리면 모달이 열리고 토글은 선택 상태로 남지 않는다")
- * `active` 클래스를 절대 붙이지 않는다. `onTrellis`가 없으면(Config 인자)
+ * 토글과 같은 `.scatterViewToggle*` 마크업을 쓰지만 상태 토글이 아니라
+ * 모달을 여는 트리거이므로 `active` 클래스를 절대 붙이지 않는다(눌러도
+ * 선택 상태로 남지 않는다). `onTrellis`가 없으면(Config 인자)
  * 버튼 하나만 남는다. */
 function CompareToggleRow({ onCompare, onTrellis }: { onCompare: () => void; onTrellis: (() => void) | null }) {
   return (
@@ -894,11 +868,11 @@ function CompareToggleRow({ onCompare, onTrellis }: { onCompare: () => void; onT
   );
 }
 
-/** 인자 카드 "보기" 토글 (지시서 WI-1) -- Pareto 옵션을 없앴다(파레토는
- * 타깃당 1개, 화면 상단에 고정된 PinnedParetoCard가 전담). 이제 Quick
- * Look의 QuickLookViewToggle과 옵션이 같아졌지만, 상태를 소유하는 카드가
- * 다르므로(이 토글은 NumericFactorCard, 저쪽은 root-cause 페이지의
- * quickLookView) 두 컴포넌트를 그대로 둔다. */
+/** 인자 카드 "보기" 토글 -- Pareto 옵션은 없다(파레토는 타깃당 1개,
+ * 화면 상단에 고정된 PinnedParetoCard가 전담). Quick Look의
+ * QuickLookViewToggle과 옵션은 같지만 상태를 소유하는 쪽이 다르므로
+ * (이 토글은 NumericFactorCard, 저쪽은 root-cause 페이지의 quickLookView)
+ * 두 컴포넌트를 따로 둔다. */
 function ViewToggle({ value, onChange }: { value: QuickLookView; onChange: (view: QuickLookView) => void }) {
   return (
     <div className="scatterViewToggleRow">
@@ -939,7 +913,7 @@ function QuickLookViewToggle({ value, onChange }: { value: QuickLookView; onChan
 
 /** SPC/ML 권장구간 산출 방식 토글 -- 보기 토글 바로 아래, 같은 좌측 라벨
  * 폭(스타일 재사용)으로 세로 정렬된다. 전환은 산점도/박스플롯의 보기
- * 전용이며 (spec §2-2/§3-3) 알람 로그·개선 권장 목록은 절대 건드리지
+ * 전용이며 알람 로그·개선 권장 목록은 절대 건드리지
  * 않는다 -- `adopted` 쪽에는 작은 채택 배지를 붙여 기본 선택이 왜 그
  * 값인지 알 수 있게 한다. */
 function MethodToggle({
@@ -966,7 +940,7 @@ function MethodToggle({
   );
 }
 
-// U-5: 텍스트 글리프(✓)는 폰트마다 모양·정렬이 달라진다 -- 장식용 문자
+// 텍스트 글리프(✓)는 폰트마다 모양·정렬이 달라진다 -- 장식용 문자
 // 대신 크기가 고정된 SVG를 쓴다.
 function CheckGlyph() {
   return (
@@ -976,7 +950,7 @@ function CheckGlyph() {
   );
 }
 
-/** 권장 구간 산출 방식 비교 카드 (spec §4) -- 표시 전용, 여기서 방식을
+/** 권장 구간 산출 방식 비교 카드 -- 표시 전용, 여기서 방식을
  * 선택할 수 없다 (전환은 오직 위 MethodToggle로만). SPC가 채택돼도 배지는
  * 같은 자리에 붙는다. */
 function MethodComparisonCard({ methods }: { methods: MethodComparison }) {
@@ -1030,15 +1004,14 @@ function formatNum1(value: number): string {
   return value.toFixed(1);
 }
 
-/** 지시서 WI-1/WI-4: 파레토는 타깃당 1개, 화면 상단에 고정된다 --
+/** 타깃당 1개, 화면 상단에 고정되는 파레토 카드.
  * ParetoChart를 non-embedded(기본) 모드로 그린다 -- 그쪽이 이미 소유한
  * 제목("R/D/Config vs {target}")·등급 범례 헤더를 그대로 쓰고,
- * `headerActions`로 이미지 저장 버튼만 그 헤더 안에 얹는다(이전에는 이
- * non-embedded 경로를 실제로 쓰는 곳이 없었다 -- 인자 카드는 항상
- * embedded로, 즐겨찾기 썸네일은 embedded+thumbnail로 불렀다). 인자
- * 카드와 달리 즐겨찾기 별은 없다 -- 이 카드는 특정 (타깃, 인자) 조합이
- * 아니라 타깃 전체의 순위를 보여줘 즐겨찾기 스냅샷(dataset+target+feature)
- * 모델과 맞지 않는다. */
+ * `headerActions`로 이미지 저장 버튼만 그 헤더 안에 얹는다. 이 경로를 쓰는
+ * 곳은 여기뿐이다(인자 카드는 embedded, 즐겨찾기 썸네일은
+ * embedded+thumbnail로 부른다). 인자 카드와 달리 즐겨찾기 별은 없다 --
+ * 이 카드는 특정 (타깃, 인자) 조합이 아니라 타깃 전체의 순위를 보여줘
+ * 즐겨찾기 스냅샷(dataset+target+feature) 모델과 맞지 않는다. */
 function PinnedParetoCard({
   target,
   items,
@@ -1073,7 +1046,7 @@ function PinnedParetoCard({
   );
 }
 
-/** 지시서 "차트 이미지 저장": 파레토·산점도·박스플롯·Config 박스플롯 카드
+/** 파레토·산점도·박스플롯·Config 박스플롯 카드
  * 우상단, 즐겨찾기(☆) 옆에 붙는 이미지 저장 버튼. 카드 루트 DOM 노드를
  * 통째로 html-to-image로 캡처한다(lib/chartExport.ts) -- 네 차트가 이
  * 컴포넌트 하나를 공유한다. `buildOptions`를 클릭 시점에 지연 평가하는
@@ -1112,7 +1085,7 @@ function ExportPngButton({
   );
 }
 
-/** One dropdown per scatter card (spec §5-3) -- no server round-trip on
+/** One dropdown per scatter card -- no server round-trip on
  * change, `lot_id`/`config` already ride along in the point data
  * ScatterChart already has. */
 function ColorBySelect({
@@ -1123,11 +1096,10 @@ function ColorBySelect({
   value: ColorMode;
   onChange: (mode: ColorMode) => void;
   // Config 컬럼이 0개인 데이터셋(업로드 데이터셋 등)에서는
-  // "Config별" 색상 옵션이 고를 수 있는 값 자체가 없으므로 숨긴다 (spec
-  // 문구 전수 검토 §A-5).
+  // "Config별" 색상 옵션이 고를 수 있는 값 자체가 없으므로 숨긴다.
   hasConfig?: boolean;
 }) {
-  // 저장된 즐겨찾기 스냅샷에 옛 값(예: 삭제된 "alarm")이 남아 있어도 화면이
+  // 저장된 즐겨찾기 스냅샷에 지금은 없는 값(예: "alarm")이 남아 있어도 화면이
   // 깨지지 않도록 알 수 없는 값은 기본으로 떨어뜨린다 -- value는 항상
   // ColorMode 타입으로 좁혀지지만, 향후 즐겨찾기 복원 경로가 생기면 이
   // 방어가 실제로 쓰인다.
@@ -1149,8 +1121,8 @@ function ColorBySelect({
   );
 }
 
-/** Owns its own Color By state locally (spec §5-3: "전역 store에 넣지
- * 마라") -- the parent forces a reset to 기본 by changing this
+/** Owns its own Color By state locally, never in a global store -- the
+ * parent forces a reset to 기본 by changing this
  * component's `key` (remount) on every new analysis run or target
  * switch, rather than lifting the state up. */
 function NumericFactorCard({
@@ -1177,27 +1149,24 @@ function NumericFactorCard({
   onCompare: (feature: string) => void;
   onTrellis: (feature: string, step: number) => void;
   hasConfig: boolean;
-  // D-1: viewType(Scatter/Box)별로 별도 즐겨찾기다 -- 이 카드가 지금 어떤
+  // viewType(Scatter/Box)별로 별도 즐겨찾기다 -- 이 카드가 지금 어떤
   // view인지는 카드 자신만 아므로, 부모가 boolean이 아니라 함수를 내려줘
   // 카드 내부에서 현재 view로 평가한다.
   isFavorited: (viewType: string) => boolean;
   isFavoritePending: (viewType: string) => boolean;
   onToggleFavorite: (snapshot: FavoriteSnapshot) => void;
-  // DE그룹: 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언) id를 함께
-  // 담는다.
+  // 즐겨찾기 스냅샷에 저장 시점의 활성 모델(챔피언) id를 함께 담는다.
   championVersion: string | null;
 }) {
   const [colorMode, setColorMode] = useState<ColorMode>("default");
-  // View state lives per-card (spec §2-2: "산점도마다 독립적인 상태"), never
-  // in a shared store/URL/localStorage -- resets for free whenever this
-  // card remounts on a new run/target (see its `key` at the call site).
-  // 지시서 WI-1: Pareto가 빠졌으므로 기본값은 Scatter Plot이다.
+  // View state lives per-card (산점도마다 독립적인 상태), never in a shared
+  // store/URL/localStorage -- resets for free whenever this card remounts
+  // on a new run/target (see its `key` at the call site).
   const [view, setView] = useState<QuickLookView>("scatter");
-  // ≤767px: 산점도 높이 240px (spec: JSON 보고서 버튼 제거 · 모바일 레이아웃
-  // 전환 §B-6).
+  // ≤767px: 산점도 높이 240px.
   const isMobileLayout = useIsMobileLayout();
   const chartHeight = isMobileLayout ? 240 : 480;
-  // SPC/ML 토글 상태 (spec §3-2): 기본 선택은 이 인자의 `methods.adopted`를
+  // SPC/ML 토글 상태 -- 기본 선택은 이 인자의 `methods.adopted`를
   // 따른다. `numericData`는 비동기로 한 번만 채워지므로 (같은 카드 인스턴스가
   // 다른 인자 데이터로 바뀌는 일은 없다 -- 위 key가 매 실행/타깃/인자 조합마다
   // 새로 발급된다) "처음 도착했을 때 한 번 반영" 패턴을 useEffect 대신
@@ -1208,12 +1177,11 @@ function NumericFactorCard({
     setMethodInitialized(true);
     setMethod(numericData.methods.adopted);
   }
-  // 지시서 WI-3: p-value 대신 R²(차수) -- ScatterChart가 추세선을 그릴 때
+  // 화면에 표시하는 R²(차수) -- ScatterChart가 추세선을 그릴 때
   // 쓰는 것과 같은 fitDefectRateCurve를 이미 받아온 산점도 좌표 위에서
   // 그대로 다시 계산한다(같은 순수 함수·같은 입력이라 값이 어긋나지 않는다).
   const curveFit = useMemo(() => (numericData ? fitDefectRateCurve(numericData.points) : null), [numericData]);
-  // 지시서 "차트 이미지 저장": 이미지 저장 버튼이 이 카드 루트를 DOM
-  // 캡처한다.
+  // 이미지 저장 버튼이 이 카드 루트를 DOM 캡처한다.
   const cardRef = useRef<HTMLElement | null>(null);
   return (
     <article className="resultCard factorChartCard" id={`factor-${item.feature}`} ref={cardRef}>
@@ -1222,10 +1190,10 @@ function NumericFactorCard({
           <div className="factorChartTitleRow">
             <h2>{item.feature} vs {activeTarget}</h2>
             <ConfidenceBadge tier={item.confidence_tier} />
-            {/* QA-2: 배제 대신 하한(30) 이상 표본을 그대로 판정하되, 종류별
-                (R/D) 정상 판정 임계 미만이면 등급을 낮추고(위 배지에 이미
-                반영됨) 이유를 별도로 밝힌다 -- 등급만 봐서는 "왜 낮은지"가
-                안 보인다. */}
+            {/* 표본이 하한(30) 이상이면 배제하지 않고 그대로 판정하되,
+                종류별(R/D) 정상 판정 임계 미만이면 등급을 낮추고(위 배지에
+                이미 반영됨) 이유를 별도로 밝힌다 -- 등급만 봐서는 "왜
+                낮은지"가 안 보인다. */}
             {item.under_sampled && (
               <span className="underSampledBadge" title={`계측 n=${item.n_observed} -- 표본이 정상 판정 임계에 못 미쳐 신뢰 등급을 한 단계 낮췄습니다.`}>
                 표본 부족
@@ -1243,12 +1211,12 @@ function NumericFactorCard({
                   colorBy: colorMode,
                   method,
                   isConfig: false,
-                  interpretation: buildModerateInterpretation(item.confidence_tier, item.eps2),
+                  interpretation: buildModerateInterpretation(item.confidence_tier, item.adj_r2),
                   championVersion,
                 })
               }
             />
-            {/* 지시서 "차트 이미지 저장": 이미지 저장 버튼은 즐겨찾기 별 바로 옆. */}
+            {/* 이미지 저장 버튼은 즐겨찾기 별 바로 옆. */}
             <ExportPngButton
               nodeRef={cardRef}
               buildOptions={() => ({
@@ -1256,7 +1224,8 @@ function NumericFactorCard({
                 captionText: buildFactorCaptionText({
                   feature: item.feature,
                   target: activeTarget,
-                  eps2: item.eps2,
+                  adjR2: item.adj_r2,
+                  degree: item.degree,
                   n: numericData?.n ?? item.n_observed,
                   datasetId: dataset,
                 }),
@@ -1274,15 +1243,19 @@ function NumericFactorCard({
         </div>
         <div className="factorChartHeaderRow meta">
           <span className="sectionLabel">{index + 1}위</span>
-          {/* 지시서 WI-3: p-value·q-value는 화면에서 뺀다(FDR 게이트 자체는
-              백엔드에서 계속 동작 -- 표시만 안 하는 것). ε²·R²(적합
-              차수)·파레토 기여율 셋이 서로를 보완한다(표본이 커지면 p는
-              약한 관계도 극단적으로 유의해져 변별력이 없다). */}
+          {/* p-value·q-value는 화면에 내보내지 않는다 -- FDR 게이트는
+              백엔드에서 계속 동작하지만, 표본이 커지면 p는 약한 관계도
+              극단적으로 유의해져 변별력이 없다. 대신 Adjusted R²(적합
+              차수)와 파레토 기여율이 서로를 보완한다. 설명력 숫자는
+              서버가 낸 adj_r2 하나뿐이다 -- 히트맵 셀·파레토 막대와 같은
+              값이라 화면끼리 어긋나지 않는다. */}
           {numericData && (
             <div className="factorChartMetaLine">
               <span className="metaItem">n={numericData.n.toLocaleString()}</span>
-              <span className="metaItem">ε² {item.eps2.toFixed(3)}</span>
-              {curveFit && <span className="metaItem">R² {curveFit.r2.toFixed(3)} ({curveFit.degree}차)</span>}
+              <span className="metaItem">
+                R² {item.adj_r2.toFixed(3)}
+                {item.degree != null && ` (${item.degree}차)`}
+              </span>
               <span className="metaItem">기여율 {item.contribution_pct.toFixed(1)}%</span>
             </div>
           )}
@@ -1290,7 +1263,7 @@ function NumericFactorCard({
       </div>
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
-          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (ε² = {item.eps2.toFixed(3)}, 등급 {TIER_LABEL[item.confidence_tier]}). 원인으로 단정할 근거는 부족합니다.
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (Adj R² = {item.adj_r2.toFixed(3)}, 등급 {TIER_LABEL[item.confidence_tier]}). 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
       {numericData ? (
@@ -1302,7 +1275,7 @@ function NumericFactorCard({
             method={method}
             onSelectWafer={onSelectWafer}
             height={chartHeight}
-            reliabilityText={buildModerateInterpretation(item.confidence_tier, item.eps2)}
+            reliabilityText={buildModerateInterpretation(item.confidence_tier, item.adj_r2)}
           />
           {numericData.methods && <MethodComparisonCard methods={numericData.methods} />}
         </>
@@ -1357,7 +1330,7 @@ function CategoricalFactorCard({
                   feature: item.feature,
                   viewType: "box",
                   isConfig: true,
-                  interpretation: buildModerateInterpretation(item.confidence_tier, item.eps2),
+                  interpretation: buildModerateInterpretation(item.confidence_tier, item.adj_r2),
                   championVersion,
                 })
               }
@@ -1369,7 +1342,8 @@ function CategoricalFactorCard({
                 captionText: buildFactorCaptionText({
                   feature: item.feature,
                   target: activeTarget,
-                  eps2: item.eps2,
+                  adjR2: item.adj_r2,
+                  degree: item.degree,
                   n: categoricalData?.n ?? item.n_observed,
                   datasetId: dataset,
                 }),
@@ -1377,21 +1351,20 @@ function CategoricalFactorCard({
             />
           </div>
         </div>
-        {/* 지시서 WI-3: p-value 제거, ε²·기여율만 남긴다 -- R²(적합 곡선)는
-            숫자 x축이 있는 산점도에서만 의미가 있어(회귀 곡선을 그 위에
-            적합한다) Config(범주형) 카드에는 없다. */}
+        {/* Config의 Adjusted R²는 더미회귀에서 나오므로 적합 차수(1차/2차)가
+            없다 -- 차수 배지는 수치형 카드에만 붙는다. */}
         {categoricalData && (
           <small className="factorChartStats">
             <span>n={categoricalData.n}</span>
-            <span>ε²={item.eps2.toFixed(3)}</span>
+            <span>Adj R²={item.adj_r2.toFixed(3)}</span>
             <span>기여율={item.contribution_pct.toFixed(1)}%</span>
           </small>
         )}
       </div>
-      <ModerateTierCaption tier={item.confidence_tier} eps2={item.eps2} />
+      <ModerateTierCaption tier={item.confidence_tier} adjR2={item.adj_r2} />
       {!hasReliableEvidence(item.confidence_tier) && (
         <p className="heatmapSignificanceBanner">
-          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (ε² = {item.eps2.toFixed(3)}, 등급 {TIER_LABEL[item.confidence_tier]}). 원인으로 단정할 근거는 부족합니다.
+          이 인자와 {activeTarget}의 통계적 연관성은 신뢰도가 낮습니다 (Adj R² = {item.adj_r2.toFixed(3)}, 등급 {TIER_LABEL[item.confidence_tier]}). 원인으로 단정할 근거는 부족합니다.
         </p>
       )}
       {categoricalData ? (
@@ -1403,7 +1376,7 @@ function CategoricalFactorCard({
   );
 }
 
-/** 즐겨찾기 별 토글 (지시서 J-2) -- 저장 시점 상태 스냅샷만 넘긴다, 점
+/** 즐겨찾기 별 토글 -- 저장 시점 상태 스냅샷만 넘긴다, 점
  * 데이터는 절대 포함하지 않는다. */
 function FavoriteStarButton({
   favorited,
@@ -1411,7 +1384,7 @@ function FavoriteStarButton({
   onClick,
 }: {
   favorited: boolean;
-  // D-1: 생성/삭제 요청이 진행 중인 동안 버튼을 막는다 -- 빠른 더블클릭이
+  // 생성/삭제 요청이 진행 중인 동안 버튼을 막는다 -- 빠른 더블클릭이
   // 중복 즐겨찾기(좀비 레코드)를 만드는 걸 막는 시각적 짝.
   disabled?: boolean;
   onClick: () => void;
@@ -1442,7 +1415,7 @@ function WaferDetailPopover({
   onClose: () => void;
   // 데이터셋에 Config 컬럼이 아예 없으면(업로드 데이터셋 등)
   // 모든 wafer가 "미계측"으로만 표시되어 "계측 안 됨"인지 "그런 항목 자체가
-  // 없음"인지 구분이 안 되므로, 행 자체를 숨긴다 (spec 문구 전수 검토 §A-5).
+  // 없음"인지 구분이 안 되므로, 행 자체를 숨긴다.
   hasConfig: boolean;
 }) {
   return (
