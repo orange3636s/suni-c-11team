@@ -335,6 +335,30 @@ uvicorn api.main:app --host 0.0.0.0 --port $PORT --workers 1
 
 Healthcheck는 `/health`를 사용합니다. Railway 무료 티어(512MB RAM / 1vCPU)를 기준으로 업로드 상한을 20MB로 두고 `--workers 1`을 유지합니다(`config/upload_limits.yaml`). 배포 환경에는 최소 `FRONTEND_ORIGINS`, SUNI 챗봇을 쓸 경우 `UPSTAGE_API_KEY` 등을 설정해야 합니다. 로컬 검증은 Railway의 실제 RAM, OOM, 499/502 발생 여부를 대신하지 않으므로 운영 배포 후 별도 확인이 필요합니다.
 
+### Railway 볼륨 설정 (필수)
+
+Railway는 재시작·재배포마다 컨테이너 파일시스템을 초기화합니다. 볼륨을 붙이지 않으면 텔레그램·Slack·Gmail 연동, 챔피언 모델 지정, 분석 스냅샷, 즐겨찾기, 알림 발송 이력, 업로드한 데이터셋, 모델 아티팩트가 재시작마다 전부 사라집니다.
+
+```text
+Settings -> Volumes -> New Volume
+Mount path: /app/var        (/app/data 는 사용하지 마세요 -- 저장소의 data/bundled/
+                              내장 데이터(train.CSV 등)가 가려져 콜드 스타트가 실패합니다)
+```
+
+환경변수 설정은 별도로 필요 없습니다. Railway가 자동 주입하는 `RAILWAY_VOLUME_MOUNT_PATH`를 `api/settings.py`가 읽어 모델·runtime DB·아티팩트·학습 잡·업로드 데이터셋 5개 저장 경로를 전부 볼륨 안으로 전환합니다.
+
+`MODEL_DIR`·`RUNTIME_DB_PATH`·`RUNTIME_ARTIFACT_DIR`·`TRAINING_JOB_ARTIFACT_DIR`·`DATASET_UPLOAD_DIR` 중 하나라도 Railway Variables에 명시적으로 설정되어 있으면 그 경로가 볼륨 자동 감지보다 우선합니다(명시적 설정 우선 원칙) — 볼륨을 붙였는데도 반영되지 않는다면 이 변수들부터 확인하고, 상대 경로이거나 로컬 기본값과 같다면 지우는 것을 권장합니다.
+
+기동 로그에 볼륨 연결 여부와 5개 저장 경로, 환경변수로 덮어써진 경로가 1회 출력되므로(`storage: volume=...` 또는 `storage: 볼륨 미연결 ...`) 배포 후 반드시 로그로 확인하세요.
+
+**볼륨에 저장되는 것**
+
+- 모델 아티팩트(`models/`)
+- runtime DB(연동 정보 · 챔피언 모델 지정 · 분석 스냅샷 · 즐겨찾기 · 알림 발송 이력)
+- 학습 잡 산출물 · 업로드한 데이터셋
+
+**볼륨이 없으면**: 재시작·재배포마다 위 항목이 전부 소실되어 텔레그램 연결부터 모델 학습까지 다시 해야 합니다.
+
 ## 검증
 
 ```powershell

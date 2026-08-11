@@ -120,6 +120,30 @@ def _resolve_dataset_upload_dir(raw_value: str | None) -> Path:
     return (PROJECT_ROOT / configured_path).resolve()
 
 
+# TA-2: `_storage_default`(볼륨 자동 감지)를 덮어쓸 수 있는 경로 환경변수
+# 전부. 기동 로그(TA-3)가 어느 경로가 명시적으로 덮어써졌는지 표시하는 데
+# 쓴다.
+STORAGE_ENV_VARS: dict[str, str] = {
+    "model_dir": "MODEL_DIR",
+    "runtime_db_path": "RUNTIME_DB_PATH",
+    "runtime_artifact_dir": "RUNTIME_ARTIFACT_DIR",
+    "training_job_artifact_dir": "TRAINING_JOB_ARTIFACT_DIR",
+    "dataset_upload_dir": "DATASET_UPLOAD_DIR",
+}
+
+
+def _ensure_writable_dir(path: Path) -> bool:
+    """디렉터리를 만들고 실제로 쓸 수 있는지 프로브 파일로 확인한다."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write-probe"
+        probe.touch(exist_ok=False)
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = field(
@@ -277,6 +301,47 @@ class Settings:
             return True
         except OSError:
             return False
+
+    @property
+    def volume_mount_path(self) -> str | None:
+        """Railway가 주입하는 볼륨 마운트 경로. 없으면 None(로컬/미연결)."""
+        raw = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+        return raw or None
+
+    @property
+    def storage_env_overrides(self) -> dict[str, str]:
+        """볼륨 자동 감지를 덮어쓴 경로 필드 -> 환경변수 이름."""
+        return {
+            field_name: env_name
+            for field_name, env_name in STORAGE_ENV_VARS.items()
+            if os.environ.get(env_name, "").strip()
+        }
+
+    def storage_directory_status(self) -> dict[str, bool]:
+        """TA-4: 5개 저장 경로 전부의 쓰기 가능 여부. 기동 시 1회 확인용."""
+        return {
+            "model_dir": self.model_directory_ready(),
+            "runtime_db_path": _ensure_writable_dir(self.runtime_db_path.parent),
+            "runtime_artifact_dir": _ensure_writable_dir(self.runtime_artifact_dir),
+            "training_job_artifact_dir": _ensure_writable_dir(
+                self.training_job_artifact_dir
+            ),
+            "dataset_upload_dir": _ensure_writable_dir(self.dataset_upload_dir),
+        }
+
+    def bundled_data_conflict(self) -> str | None:
+        """TB-2: 볼륨 마운트가 내장 데이터(data/bundled)를 가리면 진단 메시지를,
+        아니면 None을 반환한다."""
+        mount = self.volume_mount_path
+        if not mount:
+            return None
+        marker = self.bundled_dataset_dir / "train.CSV"
+        if marker.exists():
+            return None
+        return (
+            f"볼륨 마운트({mount})가 내장 데이터 경로를 가립니다. "
+            f"{marker} 를 찾을 수 없습니다. 마운트 경로를 /app/var 등으로 변경하세요."
+        )
 
 
 settings = Settings()

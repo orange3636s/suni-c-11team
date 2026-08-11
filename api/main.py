@@ -63,6 +63,47 @@ logger = logging.getLogger(__name__)
 logger.info(".env %s", "loaded" if ENV_FILE_LOADED else "not found (using OS env)")
 
 
+def _log_storage_diagnostics() -> None:
+    """TA-3: 기동 시 1회, 5개 저장 경로가 볼륨 안인지·쓰기 가능한지 남긴다.
+    재시작마다 텔레그램/Slack/Gmail 연동, 챔피언 모델, 즐겨찾기 등이
+    사라지는 문제를 다음에 5초 안에 진단할 수 있게 하는 것이 목적이다."""
+    overrides = settings.storage_env_overrides
+    mount = settings.volume_mount_path
+    if mount:
+        logger.info("storage: volume=%s (RAILWAY_VOLUME_MOUNT_PATH)", mount)
+    else:
+        logger.warning(
+            "storage: 볼륨 미연결 -- 컨테이너 파일시스템 사용 중. "
+            "재시작 시 모델·연동 정보·스냅샷이 소실됩니다."
+        )
+
+    labeled_paths = (
+        ("model_dir", "model_dir", settings.model_dir),
+        ("runtime_db", "runtime_db_path", settings.runtime_db_path),
+        ("artifacts", "runtime_artifact_dir", settings.runtime_artifact_dir),
+        ("training_jobs", "training_job_artifact_dir", settings.training_job_artifact_dir),
+        ("datasets", "dataset_upload_dir", settings.dataset_upload_dir),
+    )
+    for label, field_name, path in labeled_paths:
+        env_name = overrides.get(field_name)
+        if env_name:
+            logger.info("  %-13s = %s  (%s 환경변수)", label, path, env_name)
+        else:
+            logger.info("  %-13s = %s", label, path)
+
+    status = settings.storage_directory_status()
+    for label, field_name, path in labeled_paths:
+        if not status[field_name]:
+            logger.error("storage: %s 쓰기 불가 -- 볼륨 권한을 확인하세요", path)
+
+    conflict = settings.bundled_data_conflict()
+    if conflict:
+        logger.error("storage: %s", conflict)
+
+
+_log_storage_diagnostics()
+
+
 def _is_deployment_environment() -> bool:
     return (
         settings.app_env.lower() == "production"
@@ -127,6 +168,28 @@ async def _warmup_datasets_background() -> None:
 
 def _bootstrap_runtime_store() -> RuntimeStore:
     return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+
+
+def _check_dataset_file_integrity() -> None:
+    """TC-4: `datasets` 레코드는 남아 있는데 업로드 파일이 볼륨 밖에서
+    사라진 경우, 조회 시점에 조용히 404가 나기 전에 기동 시 한 번
+    로그로 원인을 남긴다. 모델 아티팩트 쪽(model_slots)은 이미
+    `_has_usable_champion`이 같은 방식으로 처리한다."""
+    try:
+        registry = get_dataset_registry()
+        for record in registry.store.list_datasets():
+            stored_path = record.get("stored_path")
+            if not stored_path:
+                continue
+            file_path = registry.upload_root / stored_path
+            if not file_path.exists():
+                logger.warning(
+                    "storage: dataset %s 등록됨 but 파일 없음 (%s)",
+                    record.get("dataset_id"),
+                    file_path,
+                )
+    except Exception:
+        logger.exception("storage: dataset 파일 정합성 검사 실패")
 
 
 class BundledTrainingDataMissingError(RuntimeError):
@@ -337,6 +400,7 @@ async def lifespan(app: FastAPI):
         recover_interrupted_training_jobs()
     except Exception:
         logger.exception("중단된 학습 Job 시작 복구 실패")
+    _check_dataset_file_integrity()
     _spawn_background_task(_warmup_datasets_background())
     if _is_deployment_environment():
         try:
