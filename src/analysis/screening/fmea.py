@@ -124,10 +124,10 @@ def _score_factor(
     # "권장 구간"은 SPC 관리한계(IQR*1.5, 알람용으로 일부러 넓게 잡은
     # 값)가 아니라 recommendations.py가 산출하는, 관리한계 안쪽으로
     # clamp된 더 좁은 구간이다 -- README의 권장 구간 표(예: Step28_R1
-    # 54.7~61.5)와 alarm_bands.py "구간별 평균 수율" 카드가 이미 이
-    # 값을 "권장 구간"으로 쓰고 있다. SPC 관리한계를 그대로 쓰면
-    # (드물게만 이탈하도록 일부러 넓힌 값이라) 이탈률이 항상 한 자리
-    # 수로 나와 O(발생도)가 사실상 무의미해진다.
+    # 54.7~61.5)가 이미 이 값을 "권장 구간"으로 쓰고 있다. SPC 관리한계를
+    # 그대로 쓰면(드물게만 이탈하도록 일부러 넓힌 값이라) 구간 밖 비율이
+    # 항상 한 자리 수로 나와 defect_rate_deviation_pct(아래 §WE-4)가
+    # 사실상 무의미해진다.
     control_range = compute_control_range(eval_df, factor)
     recommendation = compute_factor_recommendation(eval_df, factor, control_range, dataset_id=dataset_id)
     if recommendation is None:

@@ -1,13 +1,13 @@
 """인자별 권장 구간(recommended range) 계산 -- '개선 권장 목록'(per-wafer
 list)은 정밀도가 무작위 수준과 다르지 않아 삭제됐다 (spec 알람 신뢰도
-게이트 §B-1: train→problem 정밀도 5%). `compute_factor_recommendation`은
-여전히 남아있는 두 소비처가 쓴다:
+게이트 §B-1: train→problem 정밀도 5%). `alarm_bands.py`(사전 알람 로그의
+"구간별 평균 수율" 카드)도 그 로그 자체가 폐기되며 함께 삭제됐다.
+`compute_factor_recommendation`은 지금은 이 소비처들이 쓴다:
 
-  - `src/analysis/alarm_bands.py`의 `classify_measured_bands`/
-    `compute_factor_band` -- 사전 알람 로그의 "구간별 평균 수율" 카드이
-    "채택된 권장구간"(SPC 또는 ML) 밖/안을 가르는 데 이 창을 그대로 쓴다
-    (spec 알람 신뢰도 게이트 §C-1).
   - `src/analysis/report.py` -- JSON 보고서의 인자별 window 필드.
+  - `src/analysis/scatter.py` -- 산점도의 권장 구간 표시.
+  - `src/analysis/screening/fmea.py` -- FMEA 표의 권장 구간 열.
+  - `src/analysis/yield_prediction.py` -- 수율 예측 권장사항의 구간 조정 제안.
 
 recommended range 자체는 train 기준(bin-profile threshold, see
 `_recommended_range_raw`)으로 산출되고 control range 안쪽으로 clamp된다
@@ -44,10 +44,10 @@ def _recommended_range_raw(x: pd.Series, y: pd.Series) -> tuple[float, float] | 
     llm_stats.py's per-chamber breakdown still needs.
     """
     # TC-5: 권장 구간(SPC 쪽)은 자동 구간수를 적용하지 않고 기존 12로
-    # 고정한다 -- 구간 수가 바뀌면 최적 중심·권장 구간이 달라지고 알람
-    # 판정(alarm_bands.classify_measured_bands가 이 window로 이탈을
-    # 판정한다)이 조용히 변한다. 히트맵/Pareto의 eps2 계산(effect_size.py)
-    # 에만 Sturges를 적용했다.
+    # 고정한다 -- 구간 수가 바뀌면 최적 중심·권장 구간이 달라지고 이
+    # window를 그대로 쓰는 소비처(report.py/scatter.py/fmea.py/
+    # yield_prediction.py)의 판정이 조용히 변한다. 히트맵/Pareto의 eps2
+    # 계산(effect_size.py)에만 Sturges를 적용했다.
     bins = quantile_bins(x, y, bins=DEFAULT_BINS)
     if not bins:
         return None

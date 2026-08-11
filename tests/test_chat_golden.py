@@ -21,6 +21,7 @@ from api.routes.chat import (
     _build_messages,
     _chat_system_prompt,
     _context_level,
+    _report_system_prompt,
     _resolve_mode,
 )
 
@@ -212,6 +213,16 @@ _DEAD_TERMS = ("미분류", "게이트 미달", "4.0%p", "0.8%p", "판정 컷")
 
 def test_prompt_has_no_dead_features():
     prompt = _chat_system_prompt()
+    for term in _DEAD_TERMS:
+        assert term not in prompt, f"폐기된 판정 체계 문구가 남아 있습니다: {term!r}"
+
+
+def test_report_prompt_has_no_dead_features():
+    """report_system.md는 chat_system.md와 별도 파일이라 위 검사가 커버하지
+    않는다 -- 한때 여기만 목표 수율·민감도 절대 컷·미분류 두 사유 체계를
+    시스템 상수처럼 서술하고 있었다(챗봇 프롬프트와 서로 다른 화면
+    설명을 갖는 회귀였다). 같은 죽은 용어 목록을 여기도 강제한다."""
+    prompt = _report_system_prompt()
     for term in _DEAD_TERMS:
         assert term not in prompt, f"폐기된 판정 체계 문구가 남아 있습니다: {term!r}"
 

@@ -126,32 +126,36 @@ def _measurement_rate_limitation(df: pd.DataFrame, schema: Schema) -> str:
 
 
 def _interval_calibration_limitation(train_df: pd.DataFrame, features: list[str]) -> str:
-    """예측 구간 캘리브레이션 + 미분류 사유 분리 (spec §BD-3) -- 챗봇의
-    한계 설명에 conformal 캘리브레이션 사실을 명시한다. 하드코딩된 숫자
-    (예: "±5.5%p")를 쓰지 않고 이 데이터셋에서 실제로 낸 conformal
+    """예측 구간 캘리브레이션 한계 설명 -- 웨이퍼 단위 판정을 conformal
+    구간 폭으로 가부 판정하던 방식은 폐기됐다(±5.53%p 수준이면 판정
+    가능한 wafer가 6%뿐이었다). 화면이 실제로 보여주는 신뢰도 신호는
+    수율 예측 표의 "신뢰도 n/5"(핵심 인자가 계측된 타깃 수, VC-1)이므로
+    여기서는 conformal 여유를 판정 기준이 아닌 참고 통계로만 언급한다.
+    하드코딩된 숫자를 쓰지 않고 이 데이터셋에서 실제로 낸 conformal
     margin(q)을 매번 다시 계산한다 -- 다른 데이터셋에서는 폭이 다르므로
     고정 문구를 쓰면 거짓 정보가 된다. `compute_holdout_predictions`가
     이미 GroupKFold(5) GBDT를 한 번 적합해야 하므로(`fit_reference_model`과
     비슷한 비용), 보고서 생성 1회당 한 번만 계산한다.
     """
     coverage_pct = int(round(CONFORMAL_TARGET_COVERAGE * 100))
+    reliability_note = "예측 신뢰도는 수율 예측 화면의 '신뢰도 n/5'(핵심 인자 계측 비율)로 표시되며, 웨이퍼 단위 판정을 예측 구간 폭으로 가르지 않는다."
     if not features or GBDT_TARGET_COLUMN not in train_df.columns:
         return (
-            f"예측 구간은 홀드아웃 잔차 기반 conformal 방식으로 산출되며 목표 포함률 {coverage_pct}%를 "
-            "보장하도록 설계되어 있으나, 이 데이터셋에는 예측에 쓸 R+D 인자나 최종 수율(Y)이 없어 구간을 "
+            f"{reliability_note} 참고로 홀드아웃 잔차 기반 conformal 여유(목표 포함률 {coverage_pct}%)도 "
+            "함께 산출하도록 설계되어 있으나, 이 데이터셋에는 예측에 쓸 R+D 인자나 최종 수율(Y)이 없어 "
             "산출하지 못했다."
         )
     holdout = compute_holdout_predictions(train_df, features)
     if holdout is None:
         return (
-            f"예측 구간은 홀드아웃 잔차 기반 conformal 방식으로 산출되며 목표 포함률 {coverage_pct}%를 "
-            "보장하도록 설계되어 있으나, 이 데이터셋은 랏 수가 부족해(GroupKFold 5-fold 구성 불가) "
-            "conformal 캘리브레이션을 적용하지 못했다 -- 부트스트랩 분위수로 대체되어 포함률이 보장되지 않는다."
+            f"{reliability_note} 참고로 홀드아웃 잔차 기반 conformal 여유(목표 포함률 {coverage_pct}%)도 "
+            "함께 산출하도록 설계되어 있으나, 이 데이터셋은 랏 수가 부족해(GroupKFold 5-fold 구성 불가) "
+            "산출하지 못했다 -- 부트스트랩 분위수로 대체되어 포함률이 보장되지 않는다."
         )
     return (
-        f"예측 구간은 홀드아웃 잔차 기반 conformal 방식으로 산출되며 목표 포함률 {coverage_pct}%를 보장한다. "
-        f"이 데이터셋에서는 구간 폭이 약 ±{holdout.conformal_q:.1f}%p이므로, 웨이퍼 단위 판정이 가능한 비율이 "
-        "낮을 수 있다. 이는 모델 결함이 아니라 데이터의 설명력 한계다."
+        f"{reliability_note} 참고로 홀드아웃 잔차 기반 conformal 여유는 목표 포함률 {coverage_pct}%에서 "
+        f"이 데이터셋 기준 약 ±{holdout.conformal_q:.1f}%p로, 예측값 자체의 불확실성 정도를 보여주는 "
+        "참고 수치일 뿐 판정 기준이 아니다."
     )
 
 

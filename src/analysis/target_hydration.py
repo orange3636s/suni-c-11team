@@ -315,7 +315,7 @@ def _view_with_cache_flag(result: HydratedTargets, *, cache_hit: bool) -> Hydrat
     module that receives it transitively (`src/analysis/scatter.py`,
     `control_range.py`, `screening/*.py`,
     `measurement_expansion.py`, `alarm_gbdt.py`, `report.py`,
-    `recommendations.py`, `alarm_bands.py`): every
+    `recommendations.py`): every
     one of them either reads columns (`df[...]`, boolean-mask selection,
     which always returns a new object in pandas) or builds a brand-new local
     frame from the columns it needs (e.g. `scatter.py`'s `build_scatter_data`
