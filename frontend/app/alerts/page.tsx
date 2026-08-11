@@ -272,7 +272,7 @@ function AlertsContent() {
                 </>
               }
             />
-            <HScrollTableBody rows={10} minWidth={1640}>
+            <HScrollTableBody rows={10} minWidth={1900}>
               <table className="dataTable ypTable">
                 <thead>
                   <tr>
@@ -327,7 +327,7 @@ function AlertsContent() {
                         <td className={reliabilityClassName(c.reliability.count)} title={reliabilityTooltip(c.reliability)}>
                           {c.reliability.count}/5
                         </td>
-                        <td className="ypColRecommendation">
+                        <td className="ypColRecommendation colNoTruncate">
                           {c.recommendation.text ? (
                             <span className="ypRecommendationText" title={c.recommendation.text}>
                               {c.recommendation.text}

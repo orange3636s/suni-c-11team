@@ -10923,7 +10923,7 @@ html[data-theme="dark"] .evidenceBandJudgmentLabel{ color: #7ba3e8; }
 /* VB-1/YC-1: "권장사항"은 마지막, white-space:normal, 최소 폭 320px --
    다른 열을 좁히지 않고 가로 스크롤로 확보한다(표는 이미 hScroll
    래퍼 안에 있어 폭을 넓히면 자동으로 스크롤이 생긴다). */
-.ypColRecommendation{ min-width: 320px; white-space: normal; overflow: visible; text-overflow: clip; }
+.ypColRecommendation{ min-width: 420px; white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* sticky 좌측 2열. z-index 우선순위(지시서 VB-1): 헤더+sticky 교차점 >
    헤더 > sticky열 > 일반셀 -- 위에서 정의한 --z-sticky-seg 스케일을
@@ -10967,7 +10967,7 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
 .ypRecommendationText{
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   overflow: hidden;
   white-space: pre-line;
   color: var(--text-primary);
