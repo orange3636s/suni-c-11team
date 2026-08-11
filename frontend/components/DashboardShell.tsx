@@ -7,7 +7,6 @@ import AnalysisProgressBanner from "@/components/AnalysisProgressBanner";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import BootstrapStatusBanner from "@/components/BootstrapStatusBanner";
 import Header from "@/components/Header";
-import ManualModeBanner from "@/components/ManualModeBanner";
 import MobileTabBar from "@/components/MobileTabBar";
 import ModelAnalysisPanel from "@/components/ModelAnalysisPanel";
 import { usePanelState } from "@/components/PanelStateProvider";
@@ -116,7 +115,6 @@ export default function DashboardShell({
         <Header />
         <BootstrapStatusBanner />
         <AnalysisProgressBanner />
-        <ManualModeBanner />
         {degraded && (
           <div className="degradedStateBanner" role="alert">
             <span>이전 결과 복원 실패 — 학습·원인 분석·수율 예측이 일시적으로 보이지 않을 수 있습니다.</span>

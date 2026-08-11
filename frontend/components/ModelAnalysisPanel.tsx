@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import { activateDataset, ApiResponseError, fetchFromDb, triggerRefresh, uploadDataset } from "@/lib/api";
+import { activateDataset, ApiResponseError, deactivateDataset, fetchFromDb, triggerRefresh, uploadDataset } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 
@@ -66,6 +66,7 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
   const [registerMessage, setRegisterMessage] = useState("");
   const [uploading, setUploading] = useState(false);
   const [fetchingDb, setFetchingDb] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [startError, setStartError] = useState("");
@@ -152,6 +153,22 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
       }
     } finally {
       setFetchingDb(false);
+    }
+  }
+
+  // B-10-2: 상단 배너(ManualModeBanner, 제거됨)의 되돌리기 로직을 그대로
+  // 옮긴다 -- 등록만 지울 뿐(SC-3과 분리) 분석을 자동으로 다시 실행하지
+  // 않는다는 동작은 그대로다.
+  async function handleRevert() {
+    setRegisterError("");
+    setReverting(true);
+    try {
+      await deactivateDataset();
+      refreshSnapshotNow();
+    } catch {
+      setRegisterError("되돌리지 못했습니다.");
+    } finally {
+      setReverting(false);
     }
   }
 
@@ -242,7 +259,10 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
 
           <section className="settingsSection">
             <h3>분석 데이터 변경</h3>
-            <p className="settingsSectionDesc">파일을 선택하거나 데이터베이스에서 불러오면 즉시 분석 데이터로 등록됩니다 -- 다시 바꿀 때까지 유지됩니다.</p>
+            <p className="settingsSectionDesc">
+              파일을 선택하거나 데이터베이스에서 불러오면 즉시 분석 데이터로 등록됩니다 -- 다시 바꿀 때까지 유지됩니다.
+              되돌린 결과를 보려면 [분석 시작]을 눌러야 합니다.
+            </p>
             <input
               ref={fileInputRef}
               type="file"
@@ -262,6 +282,15 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
                 title={dbConfigured ? undefined : "알림·자동화 설정에서 서버를 먼저 등록하세요"}
               >
                 {fetchingDb ? "가져오는 중…" : "데이터베이스에서 불러오기"}
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleRevert()}
+                disabled={!manualEvalOverride || reverting}
+                title={manualEvalOverride ? undefined : "되돌릴 수동 등록이 없습니다"}
+              >
+                {reverting ? "되돌리는 중…" : "내장 데이터로 되돌리기"}
               </button>
             </div>
             {registerError && <p className="notifyFieldError">{registerError}</p>}
