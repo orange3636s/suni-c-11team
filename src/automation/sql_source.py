@@ -1,7 +1,8 @@
-"""J-1: SQL 데이터 소스 판단 + 증분 수집. SD그룹 이후 접속 정보(host/
-port/db/user)는 `RuntimeStore.get_automation_settings()`("알림·자동화
-설정" 팝업이 저장하는 전용 슬롯)에서 읽는다 -- 예전에는 `state/training`
-슬롯을 함께 썼지만, 자동화는 학습과 무관한 별개 개념이라 분리했다.
+"""SQL 데이터 소스 판단 + 증분 수집. 접속 정보(host/port/db/user)는
+`RuntimeStore.get_automation_settings()`("알림·자동화 설정" 팝업이
+저장하는 전용 슬롯)에서 읽는다 -- 학습 설정(`state/training`)과는 다른
+슬롯이다. 자동화는 학습과 무관한 별개 개념이라 섞으면 서로의 필드를
+덮어쓴다.
 서버 환경변수(`AUTO_INGEST_DB_DRIVER`/`DB_PASSWORD`/`AUTO_INGEST_QUERY`)가
 모두 갖춰져 있고 실제 접속·조회에 성공하면 SQL 모드다. 하나라도
 빠지거나 접속/조회가 실패하면 호출부(`src/automation/refresh.py`,
@@ -81,7 +82,7 @@ def _connect_only(url: str) -> None:
 
 
 def test_connection(store: RuntimeStore) -> tuple[bool, str | None]:
-    """SD-1 "연결 테스트" 버튼 -- 쿼리는 실행하지 않고 접속만 확인한다
+    """"연결 테스트" 버튼 -- 쿼리는 실행하지 않고 접속만 확인한다
     (운영 쿼리는 부작용이 있을 수 있어 테스트에는 쓰지 않는다). 실패를
     예외로 던지지 않는다(다른 채널의 "테스트 발송"과 같은 (ok, error)
     관례)."""

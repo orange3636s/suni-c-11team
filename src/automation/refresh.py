@@ -1,33 +1,31 @@
-"""SC그룹("모델 분석"): 사이드바 "모델 분석" 팝업의 [분석 시작] 버튼이
-부르는 4화면 원자적 분석 파이프라인 -- 등록된 분석 데이터로 모니터링
-홈·Config별 트리맵·원인 분석·수율 예측 네 화면을 한 번에 계산해 하나의
-`analysis_id`를 공유하는 스냅샷으로 저장한다.
+"""사이드바 "모델 분석" 팝업의 [분석 시작] 버튼이 부르는 4화면 원자적
+분석 파이프라인 -- 등록된 분석 데이터로 모니터링 홈·Config별 트리맵·원인
+분석·수율 예측 네 화면을 한 번에 계산해 하나의 `analysis_id`를 공유하는
+스냅샷으로 저장한다.
 
-RB-3: 이 파이프라인은 학습을 트리거하지 않는다 -- 분석 데이터는 항상
+이 파이프라인은 학습을 트리거하지 않는다 -- 분석 데이터는 항상
 분석셋(eval)이고, 학습은 모델 학습 팝업의 수동 업로드(또는 내장
 train.csv)로만 일어난다.
 
-SD그룹 이후 이 파이프라인은 더 이상 APScheduler 주기 잡이 아니다 --
-주기적으로 도는 것은 `src/automation/yield_dispatch.py`(수율 예측만
-계산해 알림만 보낸다)이고, 이 파이프라인(`run_refresh_pipeline`)은
+주기 잡이 아니다. 이름(`refresh`)과 달리 `run_refresh_pipeline`은
 ① [분석 시작] 버튼(`POST /api/state/refresh`), ② 서버 기동 시 유효
 스냅샷이 없을 때(부트스트랩), ③ 학습 완료 후 스냅샷이 활성 모델
-기준으로 무효화됐을 때(1회, 조용히) 만 실행된다 -- 이름(`refresh`)은
-과거 주기 잡이던 시절의 흔적으로 남아 있다.
+기준으로 무효화됐을 때(1회, 조용히) 만 실행된다. 주기적으로 도는 것은
+`src/automation/yield_dispatch.py`(수율 예측만 계산해 알림만 보낸다)다.
 
 각 단계는 독립적으로 try/except하고, 실패는 로그 + 스냅샷의 `errors`
 배열에 남긴다(단, `except`로 삼키고 성공한 척하지 않는다 -- 화면에
-실패가 보여야 한다). SC-3: 4화면(모니터링/Config별 트리맵/원인분석/
-수율예측)의 데이터 중 하나라도 완전히 실패하면 스냅샷을 저장하지 않는다
-("원자적 저장 -- 넷 다 성공해야 교체").
+실패가 보여야 한다). 4화면(모니터링/Config별 트리맵/원인분석/수율예측)의
+데이터 중 하나라도 완전히 실패하면 스냅샷을 저장하지 않는다("원자적
+저장 -- 넷 다 성공해야 교체").
 
-작업지시 T8-1: 진행 표시(`analysis_progress`)는 화면 4개보다 세분화된
-8단계다 -- "모니터링 홈"이라는 라벨 하나가 서로 다른 데이터셋에 대한
-두 개의 무거운 계산(FMEA + 조치 우선순위)을 가리던 문제를 고친다.
-T4: 각 단계 결과는 `RuntimeStore.save_refresh_checkpoint`에도 남는다 --
+진행 표시(`analysis_progress`)는 화면 4개가 아니라 8단계로 쪼갠다 --
+"모니터링 홈" 한 라벨 아래에 서로 다른 데이터셋에 대한 두 개의 무거운
+계산(FMEA + 조치 우선순위)이 숨으면 어디서 오래 걸리는지 알 수 없다.
+각 단계 결과는 `RuntimeStore.save_refresh_checkpoint`에도 남는다 --
 화면이 보는 최종 스냅샷과는 별개로, 파이프라인이 죽었다가 같은 입력으로
 재시작됐을 때 이미 끝낸 단계를 다시 계산하지 않기 위해서다(`analysis_id`가
-이제 실행 시각이 아니라 데이터셋+모델 버전의 해시라 "같은 입력 = 같은
+실행 시각이 아니라 데이터셋+모델 버전의 해시라 "같은 입력 = 같은
 analysis_id"가 성립한다).
 """
 
@@ -54,7 +52,7 @@ FALLBACK_TRAIN_DATASET = "train"
 FALLBACK_EVAL_DATASET = "test"
 TARGETS = ("Y1", "Y2", "Y3", "Y4", "Y5")
 
-# T8-1: 8단계 진행 표시. 순서가 곧 화면에 뜨는 (index/total)이다.
+# 8단계 진행 표시. 순서가 곧 화면에 뜨는 (index/total)이다.
 STAGE_ORDER = (
     "resolve",
     "hydrate_eval",
@@ -76,7 +74,7 @@ STAGE_LABELS = {
     "save": "저장",
 }
 TOTAL_STAGES = len(STAGE_ORDER)
-# T5/T8-3: 이 주기로 하트비트를 갱신한다 -- 프런트의 60초 정지 판정보다
+# 이 주기로 하트비트를 갱신한다 -- 프런트의 60초 정지 판정보다
 # 충분히 촘촘해야 정상 실행 중에 "중단됨"으로 오판하지 않는다.
 HEARTBEAT_INTERVAL_SECONDS = 10.0
 
@@ -101,16 +99,16 @@ def _set_stage(
 
 
 def _estimate_total_seconds(row_count: int) -> int:
-    """T7-2: 화면에 "약 N분 예상"을 보여주기 위한 대략적인 추정치다 --
-    정밀한 SLA가 아니라 "끊긴 게 아니라 원래 이 정도 걸린다"를 체감시키는
-    용도. T2(표본 상한)로 대부분 단계는 행 수와 거의 무관해졌지만, 수율
-    예측·모델 추론은 여전히 전량 O(n)이라 행 수에 비례해 늘어난다."""
+    """화면에 "약 N분 예상"을 보여주기 위한 대략적인 추정치다 -- 정밀한
+    SLA가 아니라 "끊긴 게 아니라 원래 이 정도 걸린다"를 체감시키는
+    용도다. 표본 상한 덕에 대부분 단계는 행 수와 거의 무관하지만, 수율
+    예측·모델 추론은 전량 O(n)이라 행 수에 비례해 늘어난다."""
     return 20 + max(0, row_count) // 1500
 
 
 @contextmanager
 def _heartbeat_during_pipeline(store: RuntimeStore):
-    """T5/T8-3: 파이프라인이 도는 내내(단계 하나가 몇 초가 걸리든) 백그라운드
+    """파이프라인이 도는 내내(단계 하나가 몇 초가 걸리든) 백그라운드
     스레드가 주기적으로 하트비트를 갱신한다 -- 프로세스가 죽으면 이 스레드도
     함께 죽으므로, 하트비트가 멈춘다는 것 자체가 "죽었다"는 신호가 된다."""
     stop = threading.Event()
@@ -132,7 +130,7 @@ def _heartbeat_during_pipeline(store: RuntimeStore):
 
 
 def _compute_analysis_id(registry: DatasetRegistry, eval_dataset_id: str, train_dataset_id: str, store: RuntimeStore) -> str:
-    """T8-1/T4: 실행 시각(`now_iso`) 대신 입력의 해시를 쓴다 -- 같은
+    """실행 시각이 아니라 입력의 해시를 쓴다 -- 같은
     데이터셋·같은 모델로 다시 돌리면 항상 같은 analysis_id가 나오므로,
     죽었다가 재시작된 실행이 체크포인트를 "내 것"으로 알아볼 수 있다."""
     try:
@@ -150,12 +148,12 @@ def _compute_analysis_id(registry: DatasetRegistry, eval_dataset_id: str, train_
 
 @dataclass(frozen=True)
 class _PipelineOutcome:
-    """작업지시(Config 하이드레이션 수정) T4: `run_refresh_pipeline`이 이
-    결과를 `RuntimeStore.finish_last_run_*`에 그대로 기록한다.
-    `success=True`는 정확히 "스냅샷을 저장했다"와 같다(SC-3의 원자적
-    저장 지점) -- 부분 실패(`errors`에만 쌓이고 스냅샷은 저장되는 경우,
-    예: FMEA 실패)는 `success=True`로 남는다. 그건 T8-4의 errors 배너가
-    이미 따로 알린다; `last_run.status`는 "이번 실행이 화면을 갱신했는가"
+    """`run_refresh_pipeline`이 이 결과를
+    `RuntimeStore.finish_last_run_*`에 그대로 기록한다.
+    `success=True`는 정확히 "스냅샷을 저장했다"와 같다(원자적 저장 지점)
+    -- 부분 실패(`errors`에만 쌓이고 스냅샷은 저장되는 경우, 예: FMEA
+    실패)는 `success=True`로 남는다. 그건 errors 배너가 이미 따로
+    알린다; `last_run.status`는 "이번 실행이 화면을 갱신했는가"
     만 답한다."""
 
     success: bool
@@ -189,12 +187,12 @@ def _dataset_registry(store: RuntimeStore) -> DatasetRegistry:
 
 
 def run_refresh_pipeline(*, dispatch: bool = True) -> None:
-    """이 파이프라인 자체는 SC/SD그룹 이후 알림을 전혀 보내지 않는다
+    """이 파이프라인 자체는 알림을 전혀 보내지 않는다
     (알림은 전적으로 "알림·자동화 설정"의 책임 -- 아래 `dispatch` 인자와는
-    무관하다). `dispatch=False`는 WK그룹(콜드 스타트) 전용으로, 서버
-    최초 기동 시 내장 test.csv로 돌리는 1회성 부트스트랩 실행이 "이후의
-    진짜 정상 실행"과 구분되게 표시하는 데만 쓰인다(부트스트랩 실패
-    상태를 지우는 로직이 이 값을 본다, ZB-2 참고). [분석 시작] 버튼·학습
+    무관하다). `dispatch=False`는 콜드 스타트 전용으로, 서버 최초 기동
+    시 내장 test.csv로 돌리는 1회성 부트스트랩 실행이 "이후의 진짜 정상
+    실행"과 구분되게 표시하는 데만 쓰인다(부트스트랩 실패 상태를 지우는
+    로직이 이 값을 본다). [분석 시작] 버튼·학습
     후 자동 복구 실행은 항상 기본값(True)을 쓴다."""
     if not _refresh_lock.acquire(blocking=False):
         logger.info("auto_refresh: 이미 다른 실행이 진행 중이라 이번 호출은 건너뜁니다.")
@@ -207,16 +205,16 @@ def run_refresh_pipeline(*, dispatch: bool = True) -> None:
         except Exception as exc:
             # 개별 단계는 각자 try/except하지만, 예상하지 못한 예외가 여기까지
             # 올라오면 스케줄러 자체가 죽지 않도록 마지막 방어선에서 삼킨다.
-            # T8-3: MemoryError를 포함한 어떤 예외든(개별 단계가 던지지 않은
+            # MemoryError를 포함한 어떤 예외든(개별 단계가 던지지 않은
             # 예상 밖 실패까지) 진행 상태를 지우지 않고는 빠져나가지 않는다 --
             # 안 지우면 화면에 "분석 진행 중… (N/8)"이 영원히 남는다.
             logger.exception("auto_refresh: 파이프라인 실행 중 예기치 않은 오류")
             outcome = _PipelineOutcome(False, None, f"예기치 않은 오류: {exc}")
         finally:
-            # 작업지시(Config 하이드레이션 수정) T4: 어떤 경로로 빠져나가든
-            # (성공/부분실패/예기치 않은 예외) last_run이 항상 최종 상태로
-            # 남는다 -- 지금까지는 실패가 로그에만 남고 프런트는 영원히
-            # "triggered: true" 이후를 기다렸다.
+            # 어떤 경로로 빠져나가든(성공/부분실패/예기치 않은 예외)
+            # last_run이 항상 최종 상태로 남아야 한다 -- 안 남기면 실패가
+            # 로그에만 남고 프런트는 영원히 "triggered: true" 이후를
+            # 기다린다.
             if outcome is None:
                 # 방어적 처리 -- `_run_refresh_pipeline_inner`는 항상
                 # `_PipelineOutcome`을 반환하는 계약이지만, 테스트 더블처럼
@@ -232,20 +230,20 @@ def run_refresh_pipeline(*, dispatch: bool = True) -> None:
 
 
 def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
-    """SC-2단계("Config별 트리맵"): 타깃 하이드레이션 + 스키마 파싱 +
+    """2단계("Config별 트리맵"): 타깃 하이드레이션 + 스키마 파싱 +
     상관관계 히트맵을 먼저 데워둔다 -- Config별 트리맵을 포함해 원인 분석
     탭의 모든 scatter/heatmap 카드가 공유하는 선행 조건이다. 이제는
     파이프라인의 2단계로서 *동기적으로* 호출되어 원자성 게이트 역할도
-    겸한다(이 단계가 실패하면 스냅샷을 저장하지 않는다 -- SC-3 "넷 다
-    성공해야 교체").
+    겸한다(이 단계가 실패하면 스냅샷을 저장하지 않는다 -- "넷 다 성공해야
+    교체").
 
     Deliberately narrow: only the SHARED prerequisites (target hydration,
     parsed schema, heatmap). Individual scatter cards themselves are
     intentionally NOT precomputed here -- "개별 산점도는 워밍업 대상에서 제외".
 
-    E-4(perf): 히트맵(`_cached_heatmap`, ~5.7초 @ train 10k)은 예전에
-    이 워밍업 대상이 아니었다 -- 원인 분석 탭 첫 진입에서 그 5.7초를
-    그대로 물었다. `_cached_schema`를 데우는 김에 같은 자리에서 데운다.
+    히트맵(`_cached_heatmap`)은 train 10k 기준 ~5.7초가 걸린다 -- 여기서
+    데우지 않으면 원인 분석 탭 첫 진입이 그 시간을 그대로 문다.
+    `_cached_schema`를 데우는 김에 같은 자리에서 데운다.
     """
     from api.routes.analysis import TARGET_HYDRATION_VERSION, _cached_heatmap, _cached_schema, _hydrated_targets_or_409
 
@@ -264,7 +262,7 @@ def _warmup_common_prerequisites(eval_dataset_id: str) -> None:
 
 def _fmea_stage(eval_dataset_id: str, errors: list[str]) -> tuple[dict[str, Any] | None, str | None]:
     """모니터링 홈 블록③(데이터 한계/FMEA). 실패해도 나머지 단계의 저장을
-    막지 않는다(J-2 부분 실패 정책) -- `fmeaError`로 "계산 안 됨"과
+    막지 않는다(부분 실패 정책) -- `fmeaError`로 "계산 안 됨"과
     "계산 실패"를 구분한다."""
     from api.routes.analysis import _fmea_payload
 
@@ -277,8 +275,8 @@ def _fmea_stage(eval_dataset_id: str, errors: list[str]) -> tuple[dict[str, Any]
 
 
 def _action_priority_stage(train_dataset_for_analysis: str, errors: list[str]) -> tuple[dict[str, Any] | None, str | None]:
-    """모니터링 홈 블록①·② -- train.CSV 기준(작업 지시서 MB-6)이라 eval
-    데이터셋과 무관하다. FMEA와 같은 부분 실패 정책을 따른다."""
+    """모니터링 홈 블록①·② -- train.CSV 기준이라 eval 데이터셋과
+    무관하다. FMEA와 같은 부분 실패 정책을 따른다."""
     from api.routes.analysis import _action_priority_payload
 
     try:
@@ -290,7 +288,7 @@ def _action_priority_stage(train_dataset_for_analysis: str, errors: list[str]) -
 
 
 def _pareto_stage(eval_dataset_id: str, errors: list[str]) -> tuple[dict[str, Any], dict[str, Any] | None, list[str]]:
-    """SC-3단계("원인 분석"): 타깃별 Pareto 랭킹. 전 타깃 실패는 호출부가
+    """3단계("원인 분석"): 타깃별 Pareto 랭킹. 전 타깃 실패는 호출부가
     빈 dict로 판정해 스냅샷 저장을 생략한다."""
     from api.routes.analysis import _pareto_payload
 
@@ -313,7 +311,7 @@ def _pareto_stage(eval_dataset_id: str, errors: list[str]) -> tuple[dict[str, An
 def _yield_prediction_stage(
     registry: DatasetRegistry, train_dataset_id: str, eval_dataset_id: str, errors: list[str]
 ) -> Any | None:
-    """SC-4단계("수율 예측"): 수율 예측 표를 계산한다. 반환값은
+    """4단계("수율 예측"): 수율 예측 표를 계산한다. 반환값은
     `YieldPredictionTable`(frozen dataclass) 그대로다 -- 호출부가 이
     회차의 알림 발송(`_dispatch_yield_update_for_refresh`)에 그대로
     넘기고, 스냅샷에는 `serialize_yield_prediction_table`로 JSON-safe
@@ -350,7 +348,7 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         # -- 1/8 데이터 확인 --------------------------------------------
         mode, train_dataset_id, eval_dataset_id, source_row_count = _resolve_source(store, registry, errors)
         analysis_id = _compute_analysis_id(registry, eval_dataset_id, train_dataset_id, store)
-        # 작업지시(Config 하이드레이션 수정) T4: 이 실행의 진행상태 기록을
+        # 이 실행의 진행상태 기록을
         # 시작한다 -- 아래 어떤 단계에서 멈추더라도(중간에 `return`하든,
         # 이 함수를 감싼 바깥 try/except가 예상 밖 예외를 잡든)
         # `run_refresh_pipeline`이 이 레코드를 최종 상태로 갱신한다.
@@ -359,7 +357,7 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         completed = set((checkpoint or {}).get("completed_stages") or [])
         if checkpoint:
             logger.info("auto_refresh: 체크포인트 발견(analysis_id=%s) -- 완료 단계 %s", analysis_id, sorted(completed))
-        # T7-2: 이후 모든 단계 배너에 "N행 · 약 M분 예상"을 함께 싣는다.
+        # 이후 모든 단계 배너에 "N행 · 약 M분 예상"을 함께 싣는다.
         estimated_seconds = _estimate_total_seconds(source_row_count)
 
         def _stage(stage_key: str) -> None:
@@ -367,7 +365,7 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
 
         _stage("resolve")
         t_stage = time.perf_counter()
-        # -- 현재 챔피언 정보만 읽는다 (RB-3) -- 이 파이프라인은 학습을
+        # -- 현재 챔피언 정보만 읽는다 -- 이 파이프라인은 학습을
         # 트리거하지 않는다. 학습은 모델 학습 팝업의 수동 업로드로만
         # 일어난다.
         model_meta = _current_model_meta(store)
@@ -386,9 +384,8 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
         ) or FALLBACK_TRAIN_DATASET
 
         # -- 2/8 모델 추론 (분석 데이터) -----------------------------------
-        # T8-1: 예전에는 이 하이드레이션이 3단계(FMEA) 안에서 처음
-        # 일어나 "1/4 모니터링 홈"이라는 라벨 뒤에 숨어 있었다 -- 별도
-        # 단계로 떼어내 진행 표시가 실제로 움직이게 한다.
+        # 하이드레이션은 FMEA 단계 안이 아니라 여기서 별도 단계로 돈다 --
+        # 다른 단계 라벨 뒤에 숨으면 진행 표시가 그 시간 동안 멈춰 보인다.
         _stage("hydrate_eval")
         t_stage = time.perf_counter()
         try:
@@ -414,7 +411,7 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             store.save_refresh_checkpoint(analysis_id, "fmea", {"fmea": fmea, "fmea_error": fmea_error})
 
         # -- 4/8 조치 우선순위 (학습 데이터) ---------------------------------
-        # T8-2: train.CSV가 바뀌지 않는 한 순위/권장구간은 이미 프로세스
+        # train.CSV가 바뀌지 않는 한 순위/권장구간은 이미 프로세스
         # 전역 캐시(`_ranked_rows_for_provenance`/`compare_methods`)로
         # 사실상 즉시 반환되지만(analysis.py의 _action_priority_payload
         # 독스트링 참고), 재시작으로 그 캐시까지 날아간 경우를 위해
@@ -524,23 +521,20 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             },
             "model": model_meta,
             "analysis": analysis_block,
-            # 알람 등급(심각/위험/주의)·게이트 판정 파이프라인은 폐기됐다 --
-            # 어떤 화면도 그 블록(counts/items_top/gate_passed/target_yield/
-            # sensitivity)을 렌더링하지 않는 것으로 확인해 스냅샷 스키마의
-            # `alarms` 키 자체를 제거했다(알림 발송은 수율 예측 갱신
-            # 파이프라인, 아래 monitoring으로 대체).
+            # 알림 발송은 수율 예측 갱신 파이프라인이 담당한다 -- 이
+            # 스냅샷에는 알람 등급/게이트 판정 블록이 없다.
             "monitoring": {"predicted_yield": None, "gap": None, "gap_pareto": [], "treemap": None},
             "errors": errors,
         }
         store.save_refresh_snapshot(snapshot)
-        # T4: 화면이 보는 스냅샷이 이제 이 회차를 온전히 반영하므로,
-        # 재시작-이어하기용 체크포인트는 더 이상 필요 없다.
+        # 화면이 보는 스냅샷이 이 회차를 온전히 반영하므로 재시작-이어하기용
+        # 체크포인트는 더 이상 필요 없다.
         store.clear_refresh_checkpoint()
-    # T5/T8-3: `run_refresh_pipeline`의 바깥 try/finally가
+    # `run_refresh_pipeline`의 바깥 try/finally가
     # `clear_analysis_progress()`를 반드시 호출하므로 여기서 따로
     # 지우지 않는다(이 함수의 모든 return 경로 -- 성공/부분 실패 모두
     # -- 가 그 finally를 통과한다).
-    # ZB-2: 콜드 스타트 부트스트랩(`_run_bootstrap`)이 한 번 실패하면
+    # 콜드 스타트 부트스트랩(`_run_bootstrap`)이 한 번 실패하면
     # `bootstrap_status`가 store에 "failed"로 영구히 남는다 -- 그 이후의
     # [분석 시작]이 스냅샷 저장에 성공해도 아무도 그 상태를 지우지 않아
     # "첫 분석에 실패했습니다" 배너가 계속 뜬다(실제로 재현 확인함).
@@ -553,12 +547,11 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             store.set_bootstrap_status("done", None)
     logger.info("auto_refresh: 스냅샷 저장 완료 mode=%s eval=%s", mode, eval_dataset_id)
 
-    # SC/SD그룹: "모델 분석"([분석 시작])은 네 화면을 갱신할 뿐, 알림을
-    # 보내지 않는다 -- 알림 발송은 전적으로 "알림·자동화 설정"의 자동화
-    # (주기 SQL 잡, `src/automation/yield_dispatch.py`)와 매일 09:00/13:00
-    # 예약 잡의 책임이다(작업 지시서 최상단 역할표: "모델 분석 = 네 화면
-    # 갱신", "알림·자동화 = 화면 없이 수율 예측만 돌려 알림 발송"). 이
-    # 함수는 알림 파이프라인을 부르지 않는다.
+    # "모델 분석"([분석 시작])은 네 화면을 갱신할 뿐, 알림을 보내지
+    # 않는다 -- 알림 발송은 전적으로 "알림·자동화 설정"의 주기 SQL 잡
+    # (`src/automation/yield_dispatch.py`) 책임이다. 역할 분리: "모델
+    # 분석 = 네 화면 갱신", "알림·자동화 = 화면 없이 수율 예측만 돌려
+    # 알림 발송". 이 함수는 알림 파이프라인을 부르지 않는다.
     if not dispatch:
         logger.info("auto_refresh: dispatch=False (콜드 스타트) -- 알림은 애초에 이 파이프라인 책임이 아니다.")
 
@@ -568,15 +561,15 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
 def _resolve_source(
     store: RuntimeStore, registry: DatasetRegistry, errors: list[str]
 ) -> tuple[str, str, str, int]:
-    """SC-2: "모델 분석"이 쓰는 분석 데이터는 등록된 것(수동 override --
-    파일 업로드 또는 "데이터베이스에서 불러오기") 하나뿐이고, 없으면
-    내장 test.CSV로 폴백한다("기본값"). 이 파이프라인은 더 이상 SQL을
-    직접 조회하지 않는다 -- SQL 조회는 ①"데이터베이스에서 불러오기"
-    버튼(`POST /api/state/fetch-from-db`, 결과를 수동 override로 등록)과
+    """"모델 분석"이 쓰는 분석 데이터는 등록된 것(수동 override -- 파일
+    업로드 또는 "데이터베이스에서 불러오기") 하나뿐이고, 없으면 내장
+    test.CSV로 폴백한다("기본값"). 이 파이프라인은 SQL을 직접 조회하지
+    않는다 -- SQL 조회는 ①"데이터베이스에서 불러오기" 버튼
+    (`POST /api/state/fetch-from-db`, 결과를 수동 override로 등록)과
     ②"알림·자동화 설정"의 주기 자동화(`src/automation/yield_dispatch.py`,
-    화면을 건드리지 않고 수율 예측만 계산)만 한다 -- "모델 분석"이 SQL을
-    조용히 자동 선점하면 "한 번 등록되면 다시 바꿀 때까지 유지된다"(SC-2)
-    는 원칙이 깨진다.
+    화면을 건드리지 않고 수율 예측만 계산)만 한다. 여기서 SQL을 조용히
+    자동 선점하면 "한 번 등록되면 다시 바꿀 때까지 유지된다"는 원칙이
+    깨진다.
 
     학습 대상(train_dataset)은 이 함수가 절대 바꾸지 않는다 -- 직전
     스냅샷의 것을 그대로 이어받거나(자동 학습을 걸지 않는다), 없으면
@@ -606,11 +599,9 @@ def _resolve_source(
 
 
 def _current_model_meta(store: RuntimeStore) -> dict[str, Any]:
-    """RB-3: refresh 파이프라인은 더 이상 학습을 제출하지 않는다 --
-    현재 활성 챔피언을 읽기만 한다. `trained_at`/`promoted`는 이 파이프라인이
-    학습을 트리거하던 시절에도 항상 None이었다(학습이 비동기라 완료를
-    여기서 기다리지 않았다) -- 그 필드 의미는 그대로 유지한다. `gate_reason`은
-    승격 게이트(RB-4로 제거됨) 시절의 필드라 함께 제거했다."""
+    """이 파이프라인은 학습을 제출하지 않고 현재 활성 챔피언을 읽기만
+    한다 -- 그래서 `trained_at`/`promoted`는 항상 None이다(이 회차가
+    학습한 것이 아니므로 채울 값이 없다)."""
     return {
         "champion_version": _current_champion_id(store),
         "trained_at": None,

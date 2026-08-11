@@ -1,4 +1,4 @@
-"""Telegram 봇 인증 코드 흐름 (알람 알림 연동 §C-3 Telegram) -- 텔레그램
+"""Telegram 봇 인증 코드 흐름 -- 텔레그램
 정책상 봇은 사용자보다 먼저 대화를 시작할 수 없으므로, 사용자 이름을 직접
 입력받는 방식은 애초에 동작하지 않는다. 대신:
 
@@ -120,7 +120,7 @@ async def run_polling_loop(bot_token: str, stop_event: asyncio.Event) -> None:
                     await asyncio.sleep(5)
                     continue
                 for update in body.get("result", []):
-                    # D-7: 처리 성공 후에 offset을 전진시킨다 -- 먼저
+                    # 처리 성공 후에 offset을 전진시킨다 -- 먼저
                     # 전진시키면 handler가 실패해도(예외) Telegram이 이
                     # update_id 이하를 다시는 보내주지 않아 그 /start가
                     # 영영 사라진다. 실패하면 이 배치의 나머지도 처리하지

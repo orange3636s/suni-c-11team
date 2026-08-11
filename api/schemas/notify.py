@@ -27,12 +27,13 @@ class GmailChannelSummary(BaseModel):
 
 
 class NotificationConditions(BaseModel):
+    # 발송 조건은 등급뿐이다 -- 자동 발송은 Refresh Time 주기 자동화가
+    # 매 주기 수행하며, 시각을 고르는 설정은 없다.
     grades: list[str]
-    timing: list[str]
 
 
 class AutomationSettingsSummary(BaseModel):
-    """SD-1: "알림·자동화 설정" 팝업의 자동화 섹션. 비밀번호는 절대
+    """알림·자동화 설정 팝업의 자동화 섹션. 비밀번호는 절대
     포함하지 않는다 -- 환경변수(DB_PASSWORD)로만 받는다."""
 
     enabled: bool
@@ -52,7 +53,7 @@ class NotificationSettingsSummary(BaseModel):
     gmail: GmailChannelSummary
     conditions: NotificationConditions
     automation: AutomationSettingsSummary
-    # EA그룹: 텔레그램 봇 username 단일 소스 -- 토큰은 절대 포함하지 않는다.
+    # 텔레그램 봇 username 단일 소스 -- 토큰은 절대 포함하지 않는다.
     # 미설정이면 null.
     telegram_bot_username: str | None = None
 
@@ -63,7 +64,7 @@ class SlackConnectRequest(BaseModel):
 
 
 class SlackTestRequest(BaseModel):
-    # D-3: 이미 연결된 채널을 테스트할 때는 생략한다 -- 연결 요약에는
+    # 이미 연결된 채널을 테스트할 때는 생략한다 -- 연결 요약에는
     # 마스킹된 webhook_masked만 있고 원본 URL이 없으므로, 프런트가 다시
     # 보낼 방법이 없다. 생략하면 서버가 저장된 값을 쓴다.
     webhook_url: str | None = None
@@ -79,7 +80,6 @@ class GmailConnectRequest(BaseModel):
 
 class ConditionsSaveRequest(BaseModel):
     grades: list[str]
-    timing: list[str]
 
 
 class SendTestResponse(BaseModel):
@@ -101,7 +101,7 @@ class DispatchResponse(BaseModel):
 
 
 class AutomationSaveRequest(BaseModel):
-    """SD-1: 비밀번호 필드가 없다 -- 서버 환경변수(DB_PASSWORD)로만 받는다."""
+    """비밀번호 필드가 없다 -- 서버 환경변수(DB_PASSWORD)로만 받는다."""
 
     enabled: bool
     sql_host: str = ""

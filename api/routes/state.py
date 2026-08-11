@@ -28,7 +28,7 @@ from src.runtime.store import RuntimeStore
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/state", tags=["state"])
 
-# 각 저장 종류가 dataset_id를 싣는 필드 (지시서 CB) -- 하나라도 더 이상
+# 각 저장 종류가 dataset_id를 싣는 필드 -- 하나라도 더 이상
 # 존재하지 않는 데이터셋을 가리키면 그 레코드를 통째로 버린다.
 _DATASET_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
     "training": ("dataset",),
@@ -42,15 +42,15 @@ def _store() -> RuntimeStore:
 
 
 def _drop_records_for_missing_datasets(state: dict[str, Any]) -> bool:
-    """지시서 CB: 저장된 결과가 이미 삭제된 데이터셋(구버전 내장
-    데이터셋 등)을 가리키면 그 결과를 통째로 버린다 -- dataset 필드만
-    "train"으로 바꿔치기하면, 사라진 데이터셋 스키마로 계산된 옛
-    payload(예: 다른 Pareto 인자 목록)가 "train" 라벨을 달고 화면에
-    뜨는 더 나쁜 상황이 된다(부분 복원 금지). `_dataframe_or_404`가
-    그대로 404를 던지게 두면 앱이 빈 화면으로 굳으므로(예외 무시가
-    아니라 폴백), 여기서 미리 걸러 반환값을 "저장된 적 없음"과 같은
-    모양(null)으로 만들되, 프론트가 "폐기됐다"를 안내할 수 있도록
-    별도 플래그를 반환한다."""
+    """저장된 결과가 이미 삭제된 데이터셋을 가리키면 그 결과를 통째로
+    버린다 -- dataset 필드만 "train"으로 바꿔치기하면, 사라진 데이터셋
+    스키마로 계산된 payload(예: 다른 Pareto 인자 목록)가 "train" 라벨을
+    달고 화면에 뜨는 더 나쁜 상황이 된다(부분 복원 금지).
+    `_dataframe_or_404`가 그대로 404를 던지게 두면 앱이 빈 화면으로
+    굳으므로(예외 무시가 아니라 폴백), 여기서 미리 걸러 해당 슬롯을
+    "저장된 적 없음"과 같은 모양(null)으로 만든다. 프론트가 이 경우를
+    "원래 저장된 적이 없음"과 구분해 안내할 수 있도록, 걸러냈다는 사실은
+    별도 플래그로 함께 반환한다."""
     registry = get_dataset_registry()
     fallback_applied = False
     for kind, fields in _DATASET_FIELDS_BY_KIND.items():
@@ -65,12 +65,12 @@ def _drop_records_for_missing_datasets(state: dict[str, Any]) -> bool:
 
 @router.get("/latest", response_model=LatestStateResponse)
 def get_latest() -> dict[str, Any]:
-    """Called once per app mount (spec §4-2/§6) -- all three tabs' latest
+    """Called once per app mount -- all three tabs' latest
     results in a single round trip so the frontend never needs to decide
     which ones to ask for.
     """
     store = _store()
-    # D-2: 복원 실패(DB 손상 등)와 "저장된 결과 없음"을 구분해야 한다 --
+    # 복원 실패(DB 손상 등)와 "저장된 결과 없음"을 구분해야 한다 --
     # 안 그러면 사용자는 결과가 사라진 줄 알고 (비싼) 재분석을 다시
     # 돌린다. get_latest_state가 예외를 던지는 경우와, 값은 읽혔지만
     # JSON이 깨져 조용히 None으로 매핑된 경우 둘 다 degraded로 잡는다.
@@ -97,7 +97,7 @@ def get_latest() -> dict[str, Any]:
             "slack": {"connected": False, "target": None, "webhook_masked": None, "verified_at": None},
             "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
             "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
-            "conditions": {"grades": ["심각"], "timing": ["on_analysis"]},
+            "conditions": {"grades": ["심각"]},
             "automation": {
                 "enabled": False,
                 "sql_host": "",
@@ -116,24 +116,24 @@ def get_latest() -> dict[str, Any]:
 
 @router.post("/training", response_model=TrainingStateSaveResponse)
 def save_training_state(body: TrainingStateSaveRequest) -> dict[str, bool]:
-    """SD그룹: SQL 연결·refresh time·자동화 on/off는 더 이상 이 슬롯에
-    저장하지 않는다("알림·자동화 설정" 팝업이 `POST /api/notify/automation`
-    으로 저장한다, 전용 슬롯 `automation:settings`) -- 이 라우트는 모델
-    학습 팝업의 학습 성능 요약(performance)만 남긴다. `schedule_applied`는
-    더 이상 이 저장이 스케줄러를 건드리지 않으므로 항상 true다(자동화
-    잡의 재스케줄은 `POST /api/notify/automation`이 전담한다)."""
+    """이 슬롯에는 모델 학습 팝업의 학습 성능 요약(performance)만 남긴다.
+    SQL 연결·refresh time·자동화 on/off는 "알림·자동화 설정" 팝업이
+    `POST /api/notify/automation`으로 전용 슬롯(`automation:settings`)에
+    저장한다. `schedule_applied`는 이 저장이 스케줄러를 건드리지 않으므로
+    항상 true다(자동화 잡의 재스케줄은 `POST /api/notify/automation`이
+    전담한다)."""
     saved = save_state(_store(), "training", dataset={"dataset": body.dataset}, payload=body.payload)
     return {"saved": saved, "schedule_applied": True}
 
 
 def _with_fmea(dataset: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """지시서 JA-1: FMEA 분석표는 자동 갱신(`src/automation/refresh.py`)과
+    """FMEA 분석표는 자동 갱신(`src/automation/refresh.py`)과
     수동 "다시 분석"(`POST /api/state/analysis`) 두 경로가 같은 계산을
     공유해야 한다 -- 프런트가 이미 `fmea`를 실어 보냈으면(현재는 안
     그런다, 앞으로도 프런트에서 계산하지 않는다) 그대로 두고, 없으면
     저장 시점에 여기서 채운다.
 
-    JA-2: FMEA 계산 실패가 분석 저장 전체를 막으면 안 된다 -- Pareto·
+    FMEA 계산 실패가 분석 저장 전체를 막으면 안 된다 -- Pareto·
     계측 확대는 이미 계산이 끝나 `payload`에 담겨 있으므로, 여기서
     예외가 나도 그 값들은 그대로 저장한다. 실패 사유는 `fmeaError`에
     남겨 화면이 "계산 안 됨"과 "계산 실패"를 구분할 수 있게 한다.
@@ -155,8 +155,8 @@ def _with_fmea(dataset: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _with_action_priority(payload: dict[str, Any]) -> dict[str, Any]:
-    """MB/MC: 모니터링 홈 블록①·②는 항상 train.CSV 기준(작업 지시서
-    MB-6)이라 저장하려는 분석의 eval 데이터셋과 무관하다 -- `_with_fmea`와
+    """모니터링 홈 블록①·②는 항상 train.CSV 기준이라 저장하려는 분석의
+    eval 데이터셋과 무관하다 -- `_with_fmea`와
     같은 "이미 있으면 건너뛰고, 없으면 저장 시점에 채우고, 실패해도
     나머지 저장은 막지 않는다" 정책을 따른다."""
     if payload.get("actionPriority") is not None:
@@ -177,39 +177,38 @@ def save_analysis_state(body: AnalysisStateSaveRequest) -> dict[str, bool]:
     return {"saved": saved}
 
 
-# -- J-3/J-4: 자동 갱신 파이프라인 스냅샷 -----------------------------
+# -- 자동 갱신 파이프라인 스냅샷 --------------------------------------
 
 
 @router.get("/snapshot/meta")
 def get_snapshot_meta() -> dict[str, Any]:
-    """J-4: 프런트가 윈도우 포커스 복귀·60초 주기마다 부르는 가벼운
+    """프런트가 윈도우 포커스 복귀·60초 주기마다 부르는 가벼운
     엔드포인트 -- `created_at`만 돌려주고 본문 전체는 싣지 않는다.
     프런트는 이 값이 캐시된 값보다 최신일 때만 `GET /api/state/snapshot`
     전체를 다시 받는다.
 
-    W-4: `bootstrap`은 첫 기동 부트스트랩(스냅샷이 아직 없을 때 1회
-    학습+분석)의 진행 상태다 -- 스냅샷이 이미 있었던 적이 없으면(부트
-    스트랩이 아직 시작 전이거나, 이미 끝나 상태를 지운 뒤 그대로 두는
-    구버전 배포 등) null이다. 프런트는 이 값이 없거나 status가
+    `bootstrap`은 첫 기동 부트스트랩(스냅샷이 아직 없을 때 1회
+    학습+분석)의 진행 상태다 -- 부트스트랩이 아직 시작되지 않았거나
+    상태가 비어 있으면 null이다. 프런트는 이 값이 없거나 status가
     "done"이면 배너를 감춘다."""
     store = _store()
     meta = store.get_refresh_snapshot_meta()
     return {
         "created_at": meta.get("created_at") if meta else None,
         "bootstrap": store.get_bootstrap_status(),
-        # SC-3: "모델 분석" 팝업의 [분석 시작] 버튼이 이 값으로 disabled
+        # "모델 분석" 팝업의 [분석 시작] 버튼이 이 값으로 disabled
         # 여부·진행 표시를 정한다 -- 서버 기동 부트스트랩·학습 후 자동
         # 복구 실행이 돌고 있어도 true가 된다(같은 락을 공유).
         "refresh_running": is_refresh_running(),
-        # SF-3: 네 화면(모니터링/트리맵/원인분석/수율예측)이 공유하는
+        # 네 화면(모니터링/트리맵/원인분석/수율예측)이 공유하는
         # 진행 표시("분석 진행 중… (2/4) 원인 분석") -- 실행 중이 아니면
         # null.
         "analysis_progress": store.get_analysis_progress(),
-        # AG-3/AG-4: 등록 직후(파이프라인이 아직 도는 중이라 스냅샷의
+        # 등록 직후(파이프라인이 아직 도는 중이라 스냅샷의
         # source.mode가 "manual"로 바뀌기 전)에도 배너가 "수동 모드"를
         # 바로 보여줄 수 있게, 스냅샷과 별개로 override 자체를 싣는다.
         "manual_eval_override": store.get_manual_eval_override(),
-        # 작업지시(Config 하이드레이션 실패 수정) T4: "분석 시작"이
+        # "분석 시작"이
         # 백그라운드에서 조용히 실패해도(`triggered: true`는 이미 받은
         # 뒤) 프런트가 원인을 보여줄 수 있게 최근 실행 결과를 함께 싣는다.
         # 실행이 한 번도 없었으면 null.
@@ -219,7 +218,7 @@ def get_snapshot_meta() -> dict[str, Any]:
 
 @router.post("/refresh")
 def trigger_refresh(background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """SC-3: "모델 분석" 팝업의 [분석 시작] 버튼이 부르는 단일 진입점 --
+    """[분석 시작] 버튼("모델 분석" 팝업)이 부르는 단일 진입점 --
     네 화면(모니터링/Config별 트리맵/원인 분석/수율 예측)을 한 번에
     갱신하는 유일한 실행 경로다("새로고침 역할" 겸함 -- 서버 지연으로
     화면이 비었을 때도 이 버튼으로 복구한다). 실행 자체는 백그라운드로
@@ -237,12 +236,12 @@ def trigger_refresh(background_tasks: BackgroundTasks) -> dict[str, Any]:
 
 @router.post("/activate-dataset")
 def activate_dataset(body: ActivateDatasetRequest) -> dict[str, Any]:
-    """SC-2: "모델 분석" 팝업에서 파일을 선택하거나 데이터베이스에서
+    """사용자가 "모델 분석" 팝업에서 파일을 선택하거나 데이터베이스에서
     불러오면 이 엔드포인트가 불려 그 데이터셋을 활성 분석 데이터로
-    등록한다("한 번 등록되면 다시 바꿀 때까지 유지된다"). SC-3와
-    분리했다 -- 등록만으로 4화면 분석이 자동으로 돌지 않는다. 실제
-    계산은 사용자가 [분석 시작]을 눌러 `POST /api/state/refresh`를
-    호출해야 시작된다. 학습은 절대 걸지 않는다(RB-3)."""
+    등록한다(한 번 등록되면 다시 바꿀 때까지 유지된다). 등록만으로
+    4화면 분석이 자동으로 돌지 않는다 -- 실제 계산은 사용자가 [분석
+    시작]을 눌러 `POST /api/state/refresh`를 호출해야 시작된다. 학습은
+    절대 걸지 않는다."""
     registry = get_dataset_registry()
     summary = registry.get_summary(body.dataset_id)
     if summary is None:
@@ -254,7 +253,7 @@ def activate_dataset(body: ActivateDatasetRequest) -> dict[str, Any]:
 
 @router.post("/fetch-from-db", response_model=DatasetUploadResponse)
 def fetch_from_db() -> dict[str, Any]:
-    """SC-2 "데이터베이스에서 불러오기" -- "알림·자동화 설정"에 등록된
+    """팝업의 "데이터베이스에서 불러오기" -- "알림·자동화 설정"에 등록된
     서버와 같은 소스(`src/automation/sql_source.py`)에서 최신 배치를
     가져와 데이터셋으로 등록한다("자동화가 쓰는 것과 같은 소스다"). 등록만
     하고 활성화하지 않는다 -- 프런트가 이 응답의 `dataset_id`로
@@ -285,8 +284,8 @@ def fetch_from_db() -> dict[str, Any]:
 @router.post("/deactivate-dataset")
 def deactivate_dataset() -> dict[str, Any]:
     """수동 override를 지워 다음 [분석 시작] 실행부터 SQL/폴백(내장
-    test.CSV)으로 되돌아가게 한다. SC-2/SC-3 분리 이후 등록만 수행하고
-    분석을 자동으로 다시 돌리지 않는다 -- 되돌아간 결과를 보려면
+    test.CSV)으로 되돌아가게 한다. 등록 해제만 수행하고 분석을 자동으로
+    다시 돌리지는 않는다 -- 되돌아간 결과를 보려면
     사용자가 [분석 시작]을 눌러야 한다."""
     store = _store()
     cleared = store.clear_manual_eval_override()
@@ -295,7 +294,7 @@ def deactivate_dataset() -> dict[str, Any]:
 
 @router.get("/snapshot")
 def get_snapshot() -> dict[str, Any]:
-    """J-3: schema_version이 다르면(백엔드가 바뀐 뒤 남은 옛 스냅샷)
+    """schema_version이 다르면(이전 스키마로 저장된 스냅샷)
     복원하지 않고 `stale_version: true`만 알린다 -- 조용히 빈 화면을
     보여주지 않고, 다음 갱신 주기에 새 스키마로 다시 채워진다는 것을
     프런트가 안내할 수 있게 한다."""

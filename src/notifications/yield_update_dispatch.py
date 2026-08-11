@@ -1,12 +1,16 @@
-"""VE-1: 수율 예측이 갱신될 때마다(자동 갱신, 사용자 파일 업로드, 또는
-"분석 실행 직후" 설정이 켜진 수동 분석 실행 -- 즉 분석이 실제로 새로
-수행될 때마다) 연결된 Telegram·Gmail·Slack으로 발송한다.
+"""수율 예측이 갱신될 때마다(Refresh Time 주기 자동화 또는 사용자가
+직접 누른 수동 발송 -- 즉 분석이 실제로 새로 수행될 때마다) 연결된
+Telegram·Gmail·Slack으로 발송한다.
 
-억제 규칙은 시간당 예산과 (수동 트리거만) 최소 간격, 두 가지만 유지한다.
-24시간/신규분 dedupe는 없다 -- 분석이 일어날 때마다 보낸다. 같은 wafer가
-직전 발송에도 나왔든 상관없다(이 시스템은 "새 이벤트가 있었는가"가 아니라
-"최신 분석 결과가 무엇인가"를 알리는 것이 목적이므로, 알람 발송의
-(dataset, wafer, grade, channel) 24시간 dedupe와 성격이 다르다).
+어떤 트리거도 저장된 시각/조건 설정으로 막히지 않는다. 자동 발송 경로는
+Refresh Time 주기 잡(src/automation/yield_dispatch.py) 하나뿐이며 매
+주기마다 무조건 시도한다.
+
+억제 규칙은 시간당 예산과 (수동 트리거만) 최소 간격, 두 가지뿐이다.
+24시간/신규분 dedupe는 하지 않는다 -- 분석이 일어날 때마다 보내며, 같은
+wafer가 직전 발송에도 나왔든 상관없다. 이 발송의 목적은 "새 이벤트가
+있었는가"가 아니라 "최신 분석 결과가 무엇인가"를 알리는 것이라, 알람
+발송의 (dataset, wafer, grade, channel) 24시간 dedupe와 성격이 다르다.
 
 발송은 best-effort다 -- 실패해도 예외를 올리지 않는다.
 """
@@ -35,38 +39,15 @@ MANUAL_MIN_INTERVAL_MINUTES = 10
 _HOURLY_STATE_KEY = "yield_update:hourly_sent_at"
 _MANUAL_INTERVAL_STATE_KEY = "yield_update:manual_last_sent_at"
 
-TRIGGER_REFRESH = "refresh"  # SD그룹: "알림·자동화 설정"의 주기 자동화(SQL) 실행 -- timing에 on_analysis 포함 시만
-TRIGGER_MANUAL = "manual_analysis"  # (레거시) 수동 분석 실행 -- 화면별 개별 실행이 폐지되어 더 이상 호출되지 않는다
-# YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러 지금
-# 보내라는 명시적 의도이므로 TRIGGER_MANUAL과 달리 "분석 실행 직후"
-# 타이밍 설정 여부와 무관하게 시도한다. 그래도 최소 간격(10분)·시간당
-# 예산은 TRIGGER_MANUAL과 동일하게 적용한다("하지 말 것": 억제 규칙을
-# 우회하는 옵션을 만들지 마라).
+# "알림·자동화 설정"의 Refresh Time 주기 자동화(SQL) 실행 -- 유일한 자동
+# 발송 경로이며, 별도의 조건 없이 매 주기마다 무조건 시도한다(억제
+# 규칙은 시간당 예산만 적용).
+TRIGGER_REFRESH = "refresh"
+TRIGGER_MANUAL = "manual_analysis"  # 수동 "분석 실행 직후" 발송(POST /api/notify/dispatch)
+# 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러 지금 보내라는
+# 명시적 의도다. 최소 간격(10분)·시간당 예산은 TRIGGER_MANUAL과 동일하게
+# 적용한다 -- 억제 규칙을 우회하는 옵션은 만들지 않는다.
 TRIGGER_MANUAL_BUTTON = "manual_button"
-# DF그룹: 알림 설정 화면의 "매일 오전 9시"/"매일 오후 1시" 발송 시점 옵션
-# -- 저장된 발송 시점 설정(`conditions["timing"]`)에 각각의 대응 값
-# (settings_store.TIMING_DAILY_9AM/TIMING_DAILY_13)이 포함돼 있을 때만
-# 실제로 보낸다. APScheduler 잡 등록은 api/main.py, 잡 본문은
-# api/routes/notify.py의 run_daily_dispatch_job/run_daily_13_dispatch_job.
-TRIGGER_DAILY_9AM = "daily_9am"
-TRIGGER_DAILY_13 = "daily_13"
-
-# trigger -> 발송을 허용하려면 conditions["timing"]에 있어야 하는 값.
-# TRIGGER_MANUAL_BUTTON은 timing 설정과 무관하게 항상 후보다(사용자가
-# 지금 보내라고 명시적으로 누름). SD그룹: TRIGGER_REFRESH(주기 자동화
-# 실행)는 "자동 실행 직후" 체크박스(SD-1)가 켜져 있을 때만 후보다 --
-# on_analysis 저장 키는 그대로 재사용하고 화면 라벨만 바뀌었다.
-_TRIGGER_REQUIRED_TIMING = {
-    TRIGGER_REFRESH: settings_store.TIMING_ON_ANALYSIS,
-    TRIGGER_MANUAL: settings_store.TIMING_ON_ANALYSIS,
-    TRIGGER_DAILY_9AM: settings_store.TIMING_DAILY_9AM,
-    TRIGGER_DAILY_13: settings_store.TIMING_DAILY_13,
-}
-_TIMING_LABEL = {
-    settings_store.TIMING_ON_ANALYSIS: "자동 실행 직후",
-    settings_store.TIMING_DAILY_9AM: "매일 오전 9시",
-    settings_store.TIMING_DAILY_13: "매일 오후 1시",
-}
 
 
 def _within_hourly_budget(store: RuntimeStore) -> bool:
@@ -105,9 +86,9 @@ def _mark_manual_dispatch_sent(store: RuntimeStore) -> None:
 
 
 def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, trigger: str) -> dict[str, Any]:
-    """SE그룹: 이 함수의 모든 종료 경로(발송/건너뜀 전부)가
-    `notify_history`에 기록을 남긴다 -- 알림 기록 화면(§SE)이 "왜 안
-    보냈는지"까지 보여줄 수 있어야 한다."""
+    """이 함수의 모든 종료 경로(발송/건너뜀 전부)가 `notify_history`에
+    기록을 남긴다 -- 알림 기록 화면이 "왜 안 보냈는지"까지 보여줄 수
+    있어야 한다."""
 
     def _record(*, status: str, skip_reason: str | None, results: dict[str, Any] | None) -> None:
         channels = [name for name, result in (results or {}).items() if result.get("ok")]
@@ -125,7 +106,7 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
                 sent_count=sent_count,
             )
         except Exception:
-            # SE-4: 이력 기록 실패가 발송 자체의 성공/실패 판정을 가리면
+            # 이력 기록 실패가 발송 자체의 성공/실패 판정을 가리면
             # 안 된다 -- best-effort로 로그만 남긴다.
             logger.exception("notify_history 기록 실패 trigger=%s", trigger)
 
@@ -134,11 +115,6 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
         return {"skipped": True, "reason": reason}
 
     try:
-        required_timing = _TRIGGER_REQUIRED_TIMING.get(trigger)
-        if required_timing is not None:
-            conditions = settings_store.get_conditions(store)
-            if required_timing not in (conditions.get("timing") or []):
-                return _skip(f"발송 시점 설정에 '{_TIMING_LABEL[required_timing]}'가 없음")
         if trigger in (TRIGGER_MANUAL, TRIGGER_MANUAL_BUTTON):
             blocked_until = _manual_interval_blocked_until(store)
             if blocked_until is not None:
@@ -204,7 +180,15 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
         if trigger in (TRIGGER_MANUAL, TRIGGER_MANUAL_BUTTON):
             _mark_manual_dispatch_sent(store)
 
-        _record(status="sent", skip_reason=None, results=results)
+        # 시도한 채널이 하나도 성공하지 못했으면 "발송됨"으로 남기지
+        # 않는다 -- 알림 기록 화면은 status가 sent가 아닐 때만 사유를
+        # 보여주므로, 그대로 두면 "TOP 0 · 발송됨"만 뜨고 왜 못 갔는지
+        # 알 수 없다.
+        if results and not any(item.get("ok") for item in results.values()):
+            errors = "; ".join(f"{name}({item.get('error') or '실패'})" for name, item in results.items())
+            _record(status="skipped", skip_reason=f"채널 발송 실패: {errors}", results=results)
+        else:
+            _record(status="sent", skip_reason=None, results=results)
         return {"skipped": False, "results": results}
     except Exception:
         logger.exception("수율 예측 갱신 발송 중 오류")

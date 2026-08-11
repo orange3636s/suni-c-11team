@@ -10,23 +10,13 @@ import {
   connectSlack,
   disconnectNotificationChannel,
   saveAutomationSettings,
-  saveNotificationConditions,
   testAutomationConnection,
   testGmail,
   testSlack,
   testTelegram,
   verifyTelegramCode,
 } from "@/lib/api";
-import type { NotificationGrade, NotificationSettingsSummary, NotificationTiming } from "@/types/data";
-
-// SD-1: 발송 시점 다중 선택 -- 자동 실행 직후(자동화 주기 잡, 저장 키는
-// 그대로 on_analysis) / 매일 오전 9시 / 매일 오후 1시. 하나도 선택하지
-// 않으면(빈 배열) 어떤 트리거로도 발송되지 않는다.
-const TIMING_OPTIONS: { value: NotificationTiming; label: string }[] = [
-  { value: "on_analysis", label: "자동 실행 직후" },
-  { value: "daily_9am", label: "매일 오전 9시" },
-  { value: "daily_13", label: "매일 오후 1시" },
-];
+import type { NotificationSettingsSummary } from "@/types/data";
 
 export default function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { notifications, setNotifications } = useAnalysisState();
@@ -73,12 +63,6 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
           </section>
 
           <AutomationSection summary={notifications} onUpdate={setNotifications} />
-
-          <section className="settingsSection">
-            <h3>발송 시점</h3>
-            <p className="settingsSectionDesc">무엇을 언제 보낼지 정합니다.</p>
-            <ConditionsForm summary={notifications} onUpdate={setNotifications} />
-          </section>
         </div>
       </div>
     </div>
@@ -109,7 +93,7 @@ function SlackCard({ summary, onUpdate }: ChannelProps) {
   const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
 
   async function handleTest() {
-    // D-3: 이미 연결된 채널이면 폼의 webhookUrl(빈 값)이 아니라 서버에
+    // 이미 연결된 채널이면 폼의 webhookUrl(빈 값)이 아니라 서버에
     // 저장된 값으로 테스트한다 -- 연결 요약에는 마스킹된 값만 있어
     // 원본을 다시 보낼 수 없다.
     if (!slack.connected && !webhookUrl.trim()) {
@@ -152,7 +136,7 @@ function SlackCard({ summary, onUpdate }: ChannelProps) {
     try {
       onUpdate(await disconnectNotificationChannel("slack"));
     } catch {
-      // D-3: unhandled rejection이 아니라 눈에 보이는 오류로 -- 실패해도
+      // unhandled rejection이 아니라 눈에 보이는 오류로 -- 실패해도
       // 화면은 "연결됨" 그대로라 사용자가 재시도할 수 있어야 한다.
       setError("연결 해제에 실패했습니다. 다시 시도해 주세요.");
     }
@@ -237,7 +221,7 @@ function TelegramCard({ summary, onUpdate }: ChannelProps) {
   const [busy, setBusy] = useState<"test" | "verify" | null>(null);
   const [error, setError] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
-  // EA그룹: 봇 username은 백엔드가 단일 소스다 -- 프런트 환경변수나
+  // 봇 username은 백엔드가 단일 소스다 -- 프런트 환경변수나
   // 하드코딩 폴백을 두지 않는다. 서버가 TELEGRAM_BOT_USERNAME을 설정하지
   // 않았으면 그대로 null이고, 그 사실을 화면에 드러낸다(죽은 링크를
   // 보여주지 않는다).
@@ -303,7 +287,7 @@ function TelegramCard({ summary, onUpdate }: ChannelProps) {
       )}
       {telegram.connected && <TestResultNote result={testResult} />}
       {!telegram.connected && expanded && botUsername === null && (
-        // EA-3: 봇 username이 서버에 설정돼 있지 않다 -- 존재하지 않는
+        // 봇 username이 서버에 설정돼 있지 않다 -- 존재하지 않는
         // 봇으로 향하는 죽은 링크를 보여주는 대신, 설정 누락임을 알리고
         // 코드 입력도 막는다(보낼 곳이 없다). 오류색은 쓰지 않는다.
         <p className="notifyChannelMuted">
@@ -348,7 +332,7 @@ function TelegramCard({ summary, onUpdate }: ChannelProps) {
               maxLength={6}
             />
           </div>
-          {/* EA-6: 코드는 메모리에 10분만 보관되고 서버 재시작 시
+          {/* 코드는 메모리에 10분만 보관되고 서버 재시작 시
               사라진다 -- 사용자가 시간을 넘기거나 재시작 직후 재도전하는
               이유를 알 수 있게 미리 알린다. */}
           <p className="notifyChannelNote">봇이 보낸 6자리 코드를 10분 이내에 입력하세요.</p>
@@ -369,7 +353,7 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
   const [busy, setBusy] = useState<"test" | "connect" | null>(null);
   const [error, setError] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
-  // 버그 수정 (지시서 W): "인증 메일 발송됨" 안내는 서버의 영속 `pending`
+  // "인증 메일 발송됨" 안내는 서버의 영속 `pending`
   // 상태가 아니라 이 세션에서 방금 발송했는지만 나타내는 로컬 상태다.
   // `pending`을 폼 렌더 조건에 쓰면 메일을 못 받거나 주소를 잘못
   // 입력했을 때 다시 시도할 방법이 없어진다 -- 패널을 닫았다 열면(이
@@ -411,7 +395,7 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
     try {
       onUpdate(await disconnectNotificationChannel("gmail"));
     } catch {
-      // D-3: unhandled rejection이 아니라 눈에 보이는 오류로.
+      // unhandled rejection이 아니라 눈에 보이는 오류로.
       setError("연결 해제에 실패했습니다. 다시 시도해 주세요.");
     }
   }
@@ -425,7 +409,7 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
         ) : gmail.pending ? (
           <>
             <span className="notifyChannelStatus pending">대기 중</span>
-            {/* 버그 수정 (지시서 W): pending일 때도 폼을 다시 열 수 있어야
+            {/* pending일 때도 폼을 다시 열 수 있어야
                 한다 -- 메일을 못 받았거나 주소를 잘못 입력한 경우의 유일한
                 복구 경로다. */}
             <button type="button" className="notifyConnectButton" onClick={() => setExpanded((v) => !v)}>
@@ -465,9 +449,9 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
               value={email}
               onChange={(event) => {
                 setEmail(event.target.value);
-                // 주소를 고치기 시작하면 이전 발송 안내는 더 이상 유효하지
-                // 않다 -- 남겨두면 새 주소를 입력 중인데 옛 주소로 보냈다는
-                // 문구가 그대로 떠 있어 혼동을 준다.
+                // 주소를 고치기 시작하면 직전 발송 안내는 유효하지 않다
+                // -- 남겨두면 새 주소를 입력 중인데 바뀌기 전 주소로
+                // 보냈다는 문구가 그대로 떠 있어 혼동을 준다.
                 setJustSent(false);
               }}
               placeholder="name@company.com"
@@ -485,7 +469,7 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
   );
 }
 
-// SD-1: "자동화" 섹션 -- refreshIntervalMinutes마다 서버에서 최신 CSV를
+// "자동화" 섹션 -- refreshIntervalMinutes마다 서버에서 최신 CSV를
 // 받아 수율 예측만 계산해 알림을 보낸다(SD-2). 비밀번호 입력칸은 없다 --
 // 서버 환경변수(DB_PASSWORD)로만 받는다("하지 말 것").
 function AutomationSection({ summary, onUpdate }: ChannelProps) {
@@ -573,6 +557,11 @@ function AutomationSection({ summary, onUpdate }: ChannelProps) {
         Refresh Time (분마다 최신 데이터를 받아 수율 예측 갱신)
         <input type="number" min={1} value={refreshMinutes} onChange={(event) => setRefreshMinutes(event.target.value)} placeholder="60" />
       </label>
+      {/* 자동 발송 시점은 이 주기 하나로만 결정되므로(별도 "발송 시점"
+          설정이 없다), 무엇이 자동으로 일어나는지 여기서 바로 설명한다. */}
+      <p className="settingsSectionDesc">
+        Refresh Time마다 데이터를 불러와 수율 예측을 계산하고 알림을 발송합니다.
+      </p>
       <p className="settingsSectionDesc">
         마지막 실행{" "}
         {automation.last_run_at
@@ -601,66 +590,5 @@ function AutomationSection({ summary, onUpdate }: ChannelProps) {
       {error && <p className="notifyFieldError">{error}</p>}
       {message && <p className="notifyTestResult ok">{message}</p>}
     </section>
-  );
-}
-
-function ConditionsForm({ summary, onUpdate }: ChannelProps) {
-  const { conditions } = summary;
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function persist(grades: NotificationGrade[], timing: NotificationTiming[]) {
-    setSaving(true);
-    setError("");
-    try {
-      onUpdate(await saveNotificationConditions({ grades, timing }));
-    } catch {
-      // D-3: unhandled rejection이 아니라 눈에 보이는 오류로 -- 실패해도
-      // 토글은 이전 값 그대로라(onUpdate가 불리지 않았으므로) 다시
-      // 누르면 된다는 것을 알려야 한다.
-      setError("저장하지 못했습니다. 다시 시도해 주세요.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // DF그룹: 단일 선택(교체)에서 다중 선택(토글)으로 -- 하나도 선택하지
-  // 않은 상태(빈 배열)도 유효한 사용자 선택이라 그대로 저장한다.
-  function toggleTiming(timing: NotificationTiming) {
-    const has = conditions.timing.includes(timing);
-    const next = has ? conditions.timing.filter((t) => t !== timing) : [...conditions.timing, timing];
-    void persist(conditions.grades, next);
-  }
-
-  return (
-    <div className="notifyConditions">
-      <div className="notifyConditionsRow">
-        <span className="notifyConditionsLabel">발송 시점</span>
-        <div className="scatterViewToggle" role="group" aria-label="발송 시점">
-          {TIMING_OPTIONS.map((option) => {
-            const active = conditions.timing.includes(option.value);
-            return (
-              <button
-                key={option.value}
-                type="button"
-                className={`scatterViewToggleBtn ${active ? "active" : ""}`}
-                onClick={() => toggleTiming(option.value)}
-                disabled={saving}
-                aria-pressed={active}
-              >
-                {active ? "☑ " : "☐ "}
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      {/* DF그룹: 발송 시점을 전부 해제하면 어떤 트리거로도 발송되지
-          않는다 -- 조용히 무발송 상태로 두지 않고 경고로 알린다. */}
-      {conditions.timing.length === 0 && (
-        <p className="notifyFieldError">발송 시점이 선택되지 않아 알림이 전송되지 않습니다</p>
-      )}
-      {error && <p className="notifyFieldError">{error}</p>}
-    </div>
   );
 }

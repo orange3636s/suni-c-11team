@@ -52,7 +52,7 @@ def escape_markdown_v2(text: str) -> str:
 
 
 def send_telegram_message(bot_token: str, chat_id: str, text: str, *, parse_mode: str | None = "MarkdownV2") -> tuple[bool, str | None]:
-    """`parse_mode=None` sends plain text -- VE-4: 수율 예측 갱신 발송은
+    """`parse_mode=None` sends plain text -- 수율 예측 갱신 발송은
     Telegram에서 MarkdownV2 이스케이프 없이 고정폭 정렬 텍스트로 보낸다.
     연결 테스트 메시지(`send_telegram_test`)만 기본값(MarkdownV2)을 쓴다."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"

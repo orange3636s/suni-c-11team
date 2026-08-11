@@ -64,7 +64,7 @@ def test_dispatch_now_route_does_not_crash(
     실제 train/test.CSV로 끝까지 죽지 않고 돌아 실제로 발송하는지 확인한다."""
     store = notify_routes._store()
     settings_store.save_slack(store, webhook_url="https://hooks.slack.com/services/FAKE/FAKE/FAKE", channel="#eng-yield")
-    settings_store.save_conditions(store, grades=["심각"], timing=[settings_store.TIMING_ON_ANALYSIS])
+    settings_store.save_conditions(store, grades=["심각"])
 
     sent = {"called": False}
 

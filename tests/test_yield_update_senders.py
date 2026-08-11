@@ -36,9 +36,16 @@ def _candidate(
     y1_contribution: float | None = None,
     y1_value: float = 1.0,
 ) -> YieldCandidate:
-    core_factors = {t: CoreFactorCell(feature=None, contribution_pct=None, rank_used=None, factor_value=None) for t in FAIL_TARGETS}
+    core_factors = {
+        t: CoreFactorCell(feature=None, contribution_pct=None, rank_used=None, factor_value=None, measured=False)
+        for t in FAIL_TARGETS
+    }
     core_factors["Y1"] = CoreFactorCell(
-        feature=y1_feature, contribution_pct=y1_contribution, rank_used=(1 if y1_feature else None), factor_value=42.0
+        feature=y1_feature,
+        contribution_pct=y1_contribution,
+        rank_used=(1 if y1_feature else None),
+        factor_value=42.0,
+        measured=bool(y1_feature),
     )
     y_components = {t: 1.0 for t in FAIL_TARGETS}
     y_components["Y1"] = y1_value

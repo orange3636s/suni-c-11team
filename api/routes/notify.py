@@ -60,7 +60,7 @@ def connect_slack(body: SlackConnectRequest) -> dict[str, Any]:
 def test_slack(body: SlackTestRequest) -> dict[str, Any]:
     webhook_url = body.webhook_url
     if webhook_url is None:
-        # D-3: 이미 연결된 채널의 "테스트 발송" -- 저장된 값을 쓴다.
+        # 이미 연결된 채널의 "테스트 발송" -- 저장된 값을 쓴다.
         record = settings_store.get_slack(_store())
         if not record:
             return {"ok": False, "error": "연결된 Slack 채널이 없습니다."}
@@ -102,7 +102,7 @@ def connect_gmail(body: GmailConnectRequest, request: Request) -> dict[str, Any]
     store = _store()
     token = settings_store.start_gmail_verification(store, email=body.email)
     if settings.smtp_host and settings.smtp_user and settings.smtp_password and settings.smtp_from_email:
-        # A-7: 명시적으로 설정된 게 없으면 이 요청을 받은 API 서버 자신의
+        # 명시적으로 설정된 게 없으면 이 요청을 받은 API 서버 자신의
         # 오리진을 쓴다 -- verify 라우트는 FastAPI에만 있고 Next.js에는
         # 대응하는 rewrite가 없으므로, 프런트엔드 오리진을 기본값으로
         # 쓰면 메일 링크가 항상 Next 404로 간다.
@@ -162,19 +162,16 @@ def test_gmail() -> dict[str, Any]:
 @router.post("/conditions", response_model=NotificationSettingsSummary)
 def save_conditions(body: ConditionsSaveRequest) -> dict[str, Any]:
     store = _store()
-    try:
-        settings_store.save_conditions(store, grades=body.grades, timing=body.timing)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    settings_store.save_conditions(store, grades=body.grades)
     return settings_store.get_settings_summary(store)
 
 
 @router.post("/automation", response_model=NotificationSettingsSummary)
 def save_automation_settings(body: AutomationSaveRequest, request: Request) -> dict[str, Any]:
-    """SD-1: "알림·자동화 설정" 팝업의 자동화 섹션 저장 -- 서버 주소·
+    """알림·자동화 설정 팝업의 자동화 섹션 저장 -- 서버 주소·
     사용자명·refresh time·켜짐 여부를 전용 슬롯(automation:settings)에
     저장하고, "자동화 사용"에 맞춰 주기 잡을 즉시 reschedule/pause한다
-    (SD-6: "체크 해제 시 스케줄러 잡 중지"). 비밀번호 필드는 없다."""
+    (체크가 해제되면 스케줄러 잡을 멈춘다). 비밀번호 필드는 없다."""
     store = _store()
     store.save_automation_settings(
         enabled=body.enabled,
@@ -202,14 +199,15 @@ def save_automation_settings(body: AutomationSaveRequest, request: Request) -> d
 
 @router.post("/automation/test", response_model=AutomationTestResponse)
 def test_automation_connection() -> dict[str, Any]:
-    """SD-1 "연결 테스트" 버튼 -- 저장된 서버 주소로 접속만 시도한다."""
+    """알림·자동화 설정 팝업의 "연결 테스트" 버튼 -- 저장된 서버 주소로
+    접속만 시도한다."""
     ok, error = sql_source.test_connection(_store())
     return {"ok": ok, "error": error}
 
 
 @router.get("/history", response_model=NotifyHistoryListResponse)
 def get_notify_history(limit: int = 100) -> dict[str, Any]:
-    """SE그룹: 알림 기록 화면 -- 발송/건너뜀 이력과 발송 당시의 메시지
+    """알림 기록 화면 -- 발송/건너뜀 이력과 발송 당시의 메시지
     전문(재계산하지 않는다)을 최신순으로 돌려준다."""
     store = _store()
     return {"items": store.list_notify_history(limit)}
@@ -234,12 +232,12 @@ def _dispatch_yield_update(
 ) -> dict[str, Any]:
     """공유 헬퍼 -- 수율 예측 화면(alerts/page.tsx)이 쓰는 것과 같은
     `build_yield_prediction_table`로 `YieldUpdatePayload`를 만들고
-    `dispatch_yield_update`를 호출한다. `/dispatch`(분석 실행 직후),
-    `/yield-update/dispatch`(YD 버튼), 09:00/13:00 스케줄 잡이 모두 이
+    `dispatch_yield_update`를 호출한다. 수동 발송 경로인
+    `/dispatch`(분석 실행 직후)와 `/yield-update/dispatch`("알림 전송"
+    버튼)가 이
     구성을 공유한다 -- 호출부마다 따로 만들지 않는다. 데이터셋을 찾을
     수 없으면 `_dataframe_or_404`/`_hydrated_targets_or_409`가 그대로
-    HTTPException을 올린다(호출부가 각자의 정책대로 처리한다: 라우트는
-    전파, 스케줄 잡은 삼킨다)."""
+    HTTPException을 올려 라우트 응답으로 전파된다."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -283,11 +281,10 @@ def _dispatch_response(result: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/dispatch", response_model=DispatchResponse)
 def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
-    """§C-4 "분석 실행 직후" 발송 트리거 -- 원인 분석 실행이 끝난 직후
-    프런트엔드가 fire-and-forget으로 호출한다. 옛 알람 등급/AUC 게이트
-    파이프라인은 폐기됐다 -- 수율 예측 갱신 파이프라인(TRIGGER_MANUAL)
-    으로 발송하며, 저장된 발송 시점 설정에 '분석 실행 직후'가 포함됐을
-    때만 실제로 보낸다(dispatch_yield_update 내부 판단)."""
+    """"분석 실행 직후" 수동 발송 트리거 -- 원인 분석 실행이 끝난 직후
+    프런트엔드가 fire-and-forget으로 호출한다. 수율 예측 갱신
+    파이프라인(TRIGGER_MANUAL)으로 조건 없이 발송을 시도하며, 억제
+    규칙(시간당 예산·수동 최소 간격 10분)만 적용된다."""
     from src.notifications.yield_update_dispatch import TRIGGER_MANUAL
 
     store = _store()
@@ -303,9 +300,8 @@ def dispatch_now(body: DispatchRequest) -> dict[str, Any]:
 
 @router.post("/yield-update/dispatch", response_model=DispatchResponse)
 def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
-    """YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러
-    지금 보낸다. `/dispatch`(분석 실행 직후)와 달리 발송 시점 설정과
-    무관하게 시도한다 -- 억제 규칙(시간당 예산·수동 최소 간격 10분)은
+    """수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러
+    지금 보낸다. 억제 규칙(시간당 예산·수동 최소 간격 10분)은
     `dispatch_yield_update`가 그대로 적용한다."""
     from src.notifications.yield_update_dispatch import TRIGGER_MANUAL_BUTTON
 
@@ -320,50 +316,7 @@ def dispatch_yield_update_now(body: DispatchRequest) -> dict[str, Any]:
     return _dispatch_response(result)
 
 
-def _run_scheduled_dispatch_job(trigger: str, *, label: str) -> None:
-    """APScheduler가 매일 정해진 시각에 호출하는 정기 발송 잡의 공통
-    본문 -- 09:00/13:00 둘 다 이 함수를 쓴다(DF그룹). 가장 최근 자동
-    갱신 스냅샷(`run_refresh_pipeline`이 매 주기마다 갱신)의
-    train/eval 데이터셋 쌍을 기준으로 수율 예측 갱신을 다시 만들어
-    발송한다.
-
-    이전에는 `GET /api/state/alarms`에 저장된(사전 알람 로그 탭이
-    쓰던) train/eval 쌍을 읽었으나, 그 저장 경로를 부르는 화면이 이제
-    없어 이 값이 항상 비어 있었다 -- 두 잡 모두 실제로는 한 번도
-    발송하지 못하는 상태였다(Task D 검증 중 확인). 자동 갱신 스냅샷은
-    APScheduler `auto_refresh` 잡이 주기적으로 채우므로 항상 최신값을
-    가진다.
-    """
-    store = _store()
-    try:
-        snapshot = store.get_refresh_snapshot_status().get("snapshot")
-        source = (snapshot or {}).get("source") or {}
-        train_dataset = source.get("train_dataset")
-        eval_dataset = source.get("eval_dataset")
-        if not train_dataset or not eval_dataset:
-            logger.info("%s 알림 발송 스킵: 저장된 자동 갱신 스냅샷 없음", label)
-            return
-        _dispatch_yield_update(store, train_dataset=train_dataset, eval_dataset=eval_dataset, trigger=trigger)
-    except Exception:
-        logger.exception("%s 알림 발송 잡 실행 실패", label)
-
-
-def run_daily_dispatch_job() -> None:
-    """APScheduler가 매일 09:00에 호출한다 (지시서 N-2: 8시 -> 9시)."""
-    from src.notifications.yield_update_dispatch import TRIGGER_DAILY_9AM
-
-    _run_scheduled_dispatch_job(TRIGGER_DAILY_9AM, label="09:00")
-
-
-def run_daily_13_dispatch_job() -> None:
-    """DF그룹: APScheduler가 매일 13:00에 호출한다. trigger만 09:00
-    잡과 다르다."""
-    from src.notifications.yield_update_dispatch import TRIGGER_DAILY_13
-
-    _run_scheduled_dispatch_job(TRIGGER_DAILY_13, label="13:00")
-
-
-# H-3②: notify_sent_log는 24시간 재발송 방지 조회에만 쓰이므로 그보다 훨씬
+# notify_sent_log는 24시간 재발송 방지 조회에만 쓰이므로 그보다 훨씬
 # 오래된 행은 볼 일이 없다 -- 지우지 않으면 무한히 커진다. 발송 잡과
 # 겹치지 않도록 별도 스케줄 id로 등록한다(api/main.py).
 NOTIFY_LOG_RETENTION_DAYS = 30
@@ -381,7 +334,7 @@ def run_notify_log_cleanup_job() -> None:
 
 
 def run_notify_history_cleanup_job() -> None:
-    """SE-4: 알림 기록(최근 100건/30일)의 보조 정리 잡 -- 쓰기 경로
+    """알림 기록(최근 100건/30일)의 보조 정리 잡 -- 쓰기 경로
     (`RuntimeStore.record_notify_history`)가 매 발송/건너뜀마다 이미
     정리하므로, 이 잡은 발송이 뜸해 그 자연스러운 정리가 오래 안 도는
     경우를 위한 보조 수단이다."""

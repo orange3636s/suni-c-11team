@@ -2,7 +2,7 @@
 tabs (학습/원인 분석/사전 알람) -- spec: "학습·분석 결과 상태 유지". One row
 per kind in RuntimeStore's `app_state` key-value table (never more than
 one; a fresh result overwrites whatever was there). Scatter-plot point
-coordinates are deliberately never part of any payload here (spec §3-1)
+coordinates are deliberately never part of any payload here
 -- those stay cheap to refetch from /api/screening/scatter on demand and
 would blow the size budget otherwise.
 """
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Bumped whenever a stored payload's shape changes incompatibly -- a
 # stored record whose schema_version doesn't match is treated as absent
-# (spec §3-5), not as a crash or a best-effort partial restore.
+# -- not as a crash, and not as a best-effort partial restore.
 STATE_SCHEMA_VERSION = 1
 
 StateKind = Literal["training", "analysis", "alarms"]
@@ -36,7 +36,7 @@ _DATASET_FIELDS = ("dataset", "train_dataset", "eval_dataset")
 
 def save_state(store: RuntimeStore, kind: StateKind, *, dataset: dict[str, str], payload: dict[str, Any]) -> bool:
     """Best-effort -- a save failure must never surface as a training/
-    analysis/alarm failure (spec §3-2), so every exception is swallowed
+    analysis/alarm failure, so every exception is swallowed
     here and only logged; callers get a bool back purely for their own
     "saved" response field, never something to raise on.
     """
@@ -68,7 +68,7 @@ def get_latest_state(store: RuntimeStore) -> dict[StateKind, dict[str, Any] | No
 
 
 def is_state_degraded(store: RuntimeStore) -> bool:
-    """D-2: true if one of the 3 latest-state records is corrupted
+    """True if one of the 3 latest-state records is corrupted
     (fails to JSON-decode) -- kept as a separate, additive check rather
     than changing `get_latest_state`'s return shape, since that function
     has several other callers (api/main.py, api/routes/notify.py,
@@ -85,10 +85,10 @@ def _record_dataset_ids(record: dict[str, Any]) -> set[str]:
 
 def invalidate_state_for_dataset(store: RuntimeStore, dataset_id: str) -> list[StateKind]:
     """Deletes any of the 3 stored results that reference `dataset_id`
-    (spec §3-5) -- called when that dataset is deleted. Never touches
-    results for other datasets, and is never called on a fresh upload
-    (spec: "데이터셋을 새로 업로드해도 기존 결과를 지우지 마라" -- uploading
-    doesn't delete anything, so it never reaches this function at all).
+    -- called when that dataset is deleted. Never touches results for
+    other datasets, and is never called on a fresh upload: uploading a new
+    dataset must not clear existing results, so it never reaches this
+    function at all.
     """
     deleted: list[StateKind] = []
     for kind, key in STATE_KEYS.items():

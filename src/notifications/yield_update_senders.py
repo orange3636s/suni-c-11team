@@ -1,10 +1,10 @@
-"""VE그룹: 수율 예측 갱신 발송 -- 두 블록(예측 수율 낮은 순 TOP 10, 타깃별
+"""수율 예측 갱신 발송 -- 두 블록(예측 수율 낮은 순 TOP 10, 타깃별
 불량률 높은 순 TOP 3)을 세 채널 형식으로 조립한다.
 
-VE-5: LLM을 쓰지 않는다 -- 표·수치·인자명은 전부 `yield_prediction`이
-이미 계산한 분석 데이터에서 직접 채우고(여기서 다시 계산하지 않는다),
-요약 문장만 정해진 조건 분기로 고른다. 반올림 규칙은 화면(수율 예측
-표)과 `yield_formatting`을 공유해 어긋나지 않는다(VE-5c).
+LLM을 쓰지 않는다 -- 표·수치·인자명은 전부 `yield_prediction`이 이미
+계산한 분석 데이터에서 직접 채우고(여기서 다시 계산하지 않는다), 요약
+문장만 정해진 조건 분기로 고른다. 반올림 규칙은 화면(수율 예측 표)과
+`yield_formatting`을 공유해 어긋나지 않는다.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ DASHBOARD_DISCLAIMER = "예측 수율의 절대값은 정확도가 낮습니다.
 
 TOP10_LIMIT = 10
 TOP3_LIMIT = 3
-# VE-5 요약 문장 조건.
+# 요약 문장 조건.
 DOMINANT_LOSS_SHARE_THRESHOLD = 30.0
 LOW_RELIABILITY_MAX_COUNT = 2  # "신뢰도 2/5 미만"
 LOW_RELIABILITY_MAJORITY_FRACTION = 0.5
@@ -45,7 +45,7 @@ class YieldUpdateTargetItem:
 class YieldUpdateTargetBlock:
     target: str
     items: tuple[YieldUpdateTargetItem, ...]
-    # VE-2: "해당 없음" 사유 -- 자격 있는 wafer가 없어도 섹션 자체는
+    # "해당 없음" 사유 -- 자격 있는 wafer가 없어도 섹션 자체는
     # 생략하지 않는다.
     unavailable_reason: str | None
 
@@ -63,8 +63,8 @@ class YieldUpdatePayload:
 
 
 def _summary_sentence(top10_candidates: list) -> str | None:
-    """VE-5: 조건에 안 걸리면 문장을 만들지 않는다(억지로 채우지 않음).
-    우선순위는 지시서에 나열된 순서 그대로다."""
+    """조건에 안 걸리면 문장을 만들지 않는다 -- 억지로 채우지 않는다.
+    아래 분기 순서가 곧 우선순위다."""
     if not top10_candidates:
         return None
 
@@ -106,7 +106,7 @@ def build_yield_update_payload(
 
     target_blocks: list[YieldUpdateTargetBlock] = []
     for target in FAIL_RATE_TARGETS:
-        # VE-2/YG: "기여율 10% 이상 인자가 계측된 wafer만" -- VD의 구간 조정
+        # "기여율 임계 이상 인자가 계측된 wafer만" -- 구간 조정
         # 자격(core_factors[target])과 같은 임계를 재사용한다.
         eligible = [
             c
@@ -298,9 +298,8 @@ def build_telegram_yield_update_chunks(payload: YieldUpdatePayload, *, max_chars
 
 
 def build_yield_update_email_html(payload: YieldUpdatePayload) -> str:
-    """H-3④/EB그룹과 같은 이유 -- dataset_label·source_note·인자명은
-    사용자가 올린 파일명 등 신뢰할 수 없는 문자열을 담을 수 있으므로
-    빠짐없이 `html.escape`를 거친다(과거 검토에서 지적된 항목)."""
+    """dataset_label·source_note·인자명은 사용자가 올린 파일명 등 신뢰할
+    수 없는 문자열을 담을 수 있으므로 빠짐없이 `html.escape`를 거친다."""
 
     def esc(value: object) -> str:
         return html.escape(str(value))
