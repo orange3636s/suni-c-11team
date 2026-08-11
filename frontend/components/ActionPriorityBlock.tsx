@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { HScrollTableBody } from "@/components/DataTablePanel";
 import { formatNumber, formatPct, formatSignedPp, isOutOfRange, rangeText } from "@/lib/fmeaFormat";
 import type { ActionPriorityPayload, ActionPriorityRow } from "@/types/data";
 
@@ -22,13 +23,13 @@ type SortValue = (typeof SORT_OPTIONS)[number]["value"];
 function describeRelation(row: ActionPriorityRow): string {
   switch (row.relation_shape) {
     case "monotonic_increasing":
-      return `${row.feature} 값이 클수록 ${row.target} 손실이 늘어납니다`;
+      return "값이 클수록 손실이 늘어납니다";
     case "monotonic_decreasing":
-      return `${row.feature} 값이 작을수록 ${row.target} 손실이 늘어납니다`;
+      return "값이 작을수록 손실이 늘어납니다";
     case "u_shape":
-      return `${row.feature} 값이 권장 구간을 벗어날수록 ${row.target} 손실이 늘어납니다`;
+      return "권장 구간을 벗어날수록 손실이 늘어납니다";
     default:
-      return `${row.feature}과 ${row.target}의 관계가 뚜렷하지 않습니다`;
+      return "관계가 뚜렷하지 않습니다";
   }
 }
 
@@ -61,12 +62,12 @@ function ActionPriorityRowView({
         {showTarget && <span className="actionPriorityTargetTag">→ {row.target}</span>}
       </td>
       {row.dimmed ? (
-        <td colSpan={4} className="actionPriorityDimReason">
+        <td colSpan={3} className="actionPriorityDimReason">
           {row.dim_reason}
         </td>
       ) : (
         <>
-          <td className="actionPriorityDescription">{describeRelation(row)}</td>
+          <td className="actionPriorityDescription colNoTruncate">{describeRelation(row)}</td>
           <td>
             <span className={outOfRange ? "actionPriorityCurrentOut" : undefined}>{formatNumber(row.factor_value)}</span>
             {" → "}
@@ -149,7 +150,7 @@ export default function ActionPriorityBlock({
           <p className="sectionCaption">
             train.CSV 기준 · 타깃별 기여율 10% 이상 인자 전체 · {sorted.length}행
           </p>
-          <div className="tableWrap">
+          <HScrollTableBody rows={5} minWidth={900}>
             <table className="dataTable actionPriorityTable">
               <thead>
                 <tr>
@@ -174,7 +175,7 @@ export default function ActionPriorityBlock({
                 })}
               </tbody>
             </table>
-          </div>
+          </HScrollTableBody>
           {data.no_qualifying_factor.length > 0 && (
             <p className="tableCaption">
               {data.no_qualifying_factor

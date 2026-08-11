@@ -11201,7 +11201,6 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   font-size: var(--fs-sm); padding: 6px 10px; border-radius: var(--radius-control);
   border: 1px solid var(--border); background: var(--surface); color: var(--text-primary);
 }
-.actionPriorityTable{ min-width: 900px; }
 .actionPriorityTable th, .actionPriorityTable td{ vertical-align: top; }
 .actionPriorityRow.dimmed{ opacity: 0.45; }
 .actionPriorityRankTop{ color: var(--sig-red); font-weight: 700; }
@@ -11210,7 +11209,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
    묶음을 드러낸다(정렬을 깨면서까지 강제로 붙이지 않는다 -- 그냥 정렬
    결과가 우연히 인접했을 때만 보이는 표시). */
 .actionPriorityGrouped{ border-left: 2px solid var(--border); padding-left: 8px; }
-.actionPriorityDescription{ color: var(--text-secondary); font-size: var(--fs-sm); max-width: 260px; }
+.actionPriorityDescription{ color: var(--text-secondary); font-size: var(--fs-sm); }
 .actionPriorityCurrentOut{ color: var(--sig-amber); font-weight: 700; }
 .actionPrioritySubline{ margin-top: 2px; font-size: var(--fs-xs); color: var(--text-muted); }
 .actionPriorityExpected{ font-variant-numeric: tabular-nums; }
