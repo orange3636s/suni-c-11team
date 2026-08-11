@@ -7,6 +7,7 @@ by a plain keyword check -- no LLM round-trip for intent classification.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from functools import lru_cache
@@ -33,6 +34,10 @@ REPORT_KEYWORDS = ("보고서", "리포트", "report", "요약해줘", "정리�
 CHAT_TIMEOUT_SECONDS = 90
 HISTORY_TURNS = 2
 MAX_RETRIES = 1
+# 프런트의 idle 타임아웃(frontend/lib/api.ts의 CHAT_STREAM_IDLE_TIMEOUT_MS,
+# 30초)보다 훨씬 짧게 잡는다 -- 컨텍스트 빌드가 이보다 오래 걸리는 동안
+# 하트비트가 안 나가면 그 자체가 idle로 잡혀 끊긴다.
+HEARTBEAT_INTERVAL_SECONDS = 5
 NO_ANALYSIS_MESSAGE = (
     "원인 분석을 먼저 실행해 주세요. 원인 분석 탭에서 실행 버튼을 누르면 "
     "분석 결과를 바탕으로 보고서를 작성할 수 있습니다.\n\n[원인 분석 탭으로 이동](/root-cause)"
@@ -116,7 +121,28 @@ async def _static_stream(text: str) -> AsyncIterator[str]:
     yield _sse({"done": True})
 
 
-async def _stream_completion(messages: list[dict[str, str]]) -> AsyncIterator[str]:
+async def _stream_completion(request: ChatRequest, mode: Literal["report", "chat"]) -> AsyncIterator[str]:
+    # 지시서 D-1: 컨텍스트 빌드(_build_messages, CPU-bound pandas 파이프라인 --
+    # train.CSV 10회 재랭킹 등, 수 초가 걸릴 수 있다)를 StreamingResponse
+    # 반환 *전에* 끝내면 첫 바이트가 그만큼 늦게 나가, 프런트의 idle
+    # 타이머(30초, 응답 시작 전부터 이미 돌고 있다)가 "총소요 제한"처럼
+    # 동작해 버린다. 대신 스트림을 연 직후 SSE 주석 하트비트를 먼저 보내
+    # 첫 바이트를 즉시 내보내고, 빌드는 백그라운드 스레드에서 돌리며 그동안
+    # 주기적으로 하트비트를 더 보내 idle 타이머가 계속 리셋되게 한다.
+    yield ": ping\n\n"
+    build_task = asyncio.ensure_future(run_in_threadpool(_build_messages, request, mode))
+    while not build_task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(build_task), timeout=HEARTBEAT_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            yield ": ping\n\n"
+    try:
+        messages = build_task.result()
+    except Exception as exc:  # noqa: BLE001 -- 스트림이 이미 열려 있어 여기서 SSE 에러 프레임으로만 알릴 수 있다
+        logger.exception("분석 컨텍스트 구성에 실패했습니다: %s", exc)
+        yield _sse({"error": "분석 결과를 불러오지 못했습니다. 다시 시도해 주세요."})
+        return
+
     client = AsyncOpenAI(
         api_key=settings.upstage_api_key,
         base_url=settings.upstage_base_url,
@@ -171,13 +197,11 @@ async def post_chat(request: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="원인 분석을 먼저 실행해 주세요.") from exc
 
     mode = _resolve_mode(request)
-    # Building the grounding context runs the full screening/report pipeline
-    # (CPU-bound pandas work) -- off the event loop so a chat request
-    # doesn't stall every other request on this single-worker process.
-    messages = await run_in_threadpool(_build_messages, request, mode)
-
+    # 지시서 D-1: 컨텍스트 빌드(CPU-bound pandas 파이프라인)는 더 이상 여기서
+    # 기다리지 않는다 -- _stream_completion 제너레이터 안으로 옮겨 첫 바이트를
+    # 즉시 내보낸다(위 함수 docstring 참고).
     return StreamingResponse(
-        _stream_completion(messages),
+        _stream_completion(request, mode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
