@@ -22,6 +22,7 @@ from src.notifications.yield_update_senders import (
     YieldUpdatePayload,
     build_slack_yield_update,
     build_telegram_yield_update_chunks,
+    build_telegram_yield_update_text,
     build_yield_update_email_html,
 )
 from src.runtime.store import RuntimeStore
@@ -34,8 +35,8 @@ MANUAL_MIN_INTERVAL_MINUTES = 10
 _HOURLY_STATE_KEY = "yield_update:hourly_sent_at"
 _MANUAL_INTERVAL_STATE_KEY = "yield_update:manual_last_sent_at"
 
-TRIGGER_REFRESH = "refresh"  # 자동 갱신 -- 항상 발송 후보(VE-1)
-TRIGGER_MANUAL = "manual_analysis"  # 수동 분석 실행 -- timing에 on_analysis 포함 시만
+TRIGGER_REFRESH = "refresh"  # SD그룹: "알림·자동화 설정"의 주기 자동화(SQL) 실행 -- timing에 on_analysis 포함 시만
+TRIGGER_MANUAL = "manual_analysis"  # (레거시) 수동 분석 실행 -- 화면별 개별 실행이 폐지되어 더 이상 호출되지 않는다
 # YD: 수율 예측 화면의 "알림 전송" 버튼 -- 사용자가 직접 눌러 지금
 # 보내라는 명시적 의도이므로 TRIGGER_MANUAL과 달리 "분석 실행 직후"
 # 타이밍 설정 여부와 무관하게 시도한다. 그래도 최소 간격(10분)·시간당
@@ -51,15 +52,18 @@ TRIGGER_DAILY_9AM = "daily_9am"
 TRIGGER_DAILY_13 = "daily_13"
 
 # trigger -> 발송을 허용하려면 conditions["timing"]에 있어야 하는 값.
-# TRIGGER_REFRESH/TRIGGER_MANUAL_BUTTON은 timing 설정과 무관하게 항상
-# 후보다(각각 "자동 갱신마다", "사용자가 지금 보내라고 명시적으로 누름").
+# TRIGGER_MANUAL_BUTTON은 timing 설정과 무관하게 항상 후보다(사용자가
+# 지금 보내라고 명시적으로 누름). SD그룹: TRIGGER_REFRESH(주기 자동화
+# 실행)는 "자동 실행 직후" 체크박스(SD-1)가 켜져 있을 때만 후보다 --
+# on_analysis 저장 키는 그대로 재사용하고 화면 라벨만 바뀌었다.
 _TRIGGER_REQUIRED_TIMING = {
+    TRIGGER_REFRESH: settings_store.TIMING_ON_ANALYSIS,
     TRIGGER_MANUAL: settings_store.TIMING_ON_ANALYSIS,
     TRIGGER_DAILY_9AM: settings_store.TIMING_DAILY_9AM,
     TRIGGER_DAILY_13: settings_store.TIMING_DAILY_13,
 }
 _TIMING_LABEL = {
-    settings_store.TIMING_ON_ANALYSIS: "분석 실행 직후",
+    settings_store.TIMING_ON_ANALYSIS: "자동 실행 직후",
     settings_store.TIMING_DAILY_9AM: "매일 오전 9시",
     settings_store.TIMING_DAILY_13: "매일 오후 1시",
 }
@@ -101,19 +105,46 @@ def _mark_manual_dispatch_sent(store: RuntimeStore) -> None:
 
 
 def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, trigger: str) -> dict[str, Any]:
+    """SE그룹: 이 함수의 모든 종료 경로(발송/건너뜀 전부)가
+    `notify_history`에 기록을 남긴다 -- 알림 기록 화면(§SE)이 "왜 안
+    보냈는지"까지 보여줄 수 있어야 한다."""
+
+    def _record(*, status: str, skip_reason: str | None, results: dict[str, Any] | None) -> None:
+        channels = [name for name, result in (results or {}).items() if result.get("ok")]
+        sent_count = len(channels)
+        message_text = build_telegram_yield_update_text(payload) if results is not None else None
+        try:
+            store.record_notify_history(
+                trigger=trigger,
+                channels=channels,
+                dataset_label=payload.dataset_label,
+                model_version=payload.model_label,
+                status=status,
+                skip_reason=skip_reason,
+                message_text=message_text,
+                sent_count=sent_count,
+            )
+        except Exception:
+            # SE-4: 이력 기록 실패가 발송 자체의 성공/실패 판정을 가리면
+            # 안 된다 -- best-effort로 로그만 남긴다.
+            logger.exception("notify_history 기록 실패 trigger=%s", trigger)
+
+    def _skip(reason: str) -> dict[str, Any]:
+        _record(status="skipped", skip_reason=reason, results=None)
+        return {"skipped": True, "reason": reason}
+
     try:
         required_timing = _TRIGGER_REQUIRED_TIMING.get(trigger)
         if required_timing is not None:
             conditions = settings_store.get_conditions(store)
             if required_timing not in (conditions.get("timing") or []):
-                return {"skipped": True, "reason": f"발송 시점 설정에 '{_TIMING_LABEL[required_timing]}'가 없음"}
+                return _skip(f"발송 시점 설정에 '{_TIMING_LABEL[required_timing]}'가 없음")
         if trigger in (TRIGGER_MANUAL, TRIGGER_MANUAL_BUTTON):
             blocked_until = _manual_interval_blocked_until(store)
             if blocked_until is not None:
-                return {
-                    "skipped": True,
-                    "reason": f"직전 발송 후 {MANUAL_MIN_INTERVAL_MINUTES}분이 지나지 않아 발송하지 않았습니다 (다음 발송 가능 {blocked_until})",
-                }
+                return _skip(
+                    f"직전 발송 후 {MANUAL_MIN_INTERVAL_MINUTES}분이 지나지 않아 발송하지 않았습니다 (다음 발송 가능 {blocked_until})"
+                )
 
         from api.settings import settings as api_settings
 
@@ -130,10 +161,10 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
         )
         telegram_ready = bool(telegram and api_settings.telegram_bot_token)
         if not (slack or telegram_ready or gmail_ready):
-            return {"skipped": True, "reason": "연결된 채널 없음"}
+            return _skip("연결된 채널 없음")
 
         if not _within_hourly_budget(store):
-            return {"skipped": True, "reason": f"시간당 발송 예산({HOURLY_SEND_BUDGET}건) 초과"}
+            return _skip(f"시간당 발송 예산({HOURLY_SEND_BUDGET}건) 초과")
 
         results: dict[str, Any] = {}
         if slack:
@@ -173,7 +204,8 @@ def dispatch_yield_update(store: RuntimeStore, payload: YieldUpdatePayload, *, t
         if trigger in (TRIGGER_MANUAL, TRIGGER_MANUAL_BUTTON):
             _mark_manual_dispatch_sent(store)
 
+        _record(status="sent", skip_reason=None, results=results)
         return {"skipped": False, "results": results}
     except Exception:
         logger.exception("수율 예측 갱신 발송 중 오류")
-        return {"skipped": True, "reason": "발송 중 오류 발생"}
+        return _skip("발송 중 오류 발생")

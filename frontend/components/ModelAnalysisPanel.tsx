@@ -3,34 +3,23 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import { activateDataset, saveTrainingState, uploadDataset } from "@/lib/api";
+import { activateDataset, ApiResponseError, fetchFromDb, triggerRefresh, uploadDataset } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 
-// RA-1/RA-2/RC-1: "모델 학습·자동화" 통합 팝업을 둘로 나누면서 생긴
-// 새 팝업. SQL 연결·refresh time은 분석 데이터를 가져오기 위한
-// 것이므로(자동화는 분석의 입력) 여기(모델 분석)에 둔다 -- 독립
-// 자동화 팝업은 만들지 않는다(RA-2 "하지 말 것").
+// SC그룹: "모델 분석" 팝업 -- 네 화면(모니터링 홈·Config별 트리맵·원인
+// 분석·수율 예측)을 한 번에 갱신하는 [분석 시작]의 유일한 진입점이다.
+// SQL 연결·refresh time·자동화 on/off는 "알림·자동화 설정"(SettingsPanel)
+// 으로 옮겨갔다 -- 이 팝업은 "어떤 데이터로 분석할지"만 다룬다.
 //
-// SQL 연결/refresh 저장은 기존 `saveTrainingState`(POST
-// /api/state/training)를 그대로 재사용한다 -- 이 값들이 서버에 저장되는
-// 위치(state 테이블의 "training" 슬롯)는 바뀌지 않았고, 어느 팝업이
-// 읽고 쓰는지만 바뀌었다.
-//
-// "현재 분석 데이터"는 자동 갱신 스냅샷(RefreshSnapshot)에서 그대로
-// 읽는다 -- 실측 상태(measured_rows/predicted_rows/mixed_rows)는 이미
-// target_provenance가 들고 있으므로 새 API가 필요 없다.
-function formatNextRefresh(createdAtIso: string | null | undefined, refreshIntervalMinutes: number | null | undefined): string | null {
-  if (!createdAtIso || !refreshIntervalMinutes) return null;
-  const created = new Date(createdAtIso);
-  if (Number.isNaN(created.getTime())) return null;
-  return formatLastRun(new Date(created.getTime() + refreshIntervalMinutes * 60_000).toISOString());
-}
+// SC-2/SC-3: 데이터 소스 등록(파일 선택/데이터베이스에서 불러오기)과
+// 실제 분석 실행([분석 시작])을 분리했다 -- 등록은 즉시 반영되지만,
+// 네 화면 계산은 사용자가 [분석 시작]을 눌러야 시작된다.
 
 function sourceLabel(mode: "sql" | "fallback" | "manual" | undefined): string {
+  if (mode === "manual") return "수동 등록 (업로드 또는 데이터베이스)";
+  if (mode === "fallback") return "내장 test_remove_y.CSV";
   if (mode === "sql") return "자동(SQL)";
-  if (mode === "manual") return "수동 업로드";
-  if (mode === "fallback") return "내장 test.csv";
   return "-";
 }
 
@@ -39,82 +28,40 @@ function measuredStatusLabel(provenance: { measured_rows: number; predicted_rows
   const { measured_rows, predicted_rows, mixed_rows } = provenance;
   const total = measured_rows + predicted_rows + mixed_rows;
   if (total === 0) return "-";
-  if (predicted_rows === total) return "y1~y5 전부 결측 (전부 예측)";
+  if (predicted_rows === total) return "Y1~Y5 전부 결측 (모델 예측)";
   if (measured_rows === total) return "전부 실측";
   return `일부 실측 (실측 ${measured_rows.toLocaleString()}장 · 혼재 ${mixed_rows.toLocaleString()}장 · 전부 예측 ${predicted_rows.toLocaleString()}장)`;
 }
 
-// ZA-5: 업로드 성공 메시지("반영했습니다")는 즉시 뜨는데 바로 위
-// "현재 분석 데이터" 블록은 폴링 주기(최대 60초)가 돌아야 갱신됐다 --
-// 파이프라인이 끝나기 전까지 보여줄 최종 분석 결과는 당연히 없지만,
-// 업로드 응답 자체가 이미 들고 있는 정보(파일명·행수·타깃 실측 상태)는
-// 기다릴 이유가 없다. 이 상태가 있는 동안은 그 정보로 블록을 즉시
-// 덮어 보여주고, 실제 스냅샷이 이 dataset_id로 갱신되면(성공이든 다른
-// 파일로 대체되든) 지운다.
-type PendingUpload = {
+// 등록 직후(아직 [분석 시작]을 누르기 전이거나 파이프라인이 도는 중)에는
+// snapshot이 이 등록을 반영하기 전이므로, 업로드/DB 조회 응답이 이미
+// 들고 있는 정보로 "현재 분석 데이터" 블록을 즉시 보여준다.
+type PendingRegistration = {
   datasetId: string;
   filename: string;
   rowCount: number | null;
-  targetMessage: string | null;
-  // 업로드 시점에 이미 반영돼 있던 스냅샷의 created_at -- 이 값이
-  // 바뀌는 순간이 "새 파이프라인 결과가 도착했다"는 신호다. eval_dataset만
-  // 비교하면, 아직 도착하지도 않은 업로드 직후 첫 렌더에서 곧바로
-  // 지워버린다(그때는 값이 여전히 옛 스냅샷 것이라 "다르다"고 오판하기
-  // 쉽다 -- created_at은 매 스냅샷마다 유일해 안전하다).
-  baselineCreatedAt: string | null;
+  setAt: string;
 };
 
 export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { training, setTraining, snapshot, refreshSnapshotNow } = useAnalysisState();
-  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const { snapshot, manualEvalOverride, notifications, refreshRunning, analysisProgress, refreshSnapshotNow } = useAnalysisState();
+  const [pending, setPending] = useState<PendingRegistration | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, open);
-  const [sqlHost, setSqlHost] = useState(training?.sqlHost ?? "");
-  const [sqlPort, setSqlPort] = useState(training?.sqlPort ?? "");
-  const [sqlDb, setSqlDb] = useState(training?.sqlDb ?? "");
-  const [sqlUser, setSqlUser] = useState(training?.sqlUser ?? "");
-  const [refreshMinutes, setRefreshMinutes] = useState(
-    training?.refreshIntervalMinutes != null ? String(training.refreshIntervalMinutes) : "",
-  );
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [recentCycleMinutes, setRecentCycleMinutes] = useState<number | null>(null);
 
-  const [file, setFile] = useState<File | null>(null);
+  const [registerError, setRegisterError] = useState("");
+  const [registerMessage, setRegisterMessage] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const [uploadMessage, setUploadMessage] = useState("");
+  const [fetchingDb, setFetchingDb] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 새 스냅샷이 도착하면(성공적으로 이 파일을 반영했든, 그 사이 다른
-  // 파일이 활성화됐든) pending 표시를 접는다 -- 진짜 결과가 있는데
-  // "분석 중…"을 계속 보여주면 안 된다.
-  useEffect(() => {
-    if (!pendingUpload) return;
-    if (snapshot?.created_at && snapshot.created_at !== pendingUpload.baselineCreatedAt) {
-      setPendingUpload(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot?.created_at]);
+  const [startError, setStartError] = useState("");
 
   useEffect(() => {
     if (!open) return;
-    setSqlHost(training?.sqlHost ?? "");
-    setSqlPort(training?.sqlPort ?? "");
-    setSqlDb(training?.sqlDb ?? "");
-    setSqlUser(training?.sqlUser ?? "");
-    setRefreshMinutes(training?.refreshIntervalMinutes != null ? String(training.refreshIntervalMinutes) : "");
-    setError("");
-    setMessage("");
-    setUploadError("");
-    setUploadMessage("");
-    // RC-1: "최근 사이클 소요 12분" -- 실제로 재려면 run_refresh_pipeline이
-    // 소요 시간을 스냅샷에 기록해야 하는데, 아직 어디에도 그 계측이
-    // 없다(RF-2 조사: record_run은 정의만 있고 호출부가 없다). 추측값을
-    // 보여주지 않기 위해 지금은 항상 null -- RC 그룹에서 실제 계측을
-    // 추가한다.
-    setRecentCycleMinutes(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setRegisterError("");
+    setRegisterMessage("");
+    setStartError("");
   }, [open]);
 
   useEffect(() => {
@@ -126,101 +73,92 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
-  async function saveSettings() {
-    setError("");
-    setMessage("");
-    const dataset = training?.dataset || "training-settings";
-    const refreshIntervalMinutes = refreshMinutes.trim() ? Number(refreshMinutes) : null;
-    try {
-      const performance = training?.performance ?? {
-        model_id: null,
-        trained_at: null,
-        source_filename: null,
-        targets: [],
-        final_yield: null,
-        row_count: null,
-        feature_count: null,
-      };
-      const result = await saveTrainingState(dataset, {
-        performance,
-        sqlHost,
-        sqlPort,
-        sqlDb,
-        sqlUser,
-        refreshIntervalMinutes,
-      });
-      setTraining((previous) =>
-        previous
-          ? { ...previous, sqlHost, sqlPort, sqlDb, sqlUser, refreshIntervalMinutes }
-          : {
-              dataset,
-              createdAt: new Date().toISOString(),
-              performance,
-              sqlHost,
-              sqlPort,
-              sqlDb,
-              sqlUser,
-              refreshIntervalMinutes,
-            },
-      );
-      if (!result.schedule_applied) {
-        setError("설정은 저장됐지만 자동 수집 주기 반영에는 실패했습니다. 다시 시도해 주세요.");
-      } else {
-        setMessage("설정을 저장했습니다.");
-      }
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "설정을 저장하지 못했습니다.");
+  // 새 스냅샷이 도착하면(이 등록을 반영했든, 그 사이 다른 소스가
+  // 활성화됐든) pending 표시를 접는다.
+  useEffect(() => {
+    if (!pending) return;
+    if (manualEvalOverride?.dataset_id === pending.datasetId) {
+      // 아직 이 등록 그대로다 -- 계속 pending으로 보여준다.
+      return;
     }
-  }
-
-  async function runManualAnalysis() {
-    if (!file || uploading) return;
-    setUploadError("");
-    setUploadMessage("");
-    setUploading(true);
-    try {
-      const result = await uploadDataset(file);
-      if (!result.success) {
-        setUploadError(result.blocking_errors.join(" ") || "업로드가 거부되었습니다.");
-        return;
-      }
-      if (result.dataset_id) {
-        // ZA-5: 파이프라인 완료(수십 초~수 분)를 기다리지 않고, 업로드
-        // 응답이 이미 들고 있는 정보로 "현재 분석 데이터" 블록을 즉시
-        // 갱신한다 -- baselineCreatedAt은 "아직 새 스냅샷이 아니다"를
-        // 판정하는 기준으로, activateDataset 호출 *전* 값을 써야 한다
-        // (그 사이 다른 갱신이 끼어들 여지를 최소화한다).
-        setPendingUpload({
-          datasetId: result.dataset_id,
-          filename: file.name,
-          rowCount: result.row_count ?? null,
-          targetMessage: result.target_status?.message ?? null,
-          baselineCreatedAt: snapshot?.created_at ?? null,
-        });
-        await activateDataset(result.dataset_id);
-        setUploadMessage("업로드한 파일을 분석 데이터로 반영했습니다. 분석이 완료되면 자동으로 반영됩니다.");
-        setFile(null);
-        // 60초 폴링을 기다리지 않고 즉시 한 번 meta를 확인해
-        // refresh_running/manual_eval_override를 앞당겨 반영한다.
-        refreshSnapshotNow();
-      }
-    } catch (failure) {
-      setUploadError(failure instanceof Error ? failure.message : "모델 분석을 시작하지 못했습니다.");
-    } finally {
-      setUploading(false);
-    }
-  }
+    setPending(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualEvalOverride?.dataset_id]);
 
   if (!open) return null;
 
   const source = snapshot?.source;
   const provenance = snapshot?.analysis.target_provenance;
-  const refreshIntervalNumber = refreshMinutes.trim() ? Number(refreshMinutes) : null;
-  // RC-1: "주기가 소요 시간보다 짧으면 경고" -- 정확한 사이클 소요 시간
-  // 계측이 아직 없어(위 recentCycleMinutes) 항상 null이면 경고를 내지
-  // 않는다(추측으로 경고하지 않는다).
-  const cycleTooShort =
-    recentCycleMinutes != null && refreshIntervalNumber != null && refreshIntervalNumber > 0 && refreshIntervalNumber < recentCycleMinutes;
+  const dbConfigured = Boolean(
+    notifications.automation.sql_host && notifications.automation.sql_port && notifications.automation.sql_db && notifications.automation.sql_user,
+  );
+
+  async function registerDataset(result: { dataset_id?: string | null; row_count?: number | null; success?: boolean; blocking_errors?: string[] }, filenameFallback: string) {
+    if (result.success === false) {
+      setRegisterError((result.blocking_errors ?? []).join(" ") || "등록이 거부되었습니다.");
+      return;
+    }
+    if (!result.dataset_id) {
+      setRegisterError("등록에 실패했습니다.");
+      return;
+    }
+    setPending({ datasetId: result.dataset_id, filename: filenameFallback, rowCount: result.row_count ?? null, setAt: new Date().toISOString() });
+    await activateDataset(result.dataset_id);
+    setRegisterMessage("분석 데이터로 등록했습니다. [분석 시작]을 눌러 네 화면을 갱신하세요.");
+    refreshSnapshotNow();
+  }
+
+  async function handleFileChosen(chosen: File | null) {
+    if (!chosen) return;
+    setRegisterError("");
+    setRegisterMessage("");
+    setUploading(true);
+    try {
+      const result = await uploadDataset(chosen);
+      await registerDataset(result, chosen.name);
+    } catch (failure) {
+      setRegisterError(failure instanceof Error ? failure.message : "업로드하지 못했습니다.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleFetchFromDb() {
+    setRegisterError("");
+    setRegisterMessage("");
+    setFetchingDb(true);
+    try {
+      const result = await fetchFromDb();
+      await registerDataset(result, result.dataset_id ?? "db_fetch.csv");
+    } catch (failure) {
+      if (failure instanceof ApiResponseError && failure.status === 404) {
+        setRegisterError("가져올 새 데이터가 없습니다.");
+      } else {
+        setRegisterError(failure instanceof Error ? failure.message : "데이터베이스에서 가져오지 못했습니다.");
+      }
+    } finally {
+      setFetchingDb(false);
+    }
+  }
+
+  async function handleStartAnalysis() {
+    setStartError("");
+    try {
+      await triggerRefresh();
+      refreshSnapshotNow();
+    } catch (failure) {
+      setStartError(
+        failure instanceof ApiResponseError && failure.status === 409
+          ? "이미 분석이 진행 중입니다."
+          : failure instanceof Error
+            ? failure.message
+            : "분석을 시작하지 못했습니다.",
+      );
+    }
+  }
+
+  const progressLabel = analysisProgress ? `분석 진행 중… (${analysisProgress.index}/${analysisProgress.total}) ${analysisProgress.stage}` : refreshRunning ? "분석 진행 중…" : null;
 
   return (
     <div className="settingsPanelBackdrop" onClick={onClose} role="presentation">
@@ -230,96 +168,37 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="모델 분석·자동화"
+        aria-label="모델 분석"
         tabIndex={-1}
       >
         <div className="settingsPanelHeader">
-          <h2>모델 분석·자동화</h2>
+          <h2>모델 분석</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
             <X size={16} strokeWidth={1.5} />
           </button>
         </div>
         <div className="settingsPanelBody">
           <section className="settingsSection">
-            <h3>SQL 연결</h3>
-            <p className="settingsSectionDesc">호스트·포트만 저장합니다. 비밀번호는 서버 환경변수(DB_PASSWORD)로 설정합니다.</p>
-            <div className="trainingSqlRow">
-              <label className="notifyFieldLabel">
-                호스트
-                <input type="text" value={sqlHost} onChange={(event) => setSqlHost(event.target.value)} placeholder="db.internal" />
-              </label>
-              <label className="notifyFieldLabel trainingPortField">
-                포트
-                <input type="text" value={sqlPort} onChange={(event) => setSqlPort(event.target.value)} placeholder="5432" />
-              </label>
-            </div>
-            <div className="trainingSqlRow">
-              <label className="notifyFieldLabel">
-                DB명
-                <input type="text" value={sqlDb} onChange={(event) => setSqlDb(event.target.value)} placeholder="suni_prod" />
-              </label>
-              <label className="notifyFieldLabel">
-                사용자명
-                <input type="text" value={sqlUser} onChange={(event) => setSqlUser(event.target.value)} placeholder="suni_reader" />
-              </label>
-            </div>
-            <label className="notifyFieldLabel">
-              Refresh Time (분마다 최신 데이터를 받아 분석)
-              <input
-                type="number"
-                min={0}
-                value={refreshMinutes}
-                onChange={(event) => setRefreshMinutes(event.target.value)}
-                placeholder="60"
-              />
-            </label>
-            {cycleTooShort && (
-              <p className="notifyFieldError">
-                현재 주기({refreshIntervalNumber}분)가 최근 소요({recentCycleMinutes}분)보다 짧아 사이클이 스킵될 수 있습니다.
-              </p>
-            )}
-            <p className="settingsSectionDesc">
-              연결 상태{" "}
-              <span className={`trainingAutomationStatus${source?.mode === "sql" ? "" : " offline"}`}>
-                <span className="sidebarStatusDot" aria-hidden="true" />
-                {sourceLabel(source?.mode)}
-              </span>
-              {snapshot?.source && " · 마지막 스캔 "}
-              {snapshot && formatLastRun(snapshot.created_at)}
-            </p>
-            <div className="notifyFormActions">
-              <button type="button" className="button secondary" onClick={() => void saveSettings()}>
-                연결 테스트 및 설정 저장
-              </button>
-            </div>
-            {error && <p className="notifyFieldError">{error}</p>}
-            {message && <p className="notifyTestResult ok">{message}</p>}
-          </section>
-
-          <section className="settingsSection">
             <h3>현재 분석 데이터</h3>
             <dl className="trainingInfoList">
               <div>
                 <dt>출처</dt>
-                <dd>{pendingUpload ? "수동 업로드" : sourceLabel(source?.mode)}</dd>
+                <dd>{pending ? "수동 등록 (반영 대기 중)" : sourceLabel(source?.mode)}</dd>
               </div>
               <div>
-                <dt>소스 파일</dt>
-                <dd>{pendingUpload ? pendingUpload.filename : (source?.eval_dataset_filename ?? source?.eval_dataset ?? "-")}</dd>
+                <dt>파일명</dt>
+                <dd>{pending ? pending.filename : (source?.eval_dataset_filename ?? source?.eval_dataset ?? "-")}</dd>
               </div>
               <div>
-                <dt>분석 시각</dt>
-                <dd>{pendingUpload ? "분석 중…" : snapshot ? formatLastRun(snapshot.created_at) : "-"}</dd>
-                {!pendingUpload && formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes) && (
-                  <dd className="settingsSectionDesc">다음 갱신 {formatNextRefresh(snapshot?.created_at, training?.refreshIntervalMinutes)}</dd>
-                )}
+                <dt>등록 시각</dt>
+                <dd>{pending ? formatLastRun(pending.setAt) : snapshot ? formatLastRun(snapshot.created_at) : "-"}</dd>
               </div>
               <div>
                 <dt>데이터 크기</dt>
                 <dd>
-                  {pendingUpload
-                    ? pendingUpload.rowCount != null
-                      ? `${pendingUpload.rowCount.toLocaleString()}행`
+                  {pending
+                    ? pending.rowCount != null
+                      ? `${pending.rowCount.toLocaleString()}행`
                       : "-"
                     : source?.row_count != null
                       ? `${source.row_count.toLocaleString()}행`
@@ -328,40 +207,61 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
               </div>
               <div>
                 <dt>실측 상태</dt>
-                <dd>{pendingUpload ? (pendingUpload.targetMessage ?? "확인 중…") : measuredStatusLabel(provenance)}</dd>
+                <dd>{pending ? "분석 시작 후 확인 가능" : measuredStatusLabel(provenance)}</dd>
               </div>
               <div>
-                <dt>사용 모델</dt>
+                <dt>모델</dt>
                 <dd className="trainingChampionId" title={snapshot?.model.champion_version ?? undefined}>
                   {snapshot?.model.champion_version ?? "-"}
                 </dd>
               </div>
             </dl>
-            {pendingUpload && <p className="settingsSectionDesc">분석이 백그라운드에서 진행 중입니다 · 팝업을 닫아도 계속됩니다.</p>}
             {snapshot && snapshot.errors.length > 0 && (
-              <p className="notifyFieldError">최근 갱신 오류: {snapshot.errors.join(" · ")}</p>
+              <p className="notifyFieldError">최근 분석 오류: {snapshot.errors.join(" · ")}</p>
             )}
           </section>
 
           <section className="settingsSection">
-            <h3>수동 모델 분석</h3>
+            <h3>분석 데이터 변경</h3>
+            <p className="settingsSectionDesc">파일을 선택하거나 데이터베이스에서 불러오면 즉시 분석 데이터로 등록됩니다 -- 다시 바꿀 때까지 유지됩니다.</p>
             <input
               ref={fileInputRef}
               type="file"
               accept=".csv"
               style={{ display: "none" }}
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => void handleFileChosen(event.target.files?.[0] ?? null)}
             />
             <div className="notifyFormActions">
-              <button type="button" className="button secondary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                파일 선택{file ? `: ${file.name}` : ""}
+              <button type="button" className="button secondary" onClick={() => fileInputRef.current?.click()} disabled={uploading || fetchingDb}>
+                {uploading ? "업로드 중…" : "파일 선택"}
               </button>
-              <button type="button" className="button primary" onClick={() => void runManualAnalysis()} disabled={!file || uploading}>
-                {uploading ? "분석 중…" : "CSV 업로드"}
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void handleFetchFromDb()}
+                disabled={uploading || fetchingDb || !dbConfigured}
+                title={dbConfigured ? undefined : "알림·자동화 설정에서 서버를 먼저 등록하세요"}
+              >
+                {fetchingDb ? "가져오는 중…" : "데이터베이스에서 불러오기"}
               </button>
             </div>
-            {uploadError && <p className="notifyFieldError">{uploadError}</p>}
-            {uploadMessage && <p className="notifyTestResult ok">{uploadMessage}</p>}
+            {registerError && <p className="notifyFieldError">{registerError}</p>}
+            {registerMessage && <p className="notifyTestResult ok">{registerMessage}</p>}
+          </section>
+
+          <section className="settingsSection">
+            <h3>분석 시작</h3>
+            <p className="settingsSectionDesc">
+              등록된 데이터로 네 화면(모니터링 홈·Config별 트리맵·원인 분석·수율 예측)을 한 번에 갱신합니다. 서버 지연으로
+              화면이 비었을 때도 이 버튼으로 복구할 수 있습니다.
+            </p>
+            <div className="notifyFormActions">
+              <button type="button" className="button primary" onClick={() => void handleStartAnalysis()} disabled={refreshRunning}>
+                {refreshRunning ? "분석 중…" : "분석 시작"}
+              </button>
+            </div>
+            {progressLabel && <p className="settingsSectionDesc">{progressLabel} · 팝업을 닫아도 계속됩니다.</p>}
+            {startError && <p className="notifyFieldError">{startError}</p>}
           </section>
         </div>
       </div>

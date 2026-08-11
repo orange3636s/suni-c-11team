@@ -9242,6 +9242,12 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
 .manualModeBanner > .button{ flex: 0 0 auto; }
 .manualModeBannerError{ color: var(--sig-red); }
 
+/* SF-3: 네 화면이 공유하는 "분석 시작" 진행 표시. */
+.analysisProgressBanner{
+  margin: 0; padding: 10px 20px; font-size: var(--fs-body); line-height: 1.5;
+  border-bottom: 1px solid var(--line); background: var(--surface-card); color: var(--text-secondary);
+}
+
 /* Per-scatter-card Color By dropdown (spec §5-3) -- height/radius/font
    sized to match the confidence badge it sits beside in
    .factorChartTitleRow, gapped via --factor-title-gap. */
@@ -10550,6 +10556,13 @@ html[data-theme="dark"] .reliabilityGateRow td{ color: #F87171; }
 .notifyTestResult.ok{ color: var(--sig-green); }
 .notifyTestResult.error{ color: var(--sig-red); }
 .notifyFormActions{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* SE-3: 알림 기록 -- 발송 당시 메시지 원문을 등폭 서체로 그대로 보여준다. */
+.notifyHistoryMessage{ display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.notifyHistoryMessageText{
+  margin: 0; padding: 12px; border-radius: var(--radius-panel); border: 1px solid var(--line);
+  background: var(--surface); color: var(--text-primary); font-family: var(--font-data);
+  font-size: var(--fs-xs); line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow-y: auto;
+}
 /* 지시서 N-6: 모델 학습 팝업에서 "설정 저장" 버튼이 Refresh Time 입력칸
    바로 아래에 붙어 입력칸의 일부처럼 보이던 문제 -- 숫자 입력 필드 바로
    다음에 오는 버튼 행에만 위 여백을 준다. */

@@ -1,12 +1,13 @@
-"""J-1: 자동 갱신 파이프라인의 SQL 데이터 소스 판단 + 증분 수집.
-
-`state/training`에 저장된 SQL 접속 정보(host/port/db/user)와 서버
-환경변수(`AUTO_INGEST_DB_DRIVER`/`DB_PASSWORD`/`AUTO_INGEST_QUERY`)가
+"""J-1: SQL 데이터 소스 판단 + 증분 수집. SD그룹 이후 접속 정보(host/
+port/db/user)는 `RuntimeStore.get_automation_settings()`("알림·자동화
+설정" 팝업이 저장하는 전용 슬롯)에서 읽는다 -- 예전에는 `state/training`
+슬롯을 함께 썼지만, 자동화는 학습과 무관한 별개 개념이라 분리했다.
+서버 환경변수(`AUTO_INGEST_DB_DRIVER`/`DB_PASSWORD`/`AUTO_INGEST_QUERY`)가
 모두 갖춰져 있고 실제 접속·조회에 성공하면 SQL 모드다. 하나라도
-빠지거나 접속/조회가 실패하면 호출부(`src/automation/refresh.py`)가
-곧장 폴백 모드(내장 train/test)로 넘어간다 -- 이 모듈은 그 판단에
-필요한 최소 기능만 제공하고, 실패를 절대 예외로 밖에 던지지 않는다
-(스케줄러 루프를 죽이면 안 된다).
+빠지거나 접속/조회가 실패하면 호출부(`src/automation/refresh.py`,
+`src/automation/yield_dispatch.py`)가 곧장 폴백 모드로 넘어간다 -- 이
+모듈은 그 판단에 필요한 최소 기능만 제공하고, 실패를 절대 예외로 밖에
+던지지 않는다(스케줄러 루프를 죽이면 안 된다).
 
 DB 엔진을 코드에 고정하지 않는다: 팹마다 SQL 엔진이 다르므로
 `AUTO_INGEST_DB_DRIVER`(SQLAlchemy dialect+driver 접두사, 예:
@@ -25,7 +26,6 @@ from urllib.parse import quote_plus
 import pandas as pd
 
 from api.settings import settings
-from src.runtime.app_state import get_latest_state
 from src.runtime.store import RuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,7 @@ class SqlConnectionInfo:
 
 
 def _stored_connection_info(store: RuntimeStore) -> SqlConnectionInfo | None:
-    training = get_latest_state(store).get("training")
-    payload = (training or {}).get("payload") or {}
+    payload = store.get_automation_settings()
     host = str(payload.get("sqlHost") or "").strip()
     port = str(payload.get("sqlPort") or "").strip()
     db = str(payload.get("sqlDb") or "").strip()
@@ -67,6 +66,40 @@ def _build_engine_url(info: SqlConnectionInfo) -> str:
     password = quote_plus(settings.db_password or "")
     user = quote_plus(info.user)
     return f"{settings.db_driver}://{user}:{password}@{info.host}:{info.port}/{info.db}"
+
+
+def _connect_only(url: str) -> None:
+    # 지연 import -- 이유는 `_run_query`와 같다.
+    from sqlalchemy import create_engine
+
+    engine = create_engine(url)
+    try:
+        with engine.connect():
+            pass
+    finally:
+        engine.dispose()
+
+
+def test_connection(store: RuntimeStore) -> tuple[bool, str | None]:
+    """SD-1 "연결 테스트" 버튼 -- 쿼리는 실행하지 않고 접속만 확인한다
+    (운영 쿼리는 부작용이 있을 수 있어 테스트에는 쓰지 않는다). 실패를
+    예외로 던지지 않는다(다른 채널의 "테스트 발송"과 같은 (ok, error)
+    관례)."""
+    if not settings.db_driver:
+        return False, "서버에 DB 드라이버(AUTO_INGEST_DB_DRIVER)가 설정되지 않았습니다."
+    info = _stored_connection_info(store)
+    if info is None:
+        return False, "서버 주소·DB명·사용자명을 먼저 저장하세요."
+    try:
+        url = _build_engine_url(info)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_connect_only, url)
+            future.result(timeout=CONNECT_TIMEOUT_SECONDS)
+        return True, None
+    except concurrent.futures.TimeoutError:
+        return False, f"{CONNECT_TIMEOUT_SECONDS}초 안에 접속하지 못했습니다."
+    except Exception as exc:
+        return False, str(exc)[:300]
 
 
 def _run_query(url: str, query: str, params: dict[str, Any]) -> list[dict[str, Any]]:

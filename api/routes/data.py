@@ -677,10 +677,8 @@ async def train_model(
     # retrain that's worse than the currently active model must NOT replace
     # it silently, since that would shift alarm judgments without the user
     # knowing. Any failure above leaves the previous active model untouched.
-    RuntimeStore(
-        settings.runtime_db_path,
-        settings.runtime_artifact_dir,
-    ).promote_if_better(
+    training_store = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+    training_store.promote_if_better(
         model_id=model_id,
         pipeline_version=str(hybrid_result.metadata["pipeline_version"]),
         dataset_version=0,
@@ -697,6 +695,23 @@ async def train_model(
             "final_y_metrics": hybrid_result.metadata["final_y_metrics"],
         },
     )
+    # SB-4/SC-4: 학습 후 자동으로 재분석하지 않는다("사용자가 정한다") --
+    # 다만 방금 모델이 바뀌어 기존 스냅샷이 활성 모델 기준으로 무효화된
+    # 상태(`has_valid_snapshot() == False`, `stale_model`)라면 네 화면이
+    # 완전히 빈 채로 방치되지 않도록 한 번, 조용히(오류 배너 없이 진행
+    # 표시만) 복구 실행한다 -- 기존에 유효한 분석이 남아 있는 경우(모델을
+    # 갱신했지만 아직 무효화되지 않은 경우는 없다: `stale_model` 판정은
+    # 즉시 적용된다)에는 이 분기 자체가 실행되지 않고, 대신 팝업이
+    # "재분석 권유" 배너만 보여준다.
+    try:
+        if not training_store.has_valid_snapshot():
+            import threading
+
+            from src.automation.refresh import run_refresh_pipeline
+
+            threading.Thread(target=run_refresh_pipeline, daemon=True, name="post-train-recovery").start()
+    except Exception:
+        logger.exception("학습 후 스냅샷 복구 실행 트리거 실패")
     # ND-4: 보관 정책 -- 방금 승격된 모델(챔피언일 수도, 게이트에 밀린
     # 후보일 수도 있다)을 포함해 최근 3세트만 남긴다. 저장은 이미
     # 끝났으므로 여기서 실패해도 학습 자체의 성공 여부에는 영향을 주지

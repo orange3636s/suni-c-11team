@@ -288,6 +288,10 @@ class YieldPredictionResponse(BaseModel):
     unmeasured_count: int
     fallback_summary: YieldFallbackSummarySchema
     target_provenance: dict[str, Any] | None = None
+    # SC그룹: "모델 분석" 파이프라인이 저장한 스냅샷 캐시에서 왔으면 그
+    # 스냅샷의 analysis_id, 즉석 계산이면 None -- 네 화면이 같은 분석
+    # 회차를 공유하는지 프런트가 구분할 수 있게 한다.
+    analysis_id: str | None = None
 
 
 class TargetPerformanceSchema(BaseModel):

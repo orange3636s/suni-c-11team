@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import AiPanel from "@/components/ai-panel/AiPanel";
+import AnalysisProgressBanner from "@/components/AnalysisProgressBanner";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import BootstrapStatusBanner from "@/components/BootstrapStatusBanner";
 import Header from "@/components/Header";
@@ -114,6 +115,7 @@ export default function DashboardShell({
       <div className="contentShell">
         <Header />
         <BootstrapStatusBanner />
+        <AnalysisProgressBanner />
         <ManualModeBanner />
         {degraded && (
           <div className="degradedStateBanner" role="alert">

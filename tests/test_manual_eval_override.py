@@ -89,41 +89,51 @@ def test_resolve_source_keeps_previous_train_dataset_in_manual_mode(tmp_path: Pa
     assert eval_dataset_id == upload_result["dataset_id"]
 
 
-def test_dispatch_is_called_in_manual_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """EB그룹: 수동 모드에서도 발송을 건너뛰지 않는다. 옛 알람 등급
-    파이프라인(refresh_dispatch.dispatch_new_alarms)은 폐기됐다 -- 자동
-    갱신마다 수율 예측 갱신 발송(_dispatch_yield_update_for_refresh ->
-    dispatch_yield_update)이 그 역할을 대신하며, 차단 여부(시간당 예산/
-    최소 간격 등)는 그 함수 내부가 판단한다."""
+def test_manual_mode_saves_snapshot_without_dispatching(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """SC/SD그룹: "모델 분석"([분석 시작], `run_refresh_pipeline`)은
+    수동(업로드) 모드를 포함해 어떤 소스에서도 알림을 보내지 않는다 --
+    알림 발송은 전적으로 "알림·자동화 설정"(주기 자동화·매일 09:00/13:00
+    잡)의 책임이다. 이 파이프라인은 네 화면 스냅샷을 저장할 뿐이다."""
     store, registry = _store_and_registry(tmp_path)
     monkeypatch.setattr(refresh, "_runtime_store", lambda: store)
     monkeypatch.setattr(refresh, "_resolve_source", lambda s, r, e: ("manual", "train", "test", 5))
     monkeypatch.setattr(refresh, "_current_model_meta", lambda s: {
         "champion_version": None, "trained_at": None, "promoted": None, "gate_reason": None, "skipped_reason": None,
     })
-    monkeypatch.setattr(
-        refresh,
-        "_analyze_and_score",
-        lambda s, eid, e: ({"paretoByTarget": {}, "measurementExpansion": None}, "train"),
-    )
+    monkeypatch.setattr(refresh, "get_latest_state", lambda s: {})
+    monkeypatch.setattr(refresh, "_fmea_stage", lambda eid, e: (None, None))
+    monkeypatch.setattr(refresh, "_action_priority_stage", lambda t, e: (None, None))
+    monkeypatch.setattr(refresh, "_warmup_common_prerequisites", lambda eid: None)
+    monkeypatch.setattr(refresh, "_pareto_stage", lambda eid, e: ({"Y1": {"items": []}}, None, []))
 
-    dispatch_calls: list[dict] = []
+    class _FakeTable:
+        candidates: list = []
+        unmeasured_wafer_ids: list = []
+        total_wafers = 0
+        fallback_summary = type("_FB", (), {"rank_counts": {}, "none_count": 0, "total_combinations": 0})()
+
+    monkeypatch.setattr(refresh, "_yield_prediction_stage", lambda r, t, eid, e: _FakeTable())
+
+    # 알림 발송 파이프라인이 조금이라도 호출되면 즉시 실패시킨다 -- 이
+    # 파이프라인의 책임 범위 밖이라는 것을 강하게 확인한다.
     monkeypatch.setattr(
-        refresh,
-        "_dispatch_yield_update_for_refresh",
-        lambda store, **kwargs: dispatch_calls.append(kwargs),
+        "src.notifications.yield_update_dispatch.dispatch_yield_update",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("run_refresh_pipeline은 알림을 보내면 안 된다")),
     )
 
     refresh.run_refresh_pipeline()
 
-    assert len(dispatch_calls) == 1
-    assert dispatch_calls[0]["mode"] == "manual"
     status = store.get_refresh_snapshot_status()
     assert status["snapshot"] is not None
     assert status["snapshot"]["source"]["mode"] == "manual"
+    assert status["snapshot"]["analysis"]["yieldPrediction"] is not None
 
 
 def test_activate_and_deactivate_dataset_endpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """SC-2/SC-3: 데이터 소스 등록과 분석 실행을 분리했다 -- 파일 선택·
+    "데이터베이스에서 불러오기"는 활성 분석 데이터를 등록할 뿐, 4화면
+    분석을 자동으로 돌리지 않는다. 사용자가 [분석 시작]을 눌러야
+    `POST /api/state/refresh`가 파이프라인을 실행한다."""
     from api.main import app
     import api.routes.state as state_routes
 
@@ -157,9 +167,10 @@ def test_activate_and_deactivate_dataset_endpoints(monkeypatch: pytest.MonkeyPat
 
         revert = client.post("/api/state/deactivate-dataset")
         assert revert.status_code == 200
-        assert revert.json()["deactivated"] is True
+        assert revert.json() == {"deactivated": True}
 
         meta2 = client.get("/api/state/snapshot/meta").json()
         assert meta2["manual_eval_override"] is None
 
-    assert calls["pipeline"] == 2  # activate + deactivate 각 1회씩
+    # 등록만 했을 뿐 분석 파이프라인은 한 번도 자동 실행되지 않았다.
+    assert calls["pipeline"] == 0

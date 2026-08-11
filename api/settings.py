@@ -222,23 +222,14 @@ class Settings:
     notify_verify_base_url: str | None = field(
         default_factory=lambda: os.environ.get("NOTIFY_VERIFY_BASE_URL", "").strip() or None
     )
-    # 자동 수집 파이프라인 1단계 (지시서 §1-1) -- 감시 디렉터리에 새 CSV가
-    # 떨어지면 Y 유무로 갈라 처리한다. 주기는 여기 두지 않는다 -- 사용자가
-    # 모델 학습·자동화 팝업에서 바꾼 값(`state/training`의
-    # `refreshIntervalMinutes`)을 스케줄러가 그대로 따른다.
-    auto_ingest_dir: str | None = field(
-        default_factory=lambda: os.environ.get("AUTO_INGEST_DIR", "").strip() or None
-    )
-    auto_ingest_enabled: bool = field(
-        default_factory=lambda: _parse_bool("AUTO_INGEST_ENABLED", False)
-    )
-    # J-1: 자동 갱신 파이프라인의 SQL 데이터 소스 -- 팹마다 DB 엔진이
-    # 달라(PostgreSQL/MySQL/MSSQL/Oracle 등) 특정 드라이버를 코드에
-    # 고정하지 않는다. `db_driver`는 SQLAlchemy dialect+driver 접두사
-    # (예: "postgresql+psycopg2", "mssql+pyodbc")이고, 실제 접속 문자열은
-    # 이 접두사 + state/training에 저장된 host/port/db/user + 아래
-    # db_password로 조립한다(src/automation/sql_source.py). 드라이버
-    # 패키지 자체는 운영팀이 자신의 DB에 맞게 별도 설치한다.
+    # SD그룹: 자동화(주기 SQL 수율 예측 발송)의 SQL 데이터 소스 -- 팹마다
+    # DB 엔진이 달라(PostgreSQL/MySQL/MSSQL/Oracle 등) 특정 드라이버를
+    # 코드에 고정하지 않는다. `db_driver`는 SQLAlchemy dialect+driver
+    # 접두사(예: "postgresql+psycopg2", "mssql+pyodbc")이고, 실제 접속
+    # 문자열은 이 접두사 + "알림·자동화 설정" 팝업이 저장한 host/port/db/
+    # user(automation:settings 슬롯) + 아래 db_password로 조립한다
+    # (src/automation/sql_source.py). 드라이버 패키지 자체는 운영팀이
+    # 자신의 DB에 맞게 별도 설치한다.
     db_driver: str | None = field(
         default_factory=lambda: os.environ.get("AUTO_INGEST_DB_DRIVER", "").strip() or None
     )

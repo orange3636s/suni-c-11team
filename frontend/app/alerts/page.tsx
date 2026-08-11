@@ -229,8 +229,8 @@ function AlertsContent() {
         />
       </div>
 
-      {/* NB-1/NB-3: "예측 대상 [변경]" 카드를 제거했다 -- 파일 첨부·분석
-          실행은 모델 분석·자동화 팝업으로 일원화됐다. CSV 내보내기·알림
+      {/* SF-1: "예측 대상 [변경]" 카드를 제거했다 -- 파일 첨부·분석
+          실행은 모델 분석 팝업으로 일원화됐다. CSV 내보내기·알림
           전송 버튼은 표 카드 상단(TableToolbar의 extra 슬롯)으로
           옮겼다. */}
       {loading ? (
@@ -247,7 +247,7 @@ function AlertsContent() {
       ) : !data || data.candidates.length === 0 ? (
         <section className="resultCard">
           <p className="emptyMessage">
-            분석 데이터가 없습니다. 모델 분석·자동화에서 파일을 업로드하세요.{" "}
+            분석 결과가 없습니다. 모델 분석에서 분석을 시작하세요.{" "}
             <button type="button" className="button secondary sm" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
           </p>
         </section>

@@ -3,12 +3,15 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import { formatLastRun } from "@/lib/timeFormat";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import {
   connectGmail,
   connectSlack,
   disconnectNotificationChannel,
+  saveAutomationSettings,
   saveNotificationConditions,
+  testAutomationConnection,
   testGmail,
   testSlack,
   testTelegram,
@@ -16,11 +19,11 @@ import {
 } from "@/lib/api";
 import type { NotificationGrade, NotificationSettingsSummary, NotificationTiming } from "@/types/data";
 
-// DF그룹: 발송 시점 다중 선택 -- 분석 실행 직후 / 매일 오전 9시 / 매일
-// 오후 1시. 하나도 선택하지 않으면(빈 배열) 어떤 트리거로도 발송되지
-// 않는다.
+// SD-1: 발송 시점 다중 선택 -- 자동 실행 직후(자동화 주기 잡, 저장 키는
+// 그대로 on_analysis) / 매일 오전 9시 / 매일 오후 1시. 하나도 선택하지
+// 않으면(빈 배열) 어떤 트리거로도 발송되지 않는다.
 const TIMING_OPTIONS: { value: NotificationTiming; label: string }[] = [
-  { value: "on_analysis", label: "분석 실행 직후" },
+  { value: "on_analysis", label: "자동 실행 직후" },
   { value: "daily_9am", label: "매일 오전 9시" },
   { value: "daily_13", label: "매일 오후 1시" },
 ];
@@ -49,19 +52,19 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="알림 설정"
+        aria-label="알림·자동화 설정"
         tabIndex={-1}
       >
         <div className="settingsPanelHeader">
-          <h2>알림 설정</h2>
+          <h2>알림·자동화 설정</h2>
           <button type="button" className="settingsPanelClose" onClick={onClose} aria-label="닫기">
             <X size={16} strokeWidth={1.5} />
           </button>
         </div>
         <div className="settingsPanelBody">
           <section className="settingsSection">
-            <h3>알림 받기</h3>
-            <p className="settingsSectionDesc">수율 예측이 갱신되면 선택한 채널로 발송합니다.</p>
+            <h3>채널 연결</h3>
+            <p className="settingsSectionDesc">수율 예측 알림을 받을 채널을 연결합니다.</p>
             <div className="notifyChannelList">
               <SlackCard summary={notifications} onUpdate={setNotifications} />
               <TelegramCard summary={notifications} onUpdate={setNotifications} />
@@ -69,8 +72,10 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
             </div>
           </section>
 
+          <AutomationSection summary={notifications} onUpdate={setNotifications} />
+
           <section className="settingsSection">
-            <h3>발송 조건</h3>
+            <h3>발송 시점</h3>
             <p className="settingsSectionDesc">무엇을 언제 보낼지 정합니다.</p>
             <ConditionsForm summary={notifications} onUpdate={setNotifications} />
           </section>
@@ -477,6 +482,125 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
         </div>
       )}
     </div>
+  );
+}
+
+// SD-1: "자동화" 섹션 -- refreshIntervalMinutes마다 서버에서 최신 CSV를
+// 받아 수율 예측만 계산해 알림을 보낸다(SD-2). 비밀번호 입력칸은 없다 --
+// 서버 환경변수(DB_PASSWORD)로만 받는다("하지 말 것").
+function AutomationSection({ summary, onUpdate }: ChannelProps) {
+  const { automation } = summary;
+  const [enabled, setEnabled] = useState(automation.enabled);
+  const [sqlHost, setSqlHost] = useState(automation.sql_host);
+  const [sqlPort, setSqlPort] = useState(automation.sql_port);
+  const [sqlDb, setSqlDb] = useState(automation.sql_db);
+  const [sqlUser, setSqlUser] = useState(automation.sql_user);
+  const [refreshMinutes, setRefreshMinutes] = useState(String(automation.refresh_interval_minutes || 60));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error: string | null } | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const minutes = Number(refreshMinutes) || 60;
+      onUpdate(
+        await saveAutomationSettings({
+          enabled,
+          sql_host: sqlHost,
+          sql_port: sqlPort,
+          sql_db: sqlDb,
+          sql_user: sqlUser,
+          refresh_interval_minutes: minutes,
+        }),
+      );
+      setMessage("저장했습니다.");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "저장하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTest() {
+    setTestBusy(true);
+    setTestResult(null);
+    try {
+      setTestResult(await testAutomationConnection());
+    } catch {
+      setTestResult({ ok: false, error: "연결 테스트 요청에 실패했습니다." });
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
+  return (
+    <section className="settingsSection">
+      <h3>자동화</h3>
+      <p className="settingsSectionDesc">
+        화면 없이 수율 예측만 계산해 알림을 보냅니다 -- 모니터링·트리맵·원인 분석은 계산하지 않습니다. 비밀번호는 서버
+        환경변수(DB_PASSWORD)로 설정합니다.
+      </p>
+      <label className="scatterViewToggleBtn notifyAutomationEnableRow" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        자동화 사용
+      </label>
+      <div className="trainingSqlRow">
+        <label className="notifyFieldLabel">
+          서버 주소
+          <input type="text" value={sqlHost} onChange={(event) => setSqlHost(event.target.value)} placeholder="db.internal" />
+        </label>
+        <label className="notifyFieldLabel trainingPortField">
+          포트
+          <input type="text" value={sqlPort} onChange={(event) => setSqlPort(event.target.value)} placeholder="5432" />
+        </label>
+      </div>
+      <div className="trainingSqlRow">
+        <label className="notifyFieldLabel">
+          DB명
+          <input type="text" value={sqlDb} onChange={(event) => setSqlDb(event.target.value)} placeholder="suni_prod" />
+        </label>
+        <label className="notifyFieldLabel">
+          사용자명
+          <input type="text" value={sqlUser} onChange={(event) => setSqlUser(event.target.value)} placeholder="suni_reader" />
+        </label>
+      </div>
+      <label className="notifyFieldLabel">
+        Refresh Time (분마다 최신 데이터를 받아 수율 예측 갱신)
+        <input type="number" min={1} value={refreshMinutes} onChange={(event) => setRefreshMinutes(event.target.value)} placeholder="60" />
+      </label>
+      <p className="settingsSectionDesc">
+        마지막 실행{" "}
+        {automation.last_run_at
+          ? `${formatLastRun(automation.last_run_at)} · ${
+              automation.last_run_status === "skipped"
+                ? "건너뜀"
+                : automation.last_run_status === "error"
+                  ? "오류"
+                  : `알림 ${automation.last_run_sent_count ?? 0}건 발송`
+            }`
+          : "없음"}
+      </p>
+      <div className="notifyFormActions">
+        <button type="button" className="button secondary" onClick={() => void handleTest()} disabled={testBusy}>
+          {testBusy ? "테스트 중…" : "연결 테스트"}
+        </button>
+        <button type="button" className="button primary" onClick={() => void handleSave()} disabled={saving}>
+          {saving ? "저장 중…" : "저장"}
+        </button>
+      </div>
+      {testResult && (
+        <p className={`notifyTestResult ${testResult.ok ? "ok" : "error"}`}>
+          {testResult.ok ? "연결에 성공했습니다." : testResult.error || "연결에 실패했습니다."}
+        </p>
+      )}
+      {error && <p className="notifyFieldError">{error}</p>}
+      {message && <p className="notifyTestResult ok">{message}</p>}
+    </section>
   );
 }
 

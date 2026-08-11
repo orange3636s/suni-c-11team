@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
-from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from api.routes.analysis import _action_priority_payload, _fmea_payload
 from api.routes.datasets import get_dataset_registry
+from api.schemas.datasets import DatasetUploadResponse
 from api.schemas.state import (
     ActivateDatasetRequest,
     AlarmsStateSaveRequest,
@@ -20,8 +21,8 @@ from api.schemas.state import (
 from api.settings import settings
 from src.analysis import alarm_gbdt
 from src.analysis.screening.schema import ALL_TARGET_COLUMNS
-from src.automation.ingest import AUTO_INGEST_JOB_ID
-from src.automation.refresh import REFRESH_JOB_ID, is_refresh_running, run_refresh_pipeline
+from src.automation import sql_source
+from src.automation.refresh import is_refresh_running, run_refresh_pipeline
 from src.notifications.settings_store import get_settings_summary
 from src.runtime.app_state import get_latest_state, is_state_degraded, save_state
 from src.runtime.store import RuntimeStore
@@ -99,46 +100,32 @@ def get_latest() -> dict[str, Any]:
             "telegram": {"connected": False, "target": None, "chat_id_masked": None, "verified_at": None},
             "gmail": {"connected": False, "pending": False, "email": None, "verified_at": None},
             "conditions": {"grades": ["심각"], "timing": ["on_analysis"]},
+            "automation": {
+                "enabled": False,
+                "sql_host": "",
+                "sql_port": "",
+                "sql_db": "",
+                "sql_user": "",
+                "refresh_interval_minutes": 60,
+                "last_run_at": None,
+                "last_run_status": None,
+                "last_run_sent_count": None,
+            },
             "telegram_bot_username": None,
         }
     return {**state, "notifications": notifications, "dataset_fallback_applied": dataset_fallback_applied, "degraded": degraded}
 
 
-def _apply_ingest_schedule(request: Request, refresh_interval_minutes: Any) -> bool:
-    """자동 수집 파이프라인 §1-2: 팝업에서 주기를 바꾸면 서버 재시작
-    없이 다음 실행 간격에 반영한다. `null`이면 잡을 일시정지한다.
-    스케줄러가 아직 뜨지 않은 상태(테스트 등)에서도 조용히 넘어간다
-    (그 경우는 반영 "실패"가 아니라 애초에 반영 대상이 없는 것이므로
-    True를 반환한다). H-3⑤: 실제 reschedule/pause 호출이 예외를 던지면
-    False를 반환해 호출부가 응답에 반영 실패를 실어 보낼 수 있게 한다.
-    """
-    scheduler = getattr(request.app.state, "scheduler", None)
-    if scheduler is None:
-        return True
-    try:
-        if isinstance(refresh_interval_minutes, (int, float)) and refresh_interval_minutes > 0:
-            trigger = IntervalTrigger(minutes=refresh_interval_minutes)
-            scheduler.reschedule_job(AUTO_INGEST_JOB_ID, trigger=trigger)
-            scheduler.resume_job(AUTO_INGEST_JOB_ID)
-            # J-2: 리프레시 파이프라인도 같은 주기를 따른다 -- 별도 잡
-            # id(REFRESH_JOB_ID)라 auto_ingest와 독립적으로 겹쳐 돌 수
-            # 있지만, 사용자가 설정하는 주기 값은 하나뿐이다.
-            scheduler.reschedule_job(REFRESH_JOB_ID, trigger=trigger)
-            scheduler.resume_job(REFRESH_JOB_ID)
-        else:
-            scheduler.pause_job(AUTO_INGEST_JOB_ID)
-            scheduler.pause_job(REFRESH_JOB_ID)
-        return True
-    except Exception:
-        logger.exception("자동 수집 주기 반영 실패")
-        return False
-
-
 @router.post("/training", response_model=TrainingStateSaveResponse)
-def save_training_state(body: TrainingStateSaveRequest, request: Request) -> dict[str, bool]:
+def save_training_state(body: TrainingStateSaveRequest) -> dict[str, bool]:
+    """SD그룹: SQL 연결·refresh time·자동화 on/off는 더 이상 이 슬롯에
+    저장하지 않는다("알림·자동화 설정" 팝업이 `POST /api/notify/automation`
+    으로 저장한다, 전용 슬롯 `automation:settings`) -- 이 라우트는 모델
+    학습 팝업의 학습 성능 요약(performance)만 남긴다. `schedule_applied`는
+    더 이상 이 저장이 스케줄러를 건드리지 않으므로 항상 true다(자동화
+    잡의 재스케줄은 `POST /api/notify/automation`이 전담한다)."""
     saved = save_state(_store(), "training", dataset={"dataset": body.dataset}, payload=body.payload)
-    schedule_applied = _apply_ingest_schedule(request, body.payload.get("refreshIntervalMinutes"))
-    return {"saved": saved, "schedule_applied": schedule_applied}
+    return {"saved": saved, "schedule_applied": True}
 
 
 def _with_fmea(dataset: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -230,10 +217,15 @@ def get_snapshot_meta() -> dict[str, Any]:
     return {
         "created_at": meta.get("created_at") if meta else None,
         "bootstrap": store.get_bootstrap_status(),
-        # AF: 모니터링의 "최신화" 버튼이 이 값으로 disabled 여부·툴팁을
-        # 정한다 -- 주기 잡이 돌고 있어도 true가 된다(같은 락을 공유).
+        # SC-3: "모델 분석" 팝업의 [분석 시작] 버튼이 이 값으로 disabled
+        # 여부·진행 표시를 정한다 -- 서버 기동 부트스트랩·학습 후 자동
+        # 복구 실행이 돌고 있어도 true가 된다(같은 락을 공유).
         "refresh_running": is_refresh_running(),
-        # AG-3/AG-4: 활성화 직후(파이프라인이 아직 도는 중이라 스냅샷의
+        # SF-3: 네 화면(모니터링/트리맵/원인분석/수율예측)이 공유하는
+        # 진행 표시("분석 진행 중… (2/4) 원인 분석") -- 실행 중이 아니면
+        # null.
+        "analysis_progress": store.get_analysis_progress(),
+        # AG-3/AG-4: 등록 직후(파이프라인이 아직 도는 중이라 스냅샷의
         # source.mode가 "manual"로 바뀌기 전)에도 배너가 "수동 모드"를
         # 바로 보여줄 수 있게, 스냅샷과 별개로 override 자체를 싣는다.
         "manual_eval_override": store.get_manual_eval_override(),
@@ -242,54 +234,78 @@ def get_snapshot_meta() -> dict[str, Any]:
 
 @router.post("/refresh")
 def trigger_refresh(background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """AF/AG: 모니터링의 "최신화" 버튼과 업로드 연동이 부르는 단일
-    진입점 -- 주기 잡과 같은 `run_refresh_pipeline`을 그대로 재사용한다
-    (별도 파이프라인을 만들지 않는다). 실행 자체는 백그라운드로 넘겨
-    응답을 블록하지 않는다 -- 완료는 기존 `created_at` 폴링이 감지한다.
+    """SC-3: "모델 분석" 팝업의 [분석 시작] 버튼이 부르는 단일 진입점 --
+    네 화면(모니터링/Config별 트리맵/원인 분석/수율 예측)을 한 번에
+    갱신하는 유일한 실행 경로다("새로고침 역할" 겸함 -- 서버 지연으로
+    화면이 비었을 때도 이 버튼으로 복구한다). 실행 자체는 백그라운드로
+    넘겨 응답을 블록하지 않는다 -- 팝업을 닫아도 계속 진행되고, 완료는
+    `GET /api/state/snapshot/meta` 폴링이 감지한다.
     """
     if is_refresh_running():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="자동 갱신이 이미 진행 중입니다.",
+            detail="분석이 이미 진행 중입니다.",
         )
     background_tasks.add_task(run_refresh_pipeline)
     return {"triggered": True}
 
 
 @router.post("/activate-dataset")
-def activate_dataset(body: ActivateDatasetRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """AG: 원인 분석·수율 예측·모델 분석 팝업(RC)에서 새 파일을 업로드하면
-    이 엔드포인트가 불린다 -- "업로드는 활성 평가 데이터셋 전환이다"
-    (지시서 AG-1). 화면별로 개별 재분석을 걸지 않고, 스냅샷 파이프라인을
-    한 번만 실행해 세 화면이 같은 결과를 공유하게 한다. 학습은 절대
-    걸지 않는다(AG-2, RB-3) -- refresh 파이프라인 자체가 학습을
-    트리거하는 경로를 갖고 있지 않다."""
+def activate_dataset(body: ActivateDatasetRequest) -> dict[str, Any]:
+    """SC-2: "모델 분석" 팝업에서 파일을 선택하거나 데이터베이스에서
+    불러오면 이 엔드포인트가 불려 그 데이터셋을 활성 분석 데이터로
+    등록한다("한 번 등록되면 다시 바꿀 때까지 유지된다"). SC-3와
+    분리했다 -- 등록만으로 4화면 분석이 자동으로 돌지 않는다. 실제
+    계산은 사용자가 [분석 시작]을 눌러 `POST /api/state/refresh`를
+    호출해야 시작된다. 학습은 절대 걸지 않는다(RB-3)."""
     registry = get_dataset_registry()
     summary = registry.get_summary(body.dataset_id)
     if summary is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="데이터셋을 찾을 수 없습니다.")
-    if is_refresh_running():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="자동 갱신이 이미 진행 중입니다. 잠시 후 다시 시도하세요.",
-        )
     store = _store()
     store.set_manual_eval_override(body.dataset_id, summary["original_filename"])
-    background_tasks.add_task(run_refresh_pipeline)
     return {"activated": True, "dataset_id": body.dataset_id}
 
 
+@router.post("/fetch-from-db", response_model=DatasetUploadResponse)
+def fetch_from_db() -> dict[str, Any]:
+    """SC-2 "데이터베이스에서 불러오기" -- "알림·자동화 설정"에 등록된
+    서버와 같은 소스(`src/automation/sql_source.py`)에서 최신 배치를
+    가져와 데이터셋으로 등록한다("자동화가 쓰는 것과 같은 소스다"). 등록만
+    하고 활성화하지 않는다 -- 프런트가 이 응답의 `dataset_id`로
+    `POST /api/state/activate-dataset`를 이어서 호출해야 분석 데이터로
+    등록된다(파일 업로드 경로와 동일한 2단계).
+
+    커서 기반 증분 조회(`fetch_incremental`)를 그대로 쓴다 -- 주기
+    자동화 잡과 같은 커서 상태를 공유하므로, 자동화가 이미 가장 최근
+    배치를 가져간 직후라면 "새 데이터 없음"일 수 있다(그 경우 404)."""
+    store = _store()
+    if not sql_source.is_sql_configured(store):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="서버가 설정되지 않았습니다. 알림·자동화 설정에서 서버를 먼저 등록하세요.",
+        )
+    dataframe = sql_source.fetch_incremental(store)
+    if dataframe is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="데이터베이스 접속에 실패했습니다.")
+    if dataframe.empty:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="가져올 새 데이터가 없습니다.")
+
+    registry = get_dataset_registry()
+    filename = f"db_fetch_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.csv"
+    content = dataframe.to_csv(index=False).encode("utf-8")
+    return registry.upload(filename, content)
+
+
 @router.post("/deactivate-dataset")
-def deactivate_dataset(background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """AG-3: "자동 갱신으로 복귀" -- 수동 override를 지우고, 다음 파이프라인
-    실행부터 SQL/폴백으로 되돌아간다. 되돌아간 결과를 바로 보여주기 위해
-    한 번 즉시 실행한다."""
+def deactivate_dataset() -> dict[str, Any]:
+    """수동 override를 지워 다음 [분석 시작] 실행부터 SQL/폴백(내장
+    test.CSV)으로 되돌아가게 한다. SC-2/SC-3 분리 이후 등록만 수행하고
+    분석을 자동으로 다시 돌리지 않는다 -- 되돌아간 결과를 보려면
+    사용자가 [분석 시작]을 눌러야 한다."""
     store = _store()
     cleared = store.clear_manual_eval_override()
-    if is_refresh_running():
-        return {"deactivated": cleared, "triggered": False}
-    background_tasks.add_task(run_refresh_pipeline)
-    return {"deactivated": cleared, "triggered": True}
+    return {"deactivated": cleared}
 
 
 @router.get("/snapshot")

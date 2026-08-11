@@ -7,20 +7,27 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
+from apscheduler.triggers.interval import IntervalTrigger
+
 from api.routes.analysis import _dataframe_or_404, _hydrated_targets_or_409
 from api.routes.datasets import get_dataset_registry
 from api.schemas.notify import (
+    AutomationSaveRequest,
+    AutomationTestResponse,
     ConditionsSaveRequest,
     DispatchRequest,
     DispatchResponse,
     GmailConnectRequest,
     NotificationSettingsSummary,
+    NotifyHistoryListResponse,
     SendTestResponse,
     SlackConnectRequest,
     SlackTestRequest,
     TelegramVerifyRequest,
 )
 from api.settings import settings
+from src.automation import sql_source
+from src.automation.yield_dispatch import AUTOMATION_YIELD_DISPATCH_JOB_ID
 from src.notifications import senders, settings_store, telegram_bot
 from src.runtime.store import RuntimeStore
 
@@ -160,6 +167,52 @@ def save_conditions(body: ConditionsSaveRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return settings_store.get_settings_summary(store)
+
+
+@router.post("/automation", response_model=NotificationSettingsSummary)
+def save_automation_settings(body: AutomationSaveRequest, request: Request) -> dict[str, Any]:
+    """SD-1: "알림·자동화 설정" 팝업의 자동화 섹션 저장 -- 서버 주소·
+    사용자명·refresh time·켜짐 여부를 전용 슬롯(automation:settings)에
+    저장하고, "자동화 사용"에 맞춰 주기 잡을 즉시 reschedule/pause한다
+    (SD-6: "체크 해제 시 스케줄러 잡 중지"). 비밀번호 필드는 없다."""
+    store = _store()
+    store.save_automation_settings(
+        enabled=body.enabled,
+        sqlHost=body.sql_host,
+        sqlPort=body.sql_port,
+        sqlDb=body.sql_db,
+        sqlUser=body.sql_user,
+        refreshIntervalMinutes=body.refresh_interval_minutes,
+    )
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is not None:
+        try:
+            if body.enabled and body.refresh_interval_minutes > 0:
+                scheduler.reschedule_job(
+                    AUTOMATION_YIELD_DISPATCH_JOB_ID,
+                    trigger=IntervalTrigger(minutes=body.refresh_interval_minutes),
+                )
+                scheduler.resume_job(AUTOMATION_YIELD_DISPATCH_JOB_ID)
+            else:
+                scheduler.pause_job(AUTOMATION_YIELD_DISPATCH_JOB_ID)
+        except Exception:
+            logger.exception("자동화 주기 반영 실패")
+    return settings_store.get_settings_summary(store)
+
+
+@router.post("/automation/test", response_model=AutomationTestResponse)
+def test_automation_connection() -> dict[str, Any]:
+    """SD-1 "연결 테스트" 버튼 -- 저장된 서버 주소로 접속만 시도한다."""
+    ok, error = sql_source.test_connection(_store())
+    return {"ok": ok, "error": error}
+
+
+@router.get("/history", response_model=NotifyHistoryListResponse)
+def get_notify_history(limit: int = 100) -> dict[str, Any]:
+    """SE그룹: 알림 기록 화면 -- 발송/건너뜀 이력과 발송 당시의 메시지
+    전문(재계산하지 않는다)을 최신순으로 돌려준다."""
+    store = _store()
+    return {"items": store.list_notify_history(limit)}
 
 
 @router.delete("/{channel}", response_model=NotificationSettingsSummary)
@@ -325,3 +378,16 @@ def run_notify_log_cleanup_job() -> None:
         logger.info("notify_sent_log 정리: %d건 삭제 (%d일 이전)", deleted, NOTIFY_LOG_RETENTION_DAYS)
     except Exception:
         logger.exception("notify_sent_log 정리 잡 실행 실패")
+
+
+def run_notify_history_cleanup_job() -> None:
+    """SE-4: 알림 기록(최근 100건/30일)의 보조 정리 잡 -- 쓰기 경로
+    (`RuntimeStore.record_notify_history`)가 매 발송/건너뜀마다 이미
+    정리하므로, 이 잡은 발송이 뜸해 그 자연스러운 정리가 오래 안 도는
+    경우를 위한 보조 수단이다."""
+    store = _store()
+    try:
+        deleted = store.purge_old_notify_history()
+        logger.info("notify_history 정리 잡: %d건 삭제", deleted)
+    except Exception:
+        logger.exception("notify_history 정리 잡 실행 실패")

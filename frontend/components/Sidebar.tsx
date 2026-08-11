@@ -19,6 +19,9 @@ export const navigationItems = [
   { label: "Config별 트리맵", href: "/config-treemap", icon: "treemap" },
   { label: "원인 분석", href: "/root-cause", icon: "analysis" },
   { label: "수율 예측", href: "/alerts", icon: "alert" },
+  // SA-2: 사용자가 알림을 받고 접속했을 때 그 내용을 다시 볼 곳 --
+  // 수율 예측 바로 아래, 즐겨찾기 위에 둔다.
+  { label: "알림 기록", href: "/notify-history", icon: "history" },
   { label: "즐겨찾기", href: "/favorites", icon: "star" },
 ] as const;
 
@@ -85,20 +88,21 @@ export default function Sidebar({
     setAnalysisPanelOpen,
   } = usePanelState();
   const { snapshot, training, notifications } = useAnalysisState();
-  // ME-2: 세 하단 버튼(모델 학습·모델 분석·알림 설정) 모두 같은 점을
-  // 쓴다 -- 오류(있으면)를 연결 여부보다 먼저 본다는 우선순위도 셋이
-  // 같다.
+  // SA-1: 세 하단 버튼(모델 학습·모델 분석·알림·자동화 설정) 모두 같은
+  // 점을 쓴다 -- 오류(있으면)를 연결 여부보다 먼저 본다는 우선순위도
+  // 셋이 같다.
+  // 모델 분석: 초록(분석 완료) · 회색(미실행) · 주황(실패) -- SQL 연결
+  // 여부는 더 이상 이 점의 몫이 아니다(그건 "알림·자동화 설정" 버튼이
+  // 보여준다, 자동화의 SQL 연결과 모델 분석의 "데이터베이스에서
+  // 불러오기"가 같은 소스를 공유한다).
   const analysisStatus: "connected" | "offline" | "error" =
-    snapshot && snapshot.errors.length > 0 ? "error" : snapshot?.source.mode === "sql" ? "connected" : "offline";
-  // QE: 헤더의 SOURCE 항목(연결 상태 배지)이 제거되면서, 이 점의 툴팁이
-  // "SQL에 연결돼 있는지"를 확인할 수 있는 유일한 자리가 됐다 -- 상태
-  // 이름뿐 아니라 마지막 스캔 시각/오류 사유까지 함께 보여준다.
+    snapshot && snapshot.errors.length > 0 ? "error" : snapshot ? "connected" : "offline";
   const analysisStatusLabel =
     analysisStatus === "connected"
-      ? `SQL 연결됨 · 마지막 스캔 ${formatSidebarDot(snapshot?.created_at)}`
+      ? `분석 완료 · ${formatSidebarDot(snapshot?.created_at)}`
       : analysisStatus === "error"
-        ? `연결 오류 — ${snapshot?.errors[0] ?? "알 수 없는 오류"}`
-        : "SQL 미연결 · 내장 데이터 사용 중";
+        ? `분석 실패 — ${snapshot?.errors[0] ?? "알 수 없는 오류"}`
+        : "미실행";
 
   // ME-2: 모델 학습 -- 이 세션에서 수동 업로드로 학습을 실행한 적이
   // 있으면(TrainingState가 채워진다) 그 파일·시각을 보여주고, 없으면
@@ -110,17 +114,27 @@ export default function Sidebar({
     ? `수동 학습 · ${training.performance?.source_filename ?? "-"} · ${formatSidebarDot(training.createdAt)}`
     : "내장 데이터로 학습됨";
 
-  // ME-2: 알림 설정 -- 채널 하나라도 연결되어 있으면 초록, 아니면 회색.
-  // 인증 만료·발송 실패의 지속 상태는 저장되지 않아(NotificationSettingsSummary가
-  // 마지막 발송 실패 사유를 담지 않는다) 구분하지 않는다.
+  // SA-1: 알림·자동화 설정 -- 초록(채널 연결 + 자동화 켜짐) · 회색
+  // (미설정) · 주황(오류, 마지막 자동화 실행이 실패).
   const connectedChannelNames = [
     notifications.slack.connected ? "Slack" : null,
     notifications.telegram.connected ? "Telegram" : null,
     notifications.gmail.connected ? "Gmail" : null,
   ].filter((name): name is string => name != null);
-  const notificationStatus: "connected" | "offline" = connectedChannelNames.length > 0 ? "connected" : "offline";
-  const notificationStatusLabel =
-    connectedChannelNames.length > 0 ? `${connectedChannelNames.join(" · ")} 연결됨` : "연결된 채널 없음";
+  const automationEnabled = notifications.automation.enabled;
+  const automationErrored = notifications.automation.last_run_status === "error";
+  const notificationStatus: "connected" | "offline" | "error" = automationErrored
+    ? "error"
+    : connectedChannelNames.length > 0 && automationEnabled
+      ? "connected"
+      : "offline";
+  const notificationStatusLabel = automationErrored
+    ? "자동화 실행 오류"
+    : connectedChannelNames.length > 0 && automationEnabled
+      ? `${connectedChannelNames.join(" · ")} 연결됨 · 자동화 켜짐`
+      : connectedChannelNames.length > 0
+        ? `${connectedChannelNames.join(" · ")} 연결됨 · 자동화 꺼짐`
+        : "연결된 채널 없음";
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
   // 접힘 상태 전용 (spec §D-2) -- 트리거 아이콘의 실제 위치를 읽어 패널을
@@ -292,27 +306,27 @@ export default function Sidebar({
           <button
             type="button"
             className={`themeToggle analysisTrigger ${collapsed ? "railIconButton" : ""}`}
-            aria-label="모델 분석·자동화"
+            aria-label="모델 분석"
             aria-haspopup="dialog"
             aria-expanded={analysisPanelOpen}
-            title={`모델 분석·자동화 (${analysisStatusLabel})`}
+            title={`모델 분석 (${analysisStatusLabel})`}
             onClick={() => setAnalysisPanelOpen((open) => !open)}
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Activity size={16} strokeWidth={1.5} /></span>
-            <span className="themeTriggerLabel">모델 분석·자동화</span>
+            <span className="themeTriggerLabel">모델 분석</span>
             <SidebarStatusDot status={analysisStatus} label={analysisStatusLabel} />
           </button>
           <button
             type="button"
             className={`themeToggle settingsTrigger ${collapsed ? "railIconButton" : ""}`}
-            aria-label="알림 설정"
+            aria-label="알림·자동화 설정"
             aria-haspopup="dialog"
             aria-expanded={settingsPanelOpen}
-            title={`알림 설정 (${notificationStatusLabel})`}
+            title={`알림·자동화 설정 (${notificationStatusLabel})`}
             onClick={() => setSettingsPanelOpen((open) => !open)}
           >
             <span className="themeTriggerIcon" aria-hidden="true"><Settings size={16} strokeWidth={1.5} /></span>
-            <span className="themeTriggerLabel">알림 설정</span>
+            <span className="themeTriggerLabel">알림·자동화 설정</span>
             <SidebarStatusDot status={notificationStatus} label={notificationStatusLabel} />
           </button>
           <div className="themeTriggerCol" ref={themeMenuRef}>
@@ -392,6 +406,7 @@ function NavIcon({ name }: { name: string }) {
     treemap: <><rect x="3" y="3" width="10" height="9" rx="1" /><rect x="15" y="3" width="6" height="5" rx="1" /><rect x="15" y="10" width="6" height="11" rx="1" /><rect x="3" y="14" width="10" height="7" rx="1" /></>,
     analysis: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /><path d="M8 11h6" /><path d="M11 8v6" /></>,
     alert: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
+    history: <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 7v5l4 2" /></>,
     star: <path d="M12 2.5 15.09 9l7.16.6-5.45 4.73L18.5 21 12 17.27 5.5 21l1.7-6.67L1.75 9.6 8.91 9 12 2.5Z" />,
   };
   return <svg className="navigationIcon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;

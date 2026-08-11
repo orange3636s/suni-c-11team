@@ -628,13 +628,32 @@ def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, An
     위에서 수행한다(VB그룹) -- `top_n`으로 서버가 미리 자르면 검색이
     상위 10 밖의 웨이퍼를 찾지 못한다(VB-4: "검색 중에는 상위 10 제한을
     해제한다").
+
+    SC그룹: 요청한 (train, eval)이 "모델 분석"이 마지막으로 저장한
+    스냅샷의 source와 일치하면, 그 파이프라인이 이미 계산해 둔 캐시를
+    그대로 돌려준다(다시 계산하지 않는다 -- 화면 수치와 알림 수치가
+    어긋나지 않게 하고, `analysis_id`를 함께 실어 네 화면이 같은 분석
+    회차를 공유함을 드러낸다). 캐시가 없거나 다른 데이터셋을 요청한
+    경우(예: 미등록 조합을 미리보기)는 기존처럼 즉석 계산한다.
     """
-    from src.analysis.yield_prediction import build_yield_prediction_table
+    from src.analysis.yield_prediction import build_yield_prediction_table, serialize_yield_prediction_table
+
+    store = RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
+    snapshot_status = store.get_refresh_snapshot_status()
+    snapshot = snapshot_status["snapshot"]
+    cached = None
+    if snapshot is not None:
+        source = snapshot.get("source") or {}
+        if source.get("train_dataset") == train and source.get("eval_dataset") == eval:
+            cached = (snapshot.get("analysis") or {}).get("yieldPrediction")
 
     train_df = _dataframe_or_404(train)
     eval_view = _hydrated_targets_or_409(eval)
-    eval_df = _dataframe_or_404(eval)
 
+    if cached is not None:
+        return {**cached, "target_provenance": eval_view.provenance.as_dict(), "analysis_id": snapshot.get("analysis_id")}
+
+    eval_df = _dataframe_or_404(eval)
     table = build_yield_prediction_table(
         train_df,
         eval_df,
@@ -644,46 +663,9 @@ def get_alerts_ranking(train: str = "train", eval: str = "test") -> dict[str, An
         train_dataset_version=get_dataset_registry().content_version(train),
     )
     return {
-        "train_dataset_id": train,
-        "eval_dataset_id": eval,
-        "total_wafers": table.total_wafers,
-        "candidates": [
-            {
-                "lot_wafer_id": c.lot_wafer_id,
-                "lot_id": c.lot_id,
-                "y": c.y,
-                "y_components": c.y_components,
-                "cells": c.cells,
-                "core_factors": {
-                    target: {
-                        "feature": cell.feature,
-                        "contribution_pct": cell.contribution_pct,
-                        "rank_used": cell.rank_used,
-                        "factor_value": cell.factor_value,
-                    }
-                    for target, cell in c.core_factors.items()
-                },
-                "reliability": {
-                    "count": c.reliability.count,
-                    "measured": [{"target": t, "feature": f} for t, f in c.reliability.measured],
-                    "unmeasured": [{"target": t, "feature": f} for t, f in c.reliability.unmeasured],
-                },
-                "recommendation": {
-                    "text": c.recommendation.text,
-                    "adjustable_targets": list(c.recommendation.adjustable_targets),
-                    "measurement_gap_targets": list(c.recommendation.measurement_gap_targets),
-                },
-            }
-            for c in table.candidates
-        ],
-        "unmeasured_wafer_ids": table.unmeasured_wafer_ids,
-        "unmeasured_count": len(table.unmeasured_wafer_ids),
-        "fallback_summary": {
-            "rank_counts": {str(rank): count for rank, count in table.fallback_summary.rank_counts.items()},
-            "none_count": table.fallback_summary.none_count,
-            "total_combinations": table.fallback_summary.total_combinations,
-        },
+        **serialize_yield_prediction_table(table, train_dataset_id=train, eval_dataset_id=eval),
         "target_provenance": eval_view.provenance.as_dict(),
+        "analysis_id": None,
     }
 
 

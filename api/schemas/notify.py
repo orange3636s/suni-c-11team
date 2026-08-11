@@ -31,11 +31,27 @@ class NotificationConditions(BaseModel):
     timing: list[str]
 
 
+class AutomationSettingsSummary(BaseModel):
+    """SD-1: "알림·자동화 설정" 팝업의 자동화 섹션. 비밀번호는 절대
+    포함하지 않는다 -- 환경변수(DB_PASSWORD)로만 받는다."""
+
+    enabled: bool
+    sql_host: str
+    sql_port: str
+    sql_db: str
+    sql_user: str
+    refresh_interval_minutes: int
+    last_run_at: str | None = None
+    last_run_status: str | None = None
+    last_run_sent_count: int | None = None
+
+
 class NotificationSettingsSummary(BaseModel):
     slack: SlackChannelSummary
     telegram: TelegramChannelSummary
     gmail: GmailChannelSummary
     conditions: NotificationConditions
+    automation: AutomationSettingsSummary
     # EA그룹: 텔레그램 봇 username 단일 소스 -- 토큰은 절대 포함하지 않는다.
     # 미설정이면 null.
     telegram_bot_username: str | None = None
@@ -82,3 +98,36 @@ class DispatchResponse(BaseModel):
     reason: str | None = None
     sent_count: int | None = None
     results: dict[str, Any] | None = None
+
+
+class AutomationSaveRequest(BaseModel):
+    """SD-1: 비밀번호 필드가 없다 -- 서버 환경변수(DB_PASSWORD)로만 받는다."""
+
+    enabled: bool
+    sql_host: str = ""
+    sql_port: str = ""
+    sql_db: str = ""
+    sql_user: str = ""
+    refresh_interval_minutes: int = 60
+
+
+class AutomationTestResponse(BaseModel):
+    ok: bool
+    error: str | None = None
+
+
+class NotifyHistoryItem(BaseModel):
+    id: int
+    sent_at: str
+    trigger: str
+    channels: list[str]
+    dataset_label: str | None
+    model_version: str | None
+    status: Literal["sent", "skipped"]
+    skip_reason: str | None
+    message_text: str | None
+    sent_count: int
+
+
+class NotifyHistoryListResponse(BaseModel):
+    items: list[NotifyHistoryItem]

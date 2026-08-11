@@ -27,14 +27,17 @@ from api.routes.notify import (
     router as notify_router,
     run_daily_13_dispatch_job,
     run_daily_dispatch_job,
+    run_notify_history_cleanup_job,
     run_notify_log_cleanup_job,
 )
 from api.routes.state import router as state_router
 from api.settings import APP_VERSION, ENV_FILE_LOADED, settings
-from src.automation.ingest import AUTO_INGEST_JOB_ID, DEFAULT_INGEST_MINUTES, run_auto_ingest_job
-from src.automation.refresh import REFRESH_JOB_ID, run_refresh_pipeline
+from src.automation.refresh import run_refresh_pipeline
+from src.automation.yield_dispatch import (
+    AUTOMATION_YIELD_DISPATCH_JOB_ID,
+    run_automation_yield_dispatch_job,
+)
 from src.notifications.telegram_bot import run_polling_loop
-from src.runtime.app_state import get_latest_state
 from src.runtime.datasets import BUNDLED_DATASET_FILES
 from src.runtime.operation_coordinator import (
     HEAVY_JOB_MESSAGE,
@@ -47,6 +50,10 @@ from src.runtime.store import RuntimeStore
 
 
 SERVICE_NAME = "manufacturing-ai-api"
+# SD그룹: 자동화(주기 SQL 수율 예측 발송) 초기 등록 주기 -- "알림·자동화
+# 설정"에 저장된 값이 없을 때만 쓰는 폴백이다(잡 자체는 자동화가 꺼져
+# 있으면 곧바로 pause된다).
+DEFAULT_AUTOMATION_MINUTES = 60
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -388,50 +395,46 @@ async def lifespan(app: FastAPI):
         id="notify_sent_log_cleanup",
         misfire_grace_time=3600,
     )
+    # SE-4: 알림 기록 보관 정책(최근 100건/30일) 보조 정리 -- 발송 잡과
+    # 겹치지 않도록 다른 시각으로 등록한다.
+    scheduler.add_job(
+        run_notify_history_cleanup_job,
+        CronTrigger(hour=3, minute=30, timezone="Asia/Seoul"),
+        id="notify_history_cleanup",
+        misfire_grace_time=3600,
+    )
 
-    # 자동 수집 파이프라인 1단계 -- 별도 잡이다(위 발송 잡을 건드리지
-    # 않는다). 주기는 환경변수가 아니라 저장된 사용자 설정
-    # (state/training의 refreshIntervalMinutes)을 따른다 -- 없으면
-    # DEFAULT_INGEST_MINUTES로 일단 등록해 두고 일시정지한다(설정된 적
-    # 없다는 뜻이므로 자동 실행은 하지 않는다). 값이 있으면 그 주기로
-    # 등록한다. max_instances=1 + coalesce=True로 학습 중복 실행을 막는다.
+    # SD그룹: 자동화(주기 SQL 수율 예측 발송) -- "알림·자동화 설정" 팝업의
+    # 전용 슬롯(automation:settings)에서 켜짐 여부·주기를 읽는다. 감시
+    # 디렉터리 폴링 자동화(auto_ingest, 옛 src/automation/ingest.py)는
+    # "자동화는 수율 예측만 계산해야 한다" 원칙에 위배돼 이번에 함께
+    # 제거했다 -- 화면 재계산까지 하던 별개의 자동화 경로가 더는 없다.
+    automation_enabled = False
     initial_minutes: int | None = None
     try:
-        training_state = get_latest_state(
-            RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
-        ).get("training")
-        if training_state:
-            raw_minutes = (training_state.get("payload") or {}).get("refreshIntervalMinutes")
-            if isinstance(raw_minutes, (int, float)) and raw_minutes > 0:
-                initial_minutes = int(raw_minutes)
+        automation_settings = RuntimeStore(
+            settings.runtime_db_path, settings.runtime_artifact_dir
+        ).get_automation_settings()
+        automation_enabled = bool(automation_settings.get("enabled"))
+        raw_minutes = automation_settings.get("refreshIntervalMinutes")
+        if isinstance(raw_minutes, (int, float)) and raw_minutes > 0:
+            initial_minutes = int(raw_minutes)
     except Exception:
-        logger.exception("자동 수집 주기 설정 조회 실패 -- 일시정지 상태로 시작합니다.")
+        logger.exception("자동화 설정 조회 실패 -- 일시정지 상태로 시작합니다.")
 
     scheduler.add_job(
-        run_auto_ingest_job,
-        IntervalTrigger(minutes=initial_minutes or DEFAULT_INGEST_MINUTES),
-        id=AUTO_INGEST_JOB_ID,
-        max_instances=1,
-        coalesce=True,
-    )
-    # J-2: 리프레시 파이프라인 -- 위 auto_ingest(감시 디렉터리 폴링)와는
-    # 별개 잡이다. 같은 refreshIntervalMinutes를 따르므로 초기 등록도
-    # 같은 initial_minutes를 쓴다. max_instances=1로 이전 사이클이 아직
-    # 도는 중이면(학습이 오래 걸리는 경우 등) 겹쳐 실행하지 않는다.
-    scheduler.add_job(
-        run_refresh_pipeline,
-        IntervalTrigger(minutes=initial_minutes or DEFAULT_INGEST_MINUTES),
-        id=REFRESH_JOB_ID,
+        run_automation_yield_dispatch_job,
+        IntervalTrigger(minutes=initial_minutes or DEFAULT_AUTOMATION_MINUTES),
+        id=AUTOMATION_YIELD_DISPATCH_JOB_ID,
         max_instances=1,
         coalesce=True,
         misfire_grace_time=600,
     )
     scheduler.start()
-    if initial_minutes is None:
-        scheduler.pause_job(AUTO_INGEST_JOB_ID)
-        scheduler.pause_job(REFRESH_JOB_ID)
-    # 저장 API(POST /api/state/training) 핸들러가 주기 변경 시
-    # reschedule/pause할 수 있도록 앱 상태에 둔다 -- 서버 재시작을
+    if not automation_enabled:
+        scheduler.pause_job(AUTOMATION_YIELD_DISPATCH_JOB_ID)
+    # 저장 API(POST /api/notify/automation) 핸들러가 켜짐 여부·주기 변경
+    # 시 reschedule/pause할 수 있도록 앱 상태에 둔다 -- 서버 재시작을
     # 요구하지 않는다.
     app.state.scheduler = scheduler
 

@@ -126,7 +126,7 @@ def test_manual_trigger_requires_on_analysis_timing():
 
         result = yud.dispatch_yield_update(store, _payload(), trigger=yud.TRIGGER_MANUAL)
         assert result["skipped"] is True
-        assert "분석 실행 직후" in result["reason"]
+        assert "자동 실행 직후" in result["reason"]
     finally:
         _cleanup(path)
 
@@ -149,12 +149,28 @@ def test_manual_trigger_respects_minimum_interval(monkeypatch):
         _cleanup(path)
 
 
-def test_refresh_trigger_ignores_timing_settings(monkeypatch):
-    """VE-1: 자동 갱신은 timing 설정과 무관하게 발송 후보다."""
+def test_refresh_trigger_requires_on_analysis_timing(monkeypatch):
+    """SD그룹: 주기 자동화(TRIGGER_REFRESH)는 "자동 실행 직후" 체크박스
+    (SD-1, 저장 키는 그대로 on_analysis)가 켜져 있을 때만 발송 후보다 --
+    전부 해제하면 자동화가 돌아도 보내지 않는다."""
     store, path = _store()
     try:
         _connect_slack(store)
         settings_store.save_conditions(store, grades=["심각"], timing=[])  # 전부 해제
+        monkeypatch.setattr(yud.senders, "send_slack_webhook", lambda *a, **k: (True, None))
+
+        result = yud.dispatch_yield_update(store, _payload(), trigger=yud.TRIGGER_REFRESH)
+        assert result["skipped"] is True
+        assert "자동 실행 직후" in result["reason"]
+    finally:
+        _cleanup(path)
+
+
+def test_refresh_trigger_sends_when_on_analysis_timing_enabled(monkeypatch):
+    store, path = _store()
+    try:
+        _connect_slack(store)
+        settings_store.save_conditions(store, grades=["심각"], timing=[settings_store.TIMING_ON_ANALYSIS])
         monkeypatch.setattr(yud.senders, "send_slack_webhook", lambda *a, **k: (True, None))
 
         result = yud.dispatch_yield_update(store, _payload(), trigger=yud.TRIGGER_REFRESH)

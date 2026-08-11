@@ -19,22 +19,14 @@ import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
 import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
 import { fitDefectRateCurve } from "@/lib/defectRateCurve";
-import { ANALYSIS_SNAPSHOT_VERSION } from "@/lib/snapshotVersion";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
-  ApiNetworkError,
-  ApiResponseError,
-  ApiTimeoutError,
   createFavorite,
   deleteFavorite,
-  dispatchAlarmNotifications,
   getDatasetSchema,
   getFavorites,
-  getScreeningPareto,
   getScreeningScatter,
   getScreeningScatterCategorical,
-  saveAnalysisState,
-  triggerRefresh,
 } from "@/lib/api";
 import type {
   CategoricalScatterResponse,
@@ -57,40 +49,12 @@ const EMPTY_PARETO_BY_TARGET: Record<string, ParetoRankingResponse> = {};
 const EMPTY_SCATTER_BY_KEY: Record<string, ScreeningScatterResponse> = {};
 const EMPTY_CATEGORICAL_BY_KEY: Record<string, CategoricalScatterResponse> = {};
 const EMPTY_HEATMAP_CACHE: Record<string, HeatmapResponse> = {};
-// TA그룹: 히트맵은 더 이상 이 진행 단계를 막지 않는다 -- CorrelationHeatmap이
-// 카드 자체의 로딩 상태로 독립적으로 조회하고(analysis.heatmap 캐시에
-// 저장), 여기서 미리 fire-and-forget으로 불러 두던 호출은 결과를 어디에도
-// 쓰지 않는 중복 요청이었다.
-const RUN_STAGES = ["요청 준비 중", "서버 준비 중 · Pareto 집계 중", "산점도·Box Plot 준비 중"];
 
 type ColorMode = ScatterColorMode;
-type RunState = "idle" | "running" | "error" | "done";
-
-type AnalysisFailureKind = "network" | "timeout" | "server" | "model_not_ready" | "unknown";
-
-const ANALYSIS_FAILURE_MESSAGE: Record<AnalysisFailureKind, string> = {
-  network: "서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-  timeout: "분석 시간이 초과되었습니다. 다시 시도해 주세요.",
-  server: "분석 중 오류가 발생했습니다. 다시 시도해 주세요.",
-  model_not_ready: "모델 학습이 완료되지 않았습니다. 사이드바 하단의 모델 학습에서 먼저 학습을 실행해 주세요.",
-  unknown: "분석을 완료하지 못했습니다. 다시 시도해 주세요.",
-};
-
-/** Turns a raw fetch/HTTP failure into a screen-safe message -- never
- * shows "Failed to fetch"/"500 Internal Server Error" verbatim (spec
- * §5-2). The raw detail is kept separately for the collapsible
- * "자세히 보기" section and the console, not shown by default. */
-function classifyAnalysisFailure(error: unknown): { kind: AnalysisFailureKind; detail: string } {
-  if (error instanceof ApiTimeoutError) return { kind: "timeout", detail: error.message };
-  if (error instanceof ApiNetworkError) return { kind: "network", detail: error.message };
-  if (error instanceof ApiResponseError) {
-    if (error.status >= 500) return { kind: "server", detail: `HTTP ${error.status}: ${error.message}` };
-    if (/모델|학습/.test(error.message)) return { kind: "model_not_ready", detail: `HTTP ${error.status}: ${error.message}` };
-    return { kind: "unknown", detail: `HTTP ${error.status}: ${error.message}` };
-  }
-  if (error instanceof Error) return { kind: "unknown", detail: error.message };
-  return { kind: "unknown", detail: String(error) };
-}
+// SF-1: 이 화면은 더 이상 스스로 분석을 실행하지 않는다 -- "running"/
+// "error"는 이제 쓰이지 않지만(자체 실행 경로가 없어졌다), 복원/스냅샷
+// 동기화 경로가 여전히 "idle" -> "done"만 오간다.
+type RunState = "idle" | "done";
 
 /** `보통` 등급 인자의 설명력이 낮은 편임을 알리는 한 줄 캡션 (spec §C-4).
  * train.CSV의 Step24_R1 → Y4(ε² 0.073)가 여기 해당한다. */
@@ -209,20 +173,12 @@ function RootCauseContent() {
   const [trellisFactor, setTrellisFactor] = useState<{ feature: string; step: number } | null>(null);
 
   const [runState, setRunState] = useState<RunState>("idle");
-  // Bumped once per "원인 분석 실행"/"다시 실행" -- folded into each factor
-  // card's React `key` so every chart's per-card Color By state (spec
-  // §5-3) is forced back to "기본" on a fresh run, even when the same
-  // feature reappears at the same list position.
-  const [runGeneration, setRunGeneration] = useState(0);
-  const [runStageIndex, setRunStageIndex] = useState(0);
-  const [runError, setRunError] = useState("");
-  const [runErrorDetail, setRunErrorDetail] = useState("");
-  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
-  // A-1: 분석 실행 직후 알림 발송(fire-and-forget)이 실패했을 때 조용히
-  // 삼키지 않고 사용자에게 알린다 -- 이전에는 .catch(() => {})로 무시돼
-  // 발송 경로가 죽어 있어도 아무도 몰랐다. 분석 결과 자체는 이미 표시된
-  // 뒤라 이 실패로 화면을 막지는 않는다.
-  const [dispatchNotifyError, setDispatchNotifyError] = useState("");
+  // 복원/스냅샷 동기화 때마다 factor 카드 key에 접어 넣는다 -- 같은
+  // 인자가 같은 목록 위치에 다시 나타나도 per-card Color By 상태(spec
+  // §5-3)가 "기본"으로 리셋되게 한다. 이 화면 자체는 더 이상 분석을
+  // 실행하지 않으므로 값 자체는 항상 0이지만, 각 factor 카드는 여전히
+  // 이 값을 key에 포함한다(안정적인 상수 접두사로 남는다).
+  const runGeneration = 0;
 
   const paretoByTarget = analysis?.paretoByTarget ?? EMPTY_PARETO_BY_TARGET;
   const scatterByKey = analysis?.scatterByKey ?? EMPTY_SCATTER_BY_KEY;
@@ -384,19 +340,13 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, analysis]);
 
-  // NB-2: "다시 분석" 버튼을 없앤 뒤에도 이 화면은 스스로 채워져야 한다
-  // -- 보통은 부트스트랩/자동 갱신 스냅샷이 채운 analysis(W-1 대체
-  // 채움, AnalysisStateProvider 참고)가 위 이펙트로 즉시 반영되지만,
-  // 그마저 아직 없는 진짜 콜드 상태(스냅샷도 저장된 결과도 없음)에서는
-  // 이 화면이 직접 한 번 실행해 채운다. 그동안 진행 바(진행 상태 표시,
-  // NB-2 유지 대상)가 보인다. syncedFromRestore와 마찬가지로 한 번만.
-  const autoRanOnce = useRef(false);
-  useEffect(() => {
-    if (!hydrated || autoRanOnce.current || analysis || runState !== "idle") return;
-    autoRanOnce.current = true;
-    void runAnalysis();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, analysis, runState]);
+  // SF-1: 이 화면은 더 이상 스스로 분석을 실행하지 않는다("다시 분석"
+  // 버튼도, 조용한 자동 실행도 없다) -- 모든 실행은 모델 분석 팝업의
+  // [분석 시작] 하나로 일원화됐다. 보통은 부트스트랩/[분석 시작]이
+  // 채운 스냅샷이 W-1 대체 채움(AnalysisStateProvider)을 거쳐 위
+  // syncedFromRestore 이펙트로 반영된다. 그마저 없는 진짜 콜드 상태
+  // (스냅샷도 저장된 결과도 없음)에서는 아래 렌더가 "분석 결과가
+  // 없습니다 -- 모델 분석에서 분석을 시작하세요" 안내를 보여준다.
 
   // RD-2: 모델 분석 팝업에서 데이터셋을 바꾸면(activate-dataset ->
   // 스냅샷 갱신 -> analysis.dataset 변경) 이 화면의 라벨도 따라간다 --
@@ -456,112 +406,7 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis, setAnalysis]);
 
-  async function runAnalysis() {
-    setRunState("running");
-    setRunError("");
-    setRunErrorDetail("");
-    setDispatchNotifyError("");
-    setRunStageIndex(0);
-    setRunElapsedSeconds(0);
-    setRunGeneration((generation) => generation + 1);
-    const startedAt = Date.now();
-    const elapsedTimer = window.setInterval(() => {
-      setRunElapsedSeconds(Math.round((Date.now() - startedAt) / 1000));
-    }, 1000);
-    try {
-      setRunStageIndex(1);
-      const paretoResults = await Promise.allSettled(
-        TARGETS.map((t) => getScreeningPareto(datasetId, t).then((response) => [t, response] as const)),
-      );
-      const fulfilledPareto: Array<readonly [string, ParetoRankingResponse]> = [];
-      for (const result of paretoResults) {
-        if (result.status === "fulfilled") fulfilledPareto.push(result.value);
-      }
-      if (fulfilledPareto.length === 0) {
-        const firstFailure = paretoResults.find((result) => result.status === "rejected");
-        throw firstFailure?.reason ?? new Error("모든 타깃의 Pareto 분석이 실패했습니다.");
-      }
-      const paretoMap: Record<string, ParetoRankingResponse> = Object.fromEntries(fulfilledPareto);
-      const targetProvenance = fulfilledPareto.find(([, response]) => response.target_provenance)?.[1].target_provenance ?? null;
-
-      // Pareto가 준비되는 즉시 화면 골격을 연다. 이후 차트는 제한된
-      // 동시성으로 하나씩 도착하며, 개별 실패가 나머지 차트를 막지 않는다.
-      setAnalysis({
-        dataset: datasetId,
-        createdAt: new Date().toISOString(),
-        activeTarget,
-        paretoByTarget: paretoMap,
-        scatterByKey: {},
-        categoricalByKey: {},
-        pointsComplete: false,
-        targetProvenance,
-        heatmap: {},
-      });
-      setAnalysisDataset(datasetId);
-
-      setRunStageIndex(2);
-      const scatterPromise = fetchAllScatterData(datasetId, paretoMap, (result) => {
-        setAnalysis((previous) => {
-          if (!previous || previous.dataset !== datasetId) return previous;
-          return result.type === "categorical"
-            ? {
-                ...previous,
-                categoricalByKey: {
-                  ...previous.categoricalByKey,
-                  [result.key]: result.data as CategoricalScatterResponse,
-                },
-              }
-            : {
-                ...previous,
-                scatterByKey: {
-                  ...previous.scatterByKey,
-                  [result.key]: result.data as ScreeningScatterResponse,
-                },
-              };
-        });
-      }).then(() => {
-        setAnalysis((previous) => previous && previous.dataset === datasetId ? { ...previous, pointsComplete: true } : previous);
-      });
-
-      await scatterPromise;
-      setRunState("done");
-      // 알림 연동 §C-4 "분석 실행 직후" -- fire-and-forget. 발송 시점 설정
-      // 일치 여부·시간당 예산·연결된 채널 유무는 전부 서버(수율 예측 갱신
-      // 파이프라인, dispatch_yield_update)가 판단한다: 이 호출은 그저
-      // "지금 막 분석이 끝났다"는 신호일 뿐이고, 실패해도 분석 결과
-      // 화면에는 아무 영향이 없어야 한다.
-      void dispatchAlarmNotifications(datasetId, datasetId).catch(() => {
-        setDispatchNotifyError("알림 발송에 실패했습니다. 수율 예측 탭에서 채널 연결 상태를 확인해 주세요.");
-      });
-      // 성공 직후 저장 (spec §3-4) -- paretoByTarget만 보낸다. 인자별
-      // 산점도 상세(관리한계·권장구간·최적중심 등, 좌표 제외)까지 25개
-      // 인자 전부 실으면 그것만으로 ~105KB라 100KB 예산(spec §6)을
-      // 넘는다 -- 어차피 복원 직후 배경에서 fetchAllScatterData로 다시
-      // 채우므로(위 useEffect), 서버에는 화면 목록 구성에 꼭 필요한
-      // Pareto만 남긴다. fmea/actionPriority는 프런트가 보내지 않는다
-      // -- 저장 시점에 서버(api/routes/state.py)가 채운다(JA-1).
-      void saveAnalysisState(datasetId, {
-        activeTarget,
-        paretoByTarget: paretoMap,
-        targetProvenance,
-        snapshotVersion: ANALYSIS_SNAPSHOT_VERSION,
-      }).catch(() => {});
-    } catch (failure) {
-      // Never leave a stale result on screen after a failure -- it could
-      // be mistaken for the new run's output (spec §5-2).
-      setAnalysis(null);
-      const { kind, detail } = classifyAnalysisFailure(failure);
-      console.error("원인 분석 실행 실패:", failure);
-      setRunError(ANALYSIS_FAILURE_MESSAGE[kind]);
-      setRunErrorDetail(detail);
-      setRunState("error");
-      setAnalysisDataset(null);
-    } finally {
-      window.clearInterval(elapsedTimer);
-    }
-  }
-
-  const analysisVisible = analysis != null && (runState === "running" || runState === "done");
+  const analysisVisible = analysis != null && runState === "done";
 
   const activeParetoResponse = paretoByTarget[activeTarget];
   const activeParetoItems: ParetoRankingItem[] = useMemo(
@@ -792,11 +637,12 @@ function RootCauseContent() {
         />
       </section>
 
-      {/* NB-1/NB-2: "분석 대상 [변경]" 카드와 "다시 분석" 실행 버튼을
-          제거했다 -- 파일 첨부·분석 실행은 모델 분석·자동화 팝업으로
-          일원화됐다. datasetMismatch는 즐겨찾기 딥링크(?dataset=)가 현재
-          분석과 다른 데이터셋을 가리키는 경우에도 발생하므로(선택
-          카드와 무관) 계속 보여준다. */}
+      {/* SF-1: "분석 대상 [변경]" 카드와 "다시 분석" 실행 버튼, 그리고
+          이 화면 자신의 조용한 자동 실행 경로까지 전부 제거했다 -- 모든
+          실행은 모델 분석 팝업의 [분석 시작] 하나로 일원화됐다.
+          datasetMismatch는 즐겨찾기 딥링크(?dataset=)가 현재 분석과 다른
+          데이터셋을 가리키는 경우에도 발생하므로(선택 카드와 무관) 계속
+          보여준다. */}
       <DatasetMismatchWarning mismatch={datasetMismatch} />
 
       <section className="uploadCard">
@@ -808,65 +654,19 @@ function RootCauseContent() {
             </div>
           </div>
         </div>
-        {dispatchNotifyError && (
-          <div className="analysisErrorBox" role="alert">
-            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
-            <div className="analysisErrorBody">
-              <p className="analysisErrorMessage">{dispatchNotifyError}</p>
-            </div>
-            <button type="button" className="button" onClick={() => setDispatchNotifyError("")}>닫기</button>
-          </div>
-        )}
-        {runState === "running" && (
-          <div className="paretoRunProgress" style={{ marginTop: 12 }}>
-            <div className="paretoRunProgressTrack">
-              <span style={{ width: `${((runStageIndex + 1) / RUN_STAGES.length) * 100}%` }} />
-            </div>
-            <span className="paretoRunStage">{RUN_STAGES[runStageIndex]} · 경과 {runElapsedSeconds}초</span>
-          </div>
-        )}
-        {runState === "error" && (
-          <div className="analysisErrorBox" role="alert">
-            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
-            <div className="analysisErrorBody">
-              <p className="analysisErrorMessage">{runError}</p>
-              {runErrorDetail && (
-                <details className="analysisErrorDetail">
-                  <summary>자세히 보기</summary>
-                  <code>{runErrorDetail}</code>
-                </details>
-              )}
-            </div>
-            <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
-          </div>
-        )}
-        {/* 지시서 AJ: 서버에 저장된 분석 결과가 있었지만 낡은 버전이거나
-            (예: PARETO_TOP_N 5->10) 그 이후 모델이 재학습돼 폐기된 경우 --
-            runState는 여전히 "idle"이라 위 두 블록과는 겹치지 않는다.
-            조용히 빈 화면만 두지 않고 이유와 재실행 경로를 알려준다.
-            NB-3: 이 화면에는 더 이상 재실행 버튼이 없으므로, 모델
-            분석·자동화 팝업으로 안내한다. */}
-        {runState === "idle" && analysisSnapshotStale && (
-          <div className="analysisErrorBox" role="alert">
-            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
+        {/* SF-2: 빈 상태 안내를 화면마다 다르게 두지 않는다 -- "분석
+            결과가 없습니다. 모델 분석에서 분석을 시작하세요."로 통일하고
+            [열기]가 항상 같은 모델 분석 팝업을 연다. 저장된 결과가 낡은
+            버전이거나(analysisSnapshotStale) 가리키던 데이터셋이 삭제돼
+            버려진 경우(datasetFallbackNotice)도 같은 안내로 합친다 --
+            사유가 달라도 사용자가 취할 다음 행동은 같다. */}
+        {runState === "idle" && !analysis && (
+          <div className="analysisErrorBox" role="status">
             <div className="analysisErrorBody">
               <p className="analysisErrorMessage">
-                저장된 분석 결과가 이전 버전이라 불러오지 않았습니다. 모델 분석·자동화에서 파일을 업로드하거나 SQL을 갱신하세요.
-              </p>
-            </div>
-            <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
-          </div>
-        )}
-        {/* 지시서 CB: 저장된 학습/분석/알람 결과가 이미 삭제된 데이터셋을
-            가리켜 통째로 버려진 경우 -- 조용히 train으로 바꿔치기하지
-            않고(다른 스키마의 옛 payload가 train 라벨을 달고 뜨면 더
-            나쁘다) 이유를 안내하고 재실행을 유도한다. */}
-        {runState === "idle" && datasetFallbackNotice && (
-          <div className="analysisErrorBox" role="alert">
-            <span className="analysisErrorIcon" aria-hidden="true">⚠</span>
-            <div className="analysisErrorBody">
-              <p className="analysisErrorMessage">
-                이전에 선택한 데이터셋이 더 이상 없어 train으로 전환했습니다. 모델 분석·자동화에서 파일을 업로드하거나 SQL을 갱신하세요.
+                분석 결과가 없습니다. 모델 분석에서 분석을 시작하세요.
+                {analysisSnapshotStale && " (저장된 결과가 이전 버전이라 불러오지 않았습니다.)"}
+                {datasetFallbackNotice && " (이전에 선택한 데이터셋이 더 이상 없어 train으로 전환했습니다.)"}
               </p>
             </div>
             <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
@@ -982,7 +782,7 @@ function RootCauseContent() {
                   ? "공정 인자의 유효 계측 표본이 부족합니다."
                   : "현재 데이터에서 순위를 계산할 수 있는 인자가 없습니다."}
               </p>
-              <p className="noChartStats">모델 상태와 데이터의 R/D/Config 계측값을 확인한 뒤 모델 분석·자동화에서 파일을 업로드하거나 SQL을 갱신하세요.</p>
+              <p className="noChartStats">모델 상태와 데이터의 R/D/Config 계측값을 확인한 뒤 모델 분석에서 분석 데이터를 바꾸거나 다시 실행하세요.</p>
               <button type="button" className="button" onClick={() => setAnalysisPanelOpen(true)}>열기</button>
             </section>
           ) : (

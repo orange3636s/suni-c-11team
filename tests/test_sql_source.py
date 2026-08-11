@@ -11,7 +11,6 @@ import pytest
 
 from api.settings import settings as real_settings
 from src.automation import sql_source
-from src.runtime.app_state import save_state
 from src.runtime.store import RuntimeStore
 
 
@@ -57,11 +56,7 @@ def test_configured_when_driver_query_and_connection_info_all_present(monkeypatc
             sql_source, "settings",
             dataclasses.replace(real_settings, db_driver="postgresql+psycopg2", auto_ingest_query="SELECT 1"),
         )
-        save_state(
-            store, "training",
-            dataset={"dataset": "training-settings"},
-            payload={"sqlHost": "db.internal", "sqlPort": "5432", "sqlDb": "fab", "sqlUser": "svc"},
-        )
+        store.save_automation_settings(sqlHost="db.internal", sqlPort="5432", sqlDb="fab", sqlUser="svc")
         assert sql_source.is_sql_configured(store) is True
     finally:
         _cleanup(path)
@@ -74,11 +69,7 @@ def test_not_configured_when_connection_info_partial(monkeypatch: pytest.MonkeyP
             sql_source, "settings",
             dataclasses.replace(real_settings, db_driver="postgresql+psycopg2", auto_ingest_query="SELECT 1"),
         )
-        save_state(
-            store, "training",
-            dataset={"dataset": "training-settings"},
-            payload={"sqlHost": "db.internal", "sqlPort": "", "sqlDb": "fab", "sqlUser": "svc"},
-        )
+        store.save_automation_settings(sqlHost="db.internal", sqlPort="", sqlDb="fab", sqlUser="svc")
         assert sql_source.is_sql_configured(store) is False
     finally:
         _cleanup(path)
@@ -98,12 +89,41 @@ def test_fetch_incremental_returns_none_on_connection_failure(monkeypatch: pytes
                 db_password="x",
             ),
         )
-        save_state(
-            store, "training",
-            dataset={"dataset": "training-settings"},
-            payload={"sqlHost": "nonexistent.invalid", "sqlPort": "5432", "sqlDb": "fab", "sqlUser": "svc"},
-        )
+        store.save_automation_settings(sqlHost="nonexistent.invalid", sqlPort="5432", sqlDb="fab", sqlUser="svc")
         result = sql_source.fetch_incremental(store)
         assert result is None
+    finally:
+        _cleanup(path)
+
+
+def test_test_connection_reports_missing_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SD-1 "연결 테스트" 버튼 -- 드라이버·접속 정보가 없으면 접속을
+    시도하지 않고 사유를 알린다."""
+    store, path = _store()
+    try:
+        monkeypatch.setattr(sql_source, "settings", dataclasses.replace(real_settings, db_driver=None))
+        ok, error = sql_source.test_connection(store)
+        assert ok is False
+        assert error
+
+        monkeypatch.setattr(sql_source, "settings", dataclasses.replace(real_settings, db_driver="postgresql+psycopg2"))
+        ok, error = sql_source.test_connection(store)
+        assert ok is False
+        assert error
+    finally:
+        _cleanup(path)
+
+
+def test_test_connection_fails_fast_on_unreachable_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    store, path = _store()
+    try:
+        monkeypatch.setattr(
+            sql_source, "settings",
+            dataclasses.replace(real_settings, db_driver="postgresql+psycopg2", db_password="x"),
+        )
+        store.save_automation_settings(sqlHost="nonexistent.invalid", sqlPort="5432", sqlDb="fab", sqlUser="svc")
+        ok, error = sql_source.test_connection(store)
+        assert ok is False
+        assert error
     finally:
         _cleanup(path)

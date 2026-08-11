@@ -1,4 +1,6 @@
 import type {
+  AutomationSaveRequest,
+  AutomationTestResponse,
   CategoricalScatterResponse,
   ConfigTreemapResponse,
   DatasetListResponse,
@@ -16,6 +18,7 @@ import type {
   ModelPerformanceResponse,
   NotificationConditions,
   NotificationSettingsSummary,
+  NotifyHistoryListResponse,
   ParetoRankingResponse,
   PromotionHistoryResponse,
   ScreeningScatterResponse,
@@ -340,6 +343,22 @@ export function saveNotificationConditions(conditions: NotificationConditions): 
   return postJson("/api/notify/conditions", conditions);
 }
 
+// SD-1: "알림·자동화 설정" 팝업의 자동화 섹션 -- 서버 주소·사용자명·
+// refresh time·켜짐 여부를 저장한다. 비밀번호 필드는 없다(환경변수로만
+// 받는다).
+export function saveAutomationSettings(body: AutomationSaveRequest): Promise<NotificationSettingsSummary> {
+  return postJson("/api/notify/automation", body);
+}
+
+export function testAutomationConnection(): Promise<AutomationTestResponse> {
+  return postJson("/api/notify/automation/test", {});
+}
+
+// SE그룹: 알림 기록 화면 -- 발송/건너뜀 이력과 발송 당시 메시지 전문.
+export function getNotifyHistory(limit = 100): Promise<NotifyHistoryListResponse> {
+  return getJson(`/api/notify/history?${new URLSearchParams({ limit: String(limit) }).toString()}`);
+}
+
 export async function disconnectNotificationChannel(channel: "slack" | "telegram" | "gmail"): Promise<NotificationSettingsSummary> {
   let response: Response;
   try {
@@ -399,23 +418,34 @@ export function getSnapshot(): Promise<SnapshotResponse> {
   return getJson("/api/state/snapshot", 15_000);
 }
 
-// AF: 모니터링의 "최신화" 버튼 -- 주기 잡과 같은 파이프라인을 백그라운드로
-// 1회 실행한다(응답은 즉시 온다, 완료는 getSnapshotMeta 폴링이 감지).
-// 이미 실행 중이면 409(ApiResponseError.status === 409).
+// SC-3: "모델 분석" 팝업의 [분석 시작] 버튼 -- 네 화면(모니터링/Config별
+// 트리맵/원인 분석/수율 예측)을 한 번에 갱신하는 유일한 실행 경로다
+// ("새로고침 역할" 겸함). 백그라운드로 실행되어 응답은 즉시 온다 --
+// 완료는 getSnapshotMeta 폴링이 감지한다. 이미 실행 중이면 409
+// (ApiResponseError.status === 409).
 export function triggerRefresh(): Promise<{ triggered: boolean }> {
   return postJson("/api/state/refresh", {}, 10_000);
 }
 
-// AG-1: 원인 분석·수율 예측에서 새 파일을 업로드하면 부른다 -- 그
-// 데이터셋을 활성 평가 데이터셋으로 바꾸고 스냅샷 파이프라인을 1회
-// 실행한다. 화면별 개별 재분석은 만들지 않는다.
+// SC-2: "모델 분석" 팝업에서 파일을 선택하거나 데이터베이스에서 불러온
+// 뒤 부른다 -- 그 데이터셋을 활성 분석 데이터로 등록할 뿐, 4화면 분석을
+// 자동으로 실행하지 않는다(SC-3과 분리됨). 실제 계산은 별도로
+// triggerRefresh()를 호출해야 시작된다.
 export function activateDataset(datasetId: string): Promise<{ activated: boolean; dataset_id: string }> {
   return postJson("/api/state/activate-dataset", { dataset_id: datasetId }, 10_000);
 }
 
-// AG-3: "자동 갱신으로 복귀" -- 수동 override를 지우고 원래 소스(SQL/폴백)로
-// 되돌린다.
-export function deactivateDataset(): Promise<{ deactivated: boolean; triggered: boolean }> {
+// SC-2 "데이터베이스에서 불러오기" -- "알림·자동화 설정"에 등록된 서버와
+// 같은 소스에서 최신 배치를 가져와 데이터셋으로 등록한다(업로드 응답과
+// 같은 모양). 등록만 할 뿐 활성화하지 않는다 -- 이어서 activateDataset을
+// 호출해야 분석 데이터로 반영된다.
+export function fetchFromDb(): Promise<DatasetUploadResponse> {
+  return postJson("/api/state/fetch-from-db", {}, 30_000);
+}
+
+// 수동 override를 지워 다음 [분석 시작]부터 원래 소스(SQL/폴백)로
+// 되돌아가게 한다. 등록만 할 뿐 분석을 자동으로 다시 실행하지 않는다.
+export function deactivateDataset(): Promise<{ deactivated: boolean }> {
   return postJson("/api/state/deactivate-dataset", {}, 10_000);
 }
 

@@ -282,14 +282,59 @@ export type NotificationConditions = {
   timing: NotificationTiming[];
 };
 
+// SD-1: "알림·자동화 설정" 팝업의 자동화 섹션. 비밀번호 필드는 없다 --
+// 환경변수(DB_PASSWORD)로만 받는다.
+export type AutomationSettingsSummary = {
+  enabled: boolean;
+  sql_host: string;
+  sql_port: string;
+  sql_db: string;
+  sql_user: string;
+  refresh_interval_minutes: number;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_sent_count: number | null;
+};
+
 export type NotificationSettingsSummary = {
   slack: SlackChannelSummary;
   telegram: TelegramChannelSummary;
   gmail: GmailChannelSummary;
   conditions: NotificationConditions;
+  automation: AutomationSettingsSummary;
   // EA그룹: 텔레그램 봇 username -- 백엔드가 단일 소스다. 프런트는 자체
   // 환경변수나 하드코딩 폴백을 두지 않는다. 미설정이면 null.
   telegram_bot_username: string | null;
+};
+
+export type AutomationSaveRequest = {
+  enabled: boolean;
+  sql_host: string;
+  sql_port: string;
+  sql_db: string;
+  sql_user: string;
+  refresh_interval_minutes: number;
+};
+
+export type AutomationTestResponse = { ok: boolean; error: string | null };
+
+// SE그룹: 알림 기록 -- 발송/건너뜀 이력과 발송 당시의 메시지 전문(재계산
+// 없이 그대로 보관).
+export type NotifyHistoryItem = {
+  id: number;
+  sent_at: string;
+  trigger: string;
+  channels: string[];
+  dataset_label: string | null;
+  model_version: string | null;
+  status: "sent" | "skipped";
+  skip_reason: string | null;
+  message_text: string | null;
+  sent_count: number;
+};
+
+export type NotifyHistoryListResponse = {
+  items: NotifyHistoryItem[];
 };
 
 export type SendTestResponse = { ok: boolean; error: string | null };
@@ -431,6 +476,10 @@ export type YieldPredictionResponse = {
   unmeasured_count: number;
   fallback_summary: YieldFallbackSummary;
   target_provenance: TargetProvenance | null;
+  // SC그룹: "모델 분석" 스냅샷 캐시에서 왔으면 그 analysis_id, 즉석
+  // 계산이면 null -- 모니터링/원인분석과 같은 분석 회차를 보고 있는지
+  // 프런트가 구분할 수 있게 한다.
+  analysis_id: string | null;
 };
 
 export type ConfidenceTier = "strong" | "moderate" | "weak" | "reference";
@@ -777,6 +826,10 @@ export type RefreshSnapshot = {
     actionPriority: ActionPriorityPayload | null;
     actionPriorityError: string | null;
     target_provenance: TargetProvenance | null;
+    // SC그룹: 이 회차의 수율 예측 표 캐시 -- GET /api/alerts/ranking과
+    // 같은 모양(YieldPredictionResponse에서 train/eval id·analysis_id만
+    // 뺀 것)이다.
+    yieldPrediction: Omit<YieldPredictionResponse, "train_dataset_id" | "eval_dataset_id" | "analysis_id"> | null;
   };
   // 옛 알람 등급/게이트 판정 파이프라인 폐기 이후 항상 null이다
   // (src/automation/refresh.py -- 알림 발송은 수율 예측 갱신 파이프라인이
@@ -819,12 +872,22 @@ export type ManualEvalOverride = {
   set_at: string;
 };
 
+// SF-3: 네 화면(모니터링/Config별 트리맵/원인분석/수율예측)이 공유하는
+// "분석 시작" 진행 표시 -- 실행 중이 아니면 null.
+export type AnalysisProgress = {
+  stage: string;
+  index: number;
+  total: number;
+  analysis_id: string;
+};
+
 export type SnapshotMetaResponse = {
   created_at: string | null;
   bootstrap: BootstrapStatus | null;
-  // AF: 주기 잡이든 수동 최신화 버튼이든, 자동 갱신 파이프라인이 지금
-  // 실행 중이면 true -- 모니터링의 "최신화" 버튼이 이 값으로 disabled.
+  // SC-3: "모델 분석" 팝업의 [분석 시작] 버튼이든 서버 기동 부트스트랩/
+  // 학습 후 자동 복구든, 파이프라인이 지금 실행 중이면 true.
   refresh_running: boolean;
+  analysis_progress: AnalysisProgress | null;
   manual_eval_override: ManualEvalOverride | null;
 };
 
@@ -890,5 +953,9 @@ export type ConfigTreemapResponse = {
   significant: boolean;
   empty_reason: string | null;
   target_provenance: TargetProvenance | null;
+  // SC그룹: "모델 분석"이 마지막으로 저장한 스냅샷의 analysis_id --
+  // 모니터링/원인분석/수율예측과 같은 값이면 같은 분석 회차다. 스냅샷이
+  // 없으면 null.
+  analysis_id: string | null;
 };
 

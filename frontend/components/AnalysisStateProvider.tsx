@@ -7,6 +7,7 @@ import { isAnalysisSnapshotUsable } from "@/lib/snapshotVersion";
 import type {
   AlertsDataResponse,
   ActionPriorityPayload,
+  AnalysisProgress,
   BootstrapStatus,
   CategoricalScatterResponse,
   FmeaTablePayload,
@@ -27,6 +28,10 @@ const SNAPSHOT_META_POLL_MS = 60_000;
 // W-4: 첫 기동 부트스트랩이 진행 중인 동안에는 체감 대기를 줄이기 위해
 // 더 짧게 돈다 -- 완료(done/failed)되면 다시 60초로 돌아간다.
 const SNAPSHOT_META_POLL_BOOTSTRAP_MS = 10_000;
+// SF-3: "분석 시작"(refresh_running)이 도는 동안에는 네 화면이 진행
+// 표시("분석 진행 중… (2/4) 원인 분석")를 실시간에 가깝게 봐야 한다 --
+// 부트스트랩보다도 더 짧게 돈다.
+const SNAPSHOT_META_POLL_ANALYSIS_RUNNING_MS = 2_000;
 // "방금 갱신됨" 배지를 몇 초간 보여줄지.
 const SNAPSHOT_JUST_UPDATED_MS = 5_000;
 
@@ -45,6 +50,17 @@ const DEFAULT_NOTIFICATIONS: NotificationSettingsSummary = {
   telegram: { connected: false, target: null, chat_id_masked: null, verified_at: null },
   gmail: { connected: false, pending: false, email: null, verified_at: null },
   conditions: { grades: ["심각"], timing: ["on_analysis"] },
+  automation: {
+    enabled: false,
+    sql_host: "",
+    sql_port: "",
+    sql_db: "",
+    sql_user: "",
+    refresh_interval_minutes: 60,
+    last_run_at: null,
+    last_run_status: null,
+    last_run_sent_count: null,
+  },
   telegram_bot_username: null,
 };
 
@@ -196,9 +212,14 @@ type AnalysisStateValue = {
   // 실패 배너의 "다시 시도"용 -- 폴링 타이머를 기다리지 않고 즉시
   // meta/snapshot을 다시 확인한다.
   refreshSnapshotNow: () => void;
-  // AF: 자동 갱신 파이프라인(주기 잡 또는 최신화 버튼)이 지금 실행 중인지.
+  // SC-3: "모델 분석"(부트스트랩·학습 후 자동 복구 포함)이 지금 실행
+  // 중인지.
   refreshRunning: boolean;
-  // AG-3: 업로드로 활성화된 수동 평가 데이터셋. null이면 자동(SQL/폴백) 모드.
+  // SF-3: 네 화면이 공유하는 "분석 시작" 진행 표시 -- 실행 중이 아니면
+  // null.
+  analysisProgress: AnalysisProgress | null;
+  // SC-2: 등록된 활성 분석 데이터가 업로드/DB 불러오기로 설정된 것이면
+  // 그 정보. null이면 내장(기본) 데이터.
   manualEvalOverride: ManualEvalOverride | null;
 };
 
@@ -265,11 +286,13 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   const [snapshotStaleVersion, setSnapshotStaleVersion] = useState(false);
   const [snapshotJustUpdated, setSnapshotJustUpdated] = useState(false);
   const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null);
-  // AF: 주기 잡이든 최신화 버튼이든, 자동 갱신 파이프라인이 지금 실행
-  // 중인지 -- 모니터링의 "최신화" 버튼 disabled 여부에 쓴다.
+  // SC-3: "모델 분석" 파이프라인(부트스트랩·[분석 시작]·학습 후 자동
+  // 복구)이 지금 실행 중인지 -- [분석 시작] 버튼 disabled 여부에 쓴다.
   const [refreshRunning, setRefreshRunning] = useState(false);
-  // AG-3: 업로드로 활성화된 수동 평가 데이터셋 -- 있으면 셸 레벨 배너가
-  // "수동 · {filename}" + "자동 갱신으로 복귀"를 보여준다.
+  // SF-3: 네 화면이 공유하는 진행 표시.
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  // SC-2: 업로드/DB 불러오기로 등록된 활성 분석 데이터 -- 있으면 셸
+  // 레벨 배너가 "수동 · {filename}"을 보여준다.
   const [manualEvalOverride, setManualEvalOverride] = useState<ManualEvalOverride | null>(null);
   // 폴링 콜백이 매번 최신 snapshot을 읽어야 하는데, setInterval에 넘긴
   // 클로저는 등록 시점 값을 붙잡는다 -- ref로 최신 값을 따라간다.
@@ -283,6 +306,12 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
   useEffect(() => {
     bootstrapStatusRef.current = bootstrapStatus;
   }, [bootstrapStatus]);
+  // SF-3: refreshRunning도 같은 이유로 ref가 필요하다 -- scheduleNext가
+  // 다음 간격을 고를 때 실행 중이면 2초로 바짝 좁힌다.
+  const refreshRunningRef = useRef(false);
+  useEffect(() => {
+    refreshRunningRef.current = refreshRunning;
+  }, [refreshRunning]);
 
   function hydrate() {
     let cancelled = false;
@@ -437,6 +466,7 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
         const meta = await getSnapshotMeta();
         setBootstrapStatus(meta.bootstrap ?? null);
         setRefreshRunning(meta.refresh_running);
+        setAnalysisProgress(meta.analysis_progress ?? null);
         setManualEvalOverride(meta.manual_eval_override ?? null);
         const cachedCreatedAt = snapshotRef.current?.created_at ?? null;
         if (meta.created_at && meta.created_at !== cachedCreatedAt) {
@@ -453,8 +483,9 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
     // 끝난 뒤 그 시점의 최신 부트스트랩 상태(bootstrapStatusRef)를 보고
     // 다음 간격(부트스트랩 중 10초 / 평소 60초)을 새로 고른다.
     function scheduleNext() {
-      const delay =
-        bootstrapStatusRef.current?.status === "running"
+      const delay = refreshRunningRef.current
+        ? SNAPSHOT_META_POLL_ANALYSIS_RUNNING_MS
+        : bootstrapStatusRef.current?.status === "running"
           ? SNAPSHOT_META_POLL_BOOTSTRAP_MS
           : SNAPSHOT_META_POLL_MS;
       timeoutId = window.setTimeout(() => {
@@ -508,12 +539,13 @@ export default function AnalysisStateProvider({ children }: { children: ReactNod
       bootstrapStatus,
       refreshSnapshotNow,
       refreshRunning,
+      analysisProgress,
       manualEvalOverride,
     }),
     [
       hydrated, training, analysis, analysisSnapshotStale, datasetFallbackNotice, degraded, alarms, monitoringHome,
       notifications, snapshot, snapshotStaleVersion, snapshotJustUpdated, bootstrapStatus, refreshSnapshotNow,
-      refreshRunning, manualEvalOverride,
+      refreshRunning, analysisProgress, manualEvalOverride,
     ],
   );
 

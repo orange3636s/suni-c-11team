@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import ActionPriorityBlock from "@/components/ActionPriorityBlock";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
@@ -8,7 +7,7 @@ import CoverageBlock from "@/components/CoverageBlock";
 import DashboardShell from "@/components/DashboardShell";
 import DataLimitationDiagnostics from "@/components/DataLimitationDiagnostics";
 import { DatasetMismatchWarning, LastRunNote, TrainingAnalysisDataNote } from "@/components/LastRunNote";
-import { ApiResponseError, triggerRefresh } from "@/lib/api";
+import { usePanelState } from "@/components/PanelStateProvider";
 import { buildMonitoringSnapshot, type MonitoringSnapshot } from "@/lib/monitoringSource";
 
 export default function MonitoringPage() {
@@ -17,35 +16,12 @@ export default function MonitoringPage() {
   // AnalysisStateProvider에 있어 탭을 옮겼다 돌아와도(페이지 언마운트)
   // 살아남는다 -- 하드 새로고침(조건 ③)만 이 컨텍스트 자체를 초기화한다.
   const {
-    hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome, refreshRunning,
+    hydrated, analysis, training, alarms, monitoringHome, setMonitoringHome,
     // TD-2: 컨텍스트의 자동 갱신 스냅샷 -- 상단 "분석 데이터" 파일명
     // 표기에만 쓴다.
     snapshot: refreshSnapshot,
   } = useAnalysisState();
-  // AF그룹: 모니터링 홈은 읽기 전용이 원칙이므로 이 버튼은 자동 갱신을
-  // 기다리지 않을 때의 보조 수단이다 -- 채워진 primary가 아니라 테두리
-  // 버튼으로 둔다. 클릭은 주기 잡과 같은 파이프라인(POST /api/state/refresh
-  // -> run_refresh_pipeline)을 1회 실행할 뿐, 이 화면이 직접 무언가를
-  // 계산하지 않는다.
-  const [manualRefreshPending, setManualRefreshPending] = useState(false);
-  const [manualRefreshError, setManualRefreshError] = useState<string | null>(null);
-  const refreshBusy = refreshRunning || manualRefreshPending;
-
-  async function handleManualRefresh() {
-    setManualRefreshError(null);
-    setManualRefreshPending(true);
-    try {
-      await triggerRefresh();
-    } catch (failure) {
-      setManualRefreshError(
-        failure instanceof ApiResponseError && failure.status === 409
-          ? "자동 갱신이 이미 진행 중입니다."
-          : "최신화를 시작하지 못했습니다.",
-      );
-    } finally {
-      setManualRefreshPending(false);
-    }
-  }
+  const { setAnalysisPanelOpen } = usePanelState();
   // A-9: alarms.createdAt도 캐시 키에 포함해야 한다 -- 알림 이력에서
   // 목표 수율·민감도를 바꾸면(alerts/page.tsx가 alarms.createdAt을
   // 갱신) 이 화면의 요약도 새 기준으로 다시 계산해야 하는데, 이 키가
@@ -111,20 +87,9 @@ export default function MonitoringPage() {
     <DashboardShell activeItem="모니터링 홈">
       <div className="rcPage">
         <div className="pageHeading">
-          <div className="monitoringHeadingRow">
-            <h1>모니터링 홈</h1>
-            {/* AF그룹: LAST RUN이 이미 아래 줄에 표시되므로 버튼 옆에
-                다시 적지 않는다. */}
-            <button
-              type="button"
-              className="button secondary monitoringRefreshButton"
-              onClick={() => void handleManualRefresh()}
-              disabled={refreshBusy}
-              title={refreshBusy ? "자동 갱신이 진행 중입니다" : "지금 자동 갱신 파이프라인을 1회 실행합니다"}
-            >
-              {refreshBusy ? "갱신 중…" : "↻ 최신화"}
-            </button>
-          </div>
+          {/* SF-1: "최신화" 버튼 제거 -- 모든 실행은 모델 분석 팝업의
+              [분석 시작] 하나로 일원화됐다. */}
+          <h1>모니터링 홈</h1>
           <p>엔지니어가 오늘 결정할 수 있는 것만 보여줍니다 — 조치 우선순위, 조치 가능 범위, 이 화면을 얼마나 믿을 수 있는가.</p>
           {snapshot?.createdAt && (
             <p className="sectionCaption">
@@ -135,7 +100,6 @@ export default function MonitoringPage() {
               />
             </p>
           )}
-          {manualRefreshError && <p className="notifyFieldError">{manualRefreshError}</p>}
         </div>
 
         {loading ? (
@@ -155,7 +119,10 @@ export default function MonitoringPage() {
         ) : !snapshot?.hasAnalysis ? (
           <section className="resultCard">
             <p className="emptyMessage">
-              아직 분석 결과가 없습니다. <Link href="/root-cause">원인 분석 탭</Link>에서 분석을 실행하세요.
+              분석 결과가 없습니다. 모델 분석에서 분석을 시작하세요.{" "}
+              <button type="button" className="button secondary" onClick={() => setAnalysisPanelOpen(true)}>
+                열기
+              </button>
             </p>
           </section>
         ) : (

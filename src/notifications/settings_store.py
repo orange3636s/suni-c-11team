@@ -287,10 +287,28 @@ def get_settings_summary(store: RuntimeStore) -> dict[str, Any]:
             )
         ),
         "conditions": conditions,
+        # SD-1: "알림·자동화 설정" 팝업의 자동화 섹션 -- 비밀번호는 절대
+        # 포함하지 않는다(환경변수 DB_PASSWORD로만 받는다).
+        "automation": _automation_summary(store),
         # EA그룹: 봇 username을 백엔드 단일 소스로 -- 프런트가 자기
         # 환경변수를 따로 읽고 없으면 존재하지 않는 봇 이름으로 링크를
         # 만들던 문제(하드코딩 폴백)를 없앤다. 가공하지 않고 그대로
         # 내려보낸다 -- 미설정(None)이면 그대로 null. 토큰은 여기 절대
         # 포함하지 않는다.
         "telegram_bot_username": settings.telegram_bot_username,
+    }
+
+
+def _automation_summary(store: RuntimeStore) -> dict[str, Any]:
+    record = store.get_automation_settings()
+    return {
+        "enabled": bool(record.get("enabled")),
+        "sql_host": record.get("sqlHost") or "",
+        "sql_port": record.get("sqlPort") or "",
+        "sql_db": record.get("sqlDb") or "",
+        "sql_user": record.get("sqlUser") or "",
+        "refresh_interval_minutes": record.get("refreshIntervalMinutes") or 60,
+        "last_run_at": record.get("lastRunAt"),
+        "last_run_status": record.get("lastRunStatus"),
+        "last_run_sent_count": record.get("lastRunSentCount"),
     }

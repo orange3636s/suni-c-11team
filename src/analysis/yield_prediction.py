@@ -113,6 +113,57 @@ class YieldPredictionTable:
     primary_factors: dict[str, ParetoFactor | None] = field(default_factory=dict)  # 타깃별 1위(참고/발송용)
 
 
+def serialize_yield_prediction_table(
+    table: "YieldPredictionTable", *, train_dataset_id: str, eval_dataset_id: str
+) -> dict:
+    """`YieldPredictionTable`(frozen dataclass)을 `GET /api/alerts/ranking`
+    응답과 동일한 JSON-safe dict로 변환한다. SC그룹: "모델 분석" 파이프라인이
+    스냅샷에 캐시하는 값과 라이브 조회 응답이 같은 모양이어야 프런트가
+    출처를 구분하지 않고 그대로 렌더링할 수 있다 -- 한 곳(여기)에서만
+    만든다."""
+    return {
+        "train_dataset_id": train_dataset_id,
+        "eval_dataset_id": eval_dataset_id,
+        "total_wafers": table.total_wafers,
+        "candidates": [
+            {
+                "lot_wafer_id": c.lot_wafer_id,
+                "lot_id": c.lot_id,
+                "y": c.y,
+                "y_components": c.y_components,
+                "cells": c.cells,
+                "core_factors": {
+                    target: {
+                        "feature": cell.feature,
+                        "contribution_pct": cell.contribution_pct,
+                        "rank_used": cell.rank_used,
+                        "factor_value": cell.factor_value,
+                    }
+                    for target, cell in c.core_factors.items()
+                },
+                "reliability": {
+                    "count": c.reliability.count,
+                    "measured": [{"target": t, "feature": f} for t, f in c.reliability.measured],
+                    "unmeasured": [{"target": t, "feature": f} for t, f in c.reliability.unmeasured],
+                },
+                "recommendation": {
+                    "text": c.recommendation.text,
+                    "adjustable_targets": list(c.recommendation.adjustable_targets),
+                    "measurement_gap_targets": list(c.recommendation.measurement_gap_targets),
+                },
+            }
+            for c in table.candidates
+        ],
+        "unmeasured_wafer_ids": table.unmeasured_wafer_ids,
+        "unmeasured_count": len(table.unmeasured_wafer_ids),
+        "fallback_summary": {
+            "rank_counts": {str(rank): count for rank, count in table.fallback_summary.rank_counts.items()},
+            "none_count": table.fallback_summary.none_count,
+            "total_combinations": table.fallback_summary.total_combinations,
+        },
+    }
+
+
 def _rank5_factors(train_df: pd.DataFrame, schema: Schema) -> dict[str, list[ParetoFactor]]:
     return {target: select_top_factors(train_df, schema, target, limit=MAX_FALLBACK_RANK) for target in FAIL_RATE_TARGETS}
 

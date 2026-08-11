@@ -54,8 +54,25 @@ def _per_target_r2_regressions(
 # 백엔드 로직이 바뀐 뒤에도 옛 스냅샷이 새 화면을 덮어쓴다).
 # v4: analysis 블록에 FMEA 분석표(fmea)가 추가됐다 -- 모니터링 홈 재편
 # (지시서 IA)로 옛 스냅샷에는 이 키가 없다.
-REFRESH_SNAPSHOT_SCHEMA_VERSION = 5
+# v6: 사이드바 4버튼 재편(지시서 SA~SF) -- analysis 블록에 수율 예측
+# 테이블(yieldPrediction)이 추가됐다. 네 화면(모니터링/트리맵/원인분석/
+# 수율예측)이 하나의 analysis_id를 공유하도록 "모델 분석" 파이프라인이
+# 수율 예측도 함께 계산해 캐시한다 -- 옛 스냅샷에는 이 키가 없다.
+REFRESH_SNAPSHOT_SCHEMA_VERSION = 6
 REFRESH_SNAPSHOT_STATE_KEY = "automation:refresh_snapshot"
+
+# SA~SF: 4화면 원자적 분석 진행 상태 -- "분석 시작"이 도는 동안 네 화면이
+# 같은 진행 표시("분석 진행 중… (2/4) 원인 분석")를 보여줄 수 있게
+# app_state에 얹는다(전용 테이블을 새로 만들지 않는다 -- bootstrap_status와
+# 같은 패턴). 완료/실패 시 지운다 -- 값이 남아 있으면 "아직 진행 중"으로
+# 오판한다.
+ANALYSIS_PROGRESS_STATE_KEY = "automation:analysis_progress"
+
+# SD: 자동화(주기 SQL 수율 예측 발송) 설정 -- "모델 학습" 팝업이 쓰던
+# `training` 슬롯과 분리한다(자동화는 학습과 무관한 별개 개념이므로 같은
+# 슬롯에 얹으면 "학습 데이터 저장"과 "자동화 설정 저장"이 서로의 필드를
+# 덮어쓸 위험이 있다).
+AUTOMATION_SETTINGS_STATE_KEY = "automation:settings"
 
 # W-2/W-6: 첫 기동 스냅샷 부트스트랩 -- 단일 실행 잠금과 진행 상태를
 # app_state 테이블에 얹는다(전용 테이블을 새로 만들지 않는다). 잠금은
@@ -244,6 +261,20 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_alert_snapshots_created
                 ON alert_snapshots(created_at DESC);
+                CREATE TABLE IF NOT EXISTS notify_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sent_at TEXT NOT NULL,
+                    trigger TEXT NOT NULL,
+                    channels_json TEXT NOT NULL DEFAULT '[]',
+                    dataset_label TEXT,
+                    model_version TEXT,
+                    status TEXT NOT NULL,
+                    skip_reason TEXT,
+                    message_text TEXT,
+                    sent_count INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_notify_history_sent_at
+                ON notify_history(sent_at DESC);
                 """
             )
             # D-7: notify_sent_log은 원래 채널 구분 없이 (dataset, wafer,
@@ -1110,6 +1141,132 @@ class RuntimeStore:
             value = dict(row)
             value["summarized"] = bool(value["summarized"])
             value["channels"] = json.loads(value.pop("channels_json") or "{}")
+            results.append(value)
+        return results
+
+    # -- SC/SF-3: "분석 시작"(4화면 원자적 파이프라인) 진행 상태 ----------
+
+    def set_analysis_progress(self, *, stage: str, index: int, total: int, analysis_id: str) -> None:
+        self.set_app_state(
+            ANALYSIS_PROGRESS_STATE_KEY,
+            {"stage": stage, "index": index, "total": total, "analysis_id": analysis_id},
+        )
+
+    def get_analysis_progress(self) -> dict[str, Any] | None:
+        return self.get_app_state(ANALYSIS_PROGRESS_STATE_KEY)
+
+    def clear_analysis_progress(self) -> bool:
+        return self.delete_app_state(ANALYSIS_PROGRESS_STATE_KEY)
+
+    # -- SD: 자동화(주기 SQL 수율 예측 발송) 설정 --------------------------
+    # "모델 학습" 슬롯(`training`)과 분리된 전용 슬롯 -- SD-1 팝업이 읽고
+    # 쓴다. 저장되지 않은 값은 전부 비활성/미설정으로 취급한다.
+
+    _AUTOMATION_SETTINGS_DEFAULTS: dict[str, Any] = {
+        "enabled": False,
+        "sqlHost": "",
+        "sqlPort": "",
+        "sqlDb": "",
+        "sqlUser": "",
+        "refreshIntervalMinutes": 60,
+        "lastRunAt": None,
+        "lastRunStatus": None,
+        "lastRunSentCount": None,
+    }
+
+    def get_automation_settings(self) -> dict[str, Any]:
+        stored = self.get_app_state(AUTOMATION_SETTINGS_STATE_KEY) or {}
+        return {**self._AUTOMATION_SETTINGS_DEFAULTS, **stored}
+
+    def save_automation_settings(self, **fields: Any) -> dict[str, Any]:
+        """부분 갱신 -- 넘긴 필드만 덮어쓰고 나머지는 기존 값을 유지한다
+        (SD-1 폼 저장과 SD-2 잡의 lastRunAt 갱신이 서로의 필드를 지우지
+        않게 한다)."""
+        current = self.get_automation_settings()
+        current.update(fields)
+        self.set_app_state(AUTOMATION_SETTINGS_STATE_KEY, current)
+        return current
+
+    # -- SE: 알림 기록 (발송 메시지 전문 보관) -----------------------------
+
+    NOTIFY_HISTORY_MAX_ROWS = 100
+    NOTIFY_HISTORY_MAX_AGE_DAYS = 30
+
+    def record_notify_history(
+        self,
+        *,
+        trigger: str,
+        channels: list[str],
+        dataset_label: str | None,
+        model_version: str | None,
+        status: str,
+        skip_reason: str | None = None,
+        message_text: str | None = None,
+        sent_count: int = 0,
+    ) -> None:
+        """SE-3: 발송 당시의 메시지 원문을 그대로 저장한다 -- 나중에
+        재계산하지 않는다(지금 데이터로 다시 만들면 다른 결과가 나온다).
+        발송/건너뜀 둘 다 기록한다(SE-2 "건너뜀도 표시")."""
+        now = datetime.now(timezone.utc).isoformat()
+        with _lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO notify_history
+                (sent_at, trigger, channels_json, dataset_label, model_version, status, skip_reason, message_text, sent_count)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    now,
+                    trigger,
+                    self._json(list(channels)),
+                    dataset_label,
+                    model_version,
+                    status,
+                    skip_reason,
+                    message_text,
+                    int(sent_count),
+                ),
+            )
+        self._purge_notify_history_locked()
+
+    def _purge_notify_history_locked(self) -> int:
+        """SE-4: 최근 100건 또는 30일 중 더 좁은 쪽을 넘는 행은 지운다 --
+        무한히 쌓이면 DB가 커진다. 쓰기 경로에서 매번 호출해 별도 정리
+        잡 없이도 상한을 유지하고, 정리 잡(run_notify_history_cleanup_job)은
+        서버가 오래 안 쓰여 자연 삽입이 없는 경우를 위한 보조 수단이다."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=self.NOTIFY_HISTORY_MAX_AGE_DAYS)).isoformat()
+        with _lock, self._connect() as connection:
+            deleted = connection.execute(
+                "DELETE FROM notify_history WHERE sent_at < ?", (cutoff,)
+            ).rowcount
+            row = connection.execute("SELECT COUNT(*) AS n FROM notify_history").fetchone()
+            total = int(row["n"]) if row else 0
+            if total > self.NOTIFY_HISTORY_MAX_ROWS:
+                overflow = total - self.NOTIFY_HISTORY_MAX_ROWS
+                ids = connection.execute(
+                    "SELECT id FROM notify_history ORDER BY sent_at ASC LIMIT ?", (overflow,)
+                ).fetchall()
+                if ids:
+                    connection.executemany("DELETE FROM notify_history WHERE id=?", [(row["id"],) for row in ids])
+                    deleted += len(ids)
+        if deleted:
+            logger.info("notify_history 정리: %d건 삭제 (100건/30일 보관 정책)", deleted)
+        return deleted
+
+    def purge_old_notify_history(self) -> int:
+        """정기 정리 잡(run_notify_history_cleanup_job)이 호출하는 공개
+        진입점 -- 발송이 뜸해 쓰기 경로의 자연스러운 정리가 오래 안 도는
+        경우를 대비한 보조 수단이다."""
+        return self._purge_notify_history_locked()
+
+    def list_notify_history(self, limit: int = 100) -> list[dict[str, Any]]:
+        with _lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM notify_history ORDER BY sent_at DESC LIMIT ?",
+                (min(max(limit, 1), self.NOTIFY_HISTORY_MAX_ROWS),),
+            ).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["channels"] = json.loads(value.pop("channels_json") or "[]")
             results.append(value)
         return results
 

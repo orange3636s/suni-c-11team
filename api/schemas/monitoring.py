@@ -34,3 +34,7 @@ class ConfigTreemapResponse(BaseModel):
     groups: list[ConfigTreemapGroupSchema]
     empty_reason: str | None = None
     target_provenance: dict | None = None
+    # SC그룹: "모델 분석" 파이프라인이 마지막으로 저장한 스냅샷의
+    # analysis_id -- 모니터링/원인분석/수율예측과 같은 값이면 네 화면이
+    # 같은 분석 회차를 보고 있다는 뜻이다. 스냅샷이 없으면 null.
+    analysis_id: str | None = None
