@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { DIVERGING_GREEN, DIVERGING_RED } from "@/lib/constants";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
@@ -72,11 +72,16 @@ export default function ConfigTreemap({
   step,
   data,
   loading,
+  headerRight,
 }: {
   target: string;
   step: number;
   data: ConfigTreemapResponse | null;
   loading: boolean;
+  // B-3: 스텝 선택 드롭다운은 다섯 트리맵이 함께 쓰는 컨트롤이라 카드
+  // 자체는 모른다 -- 부모(config-treemap/page.tsx)가 첫 번째(Y1) 카드에만
+  // 넘겨서 같은 컨트롤이 다섯 번 반복되지 않게 한다.
+  headerRight?: ReactNode;
 }) {
   const theme = useResolvedTheme();
   const router = useRouter();
@@ -119,6 +124,7 @@ export default function ConfigTreemap({
         <div>
           <h2>Config vs {target} 트리맵</h2>
         </div>
+        {headerRight}
       </div>
 
       {!data && loading ? (

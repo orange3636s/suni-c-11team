@@ -15,10 +15,11 @@ const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
 type StepCache = Record<number, Record<string, ConfigTreemapResponse | null>>;
 
 /** Config별 트리맵 탭 (작업 지시서 WH) -- 모니터링에서 분리한 설비 구성
- * 트리맵. Y1~Y5 다섯 트리맵을 세로로 일렬 배치하고, 스텝 선택은 상단에
- * 하나만 둔다 -- 다섯 개가 함께 바뀐다. 다섯 응답을 Promise.all로 한
- * 번에 묶어 스텝별로 캐시한다(WH-4) -- 스텝을 다시 선택해도 재조회하지
- * 않는다. */
+ * 트리맵. Y1~Y5 다섯 트리맵을 세로로 일렬 배치하고, 스텝 선택은 첫
+ * 카드(Y1)의 헤더에 하나만 둔다 -- 다섯 개가 함께 바뀐다(같은 컨트롤이
+ * 다섯 번 반복되지 않도록 ConfigTreemap의 `headerRight` slot으로 넘긴다).
+ * 다섯 응답을 Promise.all로 한 번에 묶어 스텝별로 캐시한다(WH-4) --
+ * 스텝을 다시 선택해도 재조회하지 않는다. */
 export default function ConfigTreemapPage() {
   const { analysis } = useAnalysisState();
   const datasetId = analysis?.dataset ?? "train";
@@ -95,37 +96,33 @@ export default function ConfigTreemapPage() {
           <p>스텝 하나를 고르면 Model → EQ → Chamber 조합별 Y1~Y5 평균 불량률을 한 번에 봅니다.</p>
           <PageHeaderMeta />
           <SampleNotice sampleInfo={sampleInfo} />
-        </div>
-
-        <section className="resultCard">
-          <div className="sectionHeading compact">
-            <div>
-              <span className="sectionLabel">스텝 선택</span>
-            </div>
-            <label className="monitoringStepSelect">
-              스텝
-              <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
-                {stepOptions.map((s) => (
-                  <option key={s} value={s}>Step{s}</option>
-                ))}
-              </select>
-            </label>
-          </div>
           {!anySignificant && (
             <p className="sectionCaption">
               FDR 보정 후 유의한 Config 조합이 없습니다 ({CONFIG_SCREENING_TEST_COUNT}건 검정, 통과 {CONFIG_SCREENING_PASS_COUNT}건).
               색 대신 수치로 비교하세요.
             </p>
           )}
-        </section>
+        </div>
 
-        {TARGETS.map((target) => (
+        {TARGETS.map((target, index) => (
           <ConfigTreemap
             key={target}
             target={target}
             step={step}
             data={stepData?.[target] ?? null}
             loading={isLoading}
+            headerRight={
+              index === 0 ? (
+                <label className="monitoringStepSelect">
+                  스텝
+                  <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
+                    {stepOptions.map((s) => (
+                      <option key={s} value={s}>Step{s}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : undefined
+            }
           />
         ))}
       </div>
