@@ -25,7 +25,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   { id: WELCOME_ID, from: "suni", text: "무엇을 도와드릴까요?", status: "done" },
 ];
 
-type ChipIconKind = "chart" | "help" | "alert" | "info" | "domain";
+type ChipIconKind = "chart" | "help" | "alert" | "info";
 type ExampleChip = { icon: ChipIconKind; text: string };
 
 // 프리셋을 네 갈래(해석/기준/한계/기능)로 나눈다 -- 해석 질문만 보여주면
@@ -62,11 +62,6 @@ const MARQUEE_ROW_2: ExampleChip[] = [
   { icon: "info", text: "이 화면은 무엇을 보여주나요?" },
   { icon: "info", text: "자동 갱신은 어떻게 동작하나요?" },
   { icon: "info", text: "알림은 언제 발송되나요?" },
-  // 도메인 지식(공정 일반) -- 이 스냅샷의 인자명을 끌어오지 않고
-  // 일반 반도체 공정 지식으로만 답한다(prompts/chat_system.md
-  // "## 반도체 도메인 지식 [일반]" 참고). 위 세 카테고리는 모두 이
-  // 분석 결과나 대시보드 기능을 묻지만, 이 카테고리만 공정 자체를 묻는다.
-  { icon: "domain", text: "식각 공정 불량을 유발하는 주요 변인은 무엇인가요?" },
 ];
 // api/routes/chat.py의 REPORT_KEYWORDS와 반드시 같은 키워드 집합을
 // 유지한다 -- "요약해줘"·"정리해줘"는 후속 질문에서도 흔히 쓰이는 일반
@@ -708,15 +703,6 @@ function ChipIcon({ kind }: { kind: ChipIconKind }) {
           <circle cx="12" cy="12" r="10" />
           <path d="M12 16v-5" />
           <path d="M12 8h.01" />
-        </svg>
-      );
-    // 도메인 지식(공정 일반)
-    case "domain":
-      return (
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M9 3h6" />
-          <path d="M10 3v5.5L4.5 18a2 2 0 0 0 1.7 3h11.6a2 2 0 0 0 1.7-3L14 8.5V3" />
-          <path d="M7.5 14h9" />
         </svg>
       );
   }
