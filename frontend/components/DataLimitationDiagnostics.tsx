@@ -13,7 +13,7 @@ import type {
 
 /** 데이터 한계 진단 (모니터링 홈) -- 조치 블록 바로 다음에 둔다("계측을
  * 늘려야 한다"의 근거가 여기 있다). 다섯 블록: 좌측에 계측 편향(MNAR,
- * 10행)·분산 분해, 우측에 불량 원인별 변동 기여·핵심 인자 커버리지·
+ * 상위 5행 · 백엔드는 10행 전달)·분산 분해, 우측에 불량 원인별 변동 기여·핵심 인자 커버리지·
  * 불량 원인 독립성을 세로로 쌓는다(좌우 세로 길이를 맞추기 위한 배치 --
  * 우측 4블록이 좌측 1블록보다 훨씬 길어 빈 공간이 생기던 문제를
  * 해소했다). 다섯 블록 전부 `LimitBlock` 하나를 공유해 제목·설명·
@@ -31,7 +31,10 @@ export default function DataLimitationDiagnostics({
   actionPriority?: ActionPriorityPayload | null;
 }) {
   if (!fmea) return null;
-  const mnarRows = fmea.mnar_rate_report; // 백엔드가 이미 배수 상위 10개로 내려보낸다
+  // 백엔드는 계속 배수 상위 10개를 내려보낸다 -- 5개만 그리는 것은
+  // 렌더링 시점의 선택이다(MNAR_VISIBLE_ROWS 참고). 6~10위 데이터가
+  // MnarInterpretation의 "상위 N개만 표시했습니다" 문장 근거로 쓰인다.
+  const mnarRows = fmea.mnar_rate_report;
   const vd = fmea.variance_decomposition;
   const modeShare = actionPriority?.mode_variance_share ?? null;
   const coverage = fmea.core_factor_coverage;
@@ -138,11 +141,16 @@ function mnarTier(ratio: number): "red" | "amber" | "muted" {
   return "muted";
 }
 
+// 계측 편향은 상위 몇 개만 그린다 -- 백엔드는 배수 상위 10개를 계속 내려보내고,
+// 6위 아래는 MnarInterpretation의 "N배 이하" 문장이 대신 요약한다.
+// 이 값을 바꾸면 해석 문장의 순위 표기도 함께 따라간다.
+const MNAR_VISIBLE_ROWS = 5;
+
 function MnarBlockBody({ rows }: { rows: MnarRateRow[] }) {
   if (rows.length === 0) return <p className="emptyMessage">표본이 부족해 계측 편향을 계산할 수 없습니다.</p>;
   return (
     <div className="mnarList">
-      {rows.map((row) => {
+      {rows.slice(0, MNAR_VISIBLE_ROWS).map((row) => {
         const maxRate = Math.max(row.overall_rate_pct, row.worst_decile_rate_pct, 1);
         const tier = mnarTier(row.ratio);
         return (
@@ -181,8 +189,8 @@ function MnarBlockBody({ rows }: { rows: MnarRateRow[] }) {
 function MnarInterpretation({ rows }: { rows: MnarRateRow[] }) {
   if (rows.length === 0) return null;
   const top = rows[0];
-  const belowTop5 = rows.slice(5);
-  const maxBelowTop5 = belowTop5.length > 0 ? Math.max(...belowTop5.map((r) => r.ratio)) : null;
+  const belowVisible = rows.slice(MNAR_VISIBLE_ROWS);
+  const maxBelowVisible = belowVisible.length > 0 ? Math.max(...belowVisible.map((r) => r.ratio)) : null;
   return (
     <>
       계측이 무작위였다면 두 막대의 높이가 같아야 합니다. 아래 막대가 길다는 것은 불량 징후를 보고 측정을 결정했다는
@@ -191,7 +199,8 @@ function MnarInterpretation({ rows }: { rows: MnarRateRow[] }) {
         {top.feature}은(는) {top.ratio.toFixed(2)}배로{" "}
       </b>
       {top.ratio >= 3 ? "사실상 사후 확인 계측입니다." : "계측이 결과를 보고 결정됐을 가능성이 있습니다."}
-      {maxBelowTop5 != null && ` 6위 아래는 ${maxBelowTop5.toFixed(1)}배 이하로 편향이 크지 않습니다.`}
+      {maxBelowVisible != null &&
+        ` 상위 ${MNAR_VISIBLE_ROWS}개만 표시했습니다 — ${MNAR_VISIBLE_ROWS + 1}위 아래는 ${maxBelowVisible.toFixed(1)}배 이하로 편향이 크지 않습니다.`}
     </>
   );
 }

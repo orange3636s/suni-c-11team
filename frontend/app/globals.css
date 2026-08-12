@@ -10742,7 +10742,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .coverageRowCaption{ margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* ---- 데이터 한계 진단(다섯 블록: MNAR·분산 분해·변동 기여·커버리지·독립성) ---- */
-/* 좌 2(MNAR 10행 · 분산 분해) · 우 3(변동 기여·커버리지·독립성). 1100px
+/* 좌 2(MNAR 상위 5행(백엔드는 10행 전달) · 분산 분해) · 우 3(변동 기여·커버리지·독립성). 1100px
    미만은 세로 스택. 다섯 블록이 .limitBlock 하나를 공유한다 -- 각자
    만들면 제목·설명·해석 간격이 갈린다. 블록 간 간격은 `.limitBlock +
    .limitBlock` 하나로만 만든다 -- 컨테이너 gap과 중복 적용하면 블록당
@@ -10761,7 +10761,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .limitBlockInterp b{ color: var(--text-primary); }
 .limitBlockInterp .limitBlockWarn{ color: var(--sig-red); }
 
-.mnarList{ display: flex; flex-direction: column; gap: 16px; }
+.mnarList{ display: flex; flex-direction: column; gap: 34px; }   /* 기존 16px · +72px -- 5행으로 줄어든 만큼 좌우 높이 차이를 흡수한다 */
 .mnarRow{ display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 10px; }
 .mnarLabel{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .mnarFeature{ color: var(--measured); font-size: var(--fs-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
