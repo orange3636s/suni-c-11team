@@ -73,6 +73,41 @@ BINNED_PROFILE_BINS = 12
 ALARM_RECORD_TRUNCATE_THRESHOLD = 200
 ALARM_RECORD_TRUNCATE_KEEP = 100
 
+# `action` derivation for the SUNI chatbot's "권장 조치" answers (see
+# `_build_action` and its use inside `build_chat_context` below). The LLM
+# never invents action text -- it only narrates whatever the backend
+# already decided to attach. Threshold from the offline validation
+# referenced in
+# prompts/chat_system.md's "## 검증 성적" section: recommendations below
+# this expected-recovery bar had a much lower real-risk hit rate than ones
+# at/above it.
+ACTION_MIN_EXPECTED_GAIN_PP = 0.5
+
+# NOTE: this report's `targets[].factors` only ever contains a factor that
+# already cleared the pipeline's own measurement-sufficiency bar (raw
+# p<0.05 on top of the per-kind MIN_N gates in
+# screening/selector.py) -- a *low* raw R/D measurement rate is normal here
+# (metrology is sampling-based, not full-lot: `n_missing_pct` sits at
+# ~85-95% for every one of this report's selected factors on the bundled
+# train.CSV, yet each still has n_observed in the thousands). So unlike the
+# yield-ranking screen's per-wafer "core factor measured?" flag
+# (`src/analysis/yield_prediction.py`'s `CoreFactorCell.measured`, narrated
+# in prompts/report_yield.md), there is no meaningful population-level
+# "unmeasured" gate to add here -- unmeasured/needs-more-measurement wafers
+# are a per-wafer question, not a per-factor one, and this report answers
+# per-factor questions.
+
+_ACTION_SCOPE_TEMPLATE = {
+    "R": "Step{step} 레시피 설정",
+    "D": "Step{step} 계측 · 설비 상태",
+    "Config": "Step{step} 장비 구성",
+}
+_ACTION_CHECKS_BY_KIND = {
+    "R": ["설정 상·하한 확인", "직전 배치와 설정 차이 대조"],
+    "D": ["계측 결과가 관리 대역 이탈", "해당 스텝 설비 상태 확인", "직전 스텝 산출물 확인"],
+    "Config": ["동일 스텝 다른 Config 대비 불량률 격차", "해당 장비 점검 대상"],
+}
+
 _INTERPRETATION_BY_SHAPE = {
     "monotonic_increasing": "값이 클수록 불량률이 상승하는 관계다. 값을 낮추는 방향의 조치가 유효하다.",
     "monotonic_decreasing": "값이 작을수록 불량률이 상승하는 관계다. 값을 높이는 방향의 조치가 유효하다.",
@@ -565,7 +600,62 @@ def _lot_range(meta: dict[str, Any]) -> str | None:
     return f"{lot_min}~{lot_max}"
 
 
-def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
+def _action_relation_note(
+    relation_shape: str | None, optimal_center: float | None, window: dict[str, Any] | None
+) -> str | None:
+    """Which direction to watch, derived purely from the already-computed
+    relation shape and recommended window -- never a new statistical
+    judgment, just wording chosen by a lookup on fields report.py already
+    produces."""
+    if window is None:
+        return None
+    lo, hi = window["lo"], window["hi"]
+    if relation_shape == "u_shape":
+        if optimal_center is None:
+            return f"양방향 이탈 모두 위험. {lo}~{hi} 복귀 대상"
+        return f"양방향 이탈 모두 위험. 최적중심 {optimal_center} 기준 {lo}~{hi} 복귀 대상"
+    if relation_shape == "monotonic_decreasing":
+        return f"한쪽 방향만 위험. {lo} 이상 유지 대상"
+    return f"한쪽 방향만 위험. {hi} 이하 유지 대상"
+
+
+def _build_action(
+    *,
+    kind: str,
+    step: int,
+    relation_shape: str | None,
+    optimal_center: float | None,
+    window: dict[str, Any] | None,
+    expected_gain_pp: float | None,
+    value: float | None,
+    severity: str | None,
+) -> dict[str, Any] | None:
+    """Derives the `action` object chat_system.md's "## 권장 조치를 물었을
+    때" section narrates -- the LLM is never asked to invent a setpoint
+    instruction, only to phrase whatever this function already decided.
+
+    A value already inside the recommended window, or an expected recovery
+    below the validated bar, drops the action entirely (return None) rather
+    than manufacturing a low-value recommendation.
+    """
+    if window is not None and value is not None and window["lo"] <= value <= window["hi"]:
+        return None
+    if expected_gain_pp is None or expected_gain_pp < ACTION_MIN_EXPECTED_GAIN_PP:
+        return None
+
+    scope = _ACTION_SCOPE_TEMPLATE.get(kind, "Step{step} 확인").format(step=step)
+    checks = list(_ACTION_CHECKS_BY_KIND.get(kind, ["확인 대상"]))
+    note = _action_relation_note(relation_shape, optimal_center, window)
+    if note:
+        checks.append(note)
+
+    action: dict[str, Any] = {"scope": scope, "checks": checks, "expected_gain_pp": expected_gain_pp}
+    if severity is not None:
+        action["urgency"] = severity
+    return action
+
+
+def build_chat_context(report: dict[str, Any], action_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Reshapes build_analysis_report's flat `alarms`/`recommendations`
     lists into `{summary, records[, records_truncated, records_total]}`
     for the SUNI chatbot -- so a question
@@ -578,27 +668,94 @@ def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
     tests, existing frontend consumers); only `/api/analysis/context`
     (and the chatbot's own grounding) sees this shape. Every other key
     is passed through unchanged.
+
+    `action_rows` is the monitoring home's action-priority table rows
+    (`api.routes.analysis._action_priority_payload("train")["rows"]`),
+    threaded in by the caller so this module never imports the api layer.
+    When given, every alarm record and every target's top factor gets an
+    `action` field attached (see `_build_action`) -- omitted (`None`) is
+    passed by callers (e.g. existing tests) that don't need `action`.
     """
     summary = report["summary"]
+
+    # (target, feature) -> expected_recovery_pp, from the monitoring home's
+    # own action-priority table (src/analysis/action_priority.py) -- reused
+    # as-is (see ACTION_MIN_EXPECTED_GAIN_PP's docstring), never
+    # recomputed here.
+    gain_by_target_feature = {
+        (row["target"], row["feature"]): row.get("expected_recovery_pp") for row in (action_rows or [])
+    }
 
     # binned_profile is chart-plotting data (12-point x/y profile) that no
     # chatbot prompt section reads -- dropped here (context payload only,
     # the download report keeps it) since it's the single largest
     # per-factor field and directly trades off against the alarm/
     # recommendation record budget below.
-    targets_out = [
-        {
-            **target_entry,
-            "factors": [
-                {k: v for k, v in factor.items() if k != "binned_profile"} for factor in target_entry["factors"]
-            ],
-        }
-        for target_entry in report["targets"]
-    ]
+    targets_out = []
+    for target_entry in report["targets"]:
+        target = target_entry["target"]
+        factors_out = []
+        for factor in target_entry["factors"]:
+            factor_out = {k: v for k, v in factor.items() if k != "binned_profile"}
+            action = _build_action(
+                kind=factor["kind"],
+                step=factor["step"],
+                relation_shape=factor["relation"]["shape"],
+                optimal_center=factor["relation"].get("optimal_center"),
+                window=factor["window"],
+                expected_gain_pp=gain_by_target_feature.get((target, factor["feature"])),
+                value=None,
+                severity=None,
+            )
+            if action is not None:
+                factor_out["action"] = action
+            factors_out.append(factor_out)
+        targets_out.append({**target_entry, "factors": factors_out})
+
+    # (target, feature) -> that target's top factor entry, so an alarm
+    # record (which only carries feature/kind/step/value) can look up the
+    # relation shape and recommended window it needs for its own `action`.
+    factor_by_target_feature = {
+        (t["target"], f["feature"]): f for t in targets_out for f in t["factors"]
+    }
 
     alarm_records = report["alarms"]
     alarms_truncated = len(alarm_records) > ALARM_RECORD_TRUNCATE_THRESHOLD
     kept_alarms = alarm_records[:ALARM_RECORD_TRUNCATE_KEEP] if alarms_truncated else alarm_records
+    records_out = []
+    for row in kept_alarms:
+        match = factor_by_target_feature.get((row["target"], row["feature"]))
+        action = _build_action(
+            kind=row["kind"],
+            step=row["step"],
+            relation_shape=match["relation"]["shape"] if match else None,
+            optimal_center=match["relation"].get("optimal_center") if match else None,
+            window=match["window"] if match else None,
+            expected_gain_pp=gain_by_target_feature.get((row["target"], row["feature"])),
+            value=row["value"],
+            severity=row["severity"],
+        )
+        record_out = {
+            "lot_wafer_id": row["lot_wafer_id"],
+            "lot_id": row["lot_id"],
+            "wafer_slot": row["wafer_slot"],
+            "step": row["step"],
+            "feature": row["feature"],
+            "kind": row["kind"],
+            "target": row["target"],
+            "value": row["value"],
+            "control_band": row["normal_range"],
+            "deviation": row["deviation"],
+            "direction": row["direction"],
+            "severity": row["severity"],
+            "actual_y_target": row["actual_y_target"],
+            "actual_y_final": row["actual_y_final"],
+            "config": row["config"],
+        }
+        if action is not None:
+            record_out["action"] = action
+        records_out.append(record_out)
+
     alarms_out = {
         "summary": {
             "n_wafers": summary["alarm_wafers"],
@@ -608,26 +765,7 @@ def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
             "normal_wafers": summary["normal_wafers"],
             "undecidable_wafers": summary["undecidable_wafers"],
         },
-        "records": [
-            {
-                "lot_wafer_id": row["lot_wafer_id"],
-                "lot_id": row["lot_id"],
-                "wafer_slot": row["wafer_slot"],
-                "step": row["step"],
-                "feature": row["feature"],
-                "kind": row["kind"],
-                "target": row["target"],
-                "value": row["value"],
-                "control_band": row["normal_range"],
-                "deviation": row["deviation"],
-                "direction": row["direction"],
-                "severity": row["severity"],
-                "actual_y_target": row["actual_y_target"],
-                "actual_y_final": row["actual_y_final"],
-                "config": row["config"],
-            }
-            for row in kept_alarms
-        ],
+        "records": records_out,
         "records_truncated": alarms_truncated,
         "records_total": len(alarm_records),
     }
