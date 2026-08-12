@@ -7,10 +7,12 @@ import ChartExportButton from "@/components/ChartExportButton";
 import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
-import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
+import { SORT_OPTION_LABEL, type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
+import { FavoriteStarButton } from "@/components/FavoriteStarButton";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
-import { DatasetMismatchWarning, PageHeaderMeta } from "@/components/LastRunNote";
+import { DatasetMismatchWarning } from "@/components/LastRunNote";
+import { PageHeader } from "@/components/PageHeader";
 import SampleNotice from "@/components/SampleNotice";
 import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
@@ -23,13 +25,11 @@ import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
 import { fitDefectRateCurve } from "@/lib/defectRateCurve";
 import { useIsMobileLayout } from "@/lib/useMediaQuery";
 import {
-  createFavorite,
-  deleteFavorite,
   getDatasetSchema,
-  getFavorites,
   getScreeningScatter,
   getScreeningScatterCategorical,
 } from "@/lib/api";
+import { useFavoriteToggle } from "@/lib/useFavoriteToggle";
 import type {
   CategoricalScatterResponse,
   ConfidenceTier,
@@ -203,75 +203,14 @@ function RootCauseContent() {
     };
   }, [datasetId]);
 
-  // 즐겨찾기 -- `${dataset}::${target}::${feature}::${viewType}` ->
-  // favorite_id. viewType을 키에 포함해야 한다 -- 안 그러면 같은
-  // 인자를 Box 뷰로 저장하려는 별 클릭이 기존 Scatter 즐겨찾기와 같은
-  // 키로 잡혀 그것을 지워버린다. 목록은 마운트 시 한 번만 불러온다
-  // (브라우저 저장소 금지, 서버가 유일한 출처). 별 버튼은 이 맵에 키가
-  // 있는지로만 채움 여부를 판단한다.
-  const [favoriteIdByKey, setFavoriteIdByKey] = useState<Record<string, string>>({});
-  function favoriteKeyOf(s: { dataset: string; target: string; feature: string; viewType: string }): string {
-    return `${s.dataset}::${s.target}::${s.feature}::${s.viewType}`;
-  }
-  useEffect(() => {
-    let cancelled = false;
-    getFavorites()
-      .then((response) => {
-        if (cancelled) return;
-        const map: Record<string, string> = {};
-        for (const item of response.items) {
-          map[favoriteKeyOf(item.snapshot)] = item.favorite_id;
-        }
-        setFavoriteIdByKey(map);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // 생성/삭제 요청이 아직 끝나지 않은 키는 다시 받지 않는다 --
-  // 빠른 더블클릭 시 두 호출 모두 같은(아직 갱신 전) favoriteIdByKey를
-  // 보고 둘 다 "생성" 경로로 들어가 중복 레코드가 생기고, 클라이언트는
-  // 마지막 id만 기억해 나머지 하나는 지울 수 없는 좀비로 남는다. 이
-  // 가드는 useState가 아니라 ref다 -- 같은 렌더에서 연달아 호출되면
-  // useState는 아직 반영 전(stale)이라 막지 못한다.
-  const pendingFavoriteKeysRef = useRef<Set<string>>(new Set());
-  const [pendingFavoriteKeys, setPendingFavoriteKeys] = useState<Set<string>>(new Set());
-
-  async function toggleFavorite(snapshot: FavoriteSnapshot) {
-    const key = favoriteKeyOf(snapshot);
-    if (pendingFavoriteKeysRef.current.has(key)) return;
-    pendingFavoriteKeysRef.current.add(key);
-    setPendingFavoriteKeys(new Set(pendingFavoriteKeysRef.current));
-    try {
-      const existingId = favoriteIdByKey[key];
-      if (existingId) {
-        setFavoriteIdByKey((previous) => {
-          const next = { ...previous };
-          delete next[key];
-          return next;
-        });
-        try {
-          await deleteFavorite(existingId);
-        } catch {
-          // Best-effort -- a failed unfavorite just leaves the star filled;
-          // the user can retry.
-          setFavoriteIdByKey((previous) => ({ ...previous, [key]: existingId }));
-        }
-        return;
-      }
-      try {
-        const created = await createFavorite(snapshot);
-        setFavoriteIdByKey((previous) => ({ ...previous, [key]: created.favorite_id }));
-      } catch {
-        // Best-effort -- 저장 실패 시 별은 그대로 빈 채로 남는다.
-      }
-    } finally {
-      pendingFavoriteKeysRef.current.delete(key);
-      setPendingFavoriteKeys(new Set(pendingFavoriteKeysRef.current));
-    }
-  }
+  // 즐겨찾기 -- 산점도·박스플롯·파레토·히트맵 넷이 이 페이지 안에서
+  // 같은 토글 로직(생성/삭제·중복 방지)을 공유한다. Config별 트리맵은
+  // 별도 페이지라 자기 인스턴스를 따로 갖는다(frontend/lib/useFavoriteToggle).
+  const { isFavorited: isFavoritedSnapshot, isFavoritePending: isFavoritePendingSnapshot, toggleFavorite } = useFavoriteToggle();
+  // 히트맵의 즐겨찾기 별은 "지금 이 정렬 기준"이 이미 저장돼 있는지
+  // 보여줘야 한다 -- 정렬은 CorrelationHeatmap 내부 상태라, 바뀔 때마다
+  // (마운트 포함) onHeatmapSortModeChange로 이 값을 받아 둔다.
+  const [heatmapSortForFavorite, setHeatmapSortForFavorite] = useState(searchParams.get("heatmapSort") || "max_adj_r2");
 
   const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string; isConfig: boolean } | null>(null);
@@ -463,8 +402,10 @@ function RootCauseContent() {
     // viewType별로 별도 즐겨찾기이므로, 채움 여부도 viewType별로
     // 따로 물어야 한다 -- NumericFactorCard는 자기 view 상태를 알므로
     // 함수로 넘겨 카드 내부에서 평가하게 한다.
-    const isFavorited = (viewType: string) => Boolean(favoriteIdByKey[`${datasetId}::${target}::${item.feature}::${viewType}`]);
-    const isFavoritePending = (viewType: string) => pendingFavoriteKeys.has(`${datasetId}::${target}::${item.feature}::${viewType}`);
+    const isFavorited = (viewType: string) =>
+      isFavoritedSnapshot({ dataset: datasetId, target, feature: item.feature, viewType: viewType as FavoriteSnapshot["viewType"] });
+    const isFavoritePending = (viewType: string) =>
+      isFavoritePendingSnapshot({ dataset: datasetId, target, feature: item.feature, viewType: viewType as FavoriteSnapshot["viewType"] });
     if (!isConfig) {
       return (
         <NumericFactorCard
@@ -568,6 +509,21 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runState]);
 
+  // 즐겨찾기의 히트맵 카드를 열었을 때(`?heatmapSort=`) 정렬 기준은
+  // CorrelationHeatmap이 initialSortMode로 스스로 복원하므로, 여기서는
+  // 그 카드로 스크롤만 시켜준다.
+  const heatmapDeepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (heatmapDeepLinkHandled.current || runState !== "done") return;
+    if (!searchParams.get("heatmapSort")) return;
+    heatmapDeepLinkHandled.current = true;
+    const timer = window.setTimeout(() => {
+      document.getElementById("correlationHeatmapCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runState]);
+
   useEffect(() => {
     if (!pendingScrollFeature) return;
     const timer = window.setTimeout(() => {
@@ -622,21 +578,17 @@ function RootCauseContent() {
 
   return (
     <DashboardShell activeItem="원인 분석">
-      <section className="uploadIntro pageHeading">
-        <span className="eyebrow">인자 진단</span>
-        <h1>원인 분석</h1>
-        {/* 첫 줄은 1280px에서 한 줄에 들어가도록 word-break: keep-all만
-            쓴다 -- white-space: nowrap과 함께 쓰지 않는다(좁은 화면에서
-            잘림). */}
-        <p className="rootCauseIntro">
-          타깃별 Pareto와 강함·보통 등급 인자의 산점도·Box Plot을 확인합니다.
-          <br />
-          권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
-        </p>
-        {/* 여섯 화면 공통 헤더 메타(마지막 실행·데이터셋·학습/분석 데이터
-            파일명). 화면 하단에 같은 정보를 중복 렌더하지 않는다. */}
-        <PageHeaderMeta />
-      </section>
+      <PageHeader
+        eyebrow="인자 진단"
+        title="원인 분석"
+        description={
+          <>
+            타깃별 Pareto와 강함·보통 등급 인자의 산점도·Box Plot을 확인합니다.
+            <br />
+            권장 구간은 통계(SPC)와 학습(ML) 두 방식을 비교해 나은 쪽을 채택합니다.
+          </>
+        }
+      />
 
       {/* 즐겨찾기 딥링크(?dataset=)가 현재 분석과 다른 데이터셋을 가리키는
           경우에도 불일치가 발생하므로 항상 렌더한다. */}
@@ -672,6 +624,22 @@ function RootCauseContent() {
         onHeatmapCellSelect={handleHeatmapSelect}
         heatmapInitialCache={analysis?.heatmap ?? EMPTY_HEATMAP_CACHE}
         onHeatmapCacheUpdate={(cache) => setAnalysis((previous) => (previous ? { ...previous, heatmap: cache } : previous))}
+        heatmapInitialSortMode={searchParams.get("heatmapSort")}
+        onHeatmapSortModeChange={setHeatmapSortForFavorite}
+        heatmapFavorited={isFavoritedSnapshot({ dataset: datasetId, target: "", feature: "", viewType: "heatmap", sort: heatmapSortForFavorite })}
+        heatmapFavoritePending={isFavoritePendingSnapshot({ dataset: datasetId, target: "", feature: "", viewType: "heatmap", sort: heatmapSortForFavorite })}
+        onHeatmapToggleFavorite={(sortMode) =>
+          toggleFavorite({
+            dataset: datasetId,
+            target: "",
+            feature: "",
+            viewType: "heatmap",
+            isConfig: false,
+            interpretation: `R, D vs Y1~Y5 상관관계 히트맵 · ${SORT_OPTION_LABEL[sortMode as keyof typeof SORT_OPTION_LABEL] ?? sortMode} 순`,
+            championVersion,
+            sort: sortMode,
+          })
+        }
       />
 
       {analysisVisible && (
@@ -786,6 +754,19 @@ function RootCauseContent() {
                   n80={activeParetoResponse.n80}
                   datasetId={datasetId}
                   onBarClick={handleParetoBarClick}
+                  favorited={isFavoritedSnapshot({ dataset: datasetId, target: activeTarget, feature: "", viewType: "pareto" })}
+                  favoritePending={isFavoritePendingSnapshot({ dataset: datasetId, target: activeTarget, feature: "", viewType: "pareto" })}
+                  onToggleFavorite={() =>
+                    toggleFavorite({
+                      dataset: datasetId,
+                      target: activeTarget,
+                      feature: "",
+                      viewType: "pareto",
+                      isConfig: false,
+                      interpretation: `R/D/Config vs ${activeTarget} 파레토 · 상위 ${activeParetoItems.length}개 인자`,
+                      championVersion,
+                    })
+                  }
                 />
               )}
 
@@ -1008,23 +989,29 @@ function formatNum1(value: number): string {
 /** 타깃당 1개, 화면 상단에 고정되는 파레토 카드.
  * ParetoChart를 non-embedded(기본) 모드로 그린다 -- 그쪽이 이미 소유한
  * 제목("R/D/Config vs {target}")·등급 범례 헤더를 그대로 쓰고,
- * `headerActions`로 이미지 저장 버튼만 그 헤더 안에 얹는다. 이 경로를 쓰는
- * 곳은 여기뿐이다(인자 카드는 embedded, 즐겨찾기 썸네일은
- * embedded+thumbnail로 부른다). 인자 카드와 달리 즐겨찾기 별은 없다 --
- * 이 카드는 특정 (타깃, 인자) 조합이 아니라 타깃 전체의 순위를 보여줘
- * 즐겨찾기 스냅샷(dataset+target+feature) 모델과 맞지 않는다. */
+ * `headerActions`로 즐겨찾기 별 + 이미지 저장 버튼을 그 헤더 안에 얹는다.
+ * 이 경로를 쓰는 곳은 여기뿐이다(인자 카드는 embedded, 즐겨찾기 썸네일은
+ * embedded+thumbnail로 부른다). 즐겨찾기 스냅샷은 특정 인자가 아니라
+ * 타깃 전체 순위를 가리키므로 feature를 빈 문자열로 둔다(viewType
+ * "pareto"). */
 function PinnedParetoCard({
   target,
   items,
   n80,
   datasetId,
   onBarClick,
+  favorited,
+  favoritePending,
+  onToggleFavorite,
 }: {
   target: string;
   items: ParetoRankingItem[];
   n80: number | null;
   datasetId: string;
   onBarClick: (item: ParetoRankingItem) => void;
+  favorited: boolean;
+  favoritePending: boolean;
+  onToggleFavorite: () => void;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
   return (
@@ -1035,13 +1022,16 @@ function PinnedParetoCard({
       onBarClick={onBarClick}
       cardRef={cardRef}
       headerActions={
-        <ChartExportButton
-          nodeRef={cardRef}
-          buildOptions={() => ({
-            filename: buildExportFilename({ feature: null, target, view: "pareto" }),
-            captionText: buildParetoCaptionText({ target, factorCount: items.length, datasetId }),
-          })}
-        />
+        <>
+          <FavoriteStarButton favorited={favorited} disabled={favoritePending} onClick={onToggleFavorite} />
+          <ChartExportButton
+            nodeRef={cardRef}
+            buildOptions={() => ({
+              filename: buildExportFilename({ feature: null, target, view: "pareto" }),
+              captionText: buildParetoCaptionText({ target, factorCount: items.length, datasetId }),
+            })}
+          />
+        </>
       }
     />
   );
@@ -1338,33 +1328,6 @@ function CategoricalFactorCard({
   );
 }
 
-/** 즐겨찾기 별 토글 -- 저장 시점 상태 스냅샷만 넘긴다, 점
- * 데이터는 절대 포함하지 않는다. */
-function FavoriteStarButton({
-  favorited,
-  disabled,
-  onClick,
-}: {
-  favorited: boolean;
-  // 생성/삭제 요청이 진행 중인 동안 버튼을 막는다 -- 빠른 더블클릭이
-  // 중복 즐겨찾기(좀비 레코드)를 만드는 걸 막는 시각적 짝.
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`favoriteStarButton ${favorited ? "active" : ""}`}
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={favorited}
-      aria-label={favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-      title={favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}
-    >
-      {favorited ? "★" : "☆"}
-    </button>
-  );
-}
 
 function WaferDetailPopover({
   point,

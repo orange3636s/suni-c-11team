@@ -7993,7 +7993,7 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
   margin: 4px 0 8px 34px;
 }
 /* 프리셋은 .button 규율(radius 3px, :active scale(.97))을 따르는 테두리
-   버튼이다 -- 채워진 버튼은 화면당 1개 원칙이라 "분석 보고서 생성"도
+   버튼이다 -- 채워진 버튼은 화면당 1개 원칙이라 "원인 분석 보고서"도
    채우지 않는다. */
 .aiPanelChip{
   padding: 6px 12px; border-radius: var(--radius-control); font-size: var(--fs-sm); cursor: pointer;
@@ -8307,7 +8307,19 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
 }
 .favoriteCard{ position: relative; padding: 0; overflow: hidden; cursor: pointer; }
 .favoriteCardThumb{ background: var(--surface-muted); padding: 6px; }
+/* 히트맵·트리맵처럼 이 크기의 썸네일로 축약해 그릴 수 없는 종류의
+   자리 표시자 -- 아이콘 하나만 크게, 카드 형태를 산점도·박스플롯과
+   맞춘다. */
+.favoriteCardKindPlaceholder{
+  display: flex; align-items: center; justify-content: center; height: 160px;
+  font-size: 40px; color: var(--text-muted); background: var(--surface-muted);
+}
 .favoriteCardBody{ padding: 12px 14px; }
+.favoriteCardKindBadge{
+  display: inline-block; margin-bottom: 4px; padding: 2px 7px; border-radius: 999px;
+  font-family: var(--font-data); font-size: var(--fs-nano, 9px); font-weight: 600;
+  letter-spacing: .04em; color: var(--text-secondary); background: var(--surface-muted);
+}
 .favoriteCardBody h3{ margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; }
 .favoriteCardTime{ font-size: var(--fs-xs); color: var(--text-secondary); display: block; margin-bottom: 6px; }
 /* 해석 문구는 2줄로 말줄임한다 -- 문구 길이가 들쭉날쭉해도 카드
@@ -8399,6 +8411,7 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    itself actually runs out of width, and keep-all avoids splitting a
    Korean word/particle across the break when it does. */
 .heatmapHeaderRowText{ flex: 1 1 320px; min-width: 0; }
+.heatmapHeaderRowActions{ display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .heatmapHeaderRow p{ margin: 4px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); max-width: none; word-break: keep-all; }
 /* 히트맵의 토글은 산점도의 .scatterViewToggle 스타일을 그대로 쓴다 --
    여러 줄(기준/보기/계층)을 세로로 쌓는 래퍼만 따로 둔다. */
@@ -10817,3 +10830,24 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .cooccurrenceDiag{ color: var(--text-muted); }
 .cooccurrenceCell{ border-radius: 5px; background: var(--surface-muted); color: var(--text-secondary); }
 .cooccurrenceCell-flag{ background: color-mix(in srgb, var(--sig-amber) 16%, var(--surface-muted)); color: var(--text-primary); }
+
+/* ── PageHeader: 여섯 화면(모니터링/Config별 트리맵/원인 분석/수율 예측/
+   알림 기록/즐겨찾기) 공용 제목 블록. `.pageHeading`/`.uploadIntro`처럼
+   부모(.rcPage 유무)에 따라 결과가 갈리는 레거시 클래스는 참조하지 않는다 --
+   이 블록의 값만으로 크기가 결정된다(수율 예측 화면의 기존 26px 기준에 맞춤). */
+.pageHeader{ margin: 0 0 var(--section-gap, 22px); }
+.pageHeader .pageHeaderEyebrow{
+  display: flex; width: 100%; align-items: center; gap: 8px; margin-bottom: 11px;
+  color: var(--text-muted); font-family: var(--font-data); font-size: var(--fs-micro);
+  font-weight: 500; letter-spacing: .1em; text-transform: uppercase;
+}
+.pageHeader .pageHeaderEyebrow::after{ content: ""; flex: 1 1 auto; height: 1px; background: var(--line-soft); }
+.pageHeader .pageHeaderTitle{
+  margin: 0; font-family: var(--font-ui); font-size: 26px; font-weight: 600;
+  line-height: 1.2; letter-spacing: -.02em; color: var(--text-primary);
+}
+.pageHeader .pageHeaderDescription{
+  margin: 7px 0 0; font-size: var(--fs-body); font-weight: 400; line-height: 1.5; color: var(--text-secondary);
+}
+.pageHeader .pageHeaderMeta{ margin-top: 8px; }
+@media(max-width:767px){ .pageHeader .pageHeaderTitle{ font-size: var(--fs-display); } }

@@ -50,3 +50,31 @@ def test_different_feature_is_not_deduped(tmp_path: Path):
     b = store.create_favorite(f"fav_{uuid4().hex}", _snapshot(feature="Step2_R1"))
     assert a["favorite_id"] != b["favorite_id"]
     assert len(store.list_favorites()) == 2
+
+
+def test_treemap_different_step_same_target_is_not_deduped(tmp_path: Path):
+    """Config별 트리맵은 스텝이 다르면 다른 차트다 -- feature가 없어(빈
+    문자열) target까지 같으면 dedupe 키가 step 없이는 우연히 같아진다."""
+    store = _store(tmp_path)
+    snapshot = lambda step: _snapshot(target="Y1", feature="", viewType="treemap", isConfig=True, step=step)
+    step1 = store.create_favorite(f"fav_{uuid4().hex}", snapshot(1))
+    step2 = store.create_favorite(f"fav_{uuid4().hex}", snapshot(2))
+    assert step1["favorite_id"] != step2["favorite_id"]
+    assert len(store.list_favorites()) == 2
+
+    # 같은 스텝을 다시 저장하면(토글 재클릭 전 재요청 등) 여전히 dedupe된다.
+    step1_again = store.create_favorite(f"fav_{uuid4().hex}", snapshot(1))
+    assert step1_again["favorite_id"] == step1["favorite_id"]
+    assert len(store.list_favorites()) == 2
+
+
+def test_heatmap_different_sort_is_not_deduped(tmp_path: Path):
+    """히트맵은 정렬 기준이 다르면 보여주는 순서가 달라 별개 즐겨찾기다.
+    target/feature가 둘 다 빈 문자열이라 sort 없이는 dedupe 키가 항상
+    같아진다."""
+    store = _store(tmp_path)
+    snapshot = lambda sort: _snapshot(target="", feature="", viewType="heatmap", sort=sort)
+    a = store.create_favorite(f"fav_{uuid4().hex}", snapshot("max_adj_r2"))
+    b = store.create_favorite(f"fav_{uuid4().hex}", snapshot("min_adj_r2"))
+    assert a["favorite_id"] != b["favorite_id"]
+    assert len(store.list_favorites()) == 2

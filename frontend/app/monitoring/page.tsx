@@ -6,8 +6,9 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import CoverageBlock from "@/components/CoverageBlock";
 import DashboardShell from "@/components/DashboardShell";
 import DataLimitationDiagnostics from "@/components/DataLimitationDiagnostics";
-import { DatasetMismatchWarning, PageHeaderMeta } from "@/components/LastRunNote";
+import { DatasetMismatchWarning } from "@/components/LastRunNote";
 import { usePanelState } from "@/components/PanelStateProvider";
+import { PageHeader } from "@/components/PageHeader";
 import { buildMonitoringSnapshot, type MonitoringSnapshot } from "@/lib/monitoringSource";
 
 export default function MonitoringPage() {
@@ -83,11 +84,11 @@ export default function MonitoringPage() {
   return (
     <DashboardShell activeItem="모니터링 홈">
       <div className="rcPage">
-        <div className="pageHeading">
-          <h1>모니터링 홈</h1>
-          <p>엔지니어가 오늘 결정할 수 있는 것만 보여줍니다 — 조치 우선순위, 조치 가능 범위, 이 화면을 얼마나 믿을 수 있는가.</p>
-          <PageHeaderMeta />
-        </div>
+        <PageHeader
+          eyebrow="모니터링"
+          title="모니터링 홈"
+          description="엔지니어가 오늘 결정할 수 있는 것만 보여줍니다 — 조치 우선순위, 조치 가능 범위, 이 화면을 얼마나 믿을 수 있는가."
+        />
 
         {loading ? (
           <p className="emptyMessage">불러오는 중…</p>

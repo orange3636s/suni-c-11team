@@ -94,11 +94,18 @@ MANUAL_EVAL_OVERRIDE_STATE_KEY = "automation:manual_eval_override"
 
 
 def _favorite_dedupe_key(snapshot: dict[str, Any]) -> str:
-    """같은 (dataset, target, feature, viewType)는 같은 즐겨찾기로
-    본다 -- viewType을 빼면 Box 뷰로 저장하려는 클릭이 기존 Scatter
-    즐겨찾기와 같은 키로 잡혀 그것을 지워버린다(프런트가 dedupe 판단에
-    쓰는 키와 반드시 같아야 한다, root-cause/page.tsx의 favoriteKeyOf)."""
-    return "::".join(str(snapshot.get(field, "")) for field in ("dataset", "target", "feature", "viewType"))
+    """같은 (dataset, target, feature, viewType, step, sort)는 같은
+    즐겨찾기로 본다 -- viewType을 빼면 Box 뷰로 저장하려는 클릭이 기존
+    Scatter 즐겨찾기와 같은 키로 잡혀 그것을 지워버린다. step/sort가
+    빠지면 Config별 트리맵의 서로 다른 스텝(예: Step1 vs Step2, 같은
+    타깃)이나 히트맵의 서로 다른 정렬 기준이 같은 즐겨찾기로 잡혀 두
+    번째 저장이 새 레코드를 만들지 못하고 첫 번째 것을 그대로 돌려주는
+    버그가 난다. scatter/box/pareto는 이 두 필드가 없으므로 빈 문자열로
+    붙는다(프런트가 dedupe 판단에 쓰는 키와 반드시 같아야 한다,
+    frontend/lib/useFavoriteToggle.ts의 favoriteKeyOf)."""
+    return "::".join(
+        str(snapshot.get(field, "")) for field in ("dataset", "target", "feature", "viewType", "step", "sort")
+    )
 
 
 class RuntimeStore:

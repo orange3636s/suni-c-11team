@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import DashboardShell from "@/components/DashboardShell";
-import { PageHeaderMeta } from "@/components/LastRunNote";
+import { PageHeader } from "@/components/PageHeader";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { getNotifyHistory } from "@/lib/api";
 import { formatLastRun } from "@/lib/timeFormat";
@@ -46,20 +46,17 @@ export default function NotifyHistoryPage() {
   return (
     <DashboardShell activeItem="알림 기록">
       <div className="rcPage">
-        <section className="uploadIntro pageHeading">
-          <span className="eyebrow">알림·자동화</span>
-          <h1>알림 기록</h1>
-          <p>
-            발송된 알림과 건너뛴 이력을 최신순으로 모아 봅니다. 메시지는 발송 당시의 원문을 그대로 보관합니다(재계산하지
-            않습니다).
-          </p>
-          {/* 이 화면의 항목들은 각자의 발송 시점 데이터셋으로 만들어졌다
-              (아래 표의 "시각" 열이 항목별 실제 발송 시각이다) -- 헤더의
-              시각·파일명은 "지금 이 화면이 조회 기준으로 삼는" 현재 분석을
-              가리킬 뿐이므로 "마지막 실행"이 아니라 "현재 분석 기준"이라고
-              부른다. */}
-          <PageHeaderMeta label="현재 분석 기준" />
-        </section>
+        {/* 이 화면의 항목들은 각자의 발송 시점 데이터셋으로 만들어졌다
+            (아래 표의 "시각" 열이 항목별 실제 발송 시각이다) -- 헤더의
+            시각·파일명은 "지금 이 화면이 조회 기준으로 삼는" 현재 분석을
+            가리킬 뿐이므로 "마지막 실행"이 아니라 "현재 분석 기준"이라고
+            부른다. */}
+        <PageHeader
+          eyebrow="알림·자동화"
+          title="알림 기록"
+          description="발송된 알림과 건너뛴 이력을 최신순으로 모아 봅니다. 메시지는 발송 당시의 원문을 그대로 보관합니다(재계산하지 않습니다)."
+          metaLabel="현재 분석 기준"
+        />
 
         {error && <p className="errorMessage">{error}</p>}
 

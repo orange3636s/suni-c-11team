@@ -3,8 +3,9 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import { SORT_OPTION_LABEL } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
-import { PageHeaderMeta } from "@/components/LastRunNote";
+import { PageHeader } from "@/components/PageHeader";
 import ParetoChart from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart from "@/components/ScatterChart";
@@ -14,12 +15,41 @@ import { formatLastRun } from "@/lib/timeFormat";
 import type {
   CategoricalScatterResponse,
   FavoriteRecord,
+  FavoriteSnapshot,
   ParetoRankingResponse,
   ScreeningScatterResponse,
 } from "@/types/data";
 
 const VIEW_LABEL: Record<string, string> = { scatter: "Scatter Plot", box: "Box Plot", pareto: "Pareto" };
+// 카드 상단 배지 -- 히트맵·파레토·트리맵은 산점도·박스플롯과 저장 단위
+// 자체가 달라(특정 인자가 아니라 화면 전체/타깃 전체) 썸네일 미리보기가
+// 없거나 얕다. 배지로 종류를 먼저 밝혀 구분한다.
+const KIND_BADGE: Record<FavoriteSnapshot["viewType"], string> = {
+  scatter: "산점도",
+  box: "박스플롯",
+  pareto: "파레토",
+  heatmap: "히트맵",
+  treemap: "트리맵",
+};
 const THUMBNAIL_HEIGHT = 160;
+
+/** 카드 제목 -- scatter/box는 인자명이 핵심이라 기존 형식을 유지하고,
+ * pareto/heatmap/treemap은 특정 인자가 아니라 화면 단위라 각자의
+ * 식별자(정렬 기준, 스텝)로 제목을 만든다. */
+function cardTitle(snapshot: FavoriteRecord["snapshot"]): string {
+  switch (snapshot.viewType) {
+    case "heatmap": {
+      const sortLabel = snapshot.sort ? (SORT_OPTION_LABEL[snapshot.sort as keyof typeof SORT_OPTION_LABEL] ?? snapshot.sort) : "기본";
+      return `R, D vs Y1~Y5 상관관계 히트맵 · ${sortLabel} 순`;
+    }
+    case "pareto":
+      return `R/D/Config vs ${snapshot.target} 파레토`;
+    case "treemap":
+      return `Config vs ${snapshot.target} 트리맵 · Step${snapshot.step ?? "?"}`;
+    default:
+      return `${snapshot.feature} vs ${snapshot.target} · ${VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}`;
+  }
+}
 
 function noop() {}
 
@@ -60,24 +90,40 @@ export default function FavoritesPage() {
     }
   }
 
-  function openInRootCause(item: FavoriteRecord) {
+  // dataset을 항상 함께 실어야 한다 -- 안 실으면 대상 화면은 현재
+  // 선택된(즐겨찾기와 무관한) 데이터셋으로 조회해, train에서 저장한
+  // 카드를 test가 선택된 상태에서 열면 같은 인자명의 다른 데이터셋
+  // 차트가 경고 없이 표시된다. 종류별로 저장 시점 상태(정렬·스텝·타깃)를
+  // 함께 실어 그 상태로 복원한다 -- 화면만 여는 것으로는 부족하다.
+  function openFavorite(item: FavoriteRecord) {
     const { snapshot } = item;
-    // dataset을 함께 실어야 한다 -- 안 실으면 원인 분석은 현재
-    // 선택된(즐겨찾기와 무관한) 데이터셋으로 조회해, train에서 저장한
-    // 카드를 test가 선택된 상태에서 열면 같은 인자명의 다른 데이터셋
-    // 차트가 경고 없이 표시된다.
-    const params = new URLSearchParams({ dataset: snapshot.dataset, target: snapshot.target, feature: snapshot.feature });
+    if (snapshot.viewType === "heatmap") {
+      const params = new URLSearchParams({ dataset: snapshot.dataset });
+      if (snapshot.sort) params.set("heatmapSort", snapshot.sort);
+      router.push(`/root-cause?${params.toString()}`);
+      return;
+    }
+    if (snapshot.viewType === "treemap") {
+      const params = new URLSearchParams({ dataset: snapshot.dataset, target: snapshot.target });
+      if (snapshot.step != null) params.set("step", String(snapshot.step));
+      router.push(`/config-treemap?${params.toString()}`);
+      return;
+    }
+    // pareto: feature 없이 target만 -- root-cause는 target 하나로 그
+    // 타깃의 파레토 카드를 그대로 연다. scatter/box: 기존과 동일.
+    const params = new URLSearchParams({ dataset: snapshot.dataset, target: snapshot.target });
+    if (snapshot.feature) params.set("feature", snapshot.feature);
     router.push(`/root-cause?${params.toString()}`);
   }
 
   return (
     <DashboardShell activeItem="즐겨찾기">
-      <section className="uploadIntro pageHeading">
-        <span className="eyebrow">저장된 그래프</span>
-        <h1>즐겨찾기</h1>
-        <p>원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다.</p>
-        <PageHeaderMeta label="현재 분석 기준" />
-      </section>
+      <PageHeader
+        eyebrow="저장된 그래프"
+        title="즐겨찾기"
+        description="원인 분석에서 ☆로 저장한 그래프를 최신순으로 모아 봅니다."
+        metaLabel="현재 분석 기준"
+      />
 
       {error && <p className="errorMessage">{error}</p>}
 
@@ -93,7 +139,7 @@ export default function FavoritesPage() {
               item={item}
               currentChampionVersion={currentChampionVersion}
               currentDatasetId={currentDatasetId}
-              onOpen={() => openInRootCause(item)}
+              onOpen={() => openFavorite(item)}
               onDelete={() => handleDelete(item.favorite_id)}
             />
           ))}
@@ -151,10 +197,11 @@ function FavoriteCard({
         <div className="favoriteCardThumb">
           <FavoriteThumbnail snapshot={snapshot} />
         </div>
-        {/* 카드에 남기는 정보는 썸네일·제목·시각·해석 넷뿐이다 --
-            인자 메타(n·기여율·p-value 등)는 넣지 않는다. */}
+        {/* 카드에 남기는 정보는 배지·제목·시각·해석 넷뿐이다 -- 인자
+            메타(n·기여율·p-value 등)는 넣지 않는다. */}
         <div className="favoriteCardBody">
-          <h3>{snapshot.feature} vs {snapshot.target} · {VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}</h3>
+          <span className="favoriteCardKindBadge">{KIND_BADGE[snapshot.viewType] ?? snapshot.viewType}</span>
+          <h3>{cardTitle(snapshot)}</h3>
           <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
           {snapshot.interpretation && <p className="favoriteCardInterpretation">{snapshot.interpretation}</p>}
           {isStale && <span className="favoriteCardStaleBadge">이전 분석 기준</span>}
@@ -175,7 +222,13 @@ function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] 
   const [paretoData, setParetoData] = useState<ParetoRankingResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
+  // 히트맵·트리맵은 화면 전체(또는 스텝 전체)를 다시 그려야 해서 이
+  // 작은 썸네일에 맞는 축약 렌더가 없다 -- 조회 자체를 건너뛰고 종류
+  // 배지 + 아이콘만 보여준다(위 KIND_BADGE 참고).
+  const skipsThumbnail = snapshot.viewType === "heatmap" || snapshot.viewType === "treemap";
+
   useEffect(() => {
+    if (skipsThumbnail) return;
     let cancelled = false;
     setFailed(false);
     if (snapshot.isConfig) {
@@ -195,8 +248,14 @@ function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot.dataset, snapshot.target, snapshot.feature, snapshot.isConfig, snapshot.viewType]);
+  }, [snapshot.dataset, snapshot.target, snapshot.feature, snapshot.isConfig, snapshot.viewType, skipsThumbnail]);
 
+  if (snapshot.viewType === "heatmap") {
+    return <div className="favoriteCardKindPlaceholder" aria-hidden="true">▤</div>;
+  }
+  if (snapshot.viewType === "treemap") {
+    return <div className="favoriteCardKindPlaceholder" aria-hidden="true">▦</div>;
+  }
   if (failed) return <p className="emptyMessage">미리보기를 불러오지 못했습니다.</p>;
   if (categoricalData) return <PlotlyChart spec={buildCategoricalSpec(categoricalData, { compact: true })} height={THUMBNAIL_HEIGHT} />;
   if (paretoData) {

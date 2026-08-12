@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { HScrollTableBody, TableCaption, TableToolbar, useTableSearchSort, type SortOption } from "@/components/DataTablePanel";
 import DashboardShell from "@/components/DashboardShell";
-import { PageHeaderMeta } from "@/components/LastRunNote";
+import { PageHeader } from "@/components/PageHeader";
 import { usePanelState } from "@/components/PanelStateProvider";
 import { dispatchYieldUpdateNotification, getNotificationSettings, getYieldPrediction } from "@/lib/api";
 import { DISPLAY_CONTRIBUTION_THRESHOLD_PCT } from "@/lib/chartSelection";
@@ -247,14 +247,11 @@ function AlertsContent() {
 
   return (
     <div className="rcPage">
-      <div className="pageHeading">
-        <h1>수율 예측</h1>
-        <p className="sectionCaption">
-          이 모델은 상위 20장 적중률 95%로 순위는 정확하지만, 예측값 자체의 오차는 큽니다(R² 0.12). 절대값이 아니라 검토 우선순위로
-          활용하세요.
-        </p>
-        <PageHeaderMeta />
-      </div>
+      <PageHeader
+        eyebrow="예측·알림"
+        title="수율 예측"
+        description="이 모델은 상위 20장 적중률 95%로 순위는 정확하지만, 예측값 자체의 오차는 큽니다(R² 0.12). 절대값이 아니라 검토 우선순위로 활용하세요."
+      />
 
       {loading ? (
         <p className="emptyMessage">불러오는 중…</p>
