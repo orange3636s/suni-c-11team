@@ -30,8 +30,14 @@ router = APIRouter(prefix="/api/state", tags=["state"])
 
 # 각 저장 종류가 dataset_id를 싣는 필드 -- 하나라도 더 이상
 # 존재하지 않는 데이터셋을 가리키면 그 레코드를 통째로 버린다.
+#
+# `training`은 여기 넣지 않는다. 이 슬롯의 payload는 학습이 끝난 모델의
+# 성능 지표(R2/RMSE/MAE/MSE/AUC)이고, 그 값은 모델에 귀속되지 학습에 쓴
+# 데이터셋이 지금 남아 있는지와 무관하다. 게다가 프런트가 이 슬롯에 싣는
+# `dataset`은 데이터셋 ID가 아니라 모델 메타데이터의 source_filename
+# (없으면 "training")이라, 레지스트리 조회가 항상 실패해 매번 레코드가
+# 통째로 버려졌다.
 _DATASET_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
-    "training": ("dataset",),
     "analysis": ("dataset",),
     "alarms": ("train_dataset", "eval_dataset"),
 }
@@ -50,7 +56,11 @@ def _drop_records_for_missing_datasets(state: dict[str, Any]) -> bool:
     굳으므로(예외 무시가 아니라 폴백), 여기서 미리 걸러 해당 슬롯을
     "저장된 적 없음"과 같은 모양(null)으로 만든다. 프론트가 이 경우를
     "원래 저장된 적이 없음"과 구분해 안내할 수 있도록, 걸러냈다는 사실은
-    별도 플래그로 함께 반환한다."""
+    별도 플래그로 함께 반환한다.
+
+    `training`은 `_DATASET_FIELDS_BY_KIND`에 없으므로 이 검사 대상이
+    아니다 -- 학습 성능 지표는 데이터셋 스키마에 의존하지 않는 자기완결
+    payload라 삭제된 데이터셋과 무관하게 항상 복원돼야 한다."""
     registry = get_dataset_registry()
     fallback_applied = False
     for kind, fields in _DATASET_FIELDS_BY_KIND.items():

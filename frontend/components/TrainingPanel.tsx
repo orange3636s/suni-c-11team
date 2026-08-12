@@ -157,6 +157,7 @@ export default function TrainingPanel({ open, onClose }: { open: boolean; onClos
   async function applyTrainedPerformance() {
     const performance = await getModelPerformance().catch(() => null);
     if (!performance) return;
+    // 데이터셋 ID가 아니라 표시용 파일명이다. 레지스트리 조회 키로 쓰지 말 것(state.py 참고).
     const dataset = performance.source_filename || "training";
     // 클로저의 training이 아니라 ref로 완료 시점의 최신
     // sqlHost/sqlPort/refreshIntervalMinutes(모델 분석 팝업이
