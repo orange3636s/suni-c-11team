@@ -39,8 +39,12 @@ from src.analysis.screening.shape import classify_shape
 MIN_CELL_N = 30
 # Adjusted R² concentration scale for the heatmap's color gradient -- fixed
 # so cell shading is comparable across screening runs/datasets instead of
-# rescaling to whatever the current dataset's max happens to be.
-ADJ_R2_SCALE = (0.0, 0.7)
+# rescaling to whatever the current dataset's max happens to be. Capped at
+# Adjusted R²'s own ceiling (1.0), not the current dataset's observed max
+# (e.g. 0.7) -- a lower cap makes every cell above it collapse to the same
+# top color (0.806 and 0.973 became visually identical), losing exactly the
+# distinctions among the strongest cells that matter most.
+ADJ_R2_SCALE = (0.0, 1.0)
 
 
 # Config 계층은 src/config_parser.py의 YAML 기반 공통 파서를 사용한다.

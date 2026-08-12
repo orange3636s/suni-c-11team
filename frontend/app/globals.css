@@ -3367,6 +3367,9 @@ html[data-theme="dark"] .savedModelList > button.active{
   --heatmap-fdr-border: #1d1d1f;
   --heatmap-text: #1d1d1f;
   --heatmap-text-inverse: #ffffff;
+  /* 다크 모드에서 R²<0.05인 약한 셀 전용 -- 라이트에서는 참조되지
+     않는다(약한 셀 배경이 이미 거의 흰색이라 --heatmap-text로 충분). */
+  --heatmap-text-muted: #6a7583;
   /* 불량모드별 변동 기여 막대(모니터링 홈 블록③) -- 단일 색상 서열(ordinal)
      램프, 1위가 가장 진하다. 팔레트 검증기 전 항목 PASS 확인된 값이라
      임의로 바꾸지 않는다. */
@@ -5561,6 +5564,10 @@ html[data-theme="dark"]{
   --heatmap-fdr-border: #f5f5f7;
   --heatmap-text: #f5f5f7;
   --heatmap-text-inverse: #ffffff;
+  /* 패널 배경(#171C24)에 가까운 약한 셀(Adj R² < 0.05) 전용 글자색 --
+     흰 글자를 그대로 얹으면 "0에 가까운 셀이 가장 눈에 띈다"는 정보
+     위계 역전이 남는다. #171C24 배경 대비 실측 3.5~3.65:1. */
+  --heatmap-text-muted: #6a7583;
   /* 불량모드별 변동 기여 막대 -- 다크는 밝을수록 큰 값이다(어두운 배경에서
      밝은 쪽이 전면에 온다). 라이트를 그대로 뒤집으면 어두운 끝이 배경
      대비 2:1을 못 넘어 검증기 FAIL -- 팔레트 검증기 전 항목 PASS 확인된

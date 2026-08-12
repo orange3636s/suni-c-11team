@@ -44,34 +44,79 @@ function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
 }
 
+/** WCAG 상대 휘도 -- sRGB 채널을 감마 보정(선형화)한 뒤 가중합한다. 단순
+ * `(0.2126R+0.7152G+0.0722B)/255`(감마 미보정 luma)는 어두운 배경 쪽에서
+ * 실제 지각 밝기보다 값을 부풀려, 글자색 자동 전환 임계값 판정이
+ * 어긋난다. */
+function srgbChannelToLinear(channel: number): number {
+  const c = channel / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
 function relativeLuminance([r, g, b]: [number, number, number]): number {
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const [rl, gl, bl] = [r, g, b].map(srgbChannelToLinear);
+  return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+}
+/** WCAG 대비비 -- 두 상대 휘도 중 밝은 쪽을 분자로 둔다. */
+function contrastRatio(luminanceA: number, luminanceB: number): number {
+  const lighter = Math.max(luminanceA, luminanceB);
+  const darker = Math.min(luminanceA, luminanceB);
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
-// 단일 색상 그라데이션(흰색 -> 진한 파랑) -- 셀 색이 전달하는 정보는
+// 단일 색상 순차(sequential) 그라데이션 -- 셀 색이 전달하는 정보는
 // "설명력이 얼마나 큰가" 하나뿐이고, 방향은 툴팁의 차수/꼭짓점/증감으로만
-// 말한다.
-// 정지점은 Adjusted R² 절대값 기준이며, 아래에서 scale.max로 정규화해
-// 쓴다(데이터셋마다 다시 스케일링하지 않는 고정 척도).
-const GRADIENT_STOPS: Array<[number, string]> = [
-  [0.0, "#ffffff"],
-  [0.1, "#DDE4EE"],
-  [0.3, "#6B8CBD"],
-  [0.5, "#2A4E86"],
-  [0.7, "#0E306D"],
+// 말한다. Adjusted R²는 0~1 한 방향 값이라 중앙값이 없으므로 발산
+// (빨강~흰색~파랑) 팔레트를 쓰지 않는다.
+//
+// 라이트는 흰색 -> 빨강, 다크는 패널 배경(거의 같은 어둡기) -> 빨강으로
+// 서로 다른 정지점을 쓴다 -- 라이트 램프를 그대로 반전해 다크에 쓰면
+// 중간 구간 색이 탁해진다. 정지점은 Adjusted R² 절대값 기준이며, 아래에서
+// scale.max(=1.00)로 정규화해 쓴다(데이터셋마다 다시 스케일링하지 않는
+// 고정 척도).
+type GradientStop = [number, string];
+const LIGHT_GRADIENT_STOPS: GradientStop[] = [
+  [0.0, "#FFFFFF"],
+  [0.1, "#FBE3DF"],
+  [0.25, "#F2B5AC"],
+  [0.45, "#E07E70"],
+  [0.6, "#CF5343"],
+  [0.7, "#B03024"],
 ];
-const GRADIENT_SPAN = GRADIENT_STOPS[GRADIENT_STOPS.length - 1][0];
-// 이 값보다 어두운 배경 위에서는 글자를 흰색으로 뒤집는다.
-const DARK_BACKGROUND_LUMINANCE = 0.5;
+const DARK_GRADIENT_STOPS: GradientStop[] = [
+  [0.0, "#171C24"],
+  [0.1, "#33222A"],
+  [0.25, "#5A2E32"],
+  [0.45, "#8C3A38"],
+  [0.6, "#B04236"],
+  [0.7, "#D14A3A"],
+];
+const GRADIENT_SPAN = LIGHT_GRADIENT_STOPS[LIGHT_GRADIENT_STOPS.length - 1][0];
+function gradientStopsFor(theme: "light" | "dark"): GradientStop[] {
+  return theme === "dark" ? DARK_GRADIENT_STOPS : LIGHT_GRADIENT_STOPS;
+}
 
-function interpolateGradient(ratio: number): [number, number, number] {
+// 글자색 자동 전환에 쓰는 두 후보 잉크. 고정 임계값(예: "휘도 0.55")
+// 하나로 밝은/어두운 글자를 가르면 중간 농도 구간에서 대비가 무너진다
+// (라이트 램프의 0.45~0.8 구간에서 실측 2.0~3.2:1까지 떨어짐) -- 대신
+// 두 후보 각각과의 실제 대비비를 계산해 더 높은 쪽을 쓴다.
+const INK_DARK: [number, number, number] = hexToRgb("#1d1d1f"); // var(--heatmap-text) 라이트 값
+const INK_LIGHT: [number, number, number] = hexToRgb("#ffffff"); // var(--heatmap-text-inverse)
+const INK_DARK_LUMINANCE = relativeLuminance(INK_DARK);
+const INK_LIGHT_LUMINANCE = relativeLuminance(INK_LIGHT);
+// 이 값 미만인 다크 모드 셀은 배경이 패널색에 거의 묻히므로, 일반 규칙
+// (대비 기준 자동 전환) 대신 흐리지만 읽히는 전용 톤을 쓴다 -- 흰 글자를
+// 그대로 얹으면 "0에 가까운 셀이 가장 눈에 띈다"는 정보 위계 역전이
+// 그대로 남는다. grade_thresholds.yaml의 "보통" 등급 하한과 같은 값.
+const WEAK_CELL_ADJ_R2_THRESHOLD = 0.05;
+
+function interpolateGradient(ratio: number, stops: GradientStop[]): [number, number, number] {
   const t = Math.min(1, Math.max(0, ratio)) * GRADIENT_SPAN;
-  let lower = GRADIENT_STOPS[0];
-  let upper = GRADIENT_STOPS[GRADIENT_STOPS.length - 1];
-  for (let i = 0; i < GRADIENT_STOPS.length - 1; i += 1) {
-    if (t >= GRADIENT_STOPS[i][0] && t <= GRADIENT_STOPS[i + 1][0]) {
-      lower = GRADIENT_STOPS[i];
-      upper = GRADIENT_STOPS[i + 1];
+  let lower = stops[0];
+  let upper = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i += 1) {
+    if (t >= stops[i][0] && t <= stops[i + 1][0]) {
+      lower = stops[i];
+      upper = stops[i + 1];
       break;
     }
   }
@@ -87,18 +132,25 @@ function interpolateGradient(ratio: number): [number, number, number] {
 }
 
 /** 셀 배경 -- Adjusted R² 크기 하나만 본다. `scaleMax`는 서버가 내려주는
- * 고정 척도(ADJ_R2_SCALE의 최대값)라 데이터셋이 바뀌어도 같은 값이 같은
- * 농도로 보인다. */
-function cellBackground(value: number, scaleMax: number): { bg: string; darkBackground: boolean } {
-  const rgb = interpolateGradient(Math.max(0, value) / (scaleMax || GRADIENT_SPAN));
-  return {
-    bg: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
-    darkBackground: relativeLuminance(rgb) < DARK_BACKGROUND_LUMINANCE,
-  };
+ * 고정 척도(ADJ_R2_SCALE의 최대값=1.00)라 데이터셋이 바뀌어도 같은 값이
+ * 같은 농도로 보인다. */
+function cellBackgroundRgb(value: number, scaleMax: number, theme: "light" | "dark"): [number, number, number] {
+  return interpolateGradient(Math.max(0, value) / (scaleMax || GRADIENT_SPAN), gradientStopsFor(theme));
 }
 
-function gradientCss(): string {
-  const stops = GRADIENT_STOPS.map(([at, hex]) => `${hex} ${(at / GRADIENT_SPAN) * 100}%`);
+/** 셀 글자색 -- 다크 모드의 약한 셀(R²<0.05)은 흐린 전용 톤(대비 3:1
+ * 이상)을, 그 외에는 배경과 실측 대비가 더 높은 쪽 잉크(대비 4.5:1
+ * 안팎)를 고른다. 라이트/다크 모두 같은 로직이다. */
+function cellTextColor(value: number, rgb: [number, number, number], theme: "light" | "dark"): string {
+  if (theme === "dark" && value < WEAK_CELL_ADJ_R2_THRESHOLD) return "var(--heatmap-text-muted)";
+  const bgLuminance = relativeLuminance(rgb);
+  const contrastWithDarkInk = contrastRatio(bgLuminance, INK_DARK_LUMINANCE);
+  const contrastWithLightInk = contrastRatio(bgLuminance, INK_LIGHT_LUMINANCE);
+  return contrastWithDarkInk >= contrastWithLightInk ? "var(--heatmap-text)" : "var(--heatmap-text-inverse)";
+}
+
+function gradientCss(theme: "light" | "dark"): string {
+  const stops = gradientStopsFor(theme).map(([at, hex]) => `${hex} ${(at / GRADIENT_SPAN) * 100}%`);
   return `linear-gradient(to right, ${stops.join(", ")})`;
 }
 
@@ -150,9 +202,9 @@ export default function CorrelationHeatmap({
   initialCache?: Record<string, HeatmapResponse>;
   onCacheUpdate?: (cache: Record<string, HeatmapResponse>) => void;
 }) {
-  // 셀 색은 테마와 무관한 단일 팔레트다. 테마는 마스킹/게이트 셀
-  // 같은 나머지 표시에만 CSS 변수로 반영된다.
-  useResolvedTheme();
+  // 셀 색은 라이트/다크가 서로 다른 램프를 쓴다(흰색~빨강 / 패널 배경~빨강)
+  // -- cellBackgroundRgb/cellTextColor/gradientCss에 그대로 흘려보낸다.
+  const theme = useResolvedTheme();
   const kind = "numeric" as const;
   // 마운트 시점의 initialCache로 씨앗을 뿌린다 -- 탭을 나갔다
   // 돌아와 이 컴포넌트가 다시 마운트될 때, AnalysisStateProvider가 들고
@@ -389,6 +441,7 @@ export default function CorrelationHeatmap({
                 rowIndex={rowIndex}
                 data={data}
                 scaleMax={scaleMax}
+                theme={theme}
                 onHover={setTooltip}
                 onSelectCell={onSelectCell}
               />
@@ -403,13 +456,18 @@ export default function CorrelationHeatmap({
         </button>
       </div>
 
-      <ColorScaleLegend scaleMax={scaleMax} />
+      <ColorScaleLegend scaleMax={scaleMax} theme={theme} />
       <HeatmapLegendCaption excludedConfigs={data.excluded_configs} />
 
       {exporting && (
         // 화면 밖(왼쪽 -99999px)에 전체 행짜리 사본을 띄운다. display:none이
         // 아니라 실제로 레이아웃되는 노드라야 getComputedStyle이 값을
         // 돌려주고, chartExport의 색 굳히기 패스가 동작한다.
+        //
+        // theme을 그대로 흘려보낸다 -- exportNodeAsPng이 캡처 직전
+        // <html data-theme>를 light로 뒤집으면 useResolvedTheme()도 같은
+        // 프레임에서 "light"로 갱신되므로, 다크 모드에서 저장을 눌러도
+        // 이 사본은 항상 라이트 램프로 그려진다(흰 배경에 어울리는 색).
         <div
           aria-hidden="true"
           style={{ position: "absolute", left: -99999, top: 0, width: "max-content", pointerEvents: "none" }}
@@ -419,6 +477,7 @@ export default function CorrelationHeatmap({
             data={data}
             rows={rows}
             scaleMax={scaleMax}
+            theme={theme}
           />
         </div>
       )}
@@ -460,14 +519,26 @@ export default function CorrelationHeatmap({
 
 /** 색 농도 범례(Adjusted R² 척도). 화면 카드와 내보내기 사본이 같은 것을
  * 쓴다 -- 내보낸 이미지에서 범례가 잘리면 셀 색을 읽을 수 없다. */
-function ColorScaleLegend({ scaleMax, labelled = false }: { scaleMax: number; labelled?: boolean }) {
+function ColorScaleLegend({
+  scaleMax,
+  theme,
+  labelled = false,
+}: {
+  scaleMax: number;
+  theme: "light" | "dark";
+  labelled?: boolean;
+}) {
   return (
     <div className="heatmapColorbar">
       {/* 화면에서는 바로 아래 캡션이 척도를 설명하므로 라벨을 생략하고,
           캡션과 떨어져 읽힐 수 있는 내보내기 사본에만 붙인다. */}
       {labelled && <span>Adjusted R²</span>}
       <span>0.00</span>
-      <div className="heatmapColorbarTrack" style={{ background: gradientCss() }} />
+      {/* 셀과 같은 gradientCss()로 그린다 -- 하드코딩된 미리보기 색이
+          아니라 실제 셀 색 함수 그대로라 늘 일치한다. 다크 모드에서는
+          다크 램프(패널 배경~빨강)를, 라이트에서는 라이트 램프(흰색~빨강)를
+          보여준다. */}
+      <div className="heatmapColorbarTrack" style={{ background: gradientCss(theme) }} />
       <span>{scaleMax.toFixed(2)}</span>
     </div>
   );
@@ -500,11 +571,13 @@ function HeatmapExportSurface({
   data,
   rows,
   scaleMax,
+  theme,
 }: {
   surfaceRef: RefObject<HTMLDivElement | null>;
   data: HeatmapResponse;
   rows: number[];
   scaleMax: number;
+  theme: "light" | "dark";
 }) {
   const gridTemplateColumns = `max-content repeat(${data.targets.length}, minmax(72px, 1fr))`;
   return (
@@ -528,13 +601,14 @@ function HeatmapExportSurface({
               rowIndex={rowIndex}
               data={data}
               scaleMax={scaleMax}
+              theme={theme}
               onHover={noopHover}
               onSelectCell={noopSelect}
             />
           ))}
         </div>
       </div>
-      <ColorScaleLegend scaleMax={scaleMax} labelled />
+      <ColorScaleLegend scaleMax={scaleMax} theme={theme} labelled />
       <HeatmapLegendCaption excludedConfigs={data.excluded_configs} maxWidth={EXPORT_CAPTION_MAX_WIDTH} />
     </div>
   );
@@ -545,6 +619,7 @@ function FragmentRow({
   rowIndex,
   data,
   scaleMax,
+  theme,
   onHover,
   onSelectCell,
 }: {
@@ -552,6 +627,7 @@ function FragmentRow({
   rowIndex: number;
   data: HeatmapResponse;
   scaleMax: number;
+  theme: "light" | "dark";
   onHover: (tooltip: TooltipState | null) => void;
   onSelectCell: (selection: HeatmapCellSelection) => void;
 }) {
@@ -575,12 +651,9 @@ function FragmentRow({
         const gateExcluded = !masked && Boolean(data.gate_excluded?.[rowIndex]?.[colIndex]);
         const style: React.CSSProperties = {};
         if (!masked) {
-          const { bg, darkBackground } = cellBackground(adjR2Value, scaleMax);
-          style.background = bg;
-          // 진한 배경 위에서는 테마와 무관하게 흰 글자로 뒤집는다(셀 색이
-          // 테마를 타지 않으므로 판정도 배경 명도만 본다). 밝은 배경은
-          // 테마별 본문 색을 그대로 쓴다.
-          style.color = darkBackground ? "var(--heatmap-text-inverse)" : "var(--heatmap-text)";
+          const rgb = cellBackgroundRgb(adjR2Value, scaleMax, theme);
+          style.background = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+          style.color = cellTextColor(adjR2Value, rgb, theme);
         }
         const hoverPayload = {
           feature,
