@@ -10536,7 +10536,14 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 .ypTable th.ypColReliability, .ypTable td.ypColReliability{
   padding: 8px 6px;
 }
-.ypTable td.ypColCoreFactor,
+/* 2차 조정 -- LOT_WF_ID·핵심인자 5열은 내용이 짧아(8~9자) 좌우 10px이
+   낭비된다. 상하는 그대로 둔다(핵심인자 2줄 표시가 붙는다). 6px이
+   실질 하한이다 -- 그 밑으로는 글자가 셀 경계에 닿아 옆 열과
+   붙어 보인다. */
+.ypTable th.ypColWafer, .ypTable td.ypColWafer,
+.ypTable th.ypColCoreFactor, .ypTable td.ypColCoreFactor{
+  padding: 8px 6px;
+}
 .ypTable td.alertCell,
 .ypTable td.numCol{
   padding: 8px 8px;
@@ -10550,14 +10557,30 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 }
 
 .ypColRank{ width: 52px; min-width: 52px; max-width: 52px; text-align: center; white-space: nowrap; }
-.ypColWafer{ min-width: 112px; white-space: nowrap; }
-.ypColCoreFactor{ min-width: 112px; white-space: nowrap; }
-.ypColReliability{ text-align: center; }
-/* "권장사항"은 마지막, white-space:normal. 320px 근처로 너무 좁히면
-   한 줄이 두 줄로 접혀 행 높이가 들쭉날쭉해지므로 280~340px 범위로
-   둔다(다른 열을 좁히지 않고 가로 스크롤로 확보한다 -- 표는 이미
-   hScroll 래퍼 안에 있어 폭을 넓히면 자동으로 스크롤이 생긴다). */
-.ypColRecommendation{ min-width: 280px; max-width: 340px; white-space: normal; overflow: visible; text-overflow: clip; }
+/* max-width -- 여백을 6px로 줄인 만큼 열 폭 자체도 내용 기준으로
+   좁힌다. LOT_WF_ID(L421W19 8자)는 92px, 핵심인자(Step28_R1 9자,
+   가장 긴 인자명)는 104px이 잘리지 않는 하한이다. 안전망으로
+   ellipsis를 두지만 위 폭에서는 실제로 발동하지 않아야 한다. */
+.ypColWafer{
+  max-width: 92px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ypColCoreFactor{ max-width: 104px; white-space: nowrap; }
+.ypColReliability{ max-width: 56px; text-align: center; }
+/* "권장사항"은 마지막, white-space:normal. TA-1에서 6열 좌우 여백을
+   줄여 확보한 폭을 여기로 옮긴다 -- 조정 항목 한 줄("Step16_R1 73.2 →
+   55.6~61.3 (Y2 −10.8%p 개선)", 약 45자 · --fs-xs 기준 ~320px)이
+   접히지 않으려면 340px 이상이 필요하다. keep-all은 "추가"처럼
+   짧은 한국어 단어가 글자 단위로 쪼개지는 것(break-all/기본 동작)을
+   막는다 -- 단어(공백/문장부호) 단위로만 줄바꿈한다. */
+.ypColRecommendation{
+  min-width: 340px; max-width: 420px; white-space: normal; overflow: visible; text-overflow: clip;
+  word-break: keep-all; overflow-wrap: break-word;
+}
+/* Y1~Y5·Y·신뢰도는 내용이 짧아(5~6자) 원래도 이 폭을 넘지 않지만,
+   권장사항이 늘어난 만큼 표 전체 폭이 커지지 않도록 명시적으로
+   상한을 둔다(TA-3 -- 표 전체 폭이 수정 전 이하여야 한다). */
+.ypTable td.alertCell{ max-width: 64px; }
+.ypTable td.numCol{ max-width: 72px; }
 
 /* sticky 좌측 2열. z-index 우선순위: 헤더+sticky 교차점 >
    헤더 > sticky열 > 일반셀 -- 위에서 정의한 --z-sticky-seg 스케일을
@@ -10586,19 +10609,21 @@ html[data-theme="dark"] .ypTable td.ypColWafer,
 html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.5); }
 
 /* 핵심 인자 표시 -- 인자명(1행)과 기여율(2행)을 나눠 한 줄일 때보다
-   열 폭을 줄인다(148px -> 112px). 괄호는 유지한다 -- 없으면 기여율이
-   인자명의 일부로 읽힌다. */
+   열 폭을 줄인다(148px -> 112px -> 104px). 괄호는 유지한다 -- 없으면
+   기여율이 인자명의 일부로 읽힌다. */
 .ypCoreFactorCell{
   display: flex;
   flex-direction: column;
   gap: 1px;
   line-height: 1.3;
 }
-.ypCoreFactorName{ font-family: var(--font-data); font-size: var(--fs-xs); }
-.ypCoreFactorPct{ color: var(--text-secondary); font-variant-numeric: tabular-nums; font-size: var(--fs-nano); }
-/* 미계측 줄("(65.5%) 미계측")은 2행에 합친다 -- 3행으로 나누면 행
-   높이가 너무 커진다. 실제로 쓰지 않은 인자라 --text-muted로
-   흐리게 뺀다(측정된 인자의 기여율보다 한 단계 더 옅다). */
+.ypCoreFactorName{ font-family: var(--font-data); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; }
+.ypCoreFactorPct{ color: var(--text-secondary); font-variant-numeric: tabular-nums; font-size: var(--fs-nano); overflow: hidden; text-overflow: ellipsis; }
+/* 미계측 2행 -- 기여율 대신 "미계측"만 보여준다(TA-1 옵션 C). 그
+   인자를 예측에 쓰지 않았으니 기여율 숫자가 의미가 없고, 숫자를
+   빼면 "(90.9%) 미계측"처럼 폭을 좁혔을 때 접히던 줄도 짧아져
+   해결된다. 실제로 쓰지 않은 인자라 --text-muted로 흐리게 뺀다
+   (측정된 인자의 기여율보다 한 단계 더 옅다). */
 .ypCoreFactorPctMuted{ color: var(--text-muted); }
 .ypCoreFactorEmpty{ color: var(--text-muted); }
 
@@ -10632,6 +10657,11 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
 }
 .ypRecommendationLine{ display: block; }
 .ypRecommendationLine.muted{ color: var(--text-muted); margin-top: 3px; }
+/* "Y1(Step28_R1)" 같은 타깃+인자명 토큰은 괄호 안에서 줄바꿈되면
+   읽기 어렵다 -- keep-all/break-word는 단어 단위 줄바꿈만 보장할 뿐
+   토큰 내부(숫자·밑줄 포함)가 줄 끝에서 갈라지는 것은 막지 않으므로
+   토큰 단위로 별도 nowrap을 건다. */
+.factor-token{ white-space: nowrap; }
 
 .ypTableFooter{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 .ypTableFooter .tableCaption{ margin: 0; }

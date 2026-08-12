@@ -78,10 +78,13 @@ function coreFactorCell(candidate: YieldCandidate, target: string) {
     return <span className="ypCoreFactorEmpty">—</span>;
   }
   if (!cell.measured) {
+    // 미계측 인자는 예측에 쓰이지 않아 기여율 숫자가 의미가 없다 --
+    // "(90.9%) 미계측"처럼 숫자까지 보여주면 폭을 좁혔을 때 2행이
+    // 접히므로, 기여율은 숨기고 "미계측"만 남긴다(TA-1 옵션 C).
     return (
-      <span className="ypCoreFactorCell ypCoreFactorUnmeasured" title="계측되지 않아 예측에 사용하지 않았습니다. 이 인자를 계측하면 정확도가 올라갑니다.">
+      <span className="ypCoreFactorCell ypCoreFactorUnmeasured" title={`계측되지 않아 예측에 사용하지 않았습니다 (참고 기여율 ${cell.contribution_pct.toFixed(1)}%). 이 인자를 계측하면 정확도가 올라갑니다.`}>
         <span className="ypCoreFactorName">{cell.feature}</span>
-        <span className="ypCoreFactorPct ypCoreFactorPctMuted">({cell.contribution_pct.toFixed(1)}%) 미계측</span>
+        <span className="ypCoreFactorPct ypCoreFactorPctMuted">미계측</span>
       </span>
     );
   }
@@ -139,6 +142,26 @@ function recommendationLines(text: string): { text: string; muted: boolean }[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .map(formatRecommendationLine);
+}
+
+// "Y1(Step28_R1)" 같은 타깃+인자명 토큰이 괄호 중간에서 줄바꿈되면
+// 읽기 어렵다 -- 토큰만 따로 뽑아 .factor-token(nowrap)으로 감싼다.
+// 나머지 텍스트는 그대로 두어 keep-all 줄바꿈이 단어(공백/·) 단위로
+// 자연스럽게 일어나게 한다.
+const FACTOR_TOKEN_RE = /[A-Za-z][A-Za-z0-9]*\([^)]+\)/g;
+
+function recommendationLineParts(text: string): (string | { token: string })[] {
+  const parts: (string | { token: string })[] = [];
+  let lastIndex = 0;
+  FACTOR_TOKEN_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FACTOR_TOKEN_RE.exec(text))) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    parts.push({ token: match[0] });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
 }
 
 function downloadCsv(data: YieldPredictionResponse, rows: YieldCandidate[]) {
@@ -384,7 +407,13 @@ function AlertsContent() {
                             <span className="ypRecommendationText" title={c.recommendation.text}>
                               {recommendationLines(c.recommendation.text).map((line, lineIndex) => (
                                 <span key={lineIndex} className={line.muted ? "ypRecommendationLine muted" : "ypRecommendationLine"}>
-                                  {line.text}
+                                  {recommendationLineParts(line.text).map((part, partIndex) =>
+                                    typeof part === "string" ? (
+                                      part
+                                    ) : (
+                                      <span key={partIndex} className="factor-token">{part.token}</span>
+                                    ),
+                                  )}
                                 </span>
                               ))}
                             </span>
