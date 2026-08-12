@@ -8492,7 +8492,11 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
    than the bars need, horizontal-scrolling only when it's narrower than
    the 28px-bar floor allows. */
 .paretoChartCard{ display: flex; flex-direction: column; gap: 4px; padding: 24px 24px 20px; }
-.paretoChartHeader{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.paretoChartHeader{ display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+/* 제목 줄 -- 제목 왼쪽, 이미지 저장 버튼(headerActions) 오른쪽. 등급
+   범례는 이 줄에 없다 -- 아래 .paretoLegendInline이 별도 줄로 차트 바로
+   위에 그대로 남는다. */
+.paretoChartHeaderRow{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .paretoChartHeader h2{ margin: 0; font-size: var(--text-section, 17px); font-weight: 600; }
 
 /* This 6px gap (axisCol <-> plotScroll) plus the tick text sitting flush

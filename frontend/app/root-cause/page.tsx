@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import ChartExportButton from "@/components/ChartExportButton";
 import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
@@ -15,7 +16,7 @@ import ParetoChart from "@/components/ParetoChart";
 import { usePanelState } from "@/components/PanelStateProvider";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart, { type QuickLookView, type ScatterColorMode } from "@/components/ScatterChart";
-import { buildExportFilename, buildFactorCaptionText, buildParetoCaptionText, exportNodeAsPng } from "@/lib/chartExport";
+import { buildExportFilename, buildFactorCaptionText, buildParetoCaptionText } from "@/lib/chartExport";
 import { selectDisplayFactors } from "@/lib/chartSelection";
 import { hasReliableEvidence, TIER_LABEL } from "@/lib/confidenceTier";
 import { buildCategoricalSpec, TARGETS } from "@/lib/constants";
@@ -1034,7 +1035,7 @@ function PinnedParetoCard({
       onBarClick={onBarClick}
       cardRef={cardRef}
       headerActions={
-        <ExportPngButton
+        <ChartExportButton
           nodeRef={cardRef}
           buildOptions={() => ({
             filename: buildExportFilename({ feature: null, target, view: "pareto" }),
@@ -1043,45 +1044,6 @@ function PinnedParetoCard({
         />
       }
     />
-  );
-}
-
-/** 파레토·산점도·박스플롯·Config 박스플롯 카드
- * 우상단, 즐겨찾기(☆) 옆에 붙는 이미지 저장 버튼. 카드 루트 DOM 노드를
- * 통째로 html-to-image로 캡처한다(lib/chartExport.ts) -- 네 차트가 이
- * 컴포넌트 하나를 공유한다. `buildOptions`를 클릭 시점에 지연 평가하는
- * 것은 파일명·캡션에 들어가는 시각을 "카드가 열린 시각"이 아니라
- * "다운로드를 누른 시각"으로 맞추기 위함이다. */
-function ExportPngButton({
-  nodeRef,
-  buildOptions,
-}: {
-  nodeRef: RefObject<HTMLElement | null>;
-  buildOptions: () => { filename: string; captionText: string };
-}) {
-  const [busy, setBusy] = useState(false);
-  async function handleClick() {
-    const node = nodeRef.current;
-    if (!node || busy) return;
-    setBusy(true);
-    try {
-      await exportNodeAsPng(node, buildOptions());
-    } catch (error) {
-      console.warn("차트 이미지 저장 실패", error);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <button
-      type="button"
-      className="chartExportButton"
-      onClick={() => void handleClick()}
-      disabled={busy}
-      title="이미지로 저장 (PNG)"
-    >
-      ⬇ 이미지 저장
-    </button>
   );
 }
 
@@ -1217,7 +1179,7 @@ function NumericFactorCard({
               }
             />
             {/* 이미지 저장 버튼은 즐겨찾기 별 바로 옆. */}
-            <ExportPngButton
+            <ChartExportButton
               nodeRef={cardRef}
               buildOptions={() => ({
                 filename: buildExportFilename({ feature: item.feature, target: activeTarget, view }),
@@ -1335,7 +1297,7 @@ function CategoricalFactorCard({
                 })
               }
             />
-            <ExportPngButton
+            <ChartExportButton
               nodeRef={cardRef}
               buildOptions={() => ({
                 filename: buildExportFilename({ feature: item.feature, target: activeTarget, view: "box" }),

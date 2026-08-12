@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
+import ChartExportButton from "@/components/ChartExportButton";
 import { getScreeningHeatmap } from "@/lib/api";
 import { buildExportFilename, buildHeatmapCaptionText, exportNodeAsPng } from "@/lib/chartExport";
 import { TIER_LABEL } from "@/lib/confidenceTier";
@@ -386,16 +387,12 @@ export default function CorrelationHeatmap({
           <h2>{VIEW_TITLE}</h2>
         </div>
         {/* 파레토·산점도·박스플롯 카드와 같은 자리(제목 줄 우측 끝)·같은
-            스타일의 이미지 저장 버튼. */}
-        <button
-          type="button"
-          className="chartExportButton"
+            컴포넌트의 이미지 저장 버튼. */}
+        <ChartExportButton
           onClick={() => void handleExport()}
-          disabled={exporting}
+          busy={exporting}
           title="이미지로 저장 (PNG, 전체 행)"
-        >
-          ⬇ 이미지 저장
-        </button>
+        />
       </div>
 
       <div className="heatmapControls">

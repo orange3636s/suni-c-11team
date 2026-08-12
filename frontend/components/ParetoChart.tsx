@@ -380,21 +380,25 @@ export default function ParetoChart({
   return (
     <section className="resultCard paretoChartCard" ref={cardRef}>
       <div className="paretoChartHeader">
-        <div>
-          <span className="sectionLabel">PARETO</span>
-          {/* 파레토는 타깃당 1개로 고정되며, 인자명이 아니라
-              "R/D/Config vs {타깃}"이 제목이다 -- 특정 인자 하나가 아니라
-              이 타깃의 인자 순위 전체를 보여주는 차트이기 때문이다. */}
-          <h2>R/D/Config vs {target}</h2>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div className="paretoLegend paretoLegendInline">
-            <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
-            <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
-            <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
-            <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
+        {/* 산점도·박스플롯·히트맵과 같은 자리(제목 줄 우측 끝)의 이미지
+            저장 버튼 -- 범례와 한 그룹으로 묶여 있던 자리에서 제목 옆으로
+            옮긴다. 범례는 옮기지 않고 그 아래 자기 줄에 그대로 둔다(차트
+            바로 위가 맞는 자리). */}
+        <div className="paretoChartHeaderRow">
+          <div>
+            <span className="sectionLabel">PARETO</span>
+            {/* 파레토는 타깃당 1개로 고정되며, 인자명이 아니라
+                "R/D/Config vs {타깃}"이 제목이다 -- 특정 인자 하나가 아니라
+                이 타깃의 인자 순위 전체를 보여주는 차트이기 때문이다. */}
+            <h2>R/D/Config vs {target}</h2>
           </div>
           {headerActions}
+        </div>
+        <div className="paretoLegend paretoLegendInline">
+          <span><i className="paretoLegendSwatch tier-strong" /> {TIER_LABEL.strong}</span>
+          <span><i className="paretoLegendSwatch tier-moderate" /> {TIER_LABEL.moderate}</span>
+          <span><i className="paretoLegendSwatch tier-weak" /> {TIER_LABEL.weak}</span>
+          <span><i className="paretoLegendSwatch tier-reference" /> {TIER_LABEL.reference}</span>
         </div>
       </div>
       {body}
