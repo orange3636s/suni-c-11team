@@ -33,21 +33,26 @@ const KIND_BADGE: Record<FavoriteSnapshot["viewType"], string> = {
 };
 const THUMBNAIL_HEIGHT = 160;
 
-/** 카드 제목 -- scatter/box는 인자명이 핵심이라 기존 형식을 유지하고,
+/** 카드 제목 -- "인자·타깃(main) · 뷰(view)" 두 부분으로 나눠 카드
+ * 헤더에서 서로 다른 스타일(main은 --font-data, view는 --text-secondary)로
+ * 렌더한다. scatter/box는 인자명이 핵심이라 기존 형식을 유지하고,
  * pareto/heatmap/treemap은 특정 인자가 아니라 화면 단위라 각자의
- * 식별자(정렬 기준, 스텝)로 제목을 만든다. */
-function cardTitle(snapshot: FavoriteRecord["snapshot"]): string {
+ * 식별자(정렬 기준, 스텝)를 view 자리에 넣는다 -- 종류 자체는 옆
+ * 배지(KIND_BADGE)가 이미 밝히므로 view에 "히트맵"/"트리맵" 같은 종류
+ * 이름을 다시 넣지 않는다(중복 방지, 히트맵은 정렬 기준·트리맵은
+ * 스텝으로 서로 다른 카드를 구분해야 하므로 그 식별자만 남긴다). */
+function cardTitle(snapshot: FavoriteRecord["snapshot"]): { main: string; view: string } {
   switch (snapshot.viewType) {
     case "heatmap": {
       const sortLabel = snapshot.sort ? (SORT_OPTION_LABEL[snapshot.sort as keyof typeof SORT_OPTION_LABEL] ?? snapshot.sort) : "기본";
-      return `R, D vs Y1~Y5 상관관계 히트맵 · ${sortLabel} 순`;
+      return { main: "R, D vs Y1~Y5", view: `${sortLabel} 순` };
     }
     case "pareto":
-      return `R/D/Config vs ${snapshot.target} 파레토`;
+      return { main: `R/D/Config vs ${snapshot.target}`, view: "Pareto" };
     case "treemap":
-      return `Config vs ${snapshot.target} 트리맵 · Step${snapshot.step ?? "?"}`;
+      return { main: `Config vs ${snapshot.target}`, view: `Step${snapshot.step ?? "?"}` };
     default:
-      return `${snapshot.feature} vs ${snapshot.target} · ${VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType}`;
+      return { main: `${snapshot.feature} vs ${snapshot.target}`, view: VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType };
   }
 }
 
@@ -182,6 +187,7 @@ function FavoriteCard({
       onOpen();
     }
   }
+  const title = cardTitle(snapshot);
   return (
     <article className="resultCard favoriteCard">
       <button type="button" className="favoriteCardDelete" onClick={(event) => { event.stopPropagation(); onDelete(); }} aria-label="삭제">
@@ -194,15 +200,22 @@ function FavoriteCard({
         onClick={onOpen}
         onKeyDown={handleOpenKeyDown}
       >
-        <div className="favoriteCardThumb">
-          <FavoriteThumbnail snapshot={snapshot} />
+        {/* 헤더 -- 배지·제목·뷰·시각을 카드 맨 위 한 줄로 (닫기
+            버튼과 겹치지 않게 우측에 여백을 둔다). 카드 폭이 좁으면
+            시각만 다음 줄로 내려가고 제목은 절대 자르지 않는다. */}
+        <div className="favoriteCardHeader">
+          <div className="favoriteCardTitleRow">
+            <span className="favoriteCardKindBadge">{KIND_BADGE[snapshot.viewType] ?? snapshot.viewType}</span>
+            <h3 className="favoriteCardTitle">
+              <span className="favoriteCardTitleMain">{title.main}</span>
+              <span className="favoriteCardTitleView"> · {title.view}</span>
+            </h3>
+          </div>
+          <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
         </div>
         {/* 카드에 남기는 정보는 배지·제목·시각·해석 넷뿐이다 -- 인자
             메타(n·기여율·p-value 등)는 넣지 않는다. */}
         <div className="favoriteCardBody">
-          <span className="favoriteCardKindBadge">{KIND_BADGE[snapshot.viewType] ?? snapshot.viewType}</span>
-          <h3>{cardTitle(snapshot)}</h3>
-          <span className="favoriteCardTime">{formatLastRun(item.created_at)}</span>
           {snapshot.interpretation && <p className="favoriteCardInterpretation">{snapshot.interpretation}</p>}
           {isStale && <span className="favoriteCardStaleBadge">이전 분석 기준</span>}
           {isDatasetStale && (
@@ -210,6 +223,9 @@ function FavoriteCard({
               다른 데이터셋으로 저장됨
             </span>
           )}
+        </div>
+        <div className="favoriteCardThumb">
+          <FavoriteThumbnail snapshot={snapshot} />
         </div>
       </div>
     </article>

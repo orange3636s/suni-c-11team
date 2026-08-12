@@ -157,7 +157,10 @@ export default function ParetoChart({
 
   const n = items.length;
 
-  const plotAvailableWidth = Math.max(containerWidth - AXIS_RESERVED_WIDTH, MIN_BAR);
+  // 썸네일은 좌우 축 컬럼(눈금 숫자)을 그리지 않으므로(아래 body 참고)
+  // 그 폭을 예약해 두면 플롯이 그만큼 좁아진 채 한쪽으로 밀려 보인다 --
+  // 축이 없는 만큼 플롯에 폭을 그대로 돌려준다.
+  const plotAvailableWidth = Math.max(containerWidth - (thumbnail ? 0 : AXIS_RESERVED_WIDTH), MIN_BAR);
   const layout = useMemo(() => computeBarLayout(Math.max(n, 1), plotAvailableWidth), [n, plotAvailableWidth]);
 
   const rotateLabels = useMemo(() => {
@@ -219,6 +222,11 @@ export default function ParetoChart({
           막대가 작아지지 않고, 전체 렌더 높이만 CHART_PADDING_TOP만큼
           늘어난다. */}
       <div className="paretoChartBody" ref={containerRef} style={{ paddingTop: CHART_PADDING_TOP }}>
+        {/* 썸네일에서는 좌우 눈금 축을 그리지 않는다 -- 식별용이라
+            값을 읽을 필요가 없고(Scatter/Box 썸네일과 같은 원칙), axis
+            컬럼이 남으면 위 plotAvailableWidth가 돌려준 폭을 다시 깎아먹어
+            막대가 좁아진다. */}
+        {!thumbnail && (
         <div className="paretoAxisCol paretoAxisCol-left" style={{ height: plotHeight }}>
           <span className="paretoAxisLabel"><span className="paretoAxisLabelText">기여율 (%)</span></span>
           <div className="paretoTickCol" style={{ height: plotHeight }}>
@@ -227,6 +235,7 @@ export default function ParetoChart({
             ))}
           </div>
         </div>
+        )}
 
         <div className="paretoPlotScroll">
           <div className="paretoPlotCenterer" style={{ minWidth: layout.plotWidth }}>
@@ -247,7 +256,9 @@ export default function ParetoChart({
                   x1={0} y1={yFor(80)} x2={layout.plotWidth} y2={yFor(80)}
                   className="paretoThresholdLine" stroke={thresholdColor}
                 />
-                <text x={layout.plotWidth - 4} y={yFor(80) - 4} textAnchor="end" className="paretoThresholdLabel">80%</text>
+                {!thumbnail && (
+                  <text x={layout.plotWidth - 4} y={yFor(80) - 4} textAnchor="end" className="paretoThresholdLabel">80%</text>
+                )}
 
                 {items.map((item, i) => {
                   // 막대 상단도 yFor()로 계산한다 (누적 마커/임계선과 같은
@@ -317,6 +328,7 @@ export default function ParetoChart({
               </svg>
             </div>
 
+            {!thumbnail && (
             <div
               className={`paretoFeatureLabels ${rotateLabels ? "rotated" : ""}`}
               style={{ width: layout.plotWidth, height: rotateLabels ? ROTATED_LABEL_HEIGHT : FLAT_LABEL_HEIGHT }}
@@ -332,10 +344,12 @@ export default function ParetoChart({
                 </span>
               ))}
             </div>
-            <p className="paretoAxisTitle" style={{ width: layout.plotWidth }}>상관 인자</p>
+            )}
+            {!thumbnail && <p className="paretoAxisTitle" style={{ width: layout.plotWidth }}>상관 인자</p>}
           </div>
         </div>
 
+        {!thumbnail && (
         <div className="paretoAxisCol paretoAxisCol-right" style={{ height: plotHeight }}>
           <div className="paretoTickCol" style={{ height: plotHeight }}>
             {RIGHT_TICKS.map((tick) => (
@@ -344,6 +358,7 @@ export default function ParetoChart({
           </div>
           <span className="paretoAxisLabel paretoAxisLabel-right" style={{ color: rightAxisColor }}><span className="paretoAxisLabelText">누적 기여율 (%)</span></span>
         </div>
+        )}
       </div>
 
       {tooltipItem && tooltip && (

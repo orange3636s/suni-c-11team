@@ -45,6 +45,10 @@ const BOX_JITTER_STD = 0.1;
 // top 28: the highest label row is window_bounds (offset 20) plus its own
 // line height. right 16: nothing is anchored to the right edge.
 const MARGIN = { top: 28, right: 16, bottom: 46, left: 76 };
+// 썸네일은 눈금/라벨/제목을 전부 생략하므로(아래 thumbnail 분기 참고) 그
+// 여백을 그대로 쓰면 플롯이 캔버스 우측 상단으로 쏠려 보인다 -- 라벨이
+// 없는 상태에 맞는 최소 여백으로 따로 잡는다.
+const THUMBNAIL_MARGIN = { top: 6, right: 6, bottom: 6, left: 6 };
 // Matches .scatterTickLabel's font (app/globals.css) -- used to measure
 // candidate tick labels for the overlap-backoff pass. .scatterTickLabel은
 // 등폭(var(--font-data))이므로 폭 측정도 같은 폰트로 해야 충돌 판정이
@@ -740,8 +744,9 @@ export default function ScatterChart({
     return () => observer.disconnect();
   }, []);
 
-  const plotWidth = Math.max(containerWidth - MARGIN.left - MARGIN.right, 120);
-  const plotHeight = height - MARGIN.top - MARGIN.bottom;
+  const margin = thumbnail ? THUMBNAIL_MARGIN : MARGIN;
+  const plotWidth = Math.max(containerWidth - margin.left - margin.right, 120);
+  const plotHeight = height - margin.top - margin.bottom;
 
   const { xDomain, yDomain, xScale, yScale } = useMemo(() => {
     const xValues = data.points.map((p) => p.x);
@@ -1180,7 +1185,7 @@ export default function ScatterChart({
   function toPlotRelative(clientX: number, clientY: number): DragPos | null {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    return { x: clientX - rect.left - MARGIN.left, y: clientY - rect.top - MARGIN.top };
+    return { x: clientX - rect.left - margin.left, y: clientY - rect.top - margin.top };
   }
 
   function handlePlotMouseDown(event: React.MouseEvent<SVGRectElement>) {
@@ -1250,8 +1255,8 @@ export default function ScatterChart({
     if (dragStart) return; // 드래그 중엔 브러시 사각형만 갱신한다 (window 리스너), 호버는 잠시 멈춘다.
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const relativeX = event.clientX - rect.left - MARGIN.left;
-    const relativeY = event.clientY - rect.top - MARGIN.top;
+    const relativeX = event.clientX - rect.left - margin.left;
+    const relativeY = event.clientY - rect.top - margin.top;
     if (view === "box") {
       const nearest = findNearestBoxPoint(relativeX, relativeY);
       if (nearest) {
@@ -1276,7 +1281,7 @@ export default function ScatterChart({
   function handleTrendMouseMove(event: React.MouseEvent<SVGRectElement>) {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const relativeX = event.clientX - rect.left - MARGIN.left;
+    const relativeX = event.clientX - rect.left - margin.left;
     const dataX = xDomain[0] + (relativeX / plotWidth) * (xDomain[1] - xDomain[0]);
     if (curveFit.fallbackReason == null) {
       const [lo, hi] = curveFit.domain;
@@ -1379,12 +1384,15 @@ export default function ScatterChart({
       {/* 해석+신뢰도 카드 (HA그룹) -- 차트 바로 위, 제목/메타 정보와는
           별도 줄로 쌓인다. 통계 용어 없이 이 차트가 무엇을 보여주는지
           한 줄로 요약하고, 설명력이 낮은 경우에는 그 사실을 같은 카드
-          안 두 번째 행으로 덧붙인다(카드를 두 개 쌓지 않는다). */}
-      <InterpretationCard rows={interpretationRows} />
+          안 두 번째 행으로 덧붙인다(카드를 두 개 쌓지 않는다).
+          썸네일에서는 그리지 않는다 -- 같은 문구를 즐겨찾기 카드 본문이
+          저장 시점 스냅샷으로 이미 보여준다(중복 방지, ParetoChart의
+          summaryCaption과 동일한 패턴). */}
+      {!thumbnail && <InterpretationCard rows={interpretationRows} />}
 
       <div className="scatterPlotWrap">
       <svg ref={svgRef} width="100%" height={height} className="scatterChartSvg" role="img" aria-label={`${factorAxisLabel(data.axis.x_label)} vs ${targetAxisLabel(data.axis.y_label)} 산점도`}>
-        <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
+        <g transform={`translate(${margin.left},${margin.top})`}>
           {/* dark-mode-only plot background -- painted
               first so every other layer sits on top of it. */}
           <rect x={0} y={0} width={plotWidth} height={plotHeight} className="scatterPlotBg" />
@@ -1732,7 +1740,12 @@ export default function ScatterChart({
       {/* 범례 -- 점의 색 구분(Color By)은 범례에 넣지 않는다: 어떤
           Color By를 고르든 이 아래 내용은 완전히 동일하다. Box Plot은
           박스 자체를 읽는 법(1행)이 앞에 붙고, 기준선 4종 + 구간 평균
-          불량률(row2)은 두 보기에서 문구까지 완전히 같다. */}
+          불량률(row2)은 두 보기에서 문구까지 완전히 같다.
+          썸네일에서는 그리지 않는다 -- 범례 항목 수가 보기(scatter/box)마다
+          달라 카드 높이가 들쭉날쭉해지고, 즐겨찾기는 "무엇을 저장했는지"만
+          보여주는 목록이라 상세 범례가 필요 없다(상세는 카드 클릭 시
+          원본 화면에서 본다). */}
+      {!thumbnail && (
       <div className="scatterRefLegend">
         <div className="scatterRefLegendDivider" />
 
@@ -1885,6 +1898,7 @@ export default function ScatterChart({
           />
         </div>
       </div>
+      )}
 
       {lineHover && (() => {
         if (lineHover.key === "optimal") {
@@ -1911,7 +1925,7 @@ export default function ScatterChart({
       })()}
 
       {trendHover && !pointHover && (
-        <div className="heatmapTooltip" style={{ left: MARGIN.left + trendHover.screenX + 14, top: MARGIN.top + trendHover.screenY + 14 }}>
+        <div className="heatmapTooltip" style={{ left: margin.left + trendHover.screenX + 14, top: margin.top + trendHover.screenY + 14 }}>
           <strong>{factorAxisLabel(data.axis.x_label)} = {trendHover.dataX.toFixed(1)}</strong>
           <div className="heatmapTooltipRow">
             <span>{curveFit.fallbackReason == null ? "불량률 곡선" : "구간 평균 불량률"}</span>

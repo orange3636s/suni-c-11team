@@ -8305,8 +8305,21 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px; margin-top: 16px;
 }
+/* 카드 하나가 하나의 배경면이어야 한다 -- flex column으로 헤더->본문
+   ->썸네일을 세로로 붙여 쌓아, 내용 길이와 무관하게 중간에 배경이
+   끊기는 빈 구간이 남지 않는다(카드 높이는 항상 내용에 맞춰진다). */
 .favoriteCard{ position: relative; padding: 0; overflow: hidden; cursor: pointer; }
-.favoriteCardThumb{ background: var(--surface-muted); padding: 6px; }
+.favoriteCardOpenArea{ display: flex; flex-direction: column; }
+/* 헤더 -- 배지·제목·뷰를 한 줄에, 시각은 같은 줄 우측 끝에 둔다(닫기
+   버튼과 겹치지 않도록 우측에 여백을 확보). 폭이 좁으면 시각만
+   다음 줄로 감싸지고(flex-wrap) 제목은 자르지 않는다. */
+.favoriteCardHeader{
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 2px 8px; padding: 12px 40px 10px 14px;
+  border-bottom: 1px solid var(--border-card, var(--border));
+}
+.favoriteCardTitleRow{ display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.favoriteCardThumb{ background: var(--surface-muted); padding: 6px; margin-top: 10px; }
 /* 히트맵·트리맵처럼 이 크기의 썸네일로 축약해 그릴 수 없는 종류의
    자리 표시자 -- 아이콘 하나만 크게, 카드 형태를 산점도·박스플롯과
    맞춘다. */
@@ -8314,14 +8327,19 @@ html[data-theme="dark"] .targetSegmentBar.stuck{
   display: flex; align-items: center; justify-content: center; height: 160px;
   font-size: 40px; color: var(--text-muted); background: var(--surface-muted);
 }
-.favoriteCardBody{ padding: 12px 14px; }
+.favoriteCardBody{ padding: 10px 14px 0; }
 .favoriteCardKindBadge{
-  display: inline-block; margin-bottom: 4px; padding: 2px 7px; border-radius: 999px;
+  display: inline-block; flex: 0 0 auto; padding: 2px 7px; border-radius: 999px;
   font-family: var(--font-data); font-size: var(--fs-nano, 9px); font-weight: 600;
   letter-spacing: .04em; color: var(--text-secondary); background: var(--surface-muted);
 }
-.favoriteCardBody h3{ margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; }
-.favoriteCardTime{ font-size: var(--fs-xs); color: var(--text-secondary); display: block; margin-bottom: 6px; }
+.favoriteCardTitle{ margin: 0; min-width: 0; font-size: var(--fs-body); font-weight: 600; }
+.favoriteCardTitleMain{ font-family: var(--font-data); color: var(--text-primary); }
+.favoriteCardTitleView{ color: var(--text-secondary); font-weight: 500; }
+.favoriteCardTime{
+  flex: 0 0 auto; font-family: var(--font-data); font-size: var(--fs-nano, 9px); color: var(--text-muted);
+  white-space: nowrap;
+}
 /* 해석 문구는 2줄로 말줄임한다 -- 문구 길이가 들쭉날쭉해도 카드
    높이가 흔들리지 않는다. */
 .favoriteCardInterpretation{
