@@ -25,7 +25,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   { id: WELCOME_ID, from: "suni", text: "무엇을 도와드릴까요?", status: "done" },
 ];
 
-type ChipIconKind = "chart" | "help" | "alert" | "info";
+type ChipIconKind = "chart" | "help" | "alert" | "info" | "domain";
 type ExampleChip = { icon: ChipIconKind; text: string };
 
 // 프리셋을 네 갈래(해석/기준/한계/기능)로 나눈다 -- 해석 질문만 보여주면
@@ -62,6 +62,11 @@ const MARQUEE_ROW_2: ExampleChip[] = [
   { icon: "info", text: "이 화면은 무엇을 보여주나요?" },
   { icon: "info", text: "자동 갱신은 어떻게 동작하나요?" },
   { icon: "info", text: "알림은 언제 발송되나요?" },
+  // 도메인 지식(공정 일반) -- 이 스냅샷의 인자명을 끌어오지 않고
+  // 일반 반도체 공정 지식으로만 답한다(prompts/chat_system.md
+  // "## 반도체 도메인 지식 [일반]" 참고). 위 세 카테고리는 모두 이
+  // 분석 결과나 대시보드 기능을 묻지만, 이 카테고리만 공정 자체를 묻는다.
+  { icon: "domain", text: "식각 공정 불량을 유발하는 주요 변인은 무엇인가요?" },
 ];
 // api/routes/chat.py의 REPORT_KEYWORDS와 반드시 같은 키워드 집합을
 // 유지한다 -- "요약해줘"·"정리해줘"는 후속 질문에서도 흔히 쓰이는 일반
@@ -404,9 +409,12 @@ export default function AiPanel({
               <button type="button" className="aiPanelBackButton" onClick={onToggle} aria-label="닫기">
                 <BackIcon />
               </button>
-              <span className="aiPanelMobileTitle">SUNI AI 어시스턴트</span>
-              {/* 어느 데이터셋 기준으로 답하는지 헤더에 항상 보인다. */}
-              <span className="aiPanelCtx">CTX {analysisDataset ?? "미실행"}</span>
+              {/* 어느 데이터셋 기준으로 답하는지는 디버그 표기("CTX
+                  train") 대신 툴팁으로만 노출한다 -- 헤더에는 제품명만
+                  보인다. */}
+              <span className="aiPanelMobileTitle" title={`분석 데이터셋: ${analysisDataset ?? "미실행"}`}>
+                SUNI AI 어시스턴트
+              </span>
             </div>
           ) : (
             <button
@@ -419,8 +427,9 @@ export default function AiPanel({
               <SuniAvatar size={open ? 28 : 32} />
               {open && (
                 <span className="shellLogoBlockTitleGroup">
-                  <span className="shellLogoBlockTitle">SUNI AI 어시스턴트</span>
-                  <span className="aiPanelCtx">CTX {analysisDataset ?? "미실행"}</span>
+                  <span className="shellLogoBlockTitle" title={`분석 데이터셋: ${analysisDataset ?? "미실행"}`}>
+                    SUNI AI 어시스턴트
+                  </span>
                 </span>
               )}
               <span className="shellLogoBlockChevron" aria-hidden="true">
@@ -489,18 +498,12 @@ export default function AiPanel({
                     </div>
                     {message.id === WELCOME_ID && (
                       <div className="aiPanelChipsWrap">
-                        <button
-                          type="button"
-                          className="aiPanelChip aiPanelChipPrimary"
-                          disabled={streaming}
-                          onClick={() => send("분석 보고서 생성", "report", "rootcause")}
-                        >
-                          분석 보고서 생성
-                        </button>
                         {/* 보고서 4종 -- report_kind를 명시해 보내므로
                             api/routes/chat.py의 REPORT_KIND_PATTERNS
                             폴백(타이핑 입력용)과 무관하게 항상 의도한
-                            종류로 라우팅된다. */}
+                            종류로 라우팅된다. 순서는 사이드바 화면 순서(모니터링
+                            홈 → 원인 분석 → Config별 트리맵 → 수율 예측)와
+                            맞춘다. */}
                         <button
                           type="button"
                           className="aiPanelChip"
@@ -511,11 +514,19 @@ export default function AiPanel({
                         </button>
                         <button
                           type="button"
+                          className="aiPanelChip aiPanelChipPrimary"
+                          disabled={streaming}
+                          onClick={() => send("원인 분석 보고서 생성", "report", "rootcause")}
+                        >
+                          원인 분석 보고서
+                        </button>
+                        <button
+                          type="button"
                           className="aiPanelChip"
                           disabled={streaming}
                           onClick={() => send("Config별 트리맵 보고서 생성", "report", "treemap")}
                         >
-                          트리맵 보고서
+                          Config 트리맵 보고서
                         </button>
                         <button
                           type="button"
@@ -536,7 +547,7 @@ export default function AiPanel({
               <div aria-hidden="true" style={{ height: MESSAGE_LIST_BOTTOM_SPACER_PX, flex: "0 0 auto" }} />
               </div>
 
-              {/* Floating block: marquee rows only -- "분석 보고서 생성" stays
+              {/* Floating block: marquee rows only -- "원인 분석 보고서" stays
                   attached to the welcome bubble above and scrolls with the
                   conversation. 대화가 시작되면(사용자가 한 번이라도
                   메시지를 보내면) 이 블록은 그리지 않는다 -- 이미 질문한
@@ -697,6 +708,15 @@ function ChipIcon({ kind }: { kind: ChipIconKind }) {
           <circle cx="12" cy="12" r="10" />
           <path d="M12 16v-5" />
           <path d="M12 8h.01" />
+        </svg>
+      );
+    // 도메인 지식(공정 일반)
+    case "domain":
+      return (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 3h6" />
+          <path d="M10 3v5.5L4.5 18a2 2 0 0 0 1.7 3h11.6a2 2 0 0 0 1.7-3L14 8.5V3" />
+          <path d="M7.5 14h9" />
         </svg>
       );
   }
