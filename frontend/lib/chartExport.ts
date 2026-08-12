@@ -330,3 +330,19 @@ export function buildHeatmapCaptionText(opts: {
   const dateStr = formatCaptionDate(new Date());
   return `R, D vs Y1~Y5 · ${opts.rowCount}행 x ${opts.columnCount}열 · 정렬 ${opts.sortLabel} · ${shortDatasetId(opts.datasetId)} · ${dateStr}`;
 }
+
+/** `Treemap_Step{n}_{YYYYMMDD-HHmm}.png` -- Config별 트리맵 다섯 장
+ * (Y1~Y5)을 한 이미지로 묶어 내보낼 때 쓰는 파일명. 스텝 번호를 파일명에
+ * 넣어야 여러 스텝을 저장해도 서로 구분된다. */
+export function buildTreemapExportFilename(step: number): string {
+  const stamp = formatExportTimestamp(new Date());
+  return `Treemap_Step${step}_${stamp}.png`;
+}
+
+/** Config별 트리맵 페이지의 캡션 한 줄 -- 다섯 트리맵(Y1~Y5)을 한
+ * 이미지로 묶어 내보내면 어느 스텝인지 이미지만 봐서는 알 수 없으므로
+ * 스텝 번호를 반드시 싣는다. */
+export function buildTreemapCaptionText(opts: { step: number; totalWafers: number; datasetId: string }): string {
+  const dateStr = formatCaptionDate(new Date());
+  return `Config vs Y1~Y5 · Step${opts.step} · Model x EQ x CH · ${opts.totalWafers.toLocaleString()}장 · ${shortDatasetId(opts.datasetId)} · ${dateStr}`;
+}

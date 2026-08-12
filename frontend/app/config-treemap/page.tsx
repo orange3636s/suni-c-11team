@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
+import ChartExportButton from "@/components/ChartExportButton";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
 import { PageHeaderMeta } from "@/components/LastRunNote";
 import SampleNotice from "@/components/SampleNotice";
 import { CONFIG_SCREENING_PASS_COUNT, CONFIG_SCREENING_TEST_COUNT } from "@/lib/fmeaFormat";
+import { buildTreemapCaptionText, buildTreemapExportFilename } from "@/lib/chartExport";
 import { getConfigTreemap, getDatasetSchema } from "@/lib/api";
 import type { ConfigTreemapResponse } from "@/types/data";
 
@@ -87,6 +89,13 @@ export default function ConfigTreemapPage() {
   // 다섯 타깃이 같은 표본을 쓰므로(같은 dataset_version) 아무거나
   // 하나에서 고지를 읽으면 충분하다.
   const sampleInfo = stepData ? (TARGETS.map((t) => stepData[t]?.sample_info).find(Boolean) ?? null) : null;
+  // 이미지 저장 캡션의 wafer 수 -- 이 스텝에서 실제로 집계된 wafer 총합
+  // (챔버별 n의 합). 데이터셋 행 수 자체는 이 페이지가 갖고 있지 않지만,
+  // Config가 채워진 wafer 수가 곧 "이 트리맵이 담은 표본 수"다.
+  const treemapWaferTotal = stepData
+    ? Math.max(...TARGETS.map((t) => stepData[t]?.groups.reduce((sum, g) => sum + g.n, 0) ?? 0))
+    : 0;
+  const treemapExportRef = useRef<HTMLDivElement | null>(null);
 
   return (
     <DashboardShell activeItem="Config별 트리맵">
@@ -96,35 +105,50 @@ export default function ConfigTreemapPage() {
           <p>스텝 하나를 고르면 Model → EQ → Chamber 조합별 Y1~Y5 평균 불량률을 한 번에 봅니다.</p>
           <PageHeaderMeta />
           <SampleNotice sampleInfo={sampleInfo} />
+        </div>
+
+        {/* FDR 안내는 다섯 트리맵 바로 위, 이미지 저장 캡처 영역 안쪽에
+            둔다 -- 여기 있어야 "이미지 저장" 버튼으로 내보낸 PNG에도
+            함께 담겨, 이미지만 봐도 왜 타일이 전부 중립색인지 알 수 있다. */}
+        <div ref={treemapExportRef}>
           {!anySignificant && (
             <p className="sectionCaption">
               FDR 보정 후 유의한 Config 조합이 없습니다 ({CONFIG_SCREENING_TEST_COUNT}건 검정, 통과 {CONFIG_SCREENING_PASS_COUNT}건).
               색 대신 수치로 비교하세요.
             </p>
           )}
+          {TARGETS.map((target, index) => (
+            <ConfigTreemap
+              key={target}
+              target={target}
+              step={step}
+              data={stepData?.[target] ?? null}
+              loading={isLoading}
+              headerRight={
+                index === 0 ? (
+                  <div className="monitoringTreemapControls">
+                    <ChartExportButton
+                      nodeRef={treemapExportRef}
+                      buildOptions={() => ({
+                        filename: buildTreemapExportFilename(step),
+                        captionText: buildTreemapCaptionText({ step, totalWafers: treemapWaferTotal, datasetId }),
+                      })}
+                      title="Y1~Y5 트리맵을 한 이미지로 저장 (PNG)"
+                    />
+                    <label className="monitoringStepSelect">
+                      스텝
+                      <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
+                        {stepOptions.map((s) => (
+                          <option key={s} value={s}>Step{s}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                ) : undefined
+              }
+            />
+          ))}
         </div>
-
-        {TARGETS.map((target, index) => (
-          <ConfigTreemap
-            key={target}
-            target={target}
-            step={step}
-            data={stepData?.[target] ?? null}
-            loading={isLoading}
-            headerRight={
-              index === 0 ? (
-                <label className="monitoringStepSelect">
-                  스텝
-                  <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
-                    {stepOptions.map((s) => (
-                      <option key={s} value={s}>Step{s}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : undefined
-            }
-          />
-        ))}
       </div>
     </DashboardShell>
   );
