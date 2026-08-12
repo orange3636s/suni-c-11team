@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import ChartExportButton from "@/components/ChartExportButton";
-import { FavoriteStarButton } from "@/components/FavoriteStarButton";
 import { getScreeningHeatmap } from "@/lib/api";
 import { buildExportFilename, buildHeatmapCaptionText, exportNodeAsPng } from "@/lib/chartExport";
 import { TIER_LABEL } from "@/lib/confidenceTier";
@@ -33,9 +32,6 @@ export const SORT_OPTION_LABEL: Record<SortMode, string> = {
   step_desc: "Step 내림차순",
   step_asc: "Step 오름차순",
 };
-function isSortMode(value: string | null | undefined): value is SortMode {
-  return value === "max_adj_r2" || value === "min_adj_r2" || value === "step_desc" || value === "step_asc";
-}
 
 /** `Step13_R1` -> 13. 문자열 정렬로는 Step1 < Step11 < Step2가 되므로
  * 반드시 숫자로 뽑아 비교한다. 스텝 번호가 없는 이름은 맨 뒤로 민다. */
@@ -196,11 +192,6 @@ export default function CorrelationHeatmap({
   onSelectCell,
   initialCache,
   onCacheUpdate,
-  initialSortMode,
-  onSortModeChange,
-  favorited = false,
-  favoritePending = false,
-  onToggleFavorite,
 }: {
   datasetId: string;
   enabled: boolean;
@@ -211,16 +202,6 @@ export default function CorrelationHeatmap({
   // 하나뿐이고, 그 값은 항상 "numeric"이다.
   initialCache?: Record<string, HeatmapResponse>;
   onCacheUpdate?: (cache: Record<string, HeatmapResponse>) => void;
-  // 즐겨찾기에서 열었을 때 저장 시점 정렬 기준으로 복원한다 --
-  // 마운트 시 한 번만 반영하고, 이후 URL과 계속 동기화하지는 않는다.
-  initialSortMode?: string | null;
-  // 즐겨찾기 별이 "지금 이 정렬 기준"이 이미 저장돼 있는지 보여주려면
-  // 부모가 현재 sortMode를 알아야 한다 -- 이 컴포넌트가 상태를 들고
-  // 있으므로(select가 여기서 바뀐다) 바뀔 때마다(마운트 포함) 알려준다.
-  onSortModeChange?: (sortMode: SortMode) => void;
-  favorited?: boolean;
-  favoritePending?: boolean;
-  onToggleFavorite?: (sortMode: SortMode) => void;
 }) {
   // 셀 색은 라이트/다크가 서로 다른 램프를 쓴다(흰색~빨강 / 패널 배경~빨강)
   // -- cellBackgroundRgb/cellTextColor/gradientCss에 그대로 흘려보낸다.
@@ -242,7 +223,7 @@ export default function CorrelationHeatmap({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [significantOnly, setSignificantOnly] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>(isSortMode(initialSortMode) ? initialSortMode : "max_adj_r2");
+  const [sortMode, setSortMode] = useState<SortMode>("max_adj_r2");
   const [expanded, setExpanded] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   // Brief settle animation on the rows whenever the sort/filter controls
@@ -255,11 +236,6 @@ export default function CorrelationHeatmap({
   // 이 값 하나로 쓴다.
   const [exporting, setExporting] = useState(false);
   const exportSurfaceRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    onSortModeChange?.(sortMode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortMode]);
 
   function triggerRowSettle() {
     setSorting(true);
@@ -411,15 +387,8 @@ export default function CorrelationHeatmap({
           <h2>{VIEW_TITLE}</h2>
         </div>
         {/* 파레토·산점도·박스플롯 카드와 같은 자리(제목 줄 우측 끝)·같은
-            순서(즐겨찾기 별 -> 이미지 저장)·같은 컴포넌트를 쓴다. */}
+            컴포넌트를 쓴다. */}
         <div className="heatmapHeaderRowActions">
-          {onToggleFavorite && (
-            <FavoriteStarButton
-              favorited={favorited}
-              disabled={favoritePending}
-              onClick={() => onToggleFavorite(sortMode)}
-            />
-          )}
           <ChartExportButton
             onClick={() => void handleExport()}
             busy={exporting}

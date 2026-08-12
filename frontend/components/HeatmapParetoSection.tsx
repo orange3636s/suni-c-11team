@@ -30,11 +30,6 @@ export default function HeatmapParetoSection({
   // CorrelationHeatmap으로 그대로 흘려보낸다.
   heatmapInitialCache,
   onHeatmapCacheUpdate,
-  heatmapInitialSortMode,
-  onHeatmapSortModeChange,
-  heatmapFavorited,
-  heatmapFavoritePending,
-  onHeatmapToggleFavorite,
 }: {
   datasetId: string;
   enabled: boolean;
@@ -44,11 +39,6 @@ export default function HeatmapParetoSection({
   criterionControl?: ReactNode;
   heatmapInitialCache?: Record<string, HeatmapResponse>;
   onHeatmapCacheUpdate?: (cache: Record<string, HeatmapResponse>) => void;
-  heatmapInitialSortMode?: string | null;
-  onHeatmapSortModeChange?: (sortMode: string) => void;
-  heatmapFavorited?: boolean;
-  heatmapFavoritePending?: boolean;
-  onHeatmapToggleFavorite?: (sortMode: string) => void;
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
@@ -76,11 +66,6 @@ export default function HeatmapParetoSection({
         onSelectCell={onHeatmapCellSelect}
         initialCache={heatmapInitialCache}
         onCacheUpdate={onHeatmapCacheUpdate}
-        initialSortMode={heatmapInitialSortMode}
-        onSortModeChange={onHeatmapSortModeChange}
-        favorited={heatmapFavorited}
-        favoritePending={heatmapFavoritePending}
-        onToggleFavorite={onHeatmapToggleFavorite}
       />
 
       {enabled && (

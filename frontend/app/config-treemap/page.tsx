@@ -1,18 +1,15 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import ChartExportButton from "@/components/ChartExportButton";
 import ConfigTreemap from "@/components/ConfigTreemap";
 import DashboardShell from "@/components/DashboardShell";
-import { FavoriteStarButton } from "@/components/FavoriteStarButton";
 import { PageHeader } from "@/components/PageHeader";
 import SampleNotice from "@/components/SampleNotice";
 import { CONFIG_SCREENING_PASS_COUNT, CONFIG_SCREENING_TEST_COUNT } from "@/lib/fmeaFormat";
 import { buildTreemapCaptionText, buildTreemapExportFilename } from "@/lib/chartExport";
 import { getConfigTreemap, getDatasetSchema } from "@/lib/api";
-import { useFavoriteToggle } from "@/lib/useFavoriteToggle";
 import type { ConfigTreemapResponse } from "@/types/data";
 
 const TARGETS = ["Y1", "Y2", "Y3", "Y4", "Y5"] as const;
@@ -34,11 +31,8 @@ export default function ConfigTreemapPage() {
 }
 
 function ConfigTreemapContent() {
-  const { analysis, training } = useAnalysisState();
+  const { analysis } = useAnalysisState();
   const datasetId = analysis?.dataset ?? "train";
-  const championVersion = training?.performance.model_id ?? null;
-  const searchParams = useSearchParams();
-  const { isFavorited, isFavoritePending, toggleFavorite } = useFavoriteToggle();
 
   const [stepOptions, setStepOptions] = useState<number[]>([]);
   const [optionsDataset, setOptionsDataset] = useState("");
@@ -47,13 +41,6 @@ function ConfigTreemapContent() {
   const [loadingStep, setLoadingStep] = useState<number | null>(null);
   // 데이터셋이 바뀌면(다른 원인 분석 결과) 이전 캐시는 무효하다.
   const cachedDatasetRef = useRef(datasetId);
-  // 즐겨찾기에서 열었을 때(`?step=&target=`) 스텝을 그 값으로
-  // 복원한다 -- 로컬 저장소보다 우선한다. 마운트 시 한 번만 적용한다.
-  const stepFromUrlRef = useRef<number | null>((() => {
-    const raw = Number(searchParams.get("step"));
-    return Number.isFinite(raw) && raw > 0 ? raw : null;
-  })());
-  const treemapDeepLinkHandledRef = useRef(false);
 
   useEffect(() => {
     if (cachedDatasetRef.current !== datasetId) {
@@ -65,16 +52,12 @@ function ConfigTreemapContent() {
       .then((schema) => {
         if (cancelled) return;
         const available = schema.config_steps.length > 0 ? schema.config_steps : schema.steps_present;
-        const urlStep = stepFromUrlRef.current;
         const storedStep = Number(window.localStorage.getItem(`config-treemap-step:${datasetId}`));
-        const nextStep =
-          urlStep != null && available.includes(urlStep)
-            ? urlStep
-            : available.includes(storedStep)
-              ? storedStep
-              : available.includes(step)
-                ? step
-                : (available[0] ?? step);
+        const nextStep = available.includes(storedStep)
+          ? storedStep
+          : available.includes(step)
+            ? step
+            : (available[0] ?? step);
         setStepOptions(available);
         setStep(nextStep);
         setOptionsDataset(datasetId);
@@ -87,18 +70,6 @@ function ConfigTreemapContent() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
-
-  // 스텝 데이터가 준비되면 즐겨찾기가 가리킨 타깃 카드로 스크롤한다.
-  useEffect(() => {
-    if (treemapDeepLinkHandledRef.current) return;
-    const targetFromUrl = searchParams.get("target");
-    if (!targetFromUrl || !cache[step]) return;
-    treemapDeepLinkHandledRef.current = true;
-    const timer = window.setTimeout(() => {
-      document.getElementById(`treemap-${targetFromUrl}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [cache, step, searchParams]);
 
   useEffect(() => {
     if (optionsDataset !== datasetId) return;
@@ -159,64 +130,38 @@ function ConfigTreemapContent() {
               색 대신 수치로 비교하세요.
             </p>
           )}
-          {TARGETS.map((target, index) => {
-            const favoriteSnapshot = {
-              dataset: datasetId,
-              target,
-              feature: "",
-              viewType: "treemap" as const,
-              step,
-            };
-            return (
-              <div key={target} id={`treemap-${target}`}>
-                <ConfigTreemap
-                  target={target}
-                  step={step}
-                  data={stepData?.[target] ?? null}
-                  loading={isLoading}
-                  headerRight={
+          {TARGETS.map((target, index) => (
+            <div key={target} id={`treemap-${target}`}>
+              <ConfigTreemap
+                target={target}
+                step={step}
+                data={stepData?.[target] ?? null}
+                loading={isLoading}
+                headerRight={
+                  index === 0 && (
                     <div className="monitoringTreemapControls">
-                      {/* 트리맵은 타깃마다(Y1~Y5 각각) 별을 단다 -- 이미지
-                          저장은 다섯 개를 한 장으로 묶지만, 즐겨찾기는
-                          트리맵 하나씩 개별로 저장한다. */}
-                      <FavoriteStarButton
-                        favorited={isFavorited(favoriteSnapshot)}
-                        disabled={isFavoritePending(favoriteSnapshot)}
-                        onClick={() =>
-                          toggleFavorite({
-                            ...favoriteSnapshot,
-                            isConfig: true,
-                            interpretation: `Config vs ${target} 트리맵 · Step${step}`,
-                            championVersion,
-                          })
-                        }
+                      <ChartExportButton
+                        nodeRef={treemapExportRef}
+                        buildOptions={() => ({
+                          filename: buildTreemapExportFilename(step),
+                          captionText: buildTreemapCaptionText({ step, totalWafers: treemapWaferTotal, datasetId }),
+                        })}
+                        title="Y1~Y5 트리맵을 한 이미지로 저장 (PNG)"
                       />
-                      {index === 0 && (
-                        <>
-                          <ChartExportButton
-                            nodeRef={treemapExportRef}
-                            buildOptions={() => ({
-                              filename: buildTreemapExportFilename(step),
-                              captionText: buildTreemapCaptionText({ step, totalWafers: treemapWaferTotal, datasetId }),
-                            })}
-                            title="Y1~Y5 트리맵을 한 이미지로 저장 (PNG)"
-                          />
-                          <label className="monitoringStepSelect">
-                            스텝
-                            <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
-                              {stepOptions.map((s) => (
-                                <option key={s} value={s}>Step{s}</option>
-                              ))}
-                            </select>
-                          </label>
-                        </>
-                      )}
+                      <label className="monitoringStepSelect">
+                        스텝
+                        <select value={step} onChange={(event) => setStep(Number(event.target.value))}>
+                          {stepOptions.map((s) => (
+                            <option key={s} value={s}>Step{s}</option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
-                  }
-                />
-              </div>
-            );
-          })}
+                  )
+                }
+              />
+            </div>
+          ))}
         </div>
       </div>
     </DashboardShell>

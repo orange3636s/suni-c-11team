@@ -4,25 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { createFavorite, deleteFavorite, getFavorites } from "@/lib/api";
 import type { FavoriteSnapshot } from "@/types/data";
 
-type FavoriteKeyInput = Pick<FavoriteSnapshot, "dataset" | "target" | "feature" | "viewType"> &
-  Partial<Pick<FavoriteSnapshot, "step" | "sort">>;
+type FavoriteKeyInput = Pick<FavoriteSnapshot, "dataset" | "target" | "feature" | "viewType">;
 
 /** 즐겨찾기 항목을 구분하는 유일한 키. viewType별로 별도 즐겨찾기이므로
- * 항상 포함하고("Scatter로 저장한 인자"와 "Box로 저장한 같은 인자"가
- * 같은 키로 잡혀 서로를 지우면 안 된다), treemap은 스텝이 다르면 다른
- * 차트이므로 step을, heatmap은 정렬이 다르면 보여주는 순서가 달라지므로
- * sort를 더한다. scatter/box/pareto는 step/sort가 없으므로 빈 문자열로
- * 붙는다 -- 기존 레코드와도 형식이 같게 유지된다(둘 다 없으면 접미사가
- * 항상 "::::"로 동일). */
+ * 항상 포함한다("Scatter로 저장한 인자"와 "Box로 저장한 같은 인자"가
+ * 같은 키로 잡혀 서로를 지우면 안 된다). */
 function favoriteKeyOf(s: FavoriteKeyInput): string {
-  return `${s.dataset}::${s.target}::${s.feature}::${s.viewType}::${s.step ?? ""}::${s.sort ?? ""}`;
+  return `${s.dataset}::${s.target}::${s.feature}::${s.viewType}`;
 }
 
-/** 즐겨찾기 ☆ 토글 공용 로직 -- 원인 분석(산점도·박스플롯·파레토·히트맵)과
- * Config별 트리맵이 각자 하나씩 인스턴스를 갖는다. 두 페이지가 저장하는
- * 종류가 겹치지 않아 상태를 공유할 필요는 없지만, 생성/삭제·중복 방지
- * (pending 가드) 로직이 페이지마다 따로 갈라지면 한쪽만 고치는 회귀가
- * 나기 쉬우므로 로직 자체는 여기 하나로 모은다. */
+/** 즐겨찾기 ☆ 토글 공용 로직 -- 산점도·박스플롯이 쓴다. 생성/삭제·중복
+ * 방지(pending 가드) 로직을 여기 하나로 모은다. */
 export function useFavoriteToggle() {
   const [favoriteIdByKey, setFavoriteIdByKey] = useState<Record<string, string>>({});
   // 생성/삭제 요청이 아직 끝나지 않은 키는 다시 받지 않는다 -- 빠른

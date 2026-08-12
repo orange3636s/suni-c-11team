@@ -7,7 +7,7 @@ import ChartExportButton from "@/components/ChartExportButton";
 import CompareAcrossConfigsModal from "@/components/CompareAcrossConfigsModal";
 import CompareAcrossTargetsModal from "@/components/CompareAcrossTargetsModal";
 import ConfidenceBadge from "@/components/ConfidenceBadge";
-import { SORT_OPTION_LABEL, type HeatmapCellSelection } from "@/components/CorrelationHeatmap";
+import type { HeatmapCellSelection } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import { FavoriteStarButton } from "@/components/FavoriteStarButton";
 import HeatmapParetoSection from "@/components/HeatmapParetoSection";
@@ -203,14 +203,9 @@ function RootCauseContent() {
     };
   }, [datasetId]);
 
-  // 즐겨찾기 -- 산점도·박스플롯·파레토·히트맵 넷이 이 페이지 안에서
-  // 같은 토글 로직(생성/삭제·중복 방지)을 공유한다. Config별 트리맵은
-  // 별도 페이지라 자기 인스턴스를 따로 갖는다(frontend/lib/useFavoriteToggle).
+  // 즐겨찾기 -- 산점도·박스플롯 둘이 이 페이지 안에서 같은 토글
+  // 로직(생성/삭제·중복 방지)을 공유한다.
   const { isFavorited: isFavoritedSnapshot, isFavoritePending: isFavoritePendingSnapshot, toggleFavorite } = useFavoriteToggle();
-  // 히트맵의 즐겨찾기 별은 "지금 이 정렬 기준"이 이미 저장돼 있는지
-  // 보여줘야 한다 -- 정렬은 CorrelationHeatmap 내부 상태라, 바뀔 때마다
-  // (마운트 포함) onHeatmapSortModeChange로 이 값을 받아 둔다.
-  const [heatmapSortForFavorite, setHeatmapSortForFavorite] = useState(searchParams.get("heatmapSort") || "max_adj_r2");
 
   const [pendingScrollFeature, setPendingScrollFeature] = useState<string | null>(null);
   const [quickLook, setQuickLook] = useState<{ target: string; feature: string; isConfig: boolean } | null>(null);
@@ -509,21 +504,6 @@ function RootCauseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runState]);
 
-  // 즐겨찾기의 히트맵 카드를 열었을 때(`?heatmapSort=`) 정렬 기준은
-  // CorrelationHeatmap이 initialSortMode로 스스로 복원하므로, 여기서는
-  // 그 카드로 스크롤만 시켜준다.
-  const heatmapDeepLinkHandled = useRef(false);
-  useEffect(() => {
-    if (heatmapDeepLinkHandled.current || runState !== "done") return;
-    if (!searchParams.get("heatmapSort")) return;
-    heatmapDeepLinkHandled.current = true;
-    const timer = window.setTimeout(() => {
-      document.getElementById("correlationHeatmapCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runState]);
-
   useEffect(() => {
     if (!pendingScrollFeature) return;
     const timer = window.setTimeout(() => {
@@ -624,22 +604,6 @@ function RootCauseContent() {
         onHeatmapCellSelect={handleHeatmapSelect}
         heatmapInitialCache={analysis?.heatmap ?? EMPTY_HEATMAP_CACHE}
         onHeatmapCacheUpdate={(cache) => setAnalysis((previous) => (previous ? { ...previous, heatmap: cache } : previous))}
-        heatmapInitialSortMode={searchParams.get("heatmapSort")}
-        onHeatmapSortModeChange={setHeatmapSortForFavorite}
-        heatmapFavorited={isFavoritedSnapshot({ dataset: datasetId, target: "", feature: "", viewType: "heatmap", sort: heatmapSortForFavorite })}
-        heatmapFavoritePending={isFavoritePendingSnapshot({ dataset: datasetId, target: "", feature: "", viewType: "heatmap", sort: heatmapSortForFavorite })}
-        onHeatmapToggleFavorite={(sortMode) =>
-          toggleFavorite({
-            dataset: datasetId,
-            target: "",
-            feature: "",
-            viewType: "heatmap",
-            isConfig: false,
-            interpretation: `R, D vs Y1~Y5 상관관계 히트맵 · ${SORT_OPTION_LABEL[sortMode as keyof typeof SORT_OPTION_LABEL] ?? sortMode} 순`,
-            championVersion,
-            sort: sortMode,
-          })
-        }
       />
 
       {analysisVisible && (
@@ -754,19 +718,6 @@ function RootCauseContent() {
                   n80={activeParetoResponse.n80}
                   datasetId={datasetId}
                   onBarClick={handleParetoBarClick}
-                  favorited={isFavoritedSnapshot({ dataset: datasetId, target: activeTarget, feature: "", viewType: "pareto" })}
-                  favoritePending={isFavoritePendingSnapshot({ dataset: datasetId, target: activeTarget, feature: "", viewType: "pareto" })}
-                  onToggleFavorite={() =>
-                    toggleFavorite({
-                      dataset: datasetId,
-                      target: activeTarget,
-                      feature: "",
-                      viewType: "pareto",
-                      isConfig: false,
-                      interpretation: `R/D/Config vs ${activeTarget} 파레토 · 상위 ${activeParetoItems.length}개 인자`,
-                      championVersion,
-                    })
-                  }
                 />
               )}
 
@@ -989,29 +940,21 @@ function formatNum1(value: number): string {
 /** 타깃당 1개, 화면 상단에 고정되는 파레토 카드.
  * ParetoChart를 non-embedded(기본) 모드로 그린다 -- 그쪽이 이미 소유한
  * 제목("R/D/Config vs {target}")·등급 범례 헤더를 그대로 쓰고,
- * `headerActions`로 즐겨찾기 별 + 이미지 저장 버튼을 그 헤더 안에 얹는다.
- * 이 경로를 쓰는 곳은 여기뿐이다(인자 카드는 embedded, 즐겨찾기 썸네일은
- * embedded+thumbnail로 부른다). 즐겨찾기 스냅샷은 특정 인자가 아니라
- * 타깃 전체 순위를 가리키므로 feature를 빈 문자열로 둔다(viewType
- * "pareto"). */
+ * `headerActions`로 이미지 저장 버튼을 그 헤더 안에 얹는다. 이 경로를
+ * 쓰는 곳은 여기뿐이다(인자 카드는 embedded, 즐겨찾기 썸네일은
+ * embedded+thumbnail로 부른다). */
 function PinnedParetoCard({
   target,
   items,
   n80,
   datasetId,
   onBarClick,
-  favorited,
-  favoritePending,
-  onToggleFavorite,
 }: {
   target: string;
   items: ParetoRankingItem[];
   n80: number | null;
   datasetId: string;
   onBarClick: (item: ParetoRankingItem) => void;
-  favorited: boolean;
-  favoritePending: boolean;
-  onToggleFavorite: () => void;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
   return (
@@ -1022,16 +965,13 @@ function PinnedParetoCard({
       onBarClick={onBarClick}
       cardRef={cardRef}
       headerActions={
-        <>
-          <FavoriteStarButton favorited={favorited} disabled={favoritePending} onClick={onToggleFavorite} />
-          <ChartExportButton
-            nodeRef={cardRef}
-            buildOptions={() => ({
-              filename: buildExportFilename({ feature: null, target, view: "pareto" }),
-              captionText: buildParetoCaptionText({ target, factorCount: items.length, datasetId }),
-            })}
-          />
-        </>
+        <ChartExportButton
+          nodeRef={cardRef}
+          buildOptions={() => ({
+            filename: buildExportFilename({ feature: null, target, view: "pareto" }),
+            captionText: buildParetoCaptionText({ target, factorCount: items.length, datasetId }),
+          })}
+        />
       }
     />
   );

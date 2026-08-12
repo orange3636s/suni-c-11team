@@ -3,57 +3,33 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAnalysisState } from "@/components/AnalysisStateProvider";
-import { SORT_OPTION_LABEL } from "@/components/CorrelationHeatmap";
 import DashboardShell from "@/components/DashboardShell";
 import { PageHeader } from "@/components/PageHeader";
-import ParetoChart from "@/components/ParetoChart";
 import PlotlyChart from "@/components/PlotlyChart";
 import ScatterChart from "@/components/ScatterChart";
-import { deleteFavorite, getFavorites, getScreeningPareto, getScreeningScatter, getScreeningScatterCategorical } from "@/lib/api";
+import { deleteFavorite, getFavorites, getScreeningScatter, getScreeningScatterCategorical } from "@/lib/api";
 import { buildCategoricalSpec } from "@/lib/constants";
 import { formatLastRun } from "@/lib/timeFormat";
 import type {
   CategoricalScatterResponse,
   FavoriteRecord,
   FavoriteSnapshot,
-  ParetoRankingResponse,
   ScreeningScatterResponse,
 } from "@/types/data";
 
-const VIEW_LABEL: Record<string, string> = { scatter: "Scatter Plot", box: "Box Plot", pareto: "Pareto" };
-// 카드 상단 배지 -- 히트맵·파레토·트리맵은 산점도·박스플롯과 저장 단위
-// 자체가 달라(특정 인자가 아니라 화면 전체/타깃 전체) 썸네일 미리보기가
-// 없거나 얕다. 배지로 종류를 먼저 밝혀 구분한다.
+const VIEW_LABEL: Record<string, string> = { scatter: "Scatter Plot", box: "Box Plot" };
+// 카드 상단 배지.
 const KIND_BADGE: Record<FavoriteSnapshot["viewType"], string> = {
   scatter: "산점도",
   box: "박스플롯",
-  pareto: "파레토",
-  heatmap: "히트맵",
-  treemap: "트리맵",
 };
 const THUMBNAIL_HEIGHT = 160;
 
 /** 카드 제목 -- "인자·타깃(main) · 뷰(view)" 두 부분으로 나눠 카드
  * 헤더에서 서로 다른 스타일(main은 --font-data, view는 --text-secondary)로
- * 렌더한다. scatter/box는 인자명이 핵심이라 기존 형식을 유지하고,
- * pareto/heatmap/treemap은 특정 인자가 아니라 화면 단위라 각자의
- * 식별자(정렬 기준, 스텝)를 view 자리에 넣는다 -- 종류 자체는 옆
- * 배지(KIND_BADGE)가 이미 밝히므로 view에 "히트맵"/"트리맵" 같은 종류
- * 이름을 다시 넣지 않는다(중복 방지, 히트맵은 정렬 기준·트리맵은
- * 스텝으로 서로 다른 카드를 구분해야 하므로 그 식별자만 남긴다). */
+ * 렌더한다. */
 function cardTitle(snapshot: FavoriteRecord["snapshot"]): { main: string; view: string } {
-  switch (snapshot.viewType) {
-    case "heatmap": {
-      const sortLabel = snapshot.sort ? (SORT_OPTION_LABEL[snapshot.sort as keyof typeof SORT_OPTION_LABEL] ?? snapshot.sort) : "기본";
-      return { main: "R, D vs Y1~Y5", view: `${sortLabel} 순` };
-    }
-    case "pareto":
-      return { main: `R/D/Config vs ${snapshot.target}`, view: "Pareto" };
-    case "treemap":
-      return { main: `Config vs ${snapshot.target}`, view: `Step${snapshot.step ?? "?"}` };
-    default:
-      return { main: `${snapshot.feature} vs ${snapshot.target}`, view: VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType };
-  }
+  return { main: `${snapshot.feature} vs ${snapshot.target}`, view: VIEW_LABEL[snapshot.viewType] ?? snapshot.viewType };
 }
 
 function noop() {}
@@ -98,24 +74,9 @@ export default function FavoritesPage() {
   // dataset을 항상 함께 실어야 한다 -- 안 실으면 대상 화면은 현재
   // 선택된(즐겨찾기와 무관한) 데이터셋으로 조회해, train에서 저장한
   // 카드를 test가 선택된 상태에서 열면 같은 인자명의 다른 데이터셋
-  // 차트가 경고 없이 표시된다. 종류별로 저장 시점 상태(정렬·스텝·타깃)를
-  // 함께 실어 그 상태로 복원한다 -- 화면만 여는 것으로는 부족하다.
+  // 차트가 경고 없이 표시된다.
   function openFavorite(item: FavoriteRecord) {
     const { snapshot } = item;
-    if (snapshot.viewType === "heatmap") {
-      const params = new URLSearchParams({ dataset: snapshot.dataset });
-      if (snapshot.sort) params.set("heatmapSort", snapshot.sort);
-      router.push(`/root-cause?${params.toString()}`);
-      return;
-    }
-    if (snapshot.viewType === "treemap") {
-      const params = new URLSearchParams({ dataset: snapshot.dataset, target: snapshot.target });
-      if (snapshot.step != null) params.set("step", String(snapshot.step));
-      router.push(`/config-treemap?${params.toString()}`);
-      return;
-    }
-    // pareto: feature 없이 target만 -- root-cause는 target 하나로 그
-    // 타깃의 파레토 카드를 그대로 연다. scatter/box: 기존과 동일.
     const params = new URLSearchParams({ dataset: snapshot.dataset, target: snapshot.target });
     if (snapshot.feature) params.set("feature", snapshot.feature);
     router.push(`/root-cause?${params.toString()}`);
@@ -235,25 +196,14 @@ function FavoriteCard({
 function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] }) {
   const [numericData, setNumericData] = useState<ScreeningScatterResponse | null>(null);
   const [categoricalData, setCategoricalData] = useState<CategoricalScatterResponse | null>(null);
-  const [paretoData, setParetoData] = useState<ParetoRankingResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
-  // 히트맵·트리맵은 화면 전체(또는 스텝 전체)를 다시 그려야 해서 이
-  // 작은 썸네일에 맞는 축약 렌더가 없다 -- 조회 자체를 건너뛰고 종류
-  // 배지 + 아이콘만 보여준다(위 KIND_BADGE 참고).
-  const skipsThumbnail = snapshot.viewType === "heatmap" || snapshot.viewType === "treemap";
-
   useEffect(() => {
-    if (skipsThumbnail) return;
     let cancelled = false;
     setFailed(false);
     if (snapshot.isConfig) {
       getScreeningScatterCategorical(snapshot.dataset, snapshot.target, snapshot.feature)
         .then((result) => !cancelled && setCategoricalData(result))
-        .catch(() => !cancelled && setFailed(true));
-    } else if (snapshot.viewType === "pareto") {
-      getScreeningPareto(snapshot.dataset, snapshot.target)
-        .then((result) => !cancelled && setParetoData(result))
         .catch(() => !cancelled && setFailed(true));
     } else {
       getScreeningScatter(snapshot.dataset, snapshot.target, snapshot.feature)
@@ -264,30 +214,10 @@ function FavoriteThumbnail({ snapshot }: { snapshot: FavoriteRecord["snapshot"] 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot.dataset, snapshot.target, snapshot.feature, snapshot.isConfig, snapshot.viewType, skipsThumbnail]);
+  }, [snapshot.dataset, snapshot.target, snapshot.feature, snapshot.isConfig, snapshot.viewType]);
 
-  if (snapshot.viewType === "heatmap") {
-    return <div className="favoriteCardKindPlaceholder" aria-hidden="true">▤</div>;
-  }
-  if (snapshot.viewType === "treemap") {
-    return <div className="favoriteCardKindPlaceholder" aria-hidden="true">▦</div>;
-  }
   if (failed) return <p className="emptyMessage">미리보기를 불러오지 못했습니다.</p>;
   if (categoricalData) return <PlotlyChart spec={buildCategoricalSpec(categoricalData, { compact: true })} height={THUMBNAIL_HEIGHT} />;
-  if (paretoData) {
-    return (
-      <ParetoChart
-        target={snapshot.target}
-        items={paretoData.items}
-        n80={paretoData.n80}
-        activeFeature={snapshot.feature}
-        onBarClick={noop}
-        embedded
-        height={THUMBNAIL_HEIGHT}
-        thumbnail
-      />
-    );
-  }
   if (numericData) {
     return (
       <ScatterChart

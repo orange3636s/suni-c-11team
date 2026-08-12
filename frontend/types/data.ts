@@ -893,10 +893,7 @@ export type SnapshotMetaResponse = {
 // -- 즐겨찾기 -------------------------------------------------------------
 // 점 데이터는 절대 담지 않는다 -- 열 때 이 파라미터로 API를 다시 불러
 // 렌더한다.
-// "heatmap"/"treemap"은 특정 (타깃,인자) 조합이 아니라 화면 전체(또는
-// 화면 한 부분)를 가리키므로 target/feature 중 의미 없는 쪽은 빈
-// 문자열로 둔다 -- heatmap은 target/feature 둘 다, treemap은 feature만.
-export type FavoriteViewType = "scatter" | "box" | "pareto" | "heatmap" | "treemap";
+export type FavoriteViewType = "scatter" | "box";
 
 export type FavoriteSnapshot = {
   dataset: string;
@@ -914,13 +911,6 @@ export type FavoriteSnapshot = {
   // 챔피언과 달라지면 카드에 "이전 분석 기준" 배지를 붙인다. 학습된
   // 모델이 아예 없던 시점에 저장됐으면 null.
   championVersion: string | null;
-  // viewType이 "heatmap"일 때만: 저장 시점의 정렬 기준
-  // (CorrelationHeatmap의 SortMode 값, 예: "max_adj_r2"). 정렬이 다르면
-  // 보여주는 순서가 달라 별개 즐겨찾기로 취급한다.
-  sort?: string;
-  // viewType이 "treemap"일 때만: 저장 시점의 스텝 번호. 스텝이 다르면
-  // 다른 차트이므로 target과 함께 반드시 키에 포함된다.
-  step?: number;
 };
 
 export type FavoriteRecord = {
