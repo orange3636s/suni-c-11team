@@ -500,6 +500,11 @@ export async function deleteFavorite(favoriteId: string): Promise<{ deleted: boo
 }
 
 export type ChatMode = "report" | "chat";
+// api/routes/chat.py의 ReportKind와 반드시 같은 값 집합을 유지한다.
+// mode가 "report"일 때만 의미가 있다 -- 생략하면 백엔드가
+// REPORT_KIND_PATTERNS로 메시지 텍스트에서 추론한다(칩이 없는 타이핑
+// 입력의 폴백 경로).
+export type ChatReportKind = "rootcause" | "monitoring" | "treemap" | "yield";
 export type ChatHistoryTurn = { role: "user" | "assistant"; content: string };
 
 // "no_llm"/"no_analysis" are terminal states a retry can't fix -- only
@@ -524,7 +529,13 @@ const CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
  * arrive. Returns a handle to cancel the in-flight request (component
  * unmount, user navigates away mid-stream). */
 export function streamChat(
-  params: { message: string; mode: ChatMode; dataset: string; history?: ChatHistoryTurn[] },
+  params: {
+    message: string;
+    mode: ChatMode;
+    dataset: string;
+    history?: ChatHistoryTurn[];
+    report_kind?: ChatReportKind;
+  },
   handlers: ChatStreamHandlers,
 ): { cancel: () => void } {
   const controller = new AbortController();

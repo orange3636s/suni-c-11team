@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { usePanelState } from "@/components/PanelStateProvider";
 import SuniAvatar from "@/components/SuniAvatar";
-import { type ChatErrorKind, type ChatHistoryTurn, type ChatMode, streamChat } from "@/lib/api";
+import { type ChatErrorKind, type ChatHistoryTurn, type ChatMode, type ChatReportKind, streamChat } from "@/lib/api";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useIsMobileLayout, useIsTabBarLayout } from "@/lib/useMediaQuery";
 
@@ -104,7 +104,9 @@ export default function AiPanel({
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [lastRequest, setLastRequest] = useState<{ message: string; mode: ChatMode } | null>(null);
+  const [lastRequest, setLastRequest] = useState<{ message: string; mode: ChatMode; reportKind?: ChatReportKind } | null>(
+    null,
+  );
 
   // Locks background scroll while the drawer covers the screen (spec
   // "열리면 뒤 본문 스크롤을 잠근다") -- desktop's fixed-width side
@@ -271,7 +273,7 @@ export default function AiPanel({
   }
 
   const send = useCallback(
-    (rawText: string, modeOverride?: ChatMode) => {
+    (rawText: string, modeOverride?: ChatMode, reportKindOverride?: ChatReportKind) => {
       const text = rawText.trim();
       if (!text || streaming) return;
 
@@ -290,7 +292,7 @@ export default function AiPanel({
         { id: suniId, from: "suni", text: "", kind: mode, status: "streaming" },
       ]);
       setDraft("");
-      setLastRequest({ message: text, mode });
+      setLastRequest({ message: text, mode, reportKind: reportKindOverride });
       setAutoScroll(true);
 
       queueRef.current = [];
@@ -305,7 +307,7 @@ export default function AiPanel({
       // reaches /api/chat the same way regardless of entry point (typed
       // text or an example chip).
       cancelRef.current = streamChat(
-        { message: text, mode, dataset: analysisDataset ?? "", history },
+        { message: text, mode, dataset: analysisDataset ?? "", history, report_kind: reportKindOverride },
         {
           onDelta: (chunk) => {
             // `chunk.split("")`은 UTF-16 서로게이트 쌍을 반으로
@@ -353,7 +355,7 @@ export default function AiPanel({
 
   function retry() {
     if (!lastRequest) return;
-    send(lastRequest.message, lastRequest.mode);
+    send(lastRequest.message, lastRequest.mode, lastRequest.reportKind);
   }
 
   function copyReport(text: string) {
@@ -491,9 +493,37 @@ export default function AiPanel({
                           type="button"
                           className="aiPanelChip aiPanelChipPrimary"
                           disabled={streaming}
-                          onClick={() => send("분석 보고서 생성", "report")}
+                          onClick={() => send("분석 보고서 생성", "report", "rootcause")}
                         >
                           분석 보고서 생성
+                        </button>
+                        {/* 보고서 4종 -- report_kind를 명시해 보내므로
+                            api/routes/chat.py의 REPORT_KIND_PATTERNS
+                            폴백(타이핑 입력용)과 무관하게 항상 의도한
+                            종류로 라우팅된다. */}
+                        <button
+                          type="button"
+                          className="aiPanelChip"
+                          disabled={streaming}
+                          onClick={() => send("모니터링 보고서 생성", "report", "monitoring")}
+                        >
+                          모니터링 보고서
+                        </button>
+                        <button
+                          type="button"
+                          className="aiPanelChip"
+                          disabled={streaming}
+                          onClick={() => send("Config별 트리맵 보고서 생성", "report", "treemap")}
+                        >
+                          트리맵 보고서
+                        </button>
+                        <button
+                          type="button"
+                          className="aiPanelChip"
+                          disabled={streaming}
+                          onClick={() => send("수율 예측 보고서 생성", "report", "yield")}
+                        >
+                          수율 예측 보고서
                         </button>
                       </div>
                     )}

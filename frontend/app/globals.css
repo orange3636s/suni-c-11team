@@ -7985,9 +7985,11 @@ html[data-theme="dark"] .aiPanelReportActions button:hover{ background: rgba(255
   30%{ transform: translateY(-4px); opacity: 1; }
 }
 
-/* "분석 보고서 생성"만 고정 배치한다(흐르는 줄에서 제외 -- 가장 중요한
-   버튼이 움직이면 누르기 어렵다). */
+/* 보고서 4종 칩만 고정 배치한다(흐르는 마퀴 줄에서 제외 -- 가장 자주
+   쓰는 버튼들이 움직이면 누르기 어렵다). flex-wrap으로 패널 폭(320px)
+   안에서 자연스럽게 줄바꿈된다. */
 .aiPanelChipsWrap{
+  display: flex; flex-wrap: wrap; gap: 6px;
   margin: 4px 0 8px 34px;
 }
 /* 프리셋은 .button 규율(radius 3px, :active scale(.97))을 따르는 테두리
