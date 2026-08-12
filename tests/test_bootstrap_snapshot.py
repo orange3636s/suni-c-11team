@@ -89,22 +89,9 @@ def test_bootstrap_status_round_trip() -> None:
         _cleanup(path)
 
 
-def test_latest_training_job_returns_most_recent() -> None:
-    store, path = _store()
-    try:
-        assert store.latest_training_job() is None
-        store.create_training_job("train_a" + "0" * 27, source_filename="a.csv")
-        store.create_training_job("train_b" + "0" * 27, source_filename="b.csv")
-        latest = store.latest_training_job()
-        assert latest is not None
-        assert latest["job_id"] == "train_b" + "0" * 27
-    finally:
-        _cleanup(path)
-
-
 class _FakeRuntimeStore:
     """`api.main._run_bootstrap`이 오직 이 표면(active_model/
-    set_bootstrap_status/latest_training_job/has_valid_snapshot/
+    set_bootstrap_status/has_valid_snapshot/
     clear_active_model)만 쓰는지 검증하기 위한 최소 더블. 실제
     RuntimeStore 대신 씀으로써 학습·분석 파이프라인 전체를 매 테스트마다
     돌리지 않아도 된다.
@@ -142,9 +129,6 @@ class _FakeRuntimeStore:
     def has_valid_snapshot(self) -> bool:
         # 파이프라인이 최소 한 번 불린 뒤에만 스냅샷이 생긴 것으로 본다.
         return self.pipeline_calls > 0 and self._snapshot_after_pipeline
-
-    def latest_training_job(self):
-        return None
 
     def get_manual_eval_override(self):
         return None
@@ -374,9 +358,6 @@ class _RegistryStore:
 
     def has_valid_snapshot(self) -> bool:
         return False
-
-    def latest_training_job(self):
-        return None
 
 
 def test_has_usable_champion_clears_stale_pointer_when_active_model_missing(

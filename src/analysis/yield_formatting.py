@@ -21,11 +21,3 @@ def format_contribution_pct(value: float) -> str:
 
 def format_reliability_fraction(count: int, total: int = 5) -> str:
     return f"{count}/{total}"
-
-
-def format_decrease_pct(value: float) -> str:
-    return f"{value:.1f}%p"
-
-
-def format_factor_value(value: float) -> str:
-    return f"{value:.1f}"

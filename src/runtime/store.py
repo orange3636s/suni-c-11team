@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
-from uuid import uuid4
 
 from api.settings import settings
 
@@ -248,16 +246,6 @@ class RuntimeStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_favorites_created
                 ON favorites(created_at DESC);
-                CREATE TABLE IF NOT EXISTS refresh_dispatch_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    new_alarm_count INTEGER NOT NULL,
-                    blocked_reason TEXT,
-                    summarized INTEGER NOT NULL DEFAULT 0,
-                    channels_json TEXT NOT NULL DEFAULT '{}'
-                );
-                CREATE INDEX IF NOT EXISTS idx_refresh_dispatch_log_created
-                ON refresh_dispatch_log(created_at DESC);
                 CREATE TABLE IF NOT EXISTS alert_snapshots (
                     snapshot_id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
@@ -301,12 +289,6 @@ class RuntimeStore:
                 """CREATE INDEX IF NOT EXISTS idx_notify_sent_log_dedupe
                 ON notify_sent_log(dataset_id, channel, model_version, criteria_version, wafer_id, sent_at DESC)"""
             )
-            # 발송/차단 이력에서 출처(수동 업로드/폴백 데모)를
-            # 나중에 추적할 수 있도록 컬럼을 추가한다 -- 위와 같은 이유로
-            # CREATE TABLE IF NOT EXISTS만으로는 기존 DB에 반영되지 않는다.
-            dispatch_log_columns = {row["name"] for row in connection.execute("PRAGMA table_info(refresh_dispatch_log)")}
-            if "source" not in dispatch_log_columns:
-                connection.execute("ALTER TABLE refresh_dispatch_log ADD COLUMN source TEXT")
 
     def active_model(self) -> dict[str, Any] | None:
         with _lock, self._connect() as connection:
@@ -319,7 +301,7 @@ class RuntimeStore:
         return value
 
     def clear_active_model(self, *, also_clear_previous: bool = False) -> None:
-        """RA-B3: `active_model_id`가 가리키는 아티팩트가 `models/`에 실제로
+        """`active_model_id`가 가리키는 아티팩트가 `models/`에 실제로
         없을 때(파일이 지워졌거나 커밋되지 않은 채 배포된 경우) 호출한다.
         레지스트리 행 자체는 남겨 두되(다음 `promote_model`이 그대로
         UPDATE할 수 있도록) 포인터만 비워 `active_model()`이 다시 None을
@@ -692,36 +674,6 @@ class RuntimeStore:
             result["result"] = None
         return result
 
-    def record_run(self, **values: Any) -> str:
-        run_id = str(values.get("run_id") or f"run_{uuid4().hex}")
-        now = datetime.now(timezone.utc).isoformat()
-        record = {
-            "run_id": run_id,
-            "event_type": values["event_type"],
-            "model_id": values.get("model_id"),
-            "started_at": values.get("started_at") or now,
-            "completed_at": values.get("completed_at") or now,
-            "duration_ms": float(values.get("duration_ms") or 0.0),
-            "row_count": values.get("row_count"),
-            "status": values.get("status", "success"),
-            "error_type": values.get("error_type"),
-            "critical_count": values.get("critical_count"),
-            "warning_count": values.get("warning_count"),
-            "schema_version": values.get("schema_version"),
-            "filename": Path(str(values["filename"])).name if values.get("filename") else None,
-        }
-        with _lock, self._connect() as connection:
-            connection.execute(
-                "INSERT INTO runs VALUES (:run_id,:event_type,:model_id,:started_at,:completed_at,:duration_ms,:row_count,:status,:error_type,:critical_count,:warning_count,:schema_version,:filename)",
-                record,
-            )
-        return run_id
-
-    def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
-        with _lock, self._connect() as connection:
-            rows = connection.execute("SELECT * FROM runs ORDER BY completed_at DESC LIMIT ?", (min(max(limit, 1), 500),)).fetchall()
-        return [dict(row) for row in rows]
-
     def model_reference_counts(self, model_id: str) -> dict[str, int]:
         with _lock, self._connect() as connection:
             prediction_count = int(connection.execute(
@@ -881,29 +833,6 @@ class RuntimeStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def record_notifications_sent(
-        self,
-        dataset_id: str,
-        entries: list[tuple[str, str]],
-        *,
-        channel: str,
-        model_version: str = "",
-        criteria_version: str = "",
-    ) -> None:
-        if not entries:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        with _lock, self._connect() as connection:
-            connection.executemany(
-                """INSERT INTO notify_sent_log
-                (dataset_id, wafer_id, grade, sent_at, channel, model_version, criteria_version)
-                VALUES (?,?,?,?,?,?,?)""",
-                [
-                    (dataset_id, wafer_id, grade, now, channel, model_version, criteria_version)
-                    for wafer_id, grade in entries
-                ],
-            )
-
     def purge_old_notification_log(self, *, older_than_iso: str) -> int:
         """notify_sent_log는 24시간 재발송 방지 조회(recent_notifications)
         용도라 그보다 훨씬 오래된 행은 볼 일이 없다 -- 지우지 않으면 이
@@ -914,45 +843,6 @@ class RuntimeStore:
                 "DELETE FROM notify_sent_log WHERE sent_at < ?", (older_than_iso,)
             )
             return cursor.rowcount
-
-    def notifications_sent_since(self, since_iso: str) -> int:
-        """시간당 발송 예산 확인용 -- 채널·데이터셋 구분 없이 최근
-        발송 건수를 센다(과도한 발송 자체를 막는 전역 안전판이다)."""
-        with _lock, self._connect() as connection:
-            row = connection.execute(
-                "SELECT COUNT(*) AS n FROM notify_sent_log WHERE sent_at >= ?", (since_iso,)
-            ).fetchone()
-        return int(row["n"]) if row else 0
-
-    def save_alert_snapshot(
-        self,
-        *,
-        dataset_id: str,
-        model_id: str | None,
-        model_version: str | None,
-        criteria_version: str,
-        payload: dict[str, Any],
-        created_at: str | None = None,
-    ) -> str:
-        """Append an immutable alert decision snapshot for audit/history."""
-        snapshot_id = f"alert_{uuid4().hex}"
-        timestamp = created_at or datetime.now(timezone.utc).isoformat()
-        with _lock, self._connect() as connection:
-            connection.execute(
-                """INSERT INTO alert_snapshots
-                (snapshot_id, created_at, dataset_id, model_id, model_version, criteria_version, payload_json)
-                VALUES (?,?,?,?,?,?,?)""",
-                (
-                    snapshot_id,
-                    timestamp,
-                    dataset_id,
-                    model_id,
-                    model_version,
-                    criteria_version,
-                    self._json(payload),
-                ),
-            )
-        return snapshot_id
 
     def list_alert_snapshots(self, limit: int = 20) -> list[dict[str, Any]]:
         with _lock, self._connect() as connection:
@@ -1130,61 +1020,6 @@ class RuntimeStore:
 
     def get_bootstrap_status(self) -> dict[str, Any] | None:
         return self.get_app_state(BOOTSTRAP_STATUS_STATE_KEY)
-
-    def latest_training_job(self) -> dict[str, Any] | None:
-        """부트스트랩이 자신이 유발한 학습 Job의 진행 상태(stage)를
-        읽어오는 용도 -- job_id를 따로 들고 다니지 않아도 되도록 가장
-        최근 Job 하나만 본다(단일 워커 배포라 동시에 여러 Job이 쌓이지
-        않는다, operation_coordinator가 그 자체를 이미 보장)."""
-        with _lock, self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM training_jobs ORDER BY created_at DESC LIMIT 1"
-            ).fetchone()
-        return dict(row) if row is not None else None
-
-    # -- 자동 갱신 알림 발송 기록 ------------------------------------------
-
-    def record_refresh_dispatch(
-        self,
-        *,
-        new_alarm_count: int,
-        blocked_reason: str | None,
-        summarized: bool,
-        channels: dict[str, Any],
-        source: str | None = None,
-    ) -> None:
-        """차단된 경우에도 기록한다 -- "왜 안 보냈는지"가 수율 예측
-        화면에서 보여야 한다. `source`는 이 사이클이 어느 데이터
-        출처(수동 업로드/폴백 데모/None=SQL 자동 갱신)에서 나온 것인지
-        -- 나중에 "이 알람이 왜 왔지"를 추적할 수 있게 남긴다."""
-        with _lock, self._connect() as connection:
-            connection.execute(
-                """INSERT INTO refresh_dispatch_log
-                (created_at, new_alarm_count, blocked_reason, summarized, channels_json, source)
-                VALUES (?,?,?,?,?,?)""",
-                (
-                    datetime.now(timezone.utc).isoformat(),
-                    new_alarm_count,
-                    blocked_reason,
-                    1 if summarized else 0,
-                    self._json(channels),
-                    source,
-                ),
-            )
-
-    def list_refresh_dispatch_log(self, limit: int = 20) -> list[dict[str, Any]]:
-        with _lock, self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM refresh_dispatch_log ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        results = []
-        for row in rows:
-            value = dict(row)
-            value["summarized"] = bool(value["summarized"])
-            value["channels"] = json.loads(value.pop("channels_json") or "{}")
-            results.append(value)
-        return results
 
     # -- "분석 시작"(8단계 원자적 파이프라인) 진행 상태 -------------------
     #
@@ -1423,13 +1258,3 @@ class RuntimeStore:
             value["channels"] = json.loads(value.pop("channels_json") or "[]")
             results.append(value)
         return results
-
-
-def safe_runtime_call(method: str, **values: Any) -> Any:
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return None
-    try:
-        return getattr(RuntimeStore(), method)(**values)
-    except Exception:
-        logger.warning("Runtime dashboard 저장 실패: %s", method, exc_info=True)
-        return None

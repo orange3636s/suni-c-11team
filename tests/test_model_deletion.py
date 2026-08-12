@@ -1,5 +1,6 @@
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import asyncio
 import gzip
 import json
@@ -19,7 +20,7 @@ from src.ml.inference import (
     InvalidModelIdError,
     ModelDeletionError,
     ModelNotFoundError,
-    delete_prediction_model,
+    delete_model_bundle,
     list_prediction_models,
 )
 from src.ml.model_io import save_model_bundle
@@ -67,6 +68,34 @@ def _asgi_request(method: str, path: str) -> tuple[int, bytes]:
     return status_code, body
 
 
+def _seed_run(store: RuntimeStore, *, event_type: str, model_id: str, status: str = "success") -> None:
+    """Direct `runs` table insert standing in for the now-removed
+    `RuntimeStore.record_run` -- that method had zero production callers
+    (nothing writes prediction/analysis history anymore) but was the only
+    seeding path for these deletion tests, which exercise the still-live
+    `model_reference_counts`/deletion-history-preservation behavior."""
+    now = datetime.now(timezone.utc).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "INSERT INTO runs VALUES (:run_id,:event_type,:model_id,:started_at,:completed_at,:duration_ms,:row_count,:status,:error_type,:critical_count,:warning_count,:schema_version,:filename)",
+            {
+                "run_id": f"run_{uuid4().hex}",
+                "event_type": event_type,
+                "model_id": model_id,
+                "started_at": now,
+                "completed_at": now,
+                "duration_ms": 0.0,
+                "row_count": None,
+                "status": status,
+                "error_type": None,
+                "critical_count": None,
+                "warning_count": None,
+                "schema_version": None,
+                "filename": None,
+            },
+        )
+
+
 @pytest.fixture(scope="module")
 def real_ridge_model() -> Ridge:
     dataframe = pd.read_csv(Path(__file__).parent / "fixtures" / "training_sample.csv")
@@ -96,10 +125,10 @@ def test_model_deletion_preserves_runtime_history(real_ridge_model: Ridge) -> No
         model_dir=root,
     )
     store = RuntimeStore(root / "runtime.db")
-    store.record_run(event_type="predict", model_id=metadata["model_id"], status="success")
+    _seed_run(store, event_type="predict", model_id=metadata["model_id"])
     assert store.model_reference_counts(metadata["model_id"])["prediction_history_count"] == 1
 
-    removed = delete_prediction_model(metadata["model_id"], root)
+    removed = delete_model_bundle(metadata["model_id"], root).deleted_files
 
     assert model_path.name in removed
     assert metadata_path.name in removed
@@ -114,8 +143,8 @@ def test_model_deletion_preserves_runtime_history(real_ridge_model: Ridge) -> No
 
 
 def _record_history(store: RuntimeStore, model_id: str) -> None:
-    store.record_run(event_type="predict", model_id=model_id, status="success")
-    store.record_run(event_type="analyze", model_id=model_id, status="success")
+    _seed_run(store, event_type="predict", model_id=model_id)
+    _seed_run(store, event_type="analyze", model_id=model_id)
 
 
 @pytest.fixture
@@ -406,7 +435,7 @@ def test_delete_rejects_flat_symlink_without_touching_target(
         pytest.skip(f"현재 환경에서 심볼릭 링크를 만들 수 없습니다: {exc}")
 
     with pytest.raises(ModelDeletionError):
-        delete_prediction_model(model_id, model_root)
+        delete_model_bundle(model_id, model_root)
 
     assert linked_model.is_symlink()
     assert outside_target.read_bytes() == b"must remain"
@@ -430,7 +459,7 @@ def test_delete_maps_resolved_path_escape_to_deletion_error(
     monkeypatch.setattr(inference_module, "_model_paths", _raise_invalid)
 
     with pytest.raises(ModelDeletionError):
-        delete_prediction_model("some_model", model_root)
+        delete_model_bundle("some_model", model_root)
 
 
 def test_delete_rejects_bundle_junction_without_touching_target(
@@ -449,7 +478,7 @@ def test_delete_rejects_bundle_junction_without_touching_target(
     try:
         assert linked_bundle.is_junction()
         with pytest.raises(ModelDeletionError):
-            delete_prediction_model(model_id, model_root)
+            delete_model_bundle(model_id, model_root)
         assert outside_metadata.read_text(encoding="utf-8") == '{"must": "remain"}'
     finally:
         linked_bundle.rmdir()
@@ -562,7 +591,7 @@ def test_empty_staging_directory_is_cleaned_and_returns_not_found(
     (model_root / ".deleting" / model_id).mkdir(parents=True)
 
     with pytest.raises(ModelNotFoundError):
-        delete_prediction_model(model_id, model_root)
+        delete_model_bundle(model_id, model_root)
 
     assert not (model_root / ".deleting").exists()
 
@@ -586,7 +615,7 @@ def test_split_flat_staging_is_recovered_before_delete(
     staged_dir.mkdir(parents=True)
     shutil.move(metadata_path, staged_dir / metadata_path.name)
 
-    deleted = delete_prediction_model(metadata["model_id"], model_root)
+    deleted = delete_model_bundle(metadata["model_id"], model_root).deleted_files
 
     assert set(deleted) == {model_path.name, metadata_path.name}
     assert not model_path.exists()
@@ -609,7 +638,7 @@ def test_unknown_hybrid_artifact_blocks_delete_without_mutation(
     unknown_path.write_bytes(b"keep")
 
     with pytest.raises(ModelDeletionError):
-        delete_prediction_model(model_id, model_root)
+        delete_model_bundle(model_id, model_root)
 
     assert bundle_path.is_file()
     assert metadata_path.is_file()
@@ -635,7 +664,7 @@ def test_concurrent_delete_same_model_returns_success_and_not_found(
 
     def attempt_delete() -> str:
         try:
-            delete_prediction_model(metadata["model_id"], model_root)
+            delete_model_bundle(metadata["model_id"], model_root)
             return "deleted"
         except ModelNotFoundError:
             return "not_found"

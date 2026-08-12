@@ -207,7 +207,7 @@ def _screening_features(dataframe: pd.DataFrame, metadata: dict[str, Any], targe
 
     categories = None
     if kind == "Config":
-        # T2/§2-2: 새로 학습된 모델은 메타데이터에 범주 목록이 있다 --
+        # 새로 학습된 모델은 메타데이터에 범주 목록이 있다 --
         # 없으면(기존 활성 모델 등 구형 메타데이터) booster에서 직접
         # 꺼내는 폴백을 쓴다. 이 폴백이 없으면 기존 활성 모델이 이
         # 배포 이후 죽는다.
@@ -261,7 +261,7 @@ def _predict_targets(dataframe: pd.DataFrame, loaded: Any) -> tuple[dict[str, np
         required_raw.extend(raw_columns)
         existing = [column for column in raw_columns if column in dataframe.columns]
         cell_total = len(dataframe) * len(raw_columns)
-        # T3: Config 컬럼에 _finite_numeric(숫자 강제 변환)을 걸면 전량
+        # Config 컬럼에 _finite_numeric(숫자 강제 변환)을 걸면 전량
         # NaN이 되어 measured_cell_coverage가 항상 0.0으로 잘못 기록된다 --
         # Config는 원본 시리즈의 notna()를 그대로 센다.
         measured_cells = int(
@@ -505,12 +505,3 @@ def invalidate_target_hydration_cache(dataset_id: str | None = None) -> int:
     if keys:
         logger.info("target_hydration cache invalidated dataset=%s entries=%d", dataset_id or "*", len(keys))
     return len(keys)
-
-
-def target_hydration_cache_info() -> dict[str, int]:
-    with _CACHE_LOCK:
-        return {
-            "size": len(_CACHE),
-            "total_rows": sum(len(cached.dataframe) for cached in _CACHE.values()),
-            "max_rows": _CACHE_MAX_ROWS,
-        }

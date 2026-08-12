@@ -295,7 +295,6 @@ def test_cache_invalidation_is_scoped_by_dataset(monkeypatch) -> None:
             raw, dataset_id=dataset_id, dataset_version="v1", store=object(), model_dir="unused"
         )
     assert target_hydration.invalidate_target_hydration_cache("one") == 1
-    assert target_hydration.target_hydration_cache_info()["size"] == 1
 
 
 def test_upload_target_states_are_distinct() -> None:

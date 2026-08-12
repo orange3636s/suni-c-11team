@@ -4,32 +4,26 @@ import importlib.util
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from src.column_detection import detect_feature_columns
-from src.data_validation import load_data_schema, validate_dataframe
-from src.ml.evaluation import RegressionMetrics, evaluate_regression
+from src.data_validation import load_data_schema
 from src.ml.model_io import (
     DEFAULT_MODEL_DIR,
     load_metadata,
     load_model,
 )
-from src.preprocessing import preprocess_dataframe
 from src.schema_compatibility import model_schema_status
 
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WARNING_THRESHOLD = 90.0
-DEFAULT_DANGER_THRESHOLD = 85.0
-MAX_PREDICTION_ROWS = 5000
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 MODEL_DELETE_STAGING_DIR = ".deleting"
 HYBRID_TARGET_MODEL_FILES = tuple(
@@ -99,28 +93,6 @@ class DeleteModelResult:
     missing_files: list[str]
     metadata_deleted: bool
     bundle_deleted: bool
-
-
-@dataclass
-class PredictionResult:
-    model_id: str
-    target: str
-    model_name: str
-    identifier_column: str
-    predictions: list[dict[str, Any]]
-    total_rows: int
-    average_prediction: float
-    normal_count: int
-    warning_count: int
-    danger_count: int
-    evaluation: RegressionMetrics | None = None
-    warnings: list[str] = field(default_factory=list)
-    truncated: bool = False
-    preprocessing_summary: dict[str, Any] = field(default_factory=dict)
-
-
-def _metadata_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
 
 
 def _validate_model_id(model_id: str) -> None:
@@ -244,24 +216,6 @@ def load_prediction_model(
     )
 
 
-def load_latest_model_bundle(
-    store: Any,
-    model_dir: str | Path = DEFAULT_MODEL_DIR,
-) -> LoadedPredictionModel:
-    """Load the persisted active Y model shared by prediction and analysis."""
-    active = store.active_model()
-    if not active or not active.get("active_model_id"):
-        raise InferenceInputError(
-            "저장된 학습 모델이 없습니다. 모델 학습 페이지에서 Y 모델을 먼저 학습해주세요."
-        )
-    loaded = load_prediction_model(str(active["active_model_id"]), model_dir)
-    if str(loaded.metadata.get("target")) != "Y":
-        raise ModelLoadError(
-            "저장된 최신 모델이 Y 최종 수율 모델과 호환되지 않습니다. 모델을 다시 학습해주세요."
-        )
-    return loaded
-
-
 def get_latest_model_metadata(store: Any) -> dict[str, Any] | None:
     active = store.active_model()
     if not active:
@@ -274,19 +228,6 @@ def get_latest_model_metadata(store: Any) -> dict[str, Any] | None:
         "trained_at": active.get("promoted_at"),
         "target": "Y",
     }
-
-
-def _missing_dependency_name(error: BaseException) -> str | None:
-    current: BaseException | None = error
-    visited: set[int] = set()
-    while current is not None and id(current) not in visited:
-        visited.add(id(current))
-        if isinstance(current, ModuleNotFoundError):
-            name = getattr(current, "name", None)
-            if isinstance(name, str) and name.strip():
-                return name.strip().split(".", 1)[0]
-        current = current.__cause__ or current.__context__
-    return None
 
 
 def _model_availability(
@@ -747,14 +688,6 @@ def delete_model_bundle(
         return _delete_model_result(model_id, deleted_files)
 
 
-def delete_prediction_model(
-    model_id: str,
-    model_dir: str | Path = DEFAULT_MODEL_DIR,
-) -> list[str]:
-    """이전 호출자 호환성을 위해 삭제 파일 목록만 반환한다."""
-    return delete_model_bundle(model_id, model_dir).deleted_files
-
-
 # 보관 정책 -- 최근 이 개수만큼의 세트(+ 현재 챔피언)만 남긴다. 학습
 # 라이브러리가 바뀌면 오래된 세트는 로드조차 안 되므로 무기한 쌓아둘
 # 이유가 없다.
@@ -788,40 +721,6 @@ def enforce_model_retention(
         deleted.append(model_id)
         logger.info("models: %s 삭제 (보관 %d개 초과)", model_id, keep)
     return deleted
-
-
-def load_prediction_model_target(
-    model_id: str,
-    target: str,
-    model_dir: str | Path = DEFAULT_MODEL_DIR,
-) -> LoadedPredictionModel:
-    loaded = load_prediction_model(model_id, model_dir)
-    if loaded.metadata.get("model_type") != "hybrid_multi_y":
-        if loaded.metadata.get("target") != target:
-            raise InferenceInputError("선택한 Legacy 모델에는 요청한 Target 서브모델이 없습니다.")
-        return loaded
-    model_for_target = getattr(loaded.model, "model_for_target", None)
-    if target == "Y":
-        raise InferenceInputError(
-            "신규 Bundle은 Direct Y 모델을 저장하지 않습니다. Y1~Y5 중 하나를 선택해 주세요."
-        )
-    if callable(model_for_target):
-        selected_model = model_for_target(target)
-    else:
-        selected_model = loaded.model.target_models.get(target)
-    if selected_model is None:
-        raise InferenceInputError(f"Hybrid Bundle에 {target} 서브모델이 없습니다.")
-    metadata = {
-        **loaded.metadata,
-        "target": target,
-        "model_name": f"Hybrid Multi-Y · {target}",
-        "metrics": (
-            loaded.metadata.get("final_y_metrics", {}).get("direct", {})
-            if target == "Y"
-            else loaded.metadata.get("target_metrics", {}).get(target, {})
-        ),
-    }
-    return LoadedPredictionModel(model_id=model_id, model=selected_model, metadata=metadata)
 
 
 def _metadata_available_targets(metadata: dict[str, Any]) -> list[str]:
@@ -1110,376 +1009,3 @@ def prepare_inference_features(
     if features.empty:
         raise InferenceInputError("유효한 예측 행이 없습니다.")
     return features, warnings
-
-
-def _identifier_values(
-    dataframe: pd.DataFrame,
-) -> tuple[str, pd.Series]:
-    schema = load_data_schema()
-    id_column = schema["id_column"]
-    if id_column in dataframe.columns:
-        return id_column, dataframe[id_column].astype("string")
-    row_ids = pd.Series(
-        [
-            f"ROW_{index:06d}"
-            for index in range(1, len(dataframe) + 1)
-        ],
-        index=dataframe.index,
-        dtype="string",
-    )
-    return "row_id", row_ids
-
-
-def _identifier_text(value: Any) -> str | None:
-    if value is None or pd.isna(value):
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _wafer_slot(value: Any) -> int | None:
-    text = _identifier_text(value)
-    if text is None:
-        return None
-    numeric = pd.to_numeric(text, errors="coerce")
-    if pd.notna(numeric) and float(numeric).is_integer():
-        return int(numeric)
-    match = re.search(r"(?:WAFER|WF|W)?[_-]?(\d+)$", text, re.IGNORECASE)
-    return int(match.group(1)) if match else None
-
-
-def _parse_lot_wafer_id(value: Any) -> tuple[str | None, str | None, int | None]:
-    text = _identifier_text(value)
-    if text is None:
-        return None, None, None
-    match = re.match(
-        r"^(?P<lot>.+?)[_-]?(?:WAFER|WF|W)[_-]?(?P<slot>\d+)$",
-        text,
-        re.IGNORECASE,
-    )
-    if not match:
-        return None, None, None
-    lot = match.group("lot").rstrip("_-") or None
-    slot_text = match.group("slot")
-    slot = int(slot_text)
-    wafer = f"W{slot:0{max(2, len(slot_text))}d}"
-    return lot, wafer, slot
-
-
-def _canonical_identifiers(
-    source_row: pd.Series,
-    identifier: Any,
-    identifier_column: str,
-) -> dict[str, Any]:
-    combined = (
-        _identifier_text(source_row.get("Lot_Wafer_ID"))
-        or _identifier_text(source_row.get("lot_wafer_id"))
-        or (_identifier_text(identifier) if identifier_column != "row_id" else None)
-    )
-    parsed_lot, parsed_wafer, parsed_slot = _parse_lot_wafer_id(combined)
-    lot = (
-        _identifier_text(source_row.get("Lot_ID"))
-        or _identifier_text(source_row.get("lot_id"))
-        or parsed_lot
-    )
-    source_wafer = (
-        _identifier_text(source_row.get("Wafer_ID"))
-        or _identifier_text(source_row.get("wafer_id"))
-    )
-    source_slot = _wafer_slot(source_row.get("Wafer_Slot"))
-    if source_slot is None:
-        source_slot = _wafer_slot(source_row.get("wafer_slot"))
-    slot = source_slot or _wafer_slot(source_wafer) or parsed_slot
-    wafer = source_wafer or (f"W{slot:02d}" if slot is not None else None) or parsed_wafer
-    if combined is None and lot is not None and wafer is not None:
-        combined = f"{lot}_{wafer}"
-    return {
-        "Lot_Wafer_ID": combined,
-        "Lot_ID": lot,
-        "Wafer_ID": wafer,
-        "Wafer_Slot": slot,
-    }
-
-
-def _finite_float(value: Any) -> float | None:
-    numeric = float(value)
-    return numeric if math.isfinite(numeric) else None
-
-
-def risk_class_confidence(
-    critical_probability: float,
-    warning_probability: float,
-) -> float:
-    """Return confidence across critical, warning-only, and normal classes."""
-    critical = min(max(float(critical_probability), 0.0), 1.0)
-    warning = min(max(float(warning_probability), 0.0), 1.0)
-    warning_only = max(warning - critical, 0.0)
-    normal = max(1.0 - warning, 0.0)
-    return max(critical, warning_only, normal)
-
-
-def _risk_level(
-    prediction: float,
-    warning_threshold: float,
-    danger_threshold: float,
-) -> str:
-    if prediction >= warning_threshold:
-        return "normal"
-    if prediction >= danger_threshold:
-        return "warning"
-    return "danger"
-
-
-def predict_dataframe(
-    dataframe: pd.DataFrame,
-    loaded: LoadedPredictionModel,
-    warning_threshold: float = DEFAULT_WARNING_THRESHOLD,
-    danger_threshold: float = DEFAULT_DANGER_THRESHOLD,
-    max_rows: int | None = MAX_PREDICTION_ROWS,
-) -> PredictionResult:
-    if (
-        not math.isfinite(warning_threshold)
-        or not math.isfinite(danger_threshold)
-        or warning_threshold <= danger_threshold
-    ):
-        raise InferenceInputError(
-            "주의 기준값은 위험 기준값보다 커야 합니다."
-        )
-    validation = validate_dataframe(
-        dataframe,
-        validation_mode="inference",
-    )
-    if not validation["is_valid"]:
-        raise InferenceInputError(
-            "예측 데이터 검증에 실패했습니다: "
-            + " ".join(validation["errors"])
-        )
-    is_auto_pipeline = str(loaded.metadata.get("pipeline_version") or "").startswith("auto_")
-    if is_auto_pipeline:
-        processed = dataframe
-        preprocessing_report = {"warnings": []}
-    else:
-        processed, preprocessing_report = preprocess_dataframe(dataframe)
-    schema = load_data_schema()
-    detected_raw = detect_feature_columns(list(dataframe.columns), schema)
-    raw_features = list(dict.fromkeys([
-        *detected_raw["r_columns"],
-        *detected_raw["d_columns"],
-        *detected_raw["eq_columns"],
-        *detected_raw.get("config_columns", []),
-    ]))
-    compatibility = model_schema_status(loaded.metadata, raw_features)
-    if compatibility == "incompatible" and not is_auto_pipeline:
-        raise InferenceInputError(
-            "선택한 모델은 현재 데이터 스키마와 호환되지 않습니다. "
-            "신규 데이터로 모델을 다시 학습해 주세요."
-        )
-    feature_columns = list(loaded.metadata["feature_columns"])
-    features, feature_warnings = prepare_inference_features(
-        dataframe if is_auto_pipeline else processed,
-        feature_columns,
-        allow_missing=is_auto_pipeline,
-    )
-    if len(features) == 0:
-        raise InferenceInputError("유효한 예측 행이 없습니다.")
-
-    hybrid_components: dict[str, Any] | None = None
-    try:
-        if callable(getattr(loaded.model, "predict_components", None)):
-            hybrid_components = loaded.model.predict_components(features)
-            raw_predictions = np.asarray(
-                hybrid_components["selected"],
-                dtype=np.float32,
-            )
-        else:
-            raw_predictions = np.asarray(
-                loaded.model.predict(features),
-                dtype=np.float32,
-            )
-    except Exception as exc:
-        raise ModelLoadError("모델 예측 실행에 실패했습니다.") from exc
-    if raw_predictions.ndim != 1 or len(raw_predictions) != len(features):
-        raise ModelLoadError("모델 예측 결과의 행 수가 올바르지 않습니다.")
-    if not np.isfinite(raw_predictions).all():
-        raise ModelLoadError("모델 예측 결과에 유효하지 않은 값이 있습니다.")
-
-    target = str(loaded.metadata["target"])
-    display_predictions = raw_predictions
-    warnings = list(
-        dict.fromkeys(
-            [
-                *([] if is_auto_pipeline else preprocessing_report["warnings"]),
-                *([] if is_auto_pipeline else feature_warnings),
-            ]
-        )
-    )
-    if compatibility == "legacy":
-        warnings.append(
-            "이 모델은 schema fingerprint가 없는 Legacy 모델입니다. "
-            "정확한 feature 일치가 확인된 범위에서만 예측했습니다."
-        )
-    if target == "Y":
-        clipped = np.clip(display_predictions, 0.0, 100.0)
-        clipped_count = int(np.count_nonzero(clipped != display_predictions))
-        if clipped_count:
-            warnings.append(
-                f"표시 범위를 위해 {clipped_count}개 Y 예측값을 "
-                "0~100으로 조정했습니다."
-            )
-        display_predictions = clipped
-    else:
-        warnings.append(
-            f"{target} 목표 변수의 위험 등급 정책이 정의되지 않아 "
-            "위험 등급을 계산하지 않았습니다."
-        )
-
-    identifier_column, identifiers = _identifier_values(dataframe)
-    actual_values: pd.Series | None = None
-    evaluation: RegressionMetrics | None = None
-    if target in dataframe.columns:
-        actual_values = pd.to_numeric(
-            dataframe[target],
-            errors="coerce",
-        ).replace([np.inf, -np.inf], np.nan)
-        evaluation_mask = actual_values.notna()
-        if evaluation_mask.any():
-            evaluation = evaluate_regression(
-                actual_values.loc[evaluation_mask],
-                raw_predictions[evaluation_mask.to_numpy()],
-            )
-
-    prediction_column = f"predicted_{target}"
-    prediction_rows: list[dict[str, Any]] = []
-    normal_count = 0
-    warning_count = 0
-    danger_count = 0
-    for position, (index, identifier) in enumerate(identifiers.items()):
-        prediction = float(display_predictions[position])
-        identifier_value = None if pd.isna(identifier) else str(identifier)
-        row: dict[str, Any] = {
-            **_canonical_identifiers(
-                dataframe.loc[index],
-                identifier_value,
-                identifier_column,
-            ),
-            identifier_column: identifier_value,
-            prediction_column: prediction,
-        }
-        if hybrid_components is not None:
-            failure_rates = {
-                target_name: float(hybrid_components["targets"][target_name][position])
-                for target_name in ("Y1", "Y2", "Y3", "Y4", "Y5")
-            }
-            fail_bit_counts = {
-                target_name: value
-                for target_name in ("Y6", "Y7", "Y8", "Y9", "Y10")
-                if (
-                    value := _finite_float(dataframe.loc[index, target_name])
-                    if target_name in dataframe.columns
-                    else None
-                ) is not None
-            }
-            critical_probability = float(hybrid_components["critical_probability"][position])
-            warning_probability = float(hybrid_components["warning_probability"][position])
-            confidence_probability = risk_class_confidence(
-                critical_probability,
-                warning_probability,
-            )
-            row.update({
-                "failure_rates": failure_rates,
-                "fail_bit_counts": fail_bit_counts,
-                "critical_probability": critical_probability,
-                "warning_probability": warning_probability,
-                "confidence": (
-                    "high" if confidence_probability >= 0.8
-                    else "medium" if confidence_probability >= 0.6
-                    else "low"
-                ),
-                "warnings": [],
-            })
-            row.update(failure_rates)
-            row.update(fail_bit_counts)
-        if target == "Y":
-            risk = _risk_level(
-                prediction,
-                warning_threshold,
-                danger_threshold,
-            )
-            row["risk_level"] = risk
-            if risk == "normal":
-                normal_count += 1
-            elif risk == "warning":
-                warning_count += 1
-            else:
-                danger_count += 1
-        else:
-            row["risk_level"] = None
-
-        if actual_values is not None:
-            actual = _finite_float(actual_values.loc[index])
-            row[f"actual_{target}"] = actual
-            if actual is not None:
-                residual = actual - float(raw_predictions[position])
-                row["residual"] = residual
-                row["absolute_error"] = abs(residual)
-            else:
-                row["residual"] = None
-                row["absolute_error"] = None
-        prediction_rows.append(row)
-
-    truncated = (
-        max_rows is not None and len(prediction_rows) > max_rows
-    )
-    if truncated:
-        warnings.append(
-            f"화면 응답은 최대 {max_rows}행까지만 표시합니다."
-        )
-        prediction_rows = prediction_rows[:max_rows]
-
-    preprocessing_audit: dict[str, Any] = {}
-    if is_auto_pipeline:
-        audit_model = loaded.model
-        model_for_target = getattr(audit_model, "model_for_target", None)
-        if callable(model_for_target):
-            audit_model = model_for_target("Y1")
-        feature_step = getattr(audit_model, "named_steps", {}).get("features")
-        audit = getattr(feature_step, "audit", None)
-        if callable(audit):
-            preprocessing_audit = audit(dataframe)
-
-    return PredictionResult(
-        model_id=loaded.model_id,
-        target=target,
-        model_name=str(loaded.metadata["model_name"]),
-        identifier_column=identifier_column,
-        predictions=prediction_rows,
-        total_rows=len(dataframe),
-        average_prediction=float(np.mean(display_predictions)),
-        normal_count=normal_count,
-        warning_count=warning_count,
-        danger_count=danger_count,
-        evaluation=evaluation,
-        warnings=warnings,
-        truncated=truncated,
-        preprocessing_summary={
-            "pipeline_version": loaded.metadata.get("pipeline_version"),
-            "config_parser_version": loaded.metadata.get("config_parser_version"),
-            "schema_version": loaded.metadata.get("schema_version"),
-            "measurement_coverage": {
-                "r": validation.get("r_measurement_coverage", 0.0),
-                "d": validation.get("d_measurement_coverage", 0.0),
-            },
-            **_metadata_dict(loaded.metadata.get("preprocessing_summary")),
-            "missing_handling": loaded.metadata.get("preprocessing_strategy"),
-            "missing_indicator": loaded.metadata.get("missing_indicator_used"),
-            "outlier_policy": loaded.metadata.get("outlier_policy"),
-            "policy": _metadata_dict(loaded.metadata.get("preprocessing_config")),
-            "missing_input_features": [
-                column for column in feature_columns if column not in dataframe.columns
-            ] if is_auto_pipeline else [],
-            "ignored_extra_features": [
-                column for column in raw_features if column not in feature_columns
-            ] if is_auto_pipeline else [],
-            **preprocessing_audit,
-        },
-    )

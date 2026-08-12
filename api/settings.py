@@ -43,13 +43,6 @@ def _parse_origins(raw_value: str | None) -> tuple[str, ...]:
     return origins or DEFAULT_FRONTEND_ORIGINS
 
 
-def _parse_bool(name: str, default: bool = False) -> bool:
-    raw_value = os.environ.get(name, "").strip().lower()
-    if not raw_value:
-        return default
-    return raw_value in {"1", "true", "yes", "on"}
-
-
 def _parse_positive_int(name: str, default: int) -> int:
     raw_value = os.environ.get(name, str(default))
     try:

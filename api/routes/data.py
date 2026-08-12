@@ -76,7 +76,6 @@ from src.ml.inference import (
     delete_model_bundle,
     enforce_model_retention,
     list_prediction_models,
-    load_latest_model_bundle,
     get_latest_model_metadata,
 )
 from src.preprocessing import preprocess_dataframe
@@ -115,15 +114,6 @@ def _runtime_store() -> RuntimeStore:
         runtime_root = resolved_model_dir / ".runtime"
         return RuntimeStore(runtime_root / "dashboard.db", runtime_root)
     return RuntimeStore(settings.runtime_db_path, settings.runtime_artifact_dir)
-
-
-def _latest_model() -> Any:
-    try:
-        return load_latest_model_bundle(_runtime_store(), MODEL_DIR)
-    except InferenceInputError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except ModelLoadError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
 def get_training_job_manager() -> TrainingJobManager:

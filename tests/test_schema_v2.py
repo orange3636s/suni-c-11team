@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from src.config_parser import CONFIG_PARSER_VERSION, parse_config_columns, parse_config_value
-from src.ml.hybrid import AutoFeaturePreprocessor, detect_auto_schema
+from src.ml.hybrid import AutoFeaturePreprocessor
 
 
 def test_config_parser_preserves_whole_strings_without_derived_columns() -> None:
@@ -52,18 +52,3 @@ def test_train_only_frequency_numeric_imputation_and_asymmetric_clipping() -> No
     assert transformed[2, 2] == 0.0
     assert transformer.frequency_mappings_["Step1_Config"] == {"A": 0.61, "B": 0.39}
     assert transformer.config_modes_["Step1_Config"] == "A"
-
-
-def test_auto_schema_uses_config_name_and_excludes_all_targets() -> None:
-    frame = pd.DataFrame({
-        "Lot_ID": ["L1", "L2", "L3"],
-        "Step1_R1": [1.0, 2.0, 3.0],
-        "Step1_D1": [0.0, 1.0, 0.0],
-        "Step1_Config": ["FULL_A", "FULL_B", "FULL_C"],
-        **{f"Y{i}": [float(i)] * 3 for i in range(1, 11)},
-        "Y": [85.0, 85.0, 85.0],
-    })
-    schema = detect_auto_schema(frame)
-    assert schema["config_columns"] == ["Step1_Config"]
-    assert set(schema["feature_columns"]) == {"Step1_R1", "Step1_D1", "Step1_Config"}
-    assert set(schema["feature_columns"]).isdisjoint({"Y", *[f"Y{i}" for i in range(1, 11)]})

@@ -1,26 +1,23 @@
-import asyncio
 import json
-from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 import pandas as pd
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
+from sklearn.dummy import DummyRegressor
 
 import api.routes.data as data_routes
 import src.ml.inference as inference_module
-from src.ml.dataset import prepare_dataset, split_dataset
+from src.ml.dataset import prepare_dataset
 from src.ml.inference import (
     get_prediction_model_detail,
     InferenceInputError,
     list_prediction_models,
     load_prediction_model,
-    predict_dataframe,
     prepare_inference_features,
 )
 from src.ml.model_io import save_model_bundle
-from src.ml.training import train_regression_models
 from src.preprocessing import preprocess_dataframe
 
 
@@ -34,19 +31,17 @@ def inference_environment():
     dataframe = pd.read_csv(fixture_path)
     processed, _ = preprocess_dataframe(dataframe)
     dataset = prepare_dataset(processed)
-    split = split_dataset(dataset)
-    training = train_regression_models(dataset, split)
+    estimator = DummyRegressor(strategy="mean").fit(
+        dataset.features[dataset.numeric_columns], dataset.target
+    )
     model_path, _, _ = save_model_bundle(
-        training.best_model,
+        estimator,
         target="Y",
-        model_name=training.best_model_name,
+        model_name="DummyRegressor",
         feature_columns=dataset.feature_columns,
-        metrics={
-            name: values.as_dict()
-            for name, values in training.metrics.items()
-        },
+        metrics={"test": {"r2": 0.0, "rmse": 1.0, "mae": 1.0}},
         random_state=42,
-        split_method=split.split_method,
+        split_method="group",
         model_dir=model_dir,
     )
     yield {
@@ -65,13 +60,6 @@ def inference_environment():
     model_dir.rmdir()
     if not any(temporary_root.iterdir()):
         temporary_root.rmdir()
-
-
-def _upload(dataframe: pd.DataFrame) -> UploadFile:
-    return UploadFile(
-        file=BytesIO(dataframe.to_csv(index=False).encode("utf-8")),
-        filename="prediction.csv",
-    )
 
 
 def test_valid_model_is_listed(inference_environment) -> None:
@@ -414,202 +402,3 @@ def test_inference_features_restore_training_order(
     )
 
     assert list(features.columns) == inference_environment["feature_columns"]
-
-
-def test_missing_required_feature_is_rejected(
-    inference_environment,
-) -> None:
-    dataframe = inference_environment["dataframe"].drop(
-        columns=["Step1_R1"]
-    )
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    with pytest.raises(InferenceInputError, match="feature가 누락.*Step1_R1"):
-        predict_dataframe(dataframe, loaded)
-
-
-def test_extra_feature_is_ignored_with_warning(
-    inference_environment,
-) -> None:
-    dataframe = inference_environment["dataframe"].copy()
-    dataframe["Step9_R1"] = range(len(dataframe))
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    result = predict_dataframe(dataframe, loaded)
-
-    assert any("Step9_R1" in warning for warning in result.warnings)
-    assert len(result.predictions) == len(dataframe)
-
-
-def test_prediction_without_target_succeeds(
-    inference_environment,
-) -> None:
-    dataframe = inference_environment["dataframe"].drop(columns=["Y"])
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    result = predict_dataframe(dataframe, loaded)
-
-    assert result.evaluation is None
-    assert all("actual_Y" not in row for row in result.predictions)
-
-
-def test_prediction_with_target_has_evaluation(
-    inference_environment,
-) -> None:
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    result = predict_dataframe(
-        inference_environment["dataframe"],
-        loaded,
-    )
-
-    assert result.evaluation is not None
-    assert result.evaluation.rmse is not None
-    assert all("actual_Y" in row for row in result.predictions)
-    assert all("absolute_error" in row for row in result.predictions)
-
-
-@pytest.mark.parametrize(
-    ("combined", "expected_lot", "expected_wafer", "expected_slot"),
-    [
-        ("LOT001_W01", "LOT001", "W01", 1),
-        ("LOT001W02", "LOT001", "W02", 2),
-        ("LOT001-W03", "LOT001", "W03", 3),
-        ("LOT001_WAFER04", "LOT001", "W04", 4),
-        ("LOT001_WF05", "LOT001", "W05", 5),
-    ],
-)
-def test_prediction_rows_include_canonical_identifiers(
-    inference_environment,
-    combined: str,
-    expected_lot: str,
-    expected_wafer: str,
-    expected_slot: int,
-) -> None:
-    dataframe = inference_environment["dataframe"].copy()
-    dataframe.loc[dataframe.index[0], "Lot_Wafer_ID"] = combined
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    row = predict_dataframe(dataframe, loaded).predictions[0]
-
-    assert row["Lot_Wafer_ID"] == combined
-    assert row["Lot_ID"] == expected_lot
-    assert row["Wafer_ID"] == expected_wafer
-    assert row["Wafer_Slot"] == expected_slot
-
-
-def test_prediction_identifier_source_fields_take_priority(
-    inference_environment,
-) -> None:
-    dataframe = inference_environment["dataframe"].copy()
-    dataframe["Lot_ID"] = "SOURCE_LOT"
-    dataframe["Wafer_ID"] = "RAW_WAFER"
-    dataframe["Wafer_Slot"] = 7
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    row = predict_dataframe(dataframe, loaded).predictions[0]
-
-    assert row["Lot_ID"] == "SOURCE_LOT"
-    assert row["Wafer_ID"] == "RAW_WAFER"
-    assert row["Wafer_Slot"] == 7
-
-
-def test_prediction_identifier_legacy_lowercase_fields_are_restored(
-    inference_environment,
-) -> None:
-    dataframe = inference_environment["dataframe"].copy().drop(
-        columns=["Lot_Wafer_ID"]
-    )
-    dataframe["lot_id"] = "LEGACY_LOT"
-    dataframe["wafer_id"] = "W09"
-    dataframe["wafer_slot"] = 9
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    result = predict_dataframe(dataframe, loaded)
-    row = result.predictions[0]
-
-    assert result.identifier_column == "row_id"
-    assert row["Lot_Wafer_ID"] == "LEGACY_LOT_W09"
-    assert row["Lot_ID"] == "LEGACY_LOT"
-    assert row["Wafer_ID"] == "W09"
-    assert row["Wafer_Slot"] == 9
-
-
-def test_prediction_identifier_parse_failure_is_safe(
-    inference_environment,
-) -> None:
-    dataframe = inference_environment["dataframe"].copy()
-    dataframe.loc[dataframe.index[0], "Lot_Wafer_ID"] = "UNPARSEABLE"
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    row = predict_dataframe(dataframe, loaded).predictions[0]
-
-    assert row["Lot_Wafer_ID"] == "UNPARSEABLE"
-    assert row["Lot_ID"] is None
-    assert row["Wafer_ID"] is None
-    assert row["Wafer_Slot"] is None
-
-
-def test_y_risk_counts_match_predictions(inference_environment) -> None:
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    result = predict_dataframe(
-        inference_environment["dataframe"],
-        loaded,
-        warning_threshold=96,
-        danger_threshold=93,
-    )
-    risk_levels = [row["risk_level"] for row in result.predictions]
-
-    assert result.normal_count == risk_levels.count("normal")
-    assert result.warning_count == risk_levels.count("warning")
-    assert result.danger_count == risk_levels.count("danger")
-    assert sum(
-        [
-            result.normal_count,
-            result.warning_count,
-            result.danger_count,
-        ]
-    ) == len(result.predictions)
-
-
-def test_invalid_thresholds_are_rejected(inference_environment) -> None:
-    loaded = load_prediction_model(
-        inference_environment["model_id"],
-        inference_environment["model_dir"],
-    )
-
-    with pytest.raises(InferenceInputError, match="주의 기준값"):
-        predict_dataframe(
-            inference_environment["dataframe"],
-            loaded,
-            warning_threshold=90,
-            danger_threshold=95,
-        )

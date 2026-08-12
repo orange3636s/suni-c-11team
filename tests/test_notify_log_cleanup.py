@@ -26,12 +26,20 @@ def test_purge_old_notification_log_removes_only_stale_rows() -> None:
     store, path = _store()
     try:
         old_cutoff = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        new_sent_at = datetime.now(timezone.utc).isoformat()
         with store._connect() as connection:
             connection.execute(
                 "INSERT INTO notify_sent_log (dataset_id, wafer_id, grade, sent_at, channel) VALUES (?,?,?,?,?)",
                 ("train", "old-wafer", "심각", old_cutoff, "slack"),
             )
-        store.record_notifications_sent("train", [("new-wafer", "심각")], channel="slack")
+            # `RuntimeStore.record_notifications_sent` had zero production
+            # callers and was removed -- this direct insert mirrors what it
+            # used to do, so `purge_old_notification_log`/`recent_notifications`
+            # (both still live, used by api/routes/notify.py) keep real coverage.
+            connection.execute(
+                "INSERT INTO notify_sent_log (dataset_id, wafer_id, grade, sent_at, channel) VALUES (?,?,?,?,?)",
+                ("train", "new-wafer", "심각", new_sent_at, "slack"),
+            )
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         deleted = store.purge_old_notification_log(older_than_iso=cutoff)

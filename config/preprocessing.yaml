@@ -15,5 +15,3 @@ schema_v2:
   numeric_imputation: train_median
   categorical_encoding: one_hot_ignore_unknown
   fit_scope: train_only
-  legacy_lot_mean_enabled: false
-  legacy_lot_sigma_enabled: false
