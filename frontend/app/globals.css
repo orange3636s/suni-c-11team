@@ -10742,20 +10742,22 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .coverageRowCaption{ margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* ---- 데이터 한계 진단(다섯 블록: MNAR·분산 분해·변동 기여·커버리지·독립성) ---- */
-/* 좌 1(MNAR, 10행) · 우 4(분산 분해·변동 기여·커버리지·독립성). 1100px
+/* 좌 2(MNAR 10행 · 분산 분해) · 우 3(변동 기여·커버리지·독립성). 1100px
    미만은 세로 스택. 다섯 블록이 .limitBlock 하나를 공유한다 -- 각자
-   만들면 제목·설명·해석 간격이 갈린다. */
+   만들면 제목·설명·해석 간격이 갈린다. 블록 간 간격은 `.limitBlock +
+   .limitBlock` 하나로만 만든다 -- 컨테이너 gap과 중복 적용하면 블록당
+   간격이 배로 늘어난다(간격 중복 버그, 커밋 이력 참고). */
 .limitsGrid{ display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; margin-top: 12px; align-items: start; }
-.limitsColRight{ display: flex; flex-direction: column; gap: 20px; }
+.limitsColRight{ display: flex; flex-direction: column; gap: 0; }
 @media (max-width: 1099px){ .limitsGrid{ grid-template-columns: 1fr; } }
 
 .limitBlock{ display: flex; flex-direction: column; }
-.limitBlock + .limitBlock{ margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+.limitBlock + .limitBlock{ margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .limitBlockTitle{ margin: 0; font-size: var(--fs-title); font-weight: 600; }
 .limitBlockDesc{ margin: 4px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); }
 .limitBlockDesc .limitBlockDataset{ font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted); }
-.limitBlockViz{ margin-top: 12px; }
-.limitBlockInterp{ margin: 10px 2px 0; padding-top: 10px; border-top: 1px solid var(--border); font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.6; }
+.limitBlockViz{ margin-top: 10px; }
+.limitBlockInterp{ margin: 8px 2px 0; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.6; }
 .limitBlockInterp b{ color: var(--text-primary); }
 .limitBlockInterp .limitBlockWarn{ color: var(--sig-red); }
 
@@ -10777,10 +10779,10 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .mnarRatio-red{ color: var(--sig-red); }
 .mnarRatio-amber{ color: var(--sig-amber); }
 
-.varianceDecompList{ display: flex; flex-direction: column; gap: 10px; }
+.varianceDecompList{ display: flex; flex-direction: column; gap: 8px; }
 .varianceDecompRow{ display: grid; grid-template-columns: 48px 1fr 56px; align-items: center; gap: 10px; }
 .varianceDecompLabel{ font-size: var(--fs-xs); color: var(--text-secondary); }
-.varianceDecompTrack{ position: relative; height: 16px; border-radius: 4px; background: var(--surface-muted); overflow: visible; }
+.varianceDecompTrack{ position: relative; height: 13px; border-radius: 4px; background: var(--surface-muted); overflow: visible; }
 .varianceDecompFill{ position: absolute; inset: 0; border-radius: 4px; }
 .varianceDecompFill-between{ background: var(--text-muted); }
 .varianceDecompFill-within{ background: var(--inferred); }
@@ -10791,7 +10793,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .modeShareLegend{ display:flex; flex-wrap:wrap; gap:10px; margin: 0 0 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .modeShareLegendItem{ display:inline-flex; align-items:center; gap:5px; }
 .modeShareSwatch{ width:10px; height:10px; border-radius:3px; display:inline-block; }
-.modeShareBar{ display:flex; gap:2px; height:20px; }
+.modeShareBar{ display:flex; gap:2px; height:16px; }
 .modeShareSeg{ flex-basis:0; min-width:2px; border-radius:2px; }
 .modeShareSeg:first-child{ border-radius:4px 2px 2px 4px; }
 .modeShareSeg:last-child{ border-radius:2px 4px 4px 2px; }
@@ -10800,7 +10802,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
   font-size: var(--fs-xs); color: var(--text-secondary); }
 .modeShareLabel b{ color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
-.coverageStackBar{ display:flex; gap:2px; height:22px; }
+.coverageStackBar{ display:flex; gap:2px; height:18px; }
 .coverageStackSeg{ flex-basis:0; min-width:2px; border-radius:2px; }
 .coverageStackSeg:first-child{ border-radius:4px 2px 2px 4px; }
 .coverageStackSeg:last-child{ border-radius:2px 4px 4px 2px; }
@@ -10809,7 +10811,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .coverageSwatch{ width:10px; height:10px; border-radius:3px; display:inline-block; flex: 0 0 auto; }
 
 .cooccurrenceMatrix{ border-collapse: collapse; width: 100%; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
-.cooccurrenceMatrix th, .cooccurrenceMatrix td{ padding: 5px 6px; text-align: center; }
+.cooccurrenceMatrix th, .cooccurrenceMatrix td{ padding: 3px 6px; text-align: center; }
 .cooccurrenceMatrix thead th{ color: var(--text-muted); font-weight: 500; font-size: var(--fs-nano); }
 .cooccurrenceMatrix tbody th{ text-align: left; color: var(--text-secondary); font-weight: 600; }
 .cooccurrenceDiag{ color: var(--text-muted); }

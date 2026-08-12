@@ -13,9 +13,11 @@ import type {
 
 /** 데이터 한계 진단 (모니터링 홈) -- 조치 블록 바로 다음에 둔다("계측을
  * 늘려야 한다"의 근거가 여기 있다). 다섯 블록: 좌측에 계측 편향(MNAR,
- * 10행), 우측에 분산 분해·불량 원인별 변동 기여·핵심 인자 커버리지·
- * 불량 원인 독립성을 세로로 쌓는다. 다섯 블록 전부 `LimitBlock` 하나를
- * 공유해 제목·설명·시각화·해석 형식을 통일한다.
+ * 10행)·분산 분해, 우측에 불량 원인별 변동 기여·핵심 인자 커버리지·
+ * 불량 원인 독립성을 세로로 쌓는다(좌우 세로 길이를 맞추기 위한 배치 --
+ * 우측 4블록이 좌측 1블록보다 훨씬 길어 빈 공간이 생기던 문제를
+ * 해소했다). 다섯 블록 전부 `LimitBlock` 하나를 공유해 제목·설명·
+ * 시각화·해석 형식을 통일한다.
  *
  * 데이터셋 기준: MNAR·분산 분해·변동 기여·독립성은 train.CSV(손실
  * 상위 10%/원인 값을 실측으로 정해야 하므로 예측 Y로 계산하면 안 된다)
@@ -57,9 +59,7 @@ export default function DataLimitationDiagnostics({
           >
             <MnarBlockBody rows={mnarRows} />
           </LimitBlock>
-        </div>
 
-        <div className="limitsColRight">
           <LimitBlock
             title="분산 분해"
             description="수율 변동이 LOT 사이에서 오나 LOT 안에서 오나"
@@ -68,7 +68,9 @@ export default function DataLimitationDiagnostics({
           >
             <VarianceBlockBody vd={vd} />
           </LimitBlock>
+        </div>
 
+        <div className="limitsColRight">
           <LimitBlock
             title="불량 원인별 변동 기여"
             description="wafer 사이의 수율 차이를 어느 원인이 만드는가"
