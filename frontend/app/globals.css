@@ -10406,6 +10406,18 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   background: var(--line-soft);
 }
 
+/* ── D-1a. Eyebrow 줄이 우측 액션(이미지 저장 버튼 등) 앞까지 이어지게.
+   .sectionLabel 자체는 항상 width:100%이지만, 그 부모(라벨+제목을 감싼
+   div)가 헤더 행에서 flex-grow 없이 내용 크기로만 잡히면 줄도 그만큼
+   짧아진다. 히트맵은 .heatmapHeaderRowText로 이미 grow를 갖고 있어
+   줄이 버튼 앞까지 이어지지만, 파레토/모니터링 블록들의 래퍼 div는
+   className이 없어 grow가 빠져 있었다 -- 여기서 한 번에 맞춘다. ── */
+.sectionHeading > div:first-child,
+.paretoChartHeaderRow > div:first-child{
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
 /* ── C-1 / D. 배지: 테두리 + 텍스트만, 정상/분류는 무채색, 이상만 신호색 ── */
 .badge{
   display: inline-flex;
@@ -10504,13 +10516,48 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
    각자 고정한다 -- 순위 열 폭을 고정해야 LOT_WF_ID 열의 left 오프셋이
    어긋나지 않는다.
    =================================================================== */
+
+/* 셀 밀도 -- 16열이라 좌우 여백이 표 전체 폭에 직접 영향을 준다
+   (기본 12px 14px는 16열이면 여백만 ~450px). 0으로 줄이면 글자가
+   셀 경계에 붙어 읽기 어려우므로 좌우 6~10px을 하한으로 열별 차등
+   적용한다. 다른 표(.dataTable 전역)에 영향이 없도록 이 표
+   (.ypTable)에만 스코프한다. */
+.ypTable th,
+.ypTable td{
+  padding: 8px 10px;
+}
+.ypTable td{
+  /* 핵심인자가 2줄, 권장사항이 여러 줄이 되면서 행 높이가 셀마다
+     달라진다 -- 가운데 정렬이면 짧은 셀이 떠 보이므로 위쪽 정렬로
+     통일한다. */
+  vertical-align: top;
+}
+.ypTable th.ypColRank, .ypTable td.ypColRank,
+.ypTable th.ypColReliability, .ypTable td.ypColReliability{
+  padding: 8px 6px;
+}
+.ypTable td.ypColCoreFactor,
+.ypTable td.alertCell,
+.ypTable td.numCol{
+  padding: 8px 8px;
+}
+/* 숫자 열(Y1~Y5, Y) -- 등폭 숫자로 자릿수를 맞춰 폭을 안정시키고,
+   본문(--fs-body)보다 한 단계 작은 --fs-xs로 표 밀도를 높인다.
+   우측 정렬·tabular-nums는 .alertCell/.numCol 공통 규칙에 이미 있다. */
+.ypTable td.alertCell,
+.ypTable td.numCol{
+  font-size: var(--fs-xs);
+}
+
 .ypColRank{ width: 52px; min-width: 52px; max-width: 52px; text-align: center; white-space: nowrap; }
 .ypColWafer{ min-width: 112px; white-space: nowrap; }
-.ypColCoreFactor{ min-width: 148px; white-space: nowrap; }
-/* "권장사항"은 마지막, white-space:normal, 최소 폭 320px --
-   다른 열을 좁히지 않고 가로 스크롤로 확보한다(표는 이미 hScroll
-   래퍼 안에 있어 폭을 넓히면 자동으로 스크롤이 생긴다). */
-.ypColRecommendation{ min-width: 420px; white-space: normal; overflow: visible; text-overflow: clip; }
+.ypColCoreFactor{ min-width: 112px; white-space: nowrap; }
+.ypColReliability{ text-align: center; }
+/* "권장사항"은 마지막, white-space:normal. 320px 근처로 너무 좁히면
+   한 줄이 두 줄로 접혀 행 높이가 들쭉날쭉해지므로 280~340px 범위로
+   둔다(다른 열을 좁히지 않고 가로 스크롤로 확보한다 -- 표는 이미
+   hScroll 래퍼 안에 있어 폭을 넓히면 자동으로 스크롤이 생긴다). */
+.ypColRecommendation{ min-width: 280px; max-width: 340px; white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* sticky 좌측 2열. z-index 우선순위: 헤더+sticky 교차점 >
    헤더 > sticky열 > 일반셀 -- 위에서 정의한 --z-sticky-seg 스케일을
@@ -10528,7 +10575,8 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
   position: sticky;
   /* 헤더는 top(.tableWrap th의 기본 sticky) + left(여기) 둘 다 고정되는
      교차점이라, 일반 sticky 열(z-index:1)과 일반 sticky 헤더
-     (--z-sticky-seg)보다 모두 높아야 한다. */
+     (--z-sticky-seg)보다 모두 높아야 한다. th에도 개별 배경을 줘야
+     스크롤 시 thead 배경만으로는 투명하게 비치지 않는다. */
   z-index: calc(var(--z-sticky-seg) + 1);
   background: var(--table-header-bg);
 }
@@ -10537,9 +10585,21 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 html[data-theme="dark"] .ypTable td.ypColWafer,
 html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.5); }
 
-/* 핵심 인자 표시("Step18_R1 (82.5%)") -- 괄호 안 기여율은 부차
-   정보라 옅게, 인자 없음은 --text-muted. */
-.ypCoreFactorPct{ color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+/* 핵심 인자 표시 -- 인자명(1행)과 기여율(2행)을 나눠 한 줄일 때보다
+   열 폭을 줄인다(148px -> 112px). 괄호는 유지한다 -- 없으면 기여율이
+   인자명의 일부로 읽힌다. */
+.ypCoreFactorCell{
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.3;
+}
+.ypCoreFactorName{ font-family: var(--font-data); font-size: var(--fs-xs); }
+.ypCoreFactorPct{ color: var(--text-secondary); font-variant-numeric: tabular-nums; font-size: var(--fs-nano); }
+/* 미계측 줄("(65.5%) 미계측")은 2행에 합친다 -- 3행으로 나누면 행
+   높이가 너무 커진다. 실제로 쓰지 않은 인자라 --text-muted로
+   흐리게 뺀다(측정된 인자의 기여율보다 한 단계 더 옅다). */
+.ypCoreFactorPctMuted{ color: var(--text-muted); }
 .ypCoreFactorEmpty{ color: var(--text-muted); }
 
 /* 기여율 구간별 색 강도 (60%+/20~60%/10~20%/10% 미만) -- 10%가
@@ -10556,20 +10616,22 @@ html[data-theme="dark"] .ypTable th.ypColWafer{ box-shadow: 2px 0 5px -2px rgba(
 .ypReliabilityCell.zero{ color: var(--sig-red); font-weight: 600; }
 .ypReliabilityCell.low{ color: var(--sig-amber); font-weight: 600; }
 
-/* 권장사항 최대 3줄 말줄임(조정 인자 최대 2줄 + 미계측
-   요약 1줄 = 정확히 3줄이 가장 흔한 경우) -- 전체 문장은 title
-   툴팁으로. 문장 내 줄바꿈(\n)을 그대로 보여주기 위해
-   white-space:pre-line을 쓰고, 그 위에 3줄로 클램프한다. */
+/* 권장사항 -- 항목(조정 인자 0~2줄 + 미계측 요약 최대 1줄)마다
+   줄바꿈해 구조를 보여준다(문장 하나로 붙어 있으면 읽히지 않는다).
+   각 줄은 .ypRecommendationLine 하나씩이고, 미계측 줄만
+   --text-muted로 흐리게 구분해 조정 가능한 항목과 성격 차이를
+   드러낸다. 고정 줄 수로 자르지 않는다 -- 권장사항이 3~4줄이면
+   그 길이가 행 높이를 정하고(vertical-align:top과 함께), 전체
+   문장은 title 툴팁으로 그대로 남겨둔다. */
 .ypRecommendationText{
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  overflow: hidden;
-  white-space: pre-line;
+  display: block;
+  white-space: normal;
   color: var(--text-primary);
-  font-size: var(--fs-sm);
-  line-height: 1.4;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
 }
+.ypRecommendationLine{ display: block; }
+.ypRecommendationLine.muted{ color: var(--text-muted); margin-top: 3px; }
 
 .ypTableFooter{ display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 .ypTableFooter .tableCaption{ margin: 0; }

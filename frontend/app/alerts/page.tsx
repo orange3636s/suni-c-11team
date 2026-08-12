@@ -65,11 +65,13 @@ function coreFactorTierClass(pct: number): string {
   return "ypCoreFactorTierMuted";
 }
 
-// "Step18_R1 (82.5%)" -- 폴백으로 하위 인자를 쓰면 기여율이 낮게
-// 표시되므로 사용자가 근거 강도를 즉시 안다. 후보 인자 자체가 없으면
-// "—"(무채색). 1~5위가 전부 미계측이면 1위 인자를 회색 + "미계측"으로
-// 보여준다 -- 빈칸 대신 "이 인자를 계측하면 예측이 정확해진다"는 조치
-// 가능한 정보를 준다.
+// "Step18_R1 / (82.5%)" -- 인자명과 기여율을 두 줄로 나눠 열 폭을 줄인다
+// (한 줄에 같이 두면 폭이 커진다). 폴백으로 하위 인자를 쓰면 기여율이
+// 낮게 표시되므로 사용자가 근거 강도를 즉시 안다. 후보 인자 자체가
+// 없으면 "—"(무채색). 1~5위가 전부 미계측이면 1위 인자를 회색 +
+// "미계측"으로 보여준다 -- 빈칸 대신 "이 인자를 계측하면 예측이
+// 정확해진다"는 조치 가능한 정보를 준다. 미계측은 기여율과 "미계측"을
+// 2행에 합친다 -- 3행으로 나누면 행 높이가 너무 커진다.
 function coreFactorCell(candidate: YieldCandidate, target: string) {
   const cell = candidate.core_factors[target];
   if (!cell || !cell.feature || cell.contribution_pct == null) {
@@ -77,18 +79,20 @@ function coreFactorCell(candidate: YieldCandidate, target: string) {
   }
   if (!cell.measured) {
     return (
-      <span className="ypCoreFactorUnmeasured" title="계측되지 않아 예측에 사용하지 않았습니다. 이 인자를 계측하면 정확도가 올라갑니다.">
-        {cell.feature} <span className="ypCoreFactorPct">({cell.contribution_pct.toFixed(1)}%)</span> 미계측
+      <span className="ypCoreFactorCell ypCoreFactorUnmeasured" title="계측되지 않아 예측에 사용하지 않았습니다. 이 인자를 계측하면 정확도가 올라갑니다.">
+        <span className="ypCoreFactorName">{cell.feature}</span>
+        <span className="ypCoreFactorPct ypCoreFactorPctMuted">({cell.contribution_pct.toFixed(1)}%) 미계측</span>
       </span>
     );
   }
   const fallback = cell.rank_used != null && cell.rank_used > 1;
   return (
     <span
-      className={coreFactorTierClass(cell.contribution_pct)}
+      className={`ypCoreFactorCell ${coreFactorTierClass(cell.contribution_pct)}`}
       title={fallback ? `${cell.rank_used}위 인자로 폴백됨 (1위 인자 미계측)` : undefined}
     >
-      {cell.feature} <span className="ypCoreFactorPct">({cell.contribution_pct.toFixed(1)}%)</span>
+      <span className="ypCoreFactorName">{cell.feature}</span>
+      <span className="ypCoreFactorPct">({cell.contribution_pct.toFixed(1)}%)</span>
     </span>
   );
 }
@@ -107,6 +111,34 @@ function reliabilityTooltip(info: YieldReliabilityInfo): string {
   if (info.measured.length) lines.push(`${info.measured.map((m) => `${m.target} ${m.feature}`).join(" · ")} 계측`);
   if (info.unmeasured.length) lines.push(`${info.unmeasured.map((m) => `${m.target} ${m.feature}`).join(" · ")} 미계측`);
   return lines.join("\n");
+}
+
+// 권장사항 문장은 백엔드가 "\n"으로 항목을 이미 구분해 보낸다(구간
+// 조정 항목 0~2줄 + 미계측 요약 최대 1줄). 조정 항목 줄은
+// "Step16_R1 65.1 → 55.6~61.3 · Y2 −2.3%p" 형태로 오는데, 부호만
+// 보면 "나빠진다"로 오해할 수 있어 마지막 " · 타깃 부호%p" 구간을
+// 괄호로 묶고 "개선"을 붙인다. 미계측 줄("미계측: ..." 로 시작)은
+// 그대로 두고 --text-muted로 흐리게 구분한다.
+function formatRecommendationLine(line: string): { text: string; muted: boolean } {
+  if (line.startsWith("미계측") || line.startsWith("핵심 인자 미계측")) {
+    return { text: line, muted: true };
+  }
+  const arrowIndex = line.indexOf(" → ");
+  const sepIndex = line.lastIndexOf(" · ");
+  if (arrowIndex !== -1 && sepIndex > arrowIndex) {
+    const head = line.slice(0, sepIndex);
+    const tail = line.slice(sepIndex + 3);
+    return { text: `${head} (${tail} 개선)`, muted: false };
+  }
+  return { text: line, muted: false };
+}
+
+function recommendationLines(text: string): { text: string; muted: boolean }[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(formatRecommendationLine);
 }
 
 function downloadCsv(data: YieldPredictionResponse, rows: YieldCandidate[]) {
@@ -292,7 +324,7 @@ function AlertsContent() {
                 </>
               }
             />
-            <HScrollTableBody rows={10} minWidth={1900}>
+            <HScrollTableBody rows={10} minWidth={1550}>
               <table className="dataTable ypTable">
                 <thead>
                   <tr>
@@ -307,8 +339,8 @@ function AlertsContent() {
                     {FAIL_TARGETS.map((t) => (
                       <th key={t}>{t}</th>
                     ))}
-                    <th title="합산 예측 수율 -- 절대값 정확도가 낮습니다(R² 0.12)">Y</th>
-                    <th title="기여율 10% 이상 인자가 계측된 타깃 수 / 5">신뢰도</th>
+                    <th className="numCol" title="합산 예측 수율 -- 절대값 정확도가 낮습니다(R² 0.12)">Y</th>
+                    <th className="ypColReliability" title="기여율 10% 이상 인자가 계측된 타깃 수 / 5">신뢰도</th>
                     <th className="ypColRecommendation">권장사항</th>
                   </tr>
                 </thead>
@@ -344,13 +376,17 @@ function AlertsContent() {
                         ))}
                         {/* Y(합산값)에는 색을 쓰지 않는다. */}
                         <td className="numCol">{c.y.toFixed(2)}%</td>
-                        <td className={reliabilityClassName(c.reliability.count)} title={reliabilityTooltip(c.reliability)}>
+                        <td className={`ypColReliability ${reliabilityClassName(c.reliability.count)}`} title={reliabilityTooltip(c.reliability)}>
                           {c.reliability.count}/5
                         </td>
                         <td className="ypColRecommendation colNoTruncate">
                           {c.recommendation.text ? (
                             <span className="ypRecommendationText" title={c.recommendation.text}>
-                              {c.recommendation.text}
+                              {recommendationLines(c.recommendation.text).map((line, lineIndex) => (
+                                <span key={lineIndex} className={line.muted ? "ypRecommendationLine muted" : "ypRecommendationLine"}>
+                                  {line.text}
+                                </span>
+                              ))}
                             </span>
                           ) : (
                             <span className="ypCoreFactorEmpty">—</span>
