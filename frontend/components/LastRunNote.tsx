@@ -57,17 +57,17 @@ export function TrainingAnalysisDataNote({
   );
 }
 
-/** 작업지시 T9: 여섯 화면(모니터링/원인분석/수율예측/Config별 트리맵/
+/** 여섯 화면(모니터링/원인분석/수율예측/Config별 트리맵/
  * 알림 기록/즐겨찾기) 제목 아래에 "마지막 실행 14:10 · 훈련 데이터
  * train_config.csv · 분석 데이터 test_remove_y.CSV"를 동일한 구분자·순서로
  * 보여준다. 데이터셋 id(train/test)는 파일명과 중복이라 따로 표시하지
- * 않는다. 세 화면이 이미 이 조합을 각자 미세하게 다르게 조립하고 있어
- * (구분자 유무, 데이터셋 id 표시 여부) 하나로 합친다 -- `AnalysisStateProvider`에서
- * 직접 읽으므로 호출부는 prop을 넘기지 않는다(새 API 호출 없음).
- * `created_at`이 없으면(분석 미실행) 아무것도 렌더하지 않는다 -- 빈
- * 구분자만 남는 것을 막는다. `label`(T9-2)은 알림 기록처럼 "마지막
- * 실행"이 아니라 "현재 분석 기준"으로 불러야 하는 화면을 위한 오버라이드
- * -- 그 화면들의 개별 항목은 각자의 실제 발송 시각을 따로 표시한다. */
+ * 않는다. 화면마다 각자 조립하면 구분자·표시 항목이 미세하게 갈릴 수
+ * 있어 하나로 합친다 -- `AnalysisStateProvider`에서 직접 읽으므로 호출부는
+ * prop을 넘기지 않는다(새 API 호출 없음). `created_at`이 없으면(분석
+ * 미실행) 아무것도 렌더하지 않는다 -- 빈 구분자만 남는 것을 막는다.
+ * `label`은 알림 기록처럼 "마지막 실행"이 아니라 "현재 분석 기준"으로
+ * 불러야 하는 화면을 위한 오버라이드 -- 그 화면들의 개별 항목은 각자의
+ * 실제 발송 시각을 따로 표시한다. */
 export function PageHeaderMeta({ label }: { label?: string } = {}) {
   const { snapshot, training } = useAnalysisState();
   if (!snapshot?.created_at) return null;

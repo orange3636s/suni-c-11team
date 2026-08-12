@@ -3272,10 +3272,8 @@ html[data-theme="dark"] .savedModelList > button.active{
   }
 }
 
-/* High-Performance HMI design system (ISA-101 tone). Names kept from the
-   previous "calm manufacturing" system so call sites didn't need mass
-   edits -- only values changed, plus new measured/inferred/signal tokens
-   appended at the end of this block. */
+/* High-Performance HMI design system (ISA-101 tone). measured/inferred/signal
+   tokens are appended at the end of this block. */
 :root{
   --background: #f4f5f7;
   --surface: #ffffff;
@@ -8195,7 +8193,7 @@ html[data-theme="dark"] .datasetSelectorAdd{ color: #9db8ff; }
 .trainingAnalysisDataNoteItem{
   display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
 }
-/* 작업지시 T2: 20,000행 초과 데이터셋을 표본으로 분석했다는 고지 --
+/* 20,000행 초과 데이터셋을 표본으로 분석했다는 고지 --
    경고가 아니라 정보 배지라 datasetMismatchWarning보다 낮은 채도로 둔다. */
 .sampleNotice{
   margin: 6px 0 0; font-size: var(--fs-micro); color: var(--text-secondary);
@@ -9197,11 +9195,11 @@ html[data-theme="dark"] .bootstrapStateBanner.error{
   border-bottom: 1px solid var(--line); background: var(--surface-card); color: var(--text-secondary);
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-/* 작업지시 T5/T8-3/T7-3: 하트비트가 60초 넘게 갱신되지 않아 서버 프로세스가
+/* 하트비트가 60초 넘게 갱신되지 않아 서버 프로세스가
    죽었다고 판단될 때. */
 .analysisProgressBannerStale{ background: var(--warning-soft); color: var(--warning); border-bottom-color: var(--warning-soft); }
 .analysisProgressBannerRetryNote{ font-size: var(--fs-sm); }
-/* 작업지시 T8-4: 완료된 분석에 부분 실패(errors)가 남아 있을 때. */
+/* 완료된 분석에 부분 실패(errors)가 남아 있을 때. */
 .analysisErrorsBanner{ background: var(--warning-soft); color: var(--warning); border-bottom-color: var(--warning-soft); }
 
 /* Per-scatter-card Color By dropdown -- height/radius/font
@@ -10433,7 +10431,7 @@ html[data-theme="dark"] .meSideEffectCard.falsePositive strong{ color: #34D399; 
 
 .paretoUnderSampledLabel{ color: var(--sig-amber); }
 
-/* RE-2/RC-4b: 알림기록 y1~y5 셀 -- 농도(진하기)는 예측에 쓴 인자의
+/* 알림기록 y1~y5 셀 -- 농도(진하기)는 예측에 쓴 인자의
    파레토 기여율(확실할수록 진하게), 색상(빨강/파랑)은 그 인자가
    증가할 때 y가 나빠지는지 좋아지는지. 실측값은 무채색(기본 텍스트
    색 + 실선 테두리) -- 색이 있다는 것 자체가 "예측값"의 신호가

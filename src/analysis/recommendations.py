@@ -97,8 +97,8 @@ def compute_factor_recommendation(
     )
     winner = methods.ml if methods.adopted == "ml" else methods.spc
     if winner is None:
-        # Spec §5-3: both methods' windows disappeared under clamping (or
-        # couldn't be fit at all) -- no recommendation for this factor.
+        # Both methods' windows disappeared under clamping (or couldn't be
+        # fit at all) -- no recommendation for this factor.
         return None
     clamped_lo, clamped_hi = winner.lo, winner.hi
     clamped = winner.clamped

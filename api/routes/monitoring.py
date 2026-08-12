@@ -26,7 +26,7 @@ def get_config_treemap(dataset: str, step: int = Query(..., ge=1), target: str =
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target은 Y1~Y5 중 하나여야 합니다.")
 
     hydrated = _hydrated_targets_or_409(dataset)
-    # T2: 그룹 평균/분위수만 필요하므로 20,000행 초과 데이터셋은 로트
+    # 그룹 평균/분위수만 필요하므로 20,000행 초과 데이터셋은 로트
     # 단위 표본을 쓴다 -- schema 파싱은 컬럼 이름만 보므로 표본 여부와
     # 무관하다(전체 df로 그대로 판단).
     schema = parse_schema(hydrated.dataframe)

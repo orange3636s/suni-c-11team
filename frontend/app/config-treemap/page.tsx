@@ -84,7 +84,7 @@ export default function ConfigTreemapPage() {
   const stepData = cache[step];
   const isLoading = loadingStep === step;
   const anySignificant = stepData ? TARGETS.some((t) => stepData[t]?.significant) : false;
-  // T2: 다섯 타깃이 같은 표본을 쓰므로(같은 dataset_version) 아무거나
+  // 다섯 타깃이 같은 표본을 쓰므로(같은 dataset_version) 아무거나
   // 하나에서 고지를 읽으면 충분하다.
   const sampleInfo = stepData ? (TARGETS.map((t) => stepData[t]?.sample_info).find(Boolean) ?? null) : null;
 

@@ -198,7 +198,7 @@ export default function ParetoChart({
   // "해석" 라벨을 붙여 Scatter/Box와 같은 InterpretationCard로
   // 그린다(신뢰도 행은 caller가 넘겨줄 때만).
   // 썸네일(즐겨찾기 카드 미리보기)에서는 그리지 않는다 -- 그 문구는
-  // 저장 시점 스냅샷으로 카드 본문이 따로 보여준다(DE-1).
+  // 저장 시점 스냅샷으로 카드 본문이 따로 보여준다.
   const summaryRows: InterpretationRow[] = [
     { label: "해석", text: buildParetoSummaryText(items, n80) },
     ...(reliabilityText ? [{ label: "신뢰도" as const, text: reliabilityText }] : []),

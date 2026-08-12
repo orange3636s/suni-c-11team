@@ -119,8 +119,8 @@ export default function DashboardShell({
           </div>
         )}
         {/* 스냅샷이 갱신되면 알린다 -- "새 결과 있음" 배너. 모든
-            화면이 공유하는 셸 레벨에서 한 번만 렌더한다(D-2와 같은
-            이유). */}
+            화면이 공유하는 셸 레벨에서 한 번만 렌더한다(페이지마다
+            따로 넣으면 빠뜨리는 화면이 생긴다). */}
         {snapshotJustUpdated && (
           <div className="snapshotUpdatedBanner" role="status">
             <span>새 결과 있음 — 모델 분석이 방금 갱신됐습니다.</span>

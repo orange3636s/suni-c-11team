@@ -1,5 +1,5 @@
-"""Extra statistics computed only for the LLM report/chat context (spec
-"SUNI 챗봇 LLM 보고서 생성" §1) -- control-band bootstrap stability, per-factor
+"""Extra statistics computed only for the LLM report/chat context --
+control-band bootstrap stability, per-factor
 chamber interaction, the Config main-effect detection limit, and the
 measurement-bias check. Purely additive: nothing here changes the output of
 select_*/compute_control_range, it only computes extra numbers report.py

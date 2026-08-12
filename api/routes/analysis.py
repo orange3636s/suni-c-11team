@@ -94,10 +94,10 @@ def _hydrated_targets_or_409(dataset_id: str) -> HydratedTargets:
             model_dir=settings.model_dir,
         )
     except TargetHydrationError as exc:
-        # RA-B4: 이 choke point(모든 분석/모니터링/알림 라우트가 승인
+        # 이 choke point(모든 분석/모니터링/알림 라우트가 승인
         # 모델을 필요로 할 때 거치는 유일한 지점)에서 409를 올리기 직전에
         # 복구를 트리거한다 -- 레지스트리 포인터는 있는데 파일이 없는
-        # 경우(RA 근본 원인) 재학습이 자동으로 시작된다. 지연 import는
+        # 경우 재학습이 자동으로 시작된다. 지연 import는
         # 순환참조 회피용이다: `api.main`이 이 모듈(`analysis_router`)을
         # 기동 시 임포트하므로, 모듈 최상단에서 되돌아 임포트하면 순환이
         # 생긴다 -- 이 함수가 처음 호출되는 시점에는 이미 `api.main`
@@ -382,7 +382,7 @@ def _cached_ranked_rows_versioned(
     # performance nicety. Dataset content is immutable once a dataset_id
     # exists (see the heatmap cache's docstring for why that's safe).
     del model_id, model_version, hydration_version
-    # T2: 인자 순위만 필요하므로 20,000행 초과 데이터셋은 로트 단위 표본을
+    # 인자 순위만 필요하므로 20,000행 초과 데이터셋은 로트 단위 표본을
     # 쓴다 -- 히트맵과 같은 `_cached_analysis_sample`을 거치므로 같은
     # (dataset_id, dataset_version)이면 항상 같은 표본이다.
     df, _sample_info = _cached_analysis_sample(dataset_id, dataset_version)

@@ -268,8 +268,8 @@ def compare_methods(
 ) -> MethodComparison:
     """`x`/`y` must already be paired and NA-dropped (same contract as
     the recommendation engine's raw-window helpers); `lcl`/`ucl` are the
-    factor's IQR*1.5 control limits (fixed, method-independent -- spec
-    §2-3), `None` on a monotonic factor's non-alarming side.
+    factor's IQR*1.5 control limits (fixed, method-independent),
+    `None` on a monotonic factor's non-alarming side.
 
     `cache_key`, when given, memoizes the full comparison -- pass
     `(dataset_id, feature, target)` so repeat callers (a reopened scatter

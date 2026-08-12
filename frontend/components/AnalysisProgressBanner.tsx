@@ -5,8 +5,8 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 import { triggerRefresh } from "@/lib/api";
 import type { AnalysisProgress } from "@/types/data";
 
-/** T7-2: "· 100,000행 · 약 2분 예상" -- 대기 시간을 아는 것만으로 "끊겼다"는
- * 오해가 줄어든다(작업지시). 값이 없으면(구버전 서버 등) 아무것도 붙이지
+/** "· 100,000행 · 약 2분 예상" -- 대기 시간을 아는 것만으로 "끊겼다"는
+ * 오해가 줄어든다. 값이 없으면(구버전 서버 등) 아무것도 붙이지
  * 않는다. */
 function formatRowsAndEta(progress: AnalysisProgress): string {
   const parts: string[] = [];
@@ -24,10 +24,10 @@ function formatRowsAndEta(progress: AnalysisProgress): string {
  * 동일하게 삽입한다. 오류 배너가 아니라 진행 표시만 보여준다("하지 말
  * 것": 자동 복구 상황을 오류 배너로 알리지 마라).
  *
- * 작업지시 T5/T8-3/T7-3: `analysisProgress.heartbeat_at`이 60초 넘게
+ * `analysisProgress.heartbeat_at`이 60초 넘게
  * 갱신되지 않으면(서버 프로세스가 죽었거나 멈춘 것으로 본다) "중단됨"으로
- * 전환하고 재시도 버튼을 붙인다 -- 지금까지는 프로세스가 죽으면 DB에 남은
- * "진행 중… (3/8)" 표시가 영원히 그대로였다.
+ * 전환하고 재시도 버튼을 붙인다 -- 그러지 않으면 프로세스가 죽었을 때
+ * DB에 남은 "진행 중… (3/8)" 표시가 영원히 그대로 남는다.
  */
 const STALE_HEARTBEAT_MS = 60_000;
 

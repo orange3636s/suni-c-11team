@@ -12,7 +12,7 @@
   - R/D: 숫자 변환(`_numeric`, +/-inf도 결측 취급) + float32, `_miss`(int8),
     u_shape면 `_dev`(|value - optimal_center|, float32) 추가.
 
-Config 카테고리(§2-2/§2-3): 평가 데이터에 학습 시 없던 범주나 결측이
+Config 카테고리: 평가 데이터에 학습 시 없던 범주나 결측이
 섞여도, `categories`(학습 시점 범주 목록)로 명시적으로 제한하면
 LightGBM에 넘기기 전에 미등록 값이 NaN으로 정리된다 -- LightGBM이
 그 자체로도 새 범주를 견뎌내지만(코드가 밀리는 것뿐, 값 기준 재매핑),
@@ -49,7 +49,7 @@ class FactorFeatureSpec:
     relation_shape: str | None = None
     optimal_center: float | None = None
     # Config 전용. None이면 컬럼이 스스로 가진 범주를 그대로 쓴다(학습 시점
-    # 기본 동작). 값이 있으면 그 범주로 제한한다(추론 시점, §2-2/§2-3).
+    # 기본 동작). 값이 있으면 그 범주로 제한한다(추론 시점).
     categories: Sequence[Any] | None = None
 
 
@@ -67,10 +67,10 @@ def _config_columns(df: pd.DataFrame, spec: FactorFeatureSpec) -> dict[str, pd.S
     if spec.feature in df.columns:
         raw = df[spec.feature].astype("category")
         if spec.categories is not None:
-            # T2/§2-3: 학습 범주로 제한 -- 미등록 값은 결측으로 정리된다.
+            # 학습 범주로 제한 -- 미등록 값은 결측으로 정리된다.
             raw = raw.cat.set_categories(list(spec.categories))
     else:
-        # T2/§2-2: 평가 데이터에 이 Config 컬럼이 아예 없어도 KeyError로
+        # 평가 데이터에 이 Config 컬럼이 아예 없어도 KeyError로
         # 죽이지 않는다 -- 학습 범주로 구성된 전량 결측 category 컬럼을
         # 대신 만든다(`_miss`는 전부 1이 된다).
         raw = pd.Series(
@@ -84,7 +84,7 @@ def _config_columns(df: pd.DataFrame, spec: FactorFeatureSpec) -> dict[str, pd.S
 
 
 def trained_categories_from_model(model: Any) -> list[str] | None:
-    """§2-2/§2-3: LightGBM은 학습된 범주 목록을 `booster_.pandas_categorical`에
+    """LightGBM은 학습된 범주 목록을 `booster_.pandas_categorical`에
     보관한다 -- 스크리닝 파이프라인은 타깃당 인자가 하나뿐이라 categorical
     컬럼도 최대 하나뿐이므로 항상 인덱스 0을 쓴다. 학습 직후(메타데이터
     저장용, `src.ml.pipeline._trained_categories` 호출부)와 추론 시점의

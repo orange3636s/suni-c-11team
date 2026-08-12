@@ -1,4 +1,4 @@
-# Effect-size gate for the confidence-tier grade (spec §5-2).
+# Effect-size gate for the confidence-tier grade.
 #
 # p-value alone answers "is the effect non-zero", not "is the effect big
 # enough to act on" -- a large-n dataset makes p tiny even for a near-zero

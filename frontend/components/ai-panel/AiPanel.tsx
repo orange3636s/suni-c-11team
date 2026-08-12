@@ -72,7 +72,7 @@ const REPORT_KEYWORD_PATTERN = /보고서|리포트|report/i;
 const TYPEWRITER_INTERVAL_MS = 14;
 const AUTO_SCROLL_THRESHOLD_PX = 40;
 // api/routes/chat.py의 HISTORY_TURNS * 2와 반드시 같은 값이어야 한다 --
-// 근거 JSON이 system 메시지로 옮겨진 뒤(A-1)에는 이 창이 순수 대화용이라
+// 근거 JSON은 system 메시지로 별도 전달되므로 이 창은 순수 대화용이라
 // 늘려도 안전하지만, 두 값이 어긋나면 둘 중 더 짧은 쪽이 실효 창이 된다.
 const HISTORY_MESSAGES = 12; // last 6 user/suni turns
 // Trailing spacer so the last real message always lands in the mask's fully

@@ -1,5 +1,5 @@
-"""Human-readable `_text` companions for the LLM chat/report context JSON
-(spec "LLM 답변·보고서 서술 다듬기" §7) -- pre-formats numbers, ranges,
+"""Human-readable `_text` companions for the LLM chat/report context JSON --
+pre-formats numbers, ranges,
 booleans, and grade strings using the exact same rounding conventions the
 screen already uses (frontend/lib/numberFormat.ts, and the per-field
 `toFixed(n)` calls scattered across ScatterChart.tsx/alerts/page.tsx/

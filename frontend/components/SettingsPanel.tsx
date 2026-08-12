@@ -470,7 +470,7 @@ function GmailCard({ summary, onUpdate }: ChannelProps) {
 }
 
 // "자동화" 섹션 -- refreshIntervalMinutes마다 서버에서 최신 CSV를
-// 받아 수율 예측만 계산해 알림을 보낸다(SD-2). 비밀번호 입력칸은 없다 --
+// 받아 수율 예측만 계산해 알림을 보낸다. 비밀번호 입력칸은 없다 --
 // 서버 환경변수(DB_PASSWORD)로만 받는다("하지 말 것").
 function AutomationSection({ summary, onUpdate }: ChannelProps) {
   const { automation } = summary;

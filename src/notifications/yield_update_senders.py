@@ -265,8 +265,7 @@ def build_telegram_yield_update_chunks(payload: YieldUpdatePayload, *, max_chars
     """Telegram 하드 한계(4096자)를 넘으면 여러 메시지로 나눈다. 항상
     `_telegram_blocks`의 온전한 블록 단위로만 자른다 -- 표를 반토막
     내거나 타깃 섹션을 통째로 누락하지 않는다. 대개(TOP10 10행 + 타깃당
-    최대 3행 기준) 한 청크(길이 1개 리스트)로 끝난다 -- 실측치는
-    프로젝트 README/작업 보고 참고.
+    최대 3행 기준) 한 청크(길이 1개 리스트)로 끝난다.
 
     블록 하나가 그 자체로 `max_chars`를 넘는 극단적인 경우(예: 매우 긴
     피처명이 반복)에는 그 블록만 단독 청크로 내보낸다 -- 잘라서 깨진

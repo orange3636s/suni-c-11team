@@ -53,7 +53,7 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV 파일만 업로드할 수 있습니다.")
     limit_bytes = max_upload_size_bytes()
     registry = get_dataset_registry()
-    # T1-3: 150MB까지 허용하는 만큼, 전체 바이트를 한 번에 메모리에 올리지
+    # 150MB까지 허용하는 만큼, 전체 바이트를 한 번에 메모리에 올리지
     # 않는다(그러면 raw bytes + pandas 파싱 중 팽창이 동시에 겹친다) --
     # 1MB 청크로 디스크에 스트리밍하며 한도 초과를 즉시 감지해 중단한다.
     tmp_path = registry.upload_root / f".upload-{uuid4().hex}.tmp"

@@ -473,7 +473,7 @@ def _run_refresh_pipeline_inner(store: RuntimeStore, *, dispatch: bool = True) -
             errors.append(f"일부 타깃 스크리닝 실패: {', '.join(failed_targets)}")
 
         # -- 7/8 수율 예측 ------------------------------------------------
-        # T2: 절대 표본을 쓰지 않는다 -- 웨이퍼별 순위가 산출물이라
+        # 절대 표본을 쓰지 않는다 -- 웨이퍼별 순위가 산출물이라
         # 체크포인트로도 건너뛰지 않는다(매번 전량 재계산).
         _stage("yield_prediction")
         t_stage = time.perf_counter()

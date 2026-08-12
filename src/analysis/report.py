@@ -634,7 +634,7 @@ def build_chat_context(report: dict[str, Any]) -> dict[str, Any]:
 
     context = {**report, "targets": targets_out, "alarms": alarms_out}
 
-    # `_text` companions (spec "LLM 답변·보고서 서술 다듬기" §7) -- pre-round
+    # `_text` companions -- pre-round
     # and pre-phrase every field the chat/report prompts are prone to
     # mis-render on their own (raw booleans, bracket-style ranges,
     # scientific-notation p-values, more decimals than the screen shows).

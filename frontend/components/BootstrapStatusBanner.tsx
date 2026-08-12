@@ -10,7 +10,7 @@ import { useAnalysisState } from "@/components/AnalysisStateProvider";
 // 쓴다).
 const BOOTSTRAP_STAGES = ["데이터 확인 중", "학습 중", "평가 · 원인분석 중"];
 
-// RA-B5: api/main.py의 BOOTSTRAP_FAILURE_REASON_DATA_MISSING과 같은
+// api/main.py의 BOOTSTRAP_FAILURE_REASON_DATA_MISSING과 같은
 // 문자열이어야 한다 -- 이 값일 때만 재시도해도 소용없는 진짜 복구
 // 불가능 케이스(내장 학습 데이터 자체가 없음)로 취급한다.
 const BOOTSTRAP_FAILURE_REASON_DATA_MISSING = "bundled_train_data_missing";
@@ -30,7 +30,7 @@ export default function BootstrapStatusBanner() {
   // 실패로 취급하지 않는다 -- 여기 도달하는 "failed"는 내장 데이터
   // 분석 자체가 깨진 문제다.
   //
-  // RA-B5: 이제 두 종류를 구분한다.
+  // 두 종류를 구분한다.
   //   - reason === "bundled_train_data_missing": 내장 학습 데이터 파일
   //     자체가 없는, 사용자가 조치할 수 없는 진짜 복구 불가능 케이스다.
   //     재시도 버튼을 두지 않는다(눌러도 같은 이유로 다시 실패한다).

@@ -156,9 +156,7 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
     }
   }
 
-  // B-10-2: 상단 배너(ManualModeBanner, 제거됨)의 되돌리기 로직을 그대로
-  // 옮긴다 -- 등록만 지울 뿐(SC-3과 분리) 분석을 자동으로 다시 실행하지
-  // 않는다는 동작은 그대로다.
+  // 등록만 지울 뿐 분석을 자동으로 다시 실행하지는 않는다.
   async function handleRevert() {
     setRegisterError("");
     setReverting(true);
@@ -189,7 +187,7 @@ export default function ModelAnalysisPanel({ open, onClose }: { open: boolean; o
   }
 
   const progressLabel = analysisProgress ? `분석 진행 중… (${analysisProgress.index}/${analysisProgress.total}) ${analysisProgress.stage}` : refreshRunning ? "분석 진행 중…" : null;
-  // 작업지시(Config 하이드레이션 실패 수정) T4: "triggered: true"를 받은
+  // "triggered: true"를 받은
   // 뒤에도 백그라운드 실행이 조용히 실패할 수 있다 -- lastRun.status가
   // "failed"면 실패 단계·사유를 그대로 보여준다. 실패해도 마지막 정상
   // 스냅샷은 그대로 보존되므로, "지금 화면은 이전 결과"임을 함께 안내한다
