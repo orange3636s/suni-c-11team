@@ -467,15 +467,20 @@ def _pareto_payload(dataset_id: str, target: str, top_n: int) -> dict[str, Any]:
 
 
 def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
-    """모니터링 홈 블록③(데이터 한계) -- MNAR 계측 편향 + 분산 분해.
+    """모니터링 홈 블록③~⑥(데이터 한계 진단).
 
-    소비처(`DataLimitationDiagnostics`)는 `mnar_rate_report`/
-    `variance_decomposition`만 읽으므로 그 둘만 내려보낸다 -- FMEA 행
-    데이터(`items`, 행마다 17개 필드)는 payload에 싣지 않는다. 블록①은
-    `_action_priority_payload`가 train.CSV 기준으로 따로 내는 별개
-    산출물이다(이 함수는 eval 기준이다). `build_fmea_table` 자체는 내부에서
-    호출한다 -- MNAR 리포트가 그 표의 (타깃, 인자) 쌍을 그대로 재사용하기
-    때문이다.
+    MNAR 계측 편향과 분산 분해는 반드시 **train.CSV의 실제 Y**로
+    계산한다 -- eval 데이터셋(`dataset_id`, 보통 test_remove_y.CSV)은 Y가
+    없어 하이드레이션이 모델 예측값으로 채운 프레임이고, 그 예측 Y로
+    "손실 상위 10%"를 정하면 예측이 나쁜 wafer(=핵심 인자가 계측된
+    wafer)가 그대로 "최악 10%"가 되어 계측률이 100%에 가깝게 부풀려진다
+    (실측으로는 나올 수 없는 값). `build_fmea_table` 자체는 eval
+    데이터셋 기준으로 호출한다 -- "핵심 인자가 무엇인가"(파레토 기여율
+    임계 통과 인자)는 지금 보고 있는 배치 기준으로 뽑아야 커버리지
+    블록의 "핵심 인자"와 화면 다른 곳(FMEA 표)이 같은 인자를 가리킨다.
+
+    소비처(`DataLimitationDiagnostics`)는 FMEA 행 원본(`items`, 행마다
+    17개 필드)을 읽지 않으므로 payload에 싣지 않는다.
     """
     hydrated = _hydrated_targets_or_409(dataset_id)
     df = hydrated.dataframe
@@ -485,15 +490,33 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
         t: list(_ranked_rows_for_provenance(dataset_id, t, hydrated.provenance)) for t in usable_targets
     }
     table = build_fmea_table(df, rows_by_target, usable_targets, dataset_id=dataset_id)
+    core_features = list(dict.fromkeys(f.feature for f in table.items))
 
-    from src.analysis.data_limitations import build_mnar_rate_report, compute_variance_decomposition
+    from src.analysis.data_limitations import (
+        build_mnar_rate_report,
+        compute_core_factor_coverage,
+        compute_defect_cooccurrence_matrix,
+        compute_variance_decomposition,
+        MIN_OVERALL_RATE_FOR_MNAR_PCT,
+        MNAR_TOP_N,
+    )
 
-    mnar_report = build_mnar_rate_report(df, [(f.target, f.feature) for f in table.items])
-    variance_decomposition = compute_variance_decomposition(df)
+    train_df = get_dataset_registry().get_dataframe("train")
+    all_factor_pairs = [(t, f) for t in usable_targets for f in (*schema.r_cols, *schema.d_cols)]
+    mnar_report = build_mnar_rate_report(
+        train_df,
+        all_factor_pairs,
+        min_overall_rate_pct=MIN_OVERALL_RATE_FOR_MNAR_PCT,
+        top_n=MNAR_TOP_N,
+    )
+    variance_decomposition = compute_variance_decomposition(train_df)
+    cooccurrence_matrix = compute_defect_cooccurrence_matrix(train_df, tuple(usable_targets))
+    coverage = compute_core_factor_coverage(df, core_features)
 
     return round_floats(
         {
             "dataset_id": dataset_id,
+            "train_total_wafers": len(train_df),
             "mnar_rate_report": [
                 {
                     "target": r.target,
@@ -515,6 +538,19 @@ def _fmea_payload(dataset_id: str, targets: tuple[str, ...]) -> dict[str, Any]:
                 }
                 if variance_decomposition is not None
                 else None
+            ),
+            "core_factor_coverage": (
+                {
+                    "dataset_id": dataset_id,
+                    "core_features": core_features,
+                    "total_wafers": len(df),
+                    "rows": [{"measured_count": r.measured_count, "wafer_count": r.wafer_count, "pct": r.pct} for r in coverage],
+                }
+                if coverage is not None
+                else None
+            ),
+            "defect_cooccurrence": (
+                {"targets": usable_targets, "matrix": cooccurrence_matrix} if cooccurrence_matrix is not None else None
             ),
             "target_provenance": hydrated.provenance.as_dict(),
         }

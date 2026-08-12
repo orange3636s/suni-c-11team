@@ -49,16 +49,32 @@ class MnarRateRow:
     ratio: float  # worst_decile_rate_pct / overall_rate_pct
 
 
-def build_mnar_rate_report(df: pd.DataFrame, factors: list[tuple[str, str]]) -> list[MnarRateRow]:
+MIN_OVERALL_RATE_FOR_MNAR_PCT = 1.0  # 이보다 계측률이 낮은 인자는 표본 부족으로 배수가 불안정해 제외
+MNAR_TOP_N = 10
+
+
+def build_mnar_rate_report(
+    df: pd.DataFrame,
+    factors: list[tuple[str, str]],
+    *,
+    min_overall_rate_pct: float | None = None,
+    top_n: int | None = None,
+) -> list[MnarRateRow]:
     """(target, feature) 쌍마다 전체 계측률과 최악 10% 계측률·배수를
     계산해 배수 내림차순으로 반환한다. 최악 10%를 정하려면 Y가 필요하다 --
-    호출부가 이미 Y1~Y5가 채워진 프레임(FMEA가 쓰는 것과 같은 eval
-    프레임)을 넘겨야 한다."""
+    호출부가 train.CSV처럼 실제 Y가 채워진 프레임을 넘겨야 한다(예측 Y로
+    채운 프레임을 넘기면 배수가 부풀려진다 -- 예측이 나쁜 wafer일수록
+    핵심 인자가 계측된 wafer이기 때문).
+
+    `min_overall_rate_pct`를 주면 그 미만인 인자는 표본이 적어 배수가
+    불안정하므로 제외한다. `top_n`을 주면 배수 상위 N개만 남긴다."""
     rows: list[MnarRateRow] = []
     for target, feature in factors:
         overall = overall_measurement_rate(df, feature)
         worst = worst_decile_measurement_rate(df, feature, target)
         if overall is None or worst is None or overall <= 0:
+            continue
+        if min_overall_rate_pct is not None and overall < min_overall_rate_pct:
             continue
         rows.append(
             MnarRateRow(
@@ -70,6 +86,8 @@ def build_mnar_rate_report(df: pd.DataFrame, factors: list[tuple[str, str]]) -> 
             )
         )
     rows.sort(key=lambda r: r.ratio, reverse=True)
+    if top_n is not None:
+        rows = rows[:top_n]
     return rows
 
 
@@ -213,3 +231,78 @@ def compute_mode_variance_share(
         )
     rows.sort(key=lambda r: r.variance_share_pct, reverse=True)
     return rows
+
+
+MIN_WAFERS_FOR_COVERAGE = 1
+
+
+@dataclass(frozen=True)
+class CoreFactorCoverageRow:
+    """모니터링 홈 블록⑤ 「핵심 인자 커버리지」 -- wafer 한 장이 핵심 인자
+    몇 개로 판정됐는가. 지금 분석 중인 배치(eval, 보통 test_remove_y.CSV)
+    기준이다 -- train과 달리 여기는 "이 배치의 계측 상태"를 묻는 질문이라
+    train을 쓰면 안 된다."""
+
+    measured_count: int
+    wafer_count: int
+    pct: float
+
+
+def compute_core_factor_coverage(df: pd.DataFrame, core_features: list[str]) -> list[CoreFactorCoverageRow] | None:
+    """`core_features`(핵심 인자, 보통 FMEA 표의 (타깃, 인자) 쌍에서 뽑은
+    인자 목록) 중 몇 개가 계측됐는지를 wafer마다 세어 0개~전체개수까지
+    분포로 반환한다. 핵심 인자가 하나도 없거나 데이터가 없으면 None."""
+    features = [f for f in core_features if f in df.columns]
+    total = len(df)
+    if not features or total < MIN_WAFERS_FOR_COVERAGE:
+        return None
+    counts = df[features].notna().sum(axis=1)
+    max_count = len(features)
+    rows: list[CoreFactorCoverageRow] = []
+    for k in range(max_count + 1):
+        wafer_count = int((counts == k).sum())
+        rows.append(CoreFactorCoverageRow(measured_count=k, wafer_count=wafer_count, pct=wafer_count / total * 100.0))
+    return rows
+
+
+MIN_SAMPLE_FOR_COOCCURRENCE = 30
+
+
+def compute_defect_cooccurrence_matrix(
+    df: pd.DataFrame,
+    targets: tuple[str, ...] = ("Y1", "Y2", "Y3", "Y4", "Y5"),
+    *,
+    fraction: float = WORST_DECILE_FRACTION,
+) -> list[list[float | None]] | None:
+    """모니터링 홈 블록⑥ 「불량 원인 독립성」 -- 두 불량 원인이 동시에
+    상위 `fraction`(기본 10%)에 드는 wafer 비율을 원인쌍마다 계산한다.
+    두 원인이 독립이면 이 비율의 기댓값은 `fraction * fraction * 100`
+    (기본 1.00%)이다. train.CSV 기준(원인 값 자체가 필요하므로 eval로는
+    계산할 수 없다). 대각선은 None. 표본 부족이면 전체를 None으로
+    반환한다."""
+    if any(t not in df.columns for t in targets):
+        return None
+    frame = df[list(targets)].apply(pd.to_numeric, errors="coerce").dropna()
+    n = len(frame)
+    if n < MIN_SAMPLE_FOR_COOCCURRENCE:
+        return None
+    n_worst = max(1, round(n * fraction))
+
+    worst_masks: dict[str, pd.Series] = {}
+    for t in targets:
+        worst_idx = frame[t].sort_values(ascending=False).index[:n_worst]
+        mask = pd.Series(False, index=frame.index)
+        mask.loc[worst_idx] = True
+        worst_masks[t] = mask
+
+    matrix: list[list[float | None]] = []
+    for a in targets:
+        row: list[float | None] = []
+        for b in targets:
+            if a == b:
+                row.append(None)
+                continue
+            both = int((worst_masks[a] & worst_masks[b]).sum())
+            row.append(both / n * 100.0)
+        matrix.append(row)
+    return matrix

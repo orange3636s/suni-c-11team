@@ -10739,30 +10739,43 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .coverageSeg-unmeasured{ background: transparent; }
 .coverageRowCaption{ margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 
-/* ---- 데이터 한계 진단(MNAR + 분산 분해) ------------------------------ */
-/* .actionBlockSubheading의 유일한 사용처는 블록③
-   (DataLimitationDiagnostics.tsx)이다. */
-.actionBlockSubheading{ margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
-.fmeaFootnote{ margin: 8px 2px 0; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.6; }
-.limitsGrid{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 12px; }
-@media (max-width: 1023px){ .limitsGrid{ grid-template-columns: 1fr; } }
+/* ---- 데이터 한계 진단(다섯 블록: MNAR·분산 분해·변동 기여·커버리지·독립성) ---- */
+/* 좌 1(MNAR, 10행) · 우 4(분산 분해·변동 기여·커버리지·독립성). 1100px
+   미만은 세로 스택. 다섯 블록이 .limitBlock 하나를 공유한다 -- 각자
+   만들면 제목·설명·해석 간격이 갈린다. */
+.limitsGrid{ display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; margin-top: 12px; align-items: start; }
+.limitsColRight{ display: flex; flex-direction: column; gap: 20px; }
+@media (max-width: 1099px){ .limitsGrid{ grid-template-columns: 1fr; } }
 
-.mnarList{ display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.limitBlock{ display: flex; flex-direction: column; }
+.limitBlock + .limitBlock{ margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+.limitBlockTitle{ margin: 0; font-size: var(--fs-title); font-weight: 600; }
+.limitBlockDesc{ margin: 4px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); }
+.limitBlockDesc .limitBlockDataset{ font-family: var(--font-data); font-size: var(--fs-nano); color: var(--text-muted); }
+.limitBlockViz{ margin-top: 12px; }
+.limitBlockInterp{ margin: 10px 2px 0; padding-top: 10px; border-top: 1px solid var(--border); font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.6; }
+.limitBlockInterp b{ color: var(--text-primary); }
+.limitBlockInterp .limitBlockWarn{ color: var(--sig-red); }
+
+.mnarList{ display: flex; flex-direction: column; gap: 16px; }
 .mnarRow{ display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 10px; }
 .mnarLabel{ display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .mnarFeature{ color: var(--measured); font-size: var(--fs-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mnarBars{ display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.modeLossTarget{ font-size: var(--fs-nano); color: var(--text-muted); }
+.mnarBars{ display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .mnarBarLine{ display: flex; align-items: center; gap: 6px; }
-.mnarBarTrack{ flex: 1 1 auto; height: 8px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
+.mnarBarTrack{ flex: 1 1 auto; height: 9px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
 .mnarBarFill{ height: 100%; border-radius: 999px; }
 .mnarBarFill-overall{ background: var(--text-muted); }
-.mnarBarFill-worst-amber{ background: var(--sig-amber); }
 .mnarBarFill-worst-red{ background: var(--sig-red); }
-.mnarBarValue{ flex: 0 0 auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mnarRatio{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.mnarBarFill-worst-amber{ background: var(--sig-amber); }
+.mnarBarFill-worst-muted{ background: var(--text-muted); opacity: .55; }
+.mnarBarValue{ flex: 0 0 auto; font-size: var(--fs-nano); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mnarRatio{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-muted); }
 .mnarRatio-red{ color: var(--sig-red); }
+.mnarRatio-amber{ color: var(--sig-amber); }
 
-.varianceDecompList{ display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.varianceDecompList{ display: flex; flex-direction: column; gap: 10px; }
 .varianceDecompRow{ display: grid; grid-template-columns: 48px 1fr 56px; align-items: center; gap: 10px; }
 .varianceDecompLabel{ font-size: var(--fs-xs); color: var(--text-secondary); }
 .varianceDecompTrack{ position: relative; height: 16px; border-radius: 4px; background: var(--surface-muted); overflow: visible; }
@@ -10773,11 +10786,7 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .varianceDecompValue{ text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .varianceDecompExpectedLabel{ margin: 6px 2px 0; font-size: var(--fs-xs); color: var(--sig-amber); }
 
-.modeShareSection{ margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
-.modeShareHeading{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-.modeShareTitle{ margin:0; font-size: var(--fs-sm); font-weight:600; }
-.modeShareBasis{ font-size: var(--fs-xs); color: var(--text-muted); }
-.modeShareLegend{ display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.modeShareLegend{ display:flex; flex-wrap:wrap; gap:10px; margin: 0 0 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .modeShareLegendItem{ display:inline-flex; align-items:center; gap:5px; }
 .modeShareSwatch{ width:10px; height:10px; border-radius:3px; display:inline-block; }
 .modeShareBar{ display:flex; gap:2px; height:20px; }
@@ -10788,3 +10797,19 @@ html[data-theme="dark"] .sidebarSurface{ background: var(--ink); }
 .modeShareLabel{ flex-basis:0; min-width:0; overflow:hidden; white-space:nowrap;
   font-size: var(--fs-xs); color: var(--text-secondary); }
 .modeShareLabel b{ color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+.coverageStackBar{ display:flex; gap:2px; height:22px; }
+.coverageStackSeg{ flex-basis:0; min-width:2px; border-radius:2px; }
+.coverageStackSeg:first-child{ border-radius:4px 2px 2px 4px; }
+.coverageStackSeg:last-child{ border-radius:2px 4px 4px 2px; }
+.coverageLegend{ display:flex; flex-wrap:wrap; gap:10px 14px; margin-top:8px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.coverageLegendItem{ display:inline-flex; align-items:center; gap:5px; }
+.coverageSwatch{ width:10px; height:10px; border-radius:3px; display:inline-block; flex: 0 0 auto; }
+
+.cooccurrenceMatrix{ border-collapse: collapse; width: 100%; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.cooccurrenceMatrix th, .cooccurrenceMatrix td{ padding: 5px 6px; text-align: center; }
+.cooccurrenceMatrix thead th{ color: var(--text-muted); font-weight: 500; font-size: var(--fs-nano); }
+.cooccurrenceMatrix tbody th{ text-align: left; color: var(--text-secondary); font-weight: 600; }
+.cooccurrenceDiag{ color: var(--text-muted); }
+.cooccurrenceCell{ border-radius: 5px; background: var(--surface-muted); color: var(--text-secondary); }
+.cooccurrenceCell-flag{ background: color-mix(in srgb, var(--sig-amber) 16%, var(--surface-muted)); color: var(--text-primary); }

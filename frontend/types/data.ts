@@ -496,14 +496,40 @@ export type VarianceDecomposition = {
   icc: number;
 };
 
-// 모니터링 홈 블록③(데이터 한계)이 유일한 소비처이며, MNAR 계측률
-// 리포트와 분산 분해만 담는다. 자동 갱신이 아직 한 번도 돌지 않았거나
-// 계산이 실패하면 이 페이로드 자체가 null로 내려온다 -- 화면이 그 상태를
-// 별도로 안내한다.
+// 블록⑤ 「핵심 인자 커버리지」 -- wafer 한 장이 핵심 인자 몇 개로
+// 판정되는가. eval(지금 분석 중인 배치, 보통 test_remove_y.CSV) 기준이다
+// -- train과 달리 "지금 배치의 계측 상태"를 묻는 질문이라서다.
+export type CoreFactorCoverageRow = {
+  measured_count: number;
+  wafer_count: number;
+  pct: number;
+};
+
+export type CoreFactorCoverage = {
+  dataset_id: string;
+  core_features: string[];
+  total_wafers: number;
+  rows: CoreFactorCoverageRow[];
+};
+
+// 블록⑥ 「불량 원인 독립성」 -- 두 원인이 동시에 상위 10%인 wafer 비율
+// (%). 독립이면 기댓값 1.00%. train.CSV 기준. matrix[i][j]는
+// targets[i]/targets[j] 쌍의 값이고 대각선은 null.
+export type DefectCooccurrence = {
+  targets: string[];
+  matrix: (number | null)[][];
+};
+
+// 모니터링 홈 블록③~⑥(데이터 한계 진단)이 유일한 소비처. 자동 갱신이
+// 아직 한 번도 돌지 않았거나 계산이 실패하면 이 페이로드 자체가
+// null로 내려온다 -- 화면이 그 상태를 별도로 안내한다.
 export type FmeaTablePayload = {
   dataset_id: string;
+  train_total_wafers: number;
   mnar_rate_report: MnarRateRow[];
   variance_decomposition: VarianceDecomposition | null;
+  core_factor_coverage: CoreFactorCoverage | null;
+  defect_cooccurrence: DefectCooccurrence | null;
   target_provenance: TargetProvenance | null;
 };
 
